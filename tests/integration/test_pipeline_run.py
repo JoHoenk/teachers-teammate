@@ -778,6 +778,7 @@ def test_pipeline_run_with_correction_persists_correction_state(tmp_path: Path) 
     mock_ocr.process_image.return_value = "raw text"
 
     mock_corrector = MagicMock()
+    mock_corrector.pieces.return_value = None
     mock_corrector.correct.return_value = CorrectionOutcome("corrected text")
 
     with (
@@ -958,7 +959,10 @@ def test_a_failing_model_check_ends_the_run_without_contacting_a_server(tmp_path
     assert summary.exit_code == 1
     assert "Cannot connect to Ollama" in summary.error
     check.assert_called_once()
-    assert check.call_args.args[:2] == (cfg.ollama_url, "my-model")
+    assert (check.call_args.kwargs["url"], check.call_args.kwargs["model"]) == (
+        cfg.ollama_url,
+        "my-model",
+    )
 
 
 # ── Engine selection ───────────────────────────────────────────────────────
@@ -1706,6 +1710,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
     first_ocr = MagicMock()
     first_ocr.process_image.return_value = "raw text"
     first_corrector = MagicMock()
+    first_corrector.pieces.return_value = None
     first_corrector.correct.return_value = CorrectionOutcome("corrected text")
     first_evaluator = MagicMock()
     first_evaluator.evaluate.return_value = EvaluationOutcome("eval-v1")
@@ -1730,6 +1735,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
     second_ocr = MagicMock()
     second_ocr.process_image.side_effect = OCRError("OCR should be reused from cache")
     second_corrector = MagicMock()
+    second_corrector.pieces.return_value = None
     second_corrector.correct.side_effect = AssertionError("correction should be reused from cache")
     second_evaluator = MagicMock()
     second_evaluator.evaluate.return_value = EvaluationOutcome("eval-v2")
@@ -1781,6 +1787,7 @@ def test_pipeline_run_with_different_providers_per_stage_produces_full_state(
     mock_ocr = MagicMock()
     mock_ocr.process_image.return_value = "raw text"
     mock_corrector = MagicMock()
+    mock_corrector.pieces.return_value = None
     mock_corrector.correct.return_value = CorrectionOutcome("corrected text")
     mock_evaluator = MagicMock()
     mock_evaluator.evaluate.return_value = EvaluationOutcome("quality: good")
@@ -1870,6 +1877,7 @@ def test_pipeline_tells_corrector_the_text_is_markdown_and_formats_the_docx(
         tmp_path, _CHANDRA_OUTPUT, correction_enabled=True, docx_enabled=True
     )
     mock_corrector = MagicMock()
+    mock_corrector.pieces.return_value = None
     mock_corrector.correct.return_value = CorrectionOutcome(
         "Dear **diary**, my ~~backpack~~ <sup>passport</sup> is here."
     )

@@ -14,6 +14,7 @@ Pure: no I/O, no provider imports.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Literal
 
 from .review import CorrectionReview
@@ -21,13 +22,26 @@ from .review import CorrectionReview
 StepName = Literal["correct", "explain", "unclear", "review"]
 """The steps a request can belong to: ① correct, ② explain, ③ unclear, and R's review."""
 
-ExchangeKind = Literal["T", "R-walk", "R-list"]
-"""Which exchange proofreads a text.
 
-``T`` — the three steps (correct, explain, unclear).  ``R-walk`` / ``R-list`` — the prepared
-one-request exchange, which walks every sentence or lists only the changed ones; it is built only
-when a tuning stage keeps it for a model.
-"""
+class ExchangeKind(StrEnum):
+    """Which exchange proofreads a text."""
+
+    TEXT_FIRST = "text-first"
+    """The three steps: ① the corrected text, ② the explanations, ③ the unclear wording."""
+
+
+_STORED_EXCHANGE_IDS: dict[ExchangeKind, str] = {ExchangeKind.TEXT_FIRST: "T"}
+"""The id in a stored cache key, for an exchange whose id is not its enum value."""
+
+
+def stored_exchange_id(kind: ExchangeKind) -> str:
+    """Return the id *kind* has in a stored cache key.
+
+    The cache key carries ``"T"`` for the text-first exchange; the enum's value is the word the
+    evaluation tools use.  Any other exchange is keyed by its value.
+    """
+    return _STORED_EXCHANGE_IDS.get(kind, kind.value)
+
 
 FailureKind = Literal["", "truncated", "invalid", "transport"]
 """How a request ended.
@@ -61,7 +75,7 @@ DEFAULT_EXCHANGE_COST = ExchangeCost(
     answer_tokens_per_100_words={"correct": 141, "explain": 60, "unclear": 20},
     text_copies={"correct": 1, "explain": 2, "unclear": 1},
 )
-"""What exchange ``T`` costs, until a measurement on the official test set replaces it.
+"""What the text-first exchange costs, until a measurement on the official test set replaces it.
 
 Provisional figures from the proof-of-concept sweep: one request per step and page, and the
 answer lengths of the three steps relative to the text.  Step ① is a plain rewrite, so its

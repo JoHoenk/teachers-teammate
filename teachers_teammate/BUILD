@@ -130,7 +130,6 @@ _INFRASTRUCTURE_SRCS = [
     "infrastructure/proofreading/corrector.py",
     "infrastructure/proofreading/exchanges/__init__.py",
     "infrastructure/proofreading/exchanges/base.py",
-    "infrastructure/proofreading/exchanges/fallback.py",
     "infrastructure/proofreading/exchanges/t.py",
     "infrastructure/proofreading/port.py",
     "infrastructure/proofreading/runner.py",

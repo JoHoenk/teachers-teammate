@@ -129,9 +129,9 @@ def test_preprocess_preview_uses_the_given_build_preprocessor(
     store = ModelStore(tmp_path / "models")
 
     def _stub_build_preprocessor(
-        tmp_dir: Path, save_steps: bool, ocr_arg: OcrConfig, store_arg: ModelStore | None
+        *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore | None
     ):
-        calls.append((tmp_dir, save_steps, ocr_arg, store_arg))
+        calls.append((tmp_dir, save_steps, ocr, store))
         return _StubPreprocessor()
 
     _original, _processed, steps = preprocess_preview(

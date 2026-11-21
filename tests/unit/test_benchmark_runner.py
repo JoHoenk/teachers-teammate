@@ -29,7 +29,7 @@ class _StubOCR(OCRProcessor):
 
 def _factory_with(stub: _StubOCR) -> PipelineComponentFactory:
     return dataclasses.replace(
-        PipelineComponentFactory(), build_ppocr_ocr=lambda _store, _stop: stub
+        PipelineComponentFactory(), build_ppocr_ocr=lambda *, store, stop_event: stub
     )
 
 

@@ -59,7 +59,9 @@ def test_build_preprocessor_gives_the_run_s_model_store_to_the_factory(tmp_path:
 
     builder.build_preprocessor(tmp_path)
 
-    build.assert_called_once_with(tmp_path, config.debug, config.ocr, store)
+    build.assert_called_once_with(
+        tmp_dir=tmp_path, save_steps=config.debug, ocr=config.ocr, store=store
+    )
 
 
 @pytest.mark.use_case("Batch_OCR_Processing")
@@ -277,9 +279,10 @@ def test_build_ocr_builds_the_built_in_reader_with_the_stop_event(tmp_path: Path
 
     assert builder.build_ocr(None, stop) is reader
 
-    store, event = build_ppocr.call_args.args
-    assert store.root == Path(os.environ["TEACHERS_TEAMMATE_MODELS_DIR"])
-    assert event is stop
+    assert build_ppocr.call_args.kwargs["store"].root == Path(
+        os.environ["TEACHERS_TEAMMATE_MODELS_DIR"]
+    )
+    assert build_ppocr.call_args.kwargs["stop_event"] is stop
     build_ollama_ocr.assert_not_called()
 
 
@@ -305,14 +308,15 @@ def test_build_text_anonymizer_only_when_enabled(tmp_path: Path) -> None:
     Then   it returns None when off, and builds an anonymizer from the factory when on
     """
     anonymizer = MagicMock()
-    factory = PipelineComponentFactory(build_anonymizer=MagicMock(return_value=anonymizer))
+    build_anonymizer = MagicMock(return_value=anonymizer)
+    factory = PipelineComponentFactory(build_anonymizer=build_anonymizer)
 
     off = StageBuilder(config=make_config(tmp_path), factory=factory)
     on = StageBuilder(config=make_config(tmp_path, text_anonymized_enabled=True), factory=factory)
 
     assert off.build_text_anonymizer() is None
     assert on.build_text_anonymizer() is anonymizer
-    factory.build_anonymizer.assert_called_once()
+    build_anonymizer.assert_called_once()
 
 
 def test_build_text_anonymizer_reuses_shared_anonymizer(tmp_path: Path) -> None:
@@ -321,14 +325,15 @@ def test_build_text_anonymizer_reuses_shared_anonymizer(tmp_path: Path) -> None:
     When   build_text_anonymizer(shared) is called
     Then   the shared instance is returned and no second one is built
     """
-    factory = PipelineComponentFactory(build_anonymizer=MagicMock())
+    build_anonymizer = MagicMock()
+    factory = PipelineComponentFactory(build_anonymizer=build_anonymizer)
     shared = MagicMock()
     builder = StageBuilder(
         config=make_config(tmp_path, text_anonymized_enabled=True), factory=factory
     )
 
     assert builder.build_text_anonymizer(shared) is shared
-    factory.build_anonymizer.assert_not_called()
+    build_anonymizer.assert_not_called()
 
 
 def test_anonymizer_receives_models_and_current_default_patterns(tmp_path: Path) -> None:
@@ -342,7 +347,8 @@ def test_anonymizer_receives_models_and_current_default_patterns(tmp_path: Path)
         DEFAULT_PATTERNS,
     )
 
-    factory = PipelineComponentFactory(build_anonymizer=MagicMock())
+    build_anonymizer = MagicMock()
+    factory = PipelineComponentFactory(build_anonymizer=build_anonymizer)
     config = make_config(
         tmp_path,
         text_anonymized_enabled=True,
@@ -353,8 +359,8 @@ def test_anonymizer_receives_models_and_current_default_patterns(tmp_path: Path)
 
     StageBuilder(config=config, factory=factory).build_text_anonymizer()
 
-    language, anon_config = factory.build_anonymizer.call_args.args
-    assert language == config.language
+    anon_config = build_anonymizer.call_args.kwargs["config"]
+    assert build_anonymizer.call_args.kwargs["language"] == config.language
     assert anon_config.primary_model == "de_core_news_sm"
     assert anon_config.secondary_model == "xx_ent_wiki_sm"
     assert anon_config.patterns == tuple(DEFAULT_PATTERNS)
@@ -366,12 +372,13 @@ def test_anonymizer_keeps_custom_and_empty_pattern_lists(tmp_path: Path) -> None
     When   the anonymizer is built for each
     Then   the custom list is kept and the empty list stays empty (no regex anonymization)
     """
-    factory = PipelineComponentFactory(build_anonymizer=MagicMock())
+    build_anonymizer = MagicMock()
+    factory = PipelineComponentFactory(build_anonymizer=build_anonymizer)
 
     for patterns in ([("ID", r"\d+")], []):
         config = make_config(tmp_path, text_anonymized_enabled=True, anonymizer_patterns=patterns)
         StageBuilder(config=config, factory=factory).build_text_anonymizer()
-        assert factory.build_anonymizer.call_args.args[1].patterns == tuple(patterns)
+        assert build_anonymizer.call_args.kwargs["config"].patterns == tuple(patterns)
 
 
 def test_correction_settings_carry_what_the_teacher_set(tmp_path: Path) -> None:
@@ -438,13 +445,14 @@ def test_anonymizer_is_not_built_without_anonymization(tmp_path: Path) -> None:
     When   build_correction_and_anonymizer() is called
     Then   no anonymizer is built at all
     """
-    factory = PipelineComponentFactory(build_anonymizer=MagicMock())
+    build_anonymizer = MagicMock()
+    factory = PipelineComponentFactory(build_anonymizer=build_anonymizer)
     config = make_config(tmp_path, correction_enabled=False, anonymization_enabled=False)
 
     _, built = StageBuilder(config=config, factory=factory).build_correction_and_anonymizer()
 
     assert built is None
-    factory.build_anonymizer.assert_not_called()
+    build_anonymizer.assert_not_called()
 
 
 def _failing_anonymizer_factory() -> PipelineComponentFactory:
@@ -558,7 +566,7 @@ def test_the_resolved_window_reaches_the_evaluator(tmp_path: Path) -> None:
     builder.build_evaluation(MagicMock(), MagicMock())
 
     windows = builder.resolved_windows()
-    assert build_evaluator.call_args.args[5] == windows.evaluation
+    assert build_evaluator.call_args.kwargs["num_ctx"] == windows.evaluation
 
 
 def test_without_hardware_the_window_stays_at_the_base_step(tmp_path: Path) -> None:
@@ -841,7 +849,10 @@ def test_the_request_profile_reaches_every_kind_of_corrector(tmp_path: Path) -> 
 
     assert local_corrector.inner._profile == request_profile("gemma4:e4b")
     assert online_corrector._profile == request_profile("gpt-4o", "openai")
-    assert llm.call_args.args[3] == request_profile("gpt-4o", "openai").review_temperature
+    assert (
+        llm.call_args.kwargs["temperature"]
+        == request_profile("gpt-4o", "openai").review_temperature
+    )
 
 
 def test_the_teacher_settings_reach_the_exchange(tmp_path: Path) -> None:

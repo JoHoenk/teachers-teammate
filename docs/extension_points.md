@@ -203,8 +203,8 @@ Implement `Exchange` (`proofread`, `max_text_chars`, `cost_model`) in a module o
 `infrastructure/proofreading/exchanges/`, register it in `EXCHANGES` under its `ExchangeKind`
 (`domain/proofreading/result.py`), and build it through `build_exchange()` so port, cut-off tries
 and clause check arrive the same way. Map the exchange's own answer schema to `ExchangeResult`:
-nothing outside `infrastructure/proofreading/` may see it. `FallbackExchange(primary, fallback)`
-is the chain of responsibility. See {doc}`development` → "Proofreading exchange"
+nothing outside `infrastructure/proofreading/` may see it. See {doc}`development` →
+"Proofreading exchange"
 
 ## Proofreading steps / prompts
 

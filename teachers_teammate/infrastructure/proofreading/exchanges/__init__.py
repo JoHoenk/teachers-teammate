@@ -7,6 +7,7 @@ this layer changes, because every exchange returns the same
 
 from __future__ import annotations
 
+from ....domain.proofreading.result import ExchangeKind
 from .base import (
     EXCHANGES,
     Exchange,
@@ -16,10 +17,9 @@ from .base import (
     ProofreadContext,
     build_exchange,
 )
-from .fallback import FallbackExchange
 from .t import TExchange
 
-EXCHANGES["T"] = TExchange
+EXCHANGES[ExchangeKind.TEXT_FIRST] = TExchange
 
 __all__ = [
     "EXCHANGES",
@@ -27,7 +27,6 @@ __all__ = [
     "ExchangeCost",
     "ExchangeFactory",
     "ExchangeResult",
-    "FallbackExchange",
     "ProofreadContext",
     "TExchange",
     "build_exchange",

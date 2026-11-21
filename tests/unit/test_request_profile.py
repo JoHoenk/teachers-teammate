@@ -13,15 +13,17 @@ from teachers_teammate.domain.model_catalog import (
     StepProfile,
     request_profile,
 )
+from teachers_teammate.domain.proofreading.result import ExchangeKind
 
 
 def test_the_default_profile_runs_the_three_step_exchange() -> None:
     """
     Given  the profile a model the catalog does not know gets
     When   it is read
-    Then   it names exchange T, checks the unclear wording and explains in batches of 20
+    Then   it names the text-first exchange, checks the unclear wording and explains in
+           batches of 20
     """
-    assert DEFAULT_REQUEST_PROFILE.exchange == "T"
+    assert DEFAULT_REQUEST_PROFILE.exchange is ExchangeKind.TEXT_FIRST
     assert DEFAULT_REQUEST_PROFILE.unclear_check is True
     assert DEFAULT_REQUEST_PROFILE.explain_batch == 20
 
@@ -104,17 +106,26 @@ def test_the_fingerprint_changes_with_a_step_setting() -> None:
     assert first.fingerprint() != second.fingerprint()
 
 
-def test_the_fingerprint_changes_with_the_exchange_and_the_switches() -> None:
+def test_the_fingerprint_changes_with_the_switches() -> None:
     """
-    Given  profiles that differ in the exchange, the unclear switch or the batch size
+    Given  profiles that differ in the unclear switch or the batch size
     When   their fingerprints are compared
     Then   every one of them differs
     """
     base = RequestProfile().fingerprint()
 
-    assert replace(RequestProfile(), exchange="R-walk").fingerprint() != base
     assert replace(RequestProfile(), unclear_check=False).fingerprint() != base
     assert replace(RequestProfile(), explain_batch=5).fingerprint() != base
+
+
+def test_the_fingerprint_names_the_exchange_by_its_stored_id() -> None:
+    """
+    Given  the default profile
+    When   its fingerprint is read
+    Then   it starts with the stored id "T", so the enum's own word can change without making
+           every stored proofreading stale
+    """
+    assert RequestProfile().fingerprint().startswith("T|")
 
 
 def test_the_fingerprint_is_stable_for_the_same_profile() -> None:

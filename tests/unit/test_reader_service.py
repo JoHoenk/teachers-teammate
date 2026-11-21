@@ -94,7 +94,9 @@ def test_preprocess_preview_uses_injected_component_factory(
     _original, _processed, steps = reader.preprocess_preview(sample_png, ocr, tmp_path)
 
     assert steps == ["stub_step"]
-    build_preprocessor.assert_called_once_with(tmp_path, False, ocr, store)
+    build_preprocessor.assert_called_once_with(
+        tmp_dir=tmp_path, save_steps=False, ocr=ocr, store=store
+    )
 
 
 @pytest.mark.unit

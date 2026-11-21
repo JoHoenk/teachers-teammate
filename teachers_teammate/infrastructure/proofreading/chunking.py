@@ -1,8 +1,9 @@
 """Proofreading a text that is too long for one request, in several pieces.
 
 :class:`ChunkingCorrector` decorates any :class:`~teachers_teammate.interfaces.Corrector` whose
-provider can only carry a limited amount of text per request; :func:`proofreading_pieces` counts
-the requests a text takes, so the GUI counter, the console line and the run cannot disagree.
+provider can only carry a limited amount of text per request; its
+:meth:`~teachers_teammate.interfaces.Corrector.pieces` counts the requests a text takes, so the
+console line and the run cannot disagree.
 
 The pieces are the app's own concern, not the exchange's: an online provider manages its own
 window and is left unwrapped, while the Ollama port asks for a fixed one.
@@ -69,6 +70,15 @@ class ChunkingCorrector(Corrector):
             return None
         return tuple(split_for_budget(raw_text, max_chars, text_format))
 
+    def pieces(self, text: str, language: str, *, text_format: TextFormat = "plain") -> int | None:
+        """Return how many requests proofreading *text* takes, ``None`` when unbounded."""
+        if self._inner.max_text_chars(language, text_format=text_format) is None:
+            return None
+        chunks = self.split(text, language, text_format=text_format)
+        if chunks is None:
+            return 1
+        return max(1, sum(1 for chunk in chunks if chunk.text.strip()))
+
     def correct(
         self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
     ) -> CorrectionOutcome:
@@ -108,28 +118,6 @@ class ChunkingCorrector(Corrector):
             left_out=sum(outcome.left_out for outcome in outcomes),
             fell_back=any(outcome.fell_back for outcome in outcomes),
         )
-
-
-def proofreading_pieces(
-    corrector: Corrector, text: str, language: str, *, text_format: TextFormat = "plain"
-) -> tuple[int | None, int | None]:
-    """Return how many requests proofreading *text* takes, and the characters one carries.
-
-    ``(None, None)`` for a corrector that sends any length in one request (an online
-    provider).  The count is the number of non-blank pieces, because
-    :meth:`ChunkingCorrector.correct` sends no request for a whitespace-only piece, and 1 when
-    the text goes out whole.  The one place that counts, so the GUI counter, the console line
-    and the run cannot disagree.
-    """
-    if not isinstance(corrector, ChunkingCorrector):
-        return None, None
-    max_chars = corrector.inner.max_text_chars(language, text_format=text_format)
-    if max_chars is None:
-        return None, None
-    chunks = corrector.split(text, language, text_format=text_format)
-    if chunks is None:
-        return 1, max_chars
-    return max(1, sum(1 for chunk in chunks if chunk.text.strip())), max_chars
 
 
 def join_warnings(*warnings: str | None) -> str | None:

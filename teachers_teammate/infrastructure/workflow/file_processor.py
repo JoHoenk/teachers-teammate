@@ -55,7 +55,6 @@ from ...interfaces import (
     Reporter,
 )
 from ..ocr_formats import plain_text_of
-from ..proofreading.chunking import proofreading_pieces
 from ..reporting import StdoutReporter
 from ..run_stats import RunStatsCollector
 from ..state_repository import machine_texts
@@ -656,8 +655,8 @@ class FileProcessor:
 
         # A text that goes out in several pieces cannot be changed across a piece boundary;
         # say so before the requests start, so the teacher knows what to expect.
-        pieces, _max_chars = proofreading_pieces(
-            self._correction, text_for_correction, self._language, text_format=text_format
+        pieces = self._correction.pieces(
+            text_for_correction, self._language, text_format=text_format
         )
         if pieces is not None and pieces > 1:
             self._reporter.status(f"       → Proofreading {file.name} in {pieces} parts...")

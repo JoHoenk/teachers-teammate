@@ -268,6 +268,10 @@ class NoExplanationCorrector(Corrector):
         """Return the budget of the exchange, so the pieces are the exchange's pieces."""
         return self._inner.max_text_chars(language, text_format=text_format)
 
+    def pieces(self, text: str, language: str, *, text_format: TextFormat = "plain") -> int | None:
+        """Return the pieces of the exchange, so the count is the exchange's count."""
+        return self._inner.pieces(text, language, text_format=text_format)
+
 
 def innermost(corrector: Corrector) -> Corrector:
     """Return the corrector that handles one piece: look through the chunking wrapper.
@@ -287,20 +291,10 @@ def innermost(corrector: Corrector) -> Corrector:
 def pieces_of(corrector: Corrector, source: str, language: str) -> int:
     """Return how many pieces the app splits *source* into: one when it fits one request.
 
-    Asks the app's own split
-    (:meth:`~teachers_teammate.infrastructure.proofreading.chunking.ChunkingCorrector.split`), so
-    the count cannot drift from what the corrector does, and counts the non-blank pieces.  A
-    corrector that does not chunk sends the text whole.  For a text that failed, the pieces after
-    the failed one were not sent; the figure is what the app would have done with a text that
-    went through.
+    Asks the corrector itself
+    (:meth:`~teachers_teammate.interfaces.Corrector.pieces`), so the count cannot drift from what
+    it does.  A corrector that sends any length in one request answers ``None``.  For a text that
+    failed, the pieces after the failed one were not sent; the figure is what the app would have
+    done with a text that went through.
     """
-    from teachers_teammate.infrastructure.proofreading.chunking import (  # noqa: PLC0415
-        ChunkingCorrector,
-    )
-
-    if not isinstance(corrector, ChunkingCorrector):
-        return 1
-    chunks = corrector.split(source, language)
-    if chunks is None:
-        return 1
-    return max(1, len([chunk for chunk in chunks if chunk.text.strip()]))
+    return corrector.pieces(source, language) or 1

@@ -687,7 +687,7 @@ a run preprocesses a scan, because the image the model sees decides the image to
 | `ModelSpeed(read_tps, write_tps, image_tokens)` | one model on one machine: request tokens per second, answer tokens per second, tokens of one page image |
 | `TimeRange(low_s, high_s, typical_s)` | a duration as a range; `scaled` and `__add__` keep the three figures together |
 | `AnswerLength(low, typical, high)` | how long a model's answers are: per 100 words for a writing model, per page for a reading one |
-| `ExchangeCost(requests_per_page, answer_tokens_per_100_words, text_copies)` | what an exchange costs per step; `DEFAULT_EXCHANGE_COST` holds exchange `T`'s provisional figures (① 1 copy, ② 2, ③ 1) |
+| `ExchangeCost(requests_per_page, answer_tokens_per_100_words, text_copies)` | what an exchange costs per step; `DEFAULT_EXCHANGE_COST` holds the text-first exchange's provisional figures (① 1 copy, ② 2, ③ 1) |
 | `proofreading_time(speed, words, cost, steps, *, answer=None)` | a proofreading run: the text times the copies of the steps that run, plus their answers |
 | `band(seconds_per_page)` | `SpeedBand`: `FAST` up to `FAST_LIMIT_S` (30 s), `OK` up to `OK_LIMIT_S` (90), `SLOW` up to `SLOW_LIMIT_S` (300), else `VERY_SLOW` |
 | `machine_factor(measured, reference)` | how much slower this computer is than the reference machine; `None` when either figure is missing, so "unknown" is never read as "the same" |
@@ -2821,7 +2821,7 @@ and list are tested with pytest-qt in `tests/gui/test_gui_text_views.py` and
 The exchange is the shape of the proofreading the app runs: three requests instead of one, and
 the edits are always the diff of the student's text against the corrected text, so the model
 explains edits but never places them.  `ExchangeCorrector`
-(`infrastructure/proofreading/corrector.py`) is the pipeline's `Corrector`: it runs exchange `T`
+(`infrastructure/proofreading/corrector.py`) is the pipeline's `Corrector`: it runs the text-first exchange
 over a `ModelPort` and returns the edit-based review as it is, so what it makes is what the cache
 stores and every reader reads.
 
@@ -2837,8 +2837,8 @@ stores and every reader reads.
 | `infrastructure/proofreading/port.py` | `ModelPort` (Bridge): `OllamaPort`, `LangChainPort` |
 | `infrastructure/proofreading/runner.py` | `StepRunner`: cut-off tries, one repair, window check, timeout |
 | `infrastructure/proofreading/schemas.py` | the answer schemas of steps ② and ③ with their parsers |
-| `infrastructure/proofreading/exchanges/` | `Exchange` protocol, `EXCHANGES` registry, `TExchange`, `FallbackExchange` |
-| `infrastructure/proofreading/chunking.py` | `ChunkingCorrector` and `proofreading_pieces()`: a text longer than one request is proofread in pieces and the results joined |
+| `infrastructure/proofreading/exchanges/` | `Exchange` protocol, `EXCHANGES` registry, `TExchange` |
+| `infrastructure/proofreading/chunking.py` | `ChunkingCorrector`: a text longer than one request is proofread in pieces and the results joined; `Corrector.pieces()` counts them |
 
 **The three steps.** ① *Correct* sends the shielded text and gets plain text back; its answer
 is restored into the source notation and stored. ② *Explain* sends the sentences of a batch
@@ -2920,10 +2920,9 @@ explanation language, notes, corrections only); the connection's own settings (`
 **Adding an exchange.** Implement `Exchange` (`proofread`, `max_text_chars`, `cost_model`),
 register it in `EXCHANGES` under its `ExchangeKind`, and build it through `build_exchange()`
 so the port, the cut-off tries and the clause check arrive the same way for every exchange.
-`FallbackExchange(primary, fallback)` is the chain of responsibility an exchange uses when it
-can fall back to a cheaper one. Nothing outside `infrastructure/proofreading/` sees an
-exchange's own answer schema: each exchange maps its answer to `ExchangeResult`, and the GUI,
-the DOCX builder and the cache read `CorrectionReview` only.
+Nothing outside `infrastructure/proofreading/` sees an exchange's own answer schema: each
+exchange maps its answer to `ExchangeResult`, and the GUI, the DOCX builder and the cache read
+`CorrectionReview` only.
 
 ## Error handling
 

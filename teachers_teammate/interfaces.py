@@ -259,6 +259,29 @@ class Corrector(ABC):
         """
         return None
 
+    def pieces(
+        self,
+        text: str,  # noqa: ARG002  # interface parameter; one request by default
+        language: str,  # noqa: ARG002  # interface parameter
+        *,
+        text_format: TextFormat = "plain",  # noqa: ARG002  # interface parameter
+    ) -> int | None:
+        """Return how many requests proofreading *text* takes, or ``None`` when unbounded.
+
+        The one place that counts, so the console line and the run cannot disagree.  ``None`` means the corrector sends any length in one request (an online
+        provider); a corrector that splits a long text answers with the number of non-blank
+        pieces, because a whitespace-only piece is not sent.
+
+        Args:
+            text: The text to proofread.
+            language: Language of the text.
+            text_format: Notation of the text.
+
+        Returns:
+            The number of requests, or ``None`` when the text goes out whole whatever its length.
+        """
+        return None
+
 
 class Evaluator(ABC):
     """Assesses the quality of corrected OCR text.

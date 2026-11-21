@@ -187,7 +187,10 @@ def test_a_corrector_that_does_not_chunk_sends_every_text_whole() -> None:
     When   the pieces of a long text are counted
     Then   it is one piece
     """
-    assert pieces_of(MagicMock(), "x" * 500, "German") == 1
+    whole = MagicMock()
+    whole.pieces.return_value = None
+
+    assert pieces_of(whole, "x" * 500, "German") == 1
 
 
 @pytest.mark.use_case("Model_Eval_Comparison")

@@ -195,7 +195,9 @@ def test_the_ollama_tab_lists_the_catalog_and_marks_a_downloaded_model(qtbot) ->
 
     assert DEFAULT_OCR_MODEL in tab.all_tags()
 
-    tab.mark_installed({f"ollama:{DEFAULT_OCR_MODEL}": True, f"size:{DEFAULT_OCR_MODEL}": 5_000_000_000})
+    tab.mark_installed(
+        {f"ollama:{DEFAULT_OCR_MODEL}": True, f"size:{DEFAULT_OCR_MODEL}": 5_000_000_000}
+    )
 
     item = tab._model_items[DEFAULT_OCR_MODEL]
     assert item.text(3).startswith("✓")

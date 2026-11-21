@@ -277,7 +277,9 @@ def test_select_best_ticks_undownloaded_best_models(qtbot) -> None:
     deepseek.setCheckState(0, Qt.CheckState.Checked)
     dlg.ollama_models._on_select_best_models()
     assert dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
-    assert dlg.ollama_models._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
+    assert (
+        dlg.ollama_models._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
+    )
     assert deepseek.checkState(0) is Qt.CheckState.Checked
 
 
@@ -308,7 +310,9 @@ def test_pre_ticking_when_no_model_of_category_downloaded(qtbot) -> None:
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
     assert dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
-    assert dlg.ollama_models._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
+    assert (
+        dlg.ollama_models._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
+    )
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -322,7 +326,9 @@ def test_no_pre_ticking_when_category_already_downloaded(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, {"glm-ocr:q8_0", "qwen3.5:9b"}))
-    assert dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Unchecked
+    assert (
+        dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Unchecked
+    )
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -599,7 +605,10 @@ def test_the_reader_box_starts_a_round_with_the_reader_only(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    for _tag, row in dlg.ollama_models._iter_model_items():  # undo the pre-ticking of the best models
+    for (
+        _tag,
+        row,
+    ) in dlg.ollama_models._iter_model_items():  # undo the pre-ticking of the best models
         row.setCheckState(0, Qt.CheckState.Unchecked)
     dlg.reading_models.checkboxes["reader:ppocr"].setChecked(True)
     started: list[dict] = []
@@ -1457,7 +1466,10 @@ def test_finished_pull_shows_model_as_downloaded_without_waiting_for_cache(
     dlg._round.start(ollama_models=[DEFAULT_OCR_MODEL], ollama_url=fake_ollama.url)
 
     # Decimal GB, like the catalog sizes shown before the download; "✓" marks it downloaded.
-    qtbot.waitUntil(lambda: dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].text(3) == "✓ 6.0 GB", timeout=5000)
+    qtbot.waitUntil(
+        lambda: dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].text(3) == "✓ 6.0 GB",
+        timeout=5000,
+    )
 
 
 @pytest.mark.use_case("Model_Category_Guidance")

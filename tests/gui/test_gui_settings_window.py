@@ -738,7 +738,9 @@ def test_a_provider_preselect_opens_online_services_with_the_package_ticked(qtbo
     window = _window(qtbot, SettingsPage.ADDONS, service=service, preselect=["provider:mistral"])
     addons = window.page(SettingsPage.ADDONS)
 
-    qtbot.waitUntil(lambda: addons.providers.checkboxes["provider:mistral"].isChecked(), timeout=5000)
+    qtbot.waitUntil(
+        lambda: addons.providers.checkboxes["provider:mistral"].isChecked(), timeout=5000
+    )
 
     assert addons._tabs.currentIndex() == AddonsPage.TAB_ONLINE_SERVICES
     assert not addons.providers.checkboxes["provider:openai"].isChecked()
@@ -789,7 +791,9 @@ def test_the_change_link_on_add_ons_opens_this_computer(qtbot) -> None:
     """
     window = _window(qtbot, SettingsPage.ADDONS)
 
-    window.page(SettingsPage.ADDONS).ollama_models._profile_line.change_link.linkActivated.emit("change")
+    window.page(SettingsPage.ADDONS).ollama_models._profile_line.change_link.linkActivated.emit(
+        "change"
+    )
 
     assert window.current_page() is SettingsPage.AI_SETUP
 
@@ -822,7 +826,9 @@ def test_a_package_hint_install_switches_to_add_ons_and_the_hint_goes_after_the_
     assert window.current_page() is SettingsPage.ADDONS
     addons = window.page(SettingsPage.ADDONS)
     assert addons._tabs.currentIndex() == AddonsPage.TAB_ONLINE_SERVICES
-    qtbot.waitUntil(lambda: addons.providers.checkboxes["provider:mistral"].isChecked(), timeout=5000)
+    qtbot.waitUntil(
+        lambda: addons.providers.checkboxes["provider:mistral"].isChecked(), timeout=5000
+    )
 
     service.missing = {}  # the install finished
     with qtbot.waitSignal(window.packages_changed, timeout=2000):

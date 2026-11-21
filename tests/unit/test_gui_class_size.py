@@ -26,13 +26,11 @@ SCANNED = "teachers_teammate/gui"
 
 #: The classes still over the limit, at the size they have today.
 OVERSIZED: dict[str, int] = {
-    "teachers_teammate/gui/_main_window.py::MainWindow": 1092,
+    "teachers_teammate/gui/_main_window.py::MainWindow": 1087,
 }
 
-#: The classes still over the attribute limit, at the number they assign today.
-OVERSIZED_ATTRIBUTES: dict[str, int] = {
-    "teachers_teammate/gui/_main_window.py::MainWindow": 36,
-}
+#: The classes still over the attribute limit, at the number they assign today (none).
+OVERSIZED_ATTRIBUTES: dict[str, int] = {}
 
 
 def _root() -> Path:

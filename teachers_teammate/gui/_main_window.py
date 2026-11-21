@@ -186,12 +186,9 @@ class MainWindow(QMainWindow):
         self._setup_launcher: SetupLauncher
 
     def _init_run_state(self) -> None:
-        """Declare what the window needs for a run that is going: the clock, the notes, closing."""
+        """Declare what the window needs for a run that is going: the clock and closing."""
         #: Set once the teacher agreed to stop the run and close (File → Quit asks itself).
         self._close_confirmed = False
-        #: Under the progress bar; built in ``_build_left_panel``.
-        self._awake_note: QLabel
-        self._battery_note: QLabel
 
     def _init_runtime_state(self) -> None:
         """Initialise per-window runtime state and declare widgets built later."""
@@ -414,8 +411,6 @@ class MainWindow(QMainWindow):
         self._run_btn = self._run_controller.run_button
         self._stop_btn = self._run_controller.stop_button
         self._progress = self._run_controller.progress_bar
-        self._awake_note = self._run_controller.awake_note
-        self._battery_note = self._run_controller.battery_note
         self._run_btn.clicked.connect(self._on_run)
         self._stop_btn.clicked.connect(self._run_controller.on_stop_clicked)
         self._check_controller.page.stop_requested.connect(self._run_controller.on_stop_clicked)
@@ -542,8 +537,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(btn_row)
 
         layout.addWidget(self._progress)
-        layout.addWidget(self._awake_note)
-        layout.addWidget(self._battery_note)
+        layout.addWidget(self._run_controller.awake_note)
+        layout.addWidget(self._run_controller.battery_note)
 
         left.setMinimumWidth(340)
         left.setMaximumWidth(420)

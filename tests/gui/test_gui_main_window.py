@@ -578,14 +578,14 @@ def test_the_awake_note_shows_during_a_run_and_warns_on_battery(main_window) -> 
         KeepAwakeState(enabled=True, held=True, on_battery=True)
     )
 
-    assert main_window._awake_note.isHidden() is False
-    assert "awake" in main_window._awake_note.text()
-    assert main_window._battery_note.isHidden() is False
+    assert main_window._run_controller.awake_note.isHidden() is False
+    assert "awake" in main_window._run_controller.awake_note.text()
+    assert main_window._run_controller.battery_note.isHidden() is False
 
     main_window._run_controller._on_run_finished(RunSummary())
 
-    assert main_window._awake_note.isHidden() is True
-    assert main_window._battery_note.isHidden() is True
+    assert main_window._run_controller.awake_note.isHidden() is True
+    assert main_window._run_controller.battery_note.isHidden() is True
 
 
 @pytest.mark.gui
@@ -599,8 +599,8 @@ def test_the_awake_note_says_so_when_the_system_refused(main_window) -> None:
         KeepAwakeState(enabled=True, held=False, on_battery=False)
     )
 
-    assert "may go to sleep" in main_window._awake_note.text()
-    assert main_window._battery_note.isHidden() is True
+    assert "may go to sleep" in main_window._run_controller.awake_note.text()
+    assert main_window._run_controller.battery_note.isHidden() is True
 
 
 @pytest.mark.gui
@@ -614,7 +614,7 @@ def test_the_awake_note_does_not_blame_the_system_when_nothing_was_requested(mai
         KeepAwakeState(enabled=True, held=False, available=False)
     )
 
-    text = main_window._awake_note.text()
+    text = main_window._run_controller.awake_note.text()
     assert "cannot keep this computer awake" in text
     assert "did not allow" not in text
 
@@ -630,8 +630,8 @@ def test_no_awake_note_when_keep_awake_is_off(main_window) -> None:
         KeepAwakeState(enabled=False, held=False, on_battery=True)
     )
 
-    assert main_window._awake_note.isHidden() is True
-    assert main_window._battery_note.isHidden() is True
+    assert main_window._run_controller.awake_note.isHidden() is True
+    assert main_window._run_controller.battery_note.isHidden() is True
 
 
 class _SpontaneousClose:

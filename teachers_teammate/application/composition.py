@@ -31,9 +31,9 @@ from .service import ProcessingApplicationService
 class AppServices:
     """The application's services, one instance per process.
 
-    ``processing`` is the facade the adapters call today; the focused services of P4b–4k take
-    its place one topic at a time.  The rest are the parts that must not exist twice: the
-    teacher's work, the reader's model files, and the sleep blocker held around a run.
+    ``processing`` is the facade the adapters call today; the focused services take its place
+    one topic at a time.  The rest are the parts that must not exist twice: the teacher's work,
+    the reader's model files, and the sleep blocker held around a run.
     """
 
     processing: ProcessingApplicationService

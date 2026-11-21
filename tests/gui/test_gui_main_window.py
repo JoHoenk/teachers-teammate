@@ -16,12 +16,12 @@ from PySide6.QtWidgets import QApplication, QWidget
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.speed_estimates import SpeedSummary
+from teachers_teammate.application.documents import WorkedOn
 from teachers_teammate.application.service import (
     IssueKind,
     ProcessingApplicationService,
     RequirementIssue,
     RunPreflight,
-    WorkedOn,
 )
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
@@ -434,7 +434,7 @@ def test_a_stopped_file_opens_no_error_dialog_and_shows_where_it_stopped(
            row is neither green nor red
     """
     shown = _record_notices(monkeypatch)
-    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
+    monkeypatch.setattr(main_window._app_service.documents, "load_view", lambda *_a, **_k: None)
     source = "/tmp/scan.png"
     main_window._results_table.set_queue([_queue_row(source, "scan.png")])
     main_window._results_table.mark_processing(source)
@@ -468,7 +468,7 @@ def test_a_stopped_file_keeps_the_tick_of_the_step_that_finished(main_window, mo
     """
     source = "/tmp/essay.png"
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.documents,
         "queue_row",
         lambda *_a, **_k: _queue_row(source, "essay.png", ocr=StageState.DONE),
     )
@@ -866,7 +866,7 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.documents,
         "queue_row",
         lambda *_a, **_k: _queue_row(
             source_id,
@@ -962,7 +962,9 @@ def test_a_failed_load_does_not_leave_the_open_document_locked(
     main_window._apply_lock()
     assert main_window._check.body.banner.text == txt.WAITING_FOR_RUN
     main_window._run_pending = set()
-    monkeypatch.setattr(main_window._app_service, "check_document", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        main_window._app_service.documents, "check_document", lambda *_a, **_k: None
+    )
     shown = _record_notices(monkeypatch)
 
     assert main_window._load_check(a) is False
@@ -1008,7 +1010,7 @@ def test_a_typed_edit_is_stored_before_a_stage_run_clears_the_cache(
     order: list[str] = []
     monkeypatch.setattr(main_window._check, "flush_pending_edit", lambda: order.append("flush"))
     monkeypatch.setattr(
-        main_window._app_service, "worked_on_documents", lambda *_a, **_k: WorkedOn()
+        main_window._app_service.documents, "worked_on_documents", lambda *_a, **_k: WorkedOn()
     )
 
     def _invalidate(*_a, **_k):
@@ -1034,14 +1036,14 @@ def test_a_stored_edit_reads_the_document_state_once(main_window, monkeypatch, s
     [a] = stored("a.png", raw="raw text", corrected="corr old")
     main_window._results_table.selectRow(0)
     main_window._open_check(a)
-    real = main_window._app_service.load_view
+    real = main_window._app_service.documents.load_view
     calls: list[str] = []
 
     def _counting(*args, **kwargs):
         calls.append("load_view")
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(main_window._app_service, "load_view", _counting)
+    monkeypatch.setattr(main_window._app_service.documents, "load_view", _counting)
 
     main_window._on_correction_text_edited("corr edited")
 
@@ -3932,7 +3934,7 @@ def test_main_window_file_done_keeps_the_row_when_the_store_cannot_be_read(
     def _unreadable(*_args: object, **_kwargs: object) -> QueueRow:
         raise OSError("the state folder is gone")
 
-    monkeypatch.setattr(main_window._app_service, "queue_row", _unreadable)
+    monkeypatch.setattr(main_window._app_service.documents, "queue_row", _unreadable)
 
     main_window._on_file_done(
         FileDoneEvent(
@@ -5250,7 +5252,7 @@ def test_main_window_probes_this_computer_in_the_background_for_the_cache_keys(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     service = main_window._app_service
     loads: list[int] = []
-    monkeypatch.setattr(service, "queue_rows", lambda *_a, **_k: loads.append(1) or [])
+    monkeypatch.setattr(service.documents, "queue_rows", lambda *_a, **_k: loads.append(1) or [])
     probed = False
     detect_threads: list[threading.Thread] = []
 
@@ -5819,7 +5821,7 @@ def test_a_skipped_file_opens_no_error_dialog_and_is_counted_apart(
     shown = _record_notices(monkeypatch)
     source = "/tmp/scan.png"
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.documents,
         "queue_row",
         lambda *_a, **_k: _queue_row(source, "scan.png"),
     )

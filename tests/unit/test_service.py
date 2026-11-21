@@ -21,6 +21,7 @@ from teachers_teammate.application import service as service_module
 from teachers_teammate.config import Config
 from teachers_teammate.application.composition import inject_addon_packages_dir
 from teachers_teammate.application.commands import ApplicationCommands, WorkNotSavedError
+from teachers_teammate.application.documents import DocumentQueries
 from teachers_teammate.application.queue import StageState
 from teachers_teammate.application.service import (
     AnonymizerConfig,
@@ -999,7 +1000,7 @@ def test_a_privacy_setting_change_keeps_the_proofreading_and_says_so(tmp_path: P
     recon.record_correction(source, ctx, correction_text="hello corrected", source_text="hello")
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    row = svc.queue_rows(on, [source])[0]
+    row = svc.documents.queue_rows(on, [source])[0]
 
     assert row.correction is StageState.DONE
     assert row.sent[STAGE_CORRECTION].record == sent_record(off, STAGE_CORRECTION)
@@ -1038,7 +1039,7 @@ def test_a_stale_stage_shows_no_line_about_how_it_was_sent(tmp_path: Path) -> No
     recon.record_correction(source, ctx, correction_text="hello corrected")
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    row = svc.queue_rows(now, [source])[0]
+    row = svc.documents.queue_rows(now, [source])[0]
 
     assert row.correction is StageState.STALE
     assert row.sent == {}
@@ -1065,7 +1066,7 @@ def test_a_switched_off_proofreading_stays_done_and_is_kept(tmp_path: Path) -> N
     recon.record_correction(source, ctx, correction_text="hello corrected", source_text="hello")
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    row = svc.queue_rows(off, [source])[0]
+    row = svc.documents.queue_rows(off, [source])[0]
 
     assert row.correction is StageState.DONE
 
@@ -1101,8 +1102,8 @@ def test_the_queue_and_the_check_view_agree_after_reconciliation(tmp_path: Path)
     )
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    row = svc.queue_row(now, source)
-    view = svc.load_view(now, source)
+    row = svc.documents.queue_row(now, source)
+    view = svc.documents.load_view(now, source)
 
     assert view is not None
     assert row.has_text is True
@@ -1127,9 +1128,9 @@ def test_the_queue_and_the_check_view_agree_about_a_file_without_a_result(tmp_pa
     repo = StateRepository(tmp_path / "state")
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    row = svc.queue_row(cfg, source)
+    row = svc.documents.queue_row(cfg, source)
 
-    assert svc.load_view(cfg, source) is None
+    assert svc.documents.load_view(cfg, source) is None
     assert row.has_text is False
     assert row.ocr is StageState.NONE
     assert row.correction is StageState.NONE
@@ -1158,8 +1159,8 @@ def test_views_without_a_stored_result_cost_no_privacy_fingerprint(tmp_path: Pat
     with patch(
         "teachers_teammate.application.service.privacy_fingerprint", side_effect=AssertionError
     ):
-        assert svc.load_view(cfg, source) is not None
-        assert svc.queue_rows(cfg, [source])
+        assert svc.documents.load_view(cfg, source) is not None
+        assert svc.documents.queue_rows(cfg, [source])
 
 
 @pytest.mark.unit
@@ -1183,13 +1184,13 @@ def test_check_document_answers_for_a_stored_document_and_none_without_one(
     recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    doc = svc.check_document(cfg, source)
+    doc = svc.documents.check_document(cfg, source)
 
     assert doc is not None
     assert doc.source_id == str(source.resolve())
     assert doc.raw_text == "hello"
     assert doc.has_proofreading is False
-    assert svc.check_document(cfg, tmp_path / "other.txt") is None
+    assert svc.documents.check_document(cfg, tmp_path / "other.txt") is None
 
 
 # ── _invalidate_from_stage ValueError ────────────────────────────────────
@@ -1422,7 +1423,7 @@ def test_reader_refusal_names_the_download_flag(tmp_path: Path) -> None:
     off = make_config(tmp_path / "s", ocr_engine="ppocr", recognition_enabled=False)
     files = [config.input_dir / "scan.png"]
 
-    with patch.object(ProcessingApplicationService, "_state_store", return_value=_empty_store()):
+    with patch.object(DocumentQueries, "_documents", return_value=iter(())):
         refusal = svc.reader_refusal_for_run(config, files)
 
         assert "--download-reader" in refusal
@@ -1446,16 +1447,10 @@ def test_reader_refusal_lets_a_run_over_text_files_start(tmp_path: Path) -> None
     scan = config.input_dir / "scan.png"
     scan.write_bytes(b"x")
 
-    with patch.object(ProcessingApplicationService, "_state_store", return_value=_empty_store()):
+    with patch.object(DocumentQueries, "_documents", return_value=iter(())):
         assert svc.reader_refusal_for_run(config, [text]) == ""
         assert "--download-reader" in svc.reader_refusal_for_run(config, [text, scan])
 
-
-def _empty_store() -> MagicMock:
-    """Return a state store that has no result for any file."""
-    store = MagicMock()
-    store.load_valid.return_value = None
-    return store
 
 
 def _reader_service(tmp_path: Path) -> ProcessingApplicationService:
@@ -2190,7 +2185,7 @@ def test_expected_cache_keys_never_probe_this_computer(tmp_path: Path, monkeypat
     cfg = _ollama_config(tmp_path, ocr_engine="ppocr", hardware_profile="auto")
 
     windows = svc.resolved_windows(cfg)
-    svc.queue_rows(cfg, [])
+    svc.documents.queue_rows(cfg, [])
 
     assert probes == []
     assert (windows.proofreading, windows.evaluation) == (BASE_NUM_CTX, BASE_NUM_CTX)
@@ -3237,7 +3232,7 @@ def test_text_for_copy_is_what_export_text_writes(
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ):
-        view = svc.load_view(config, source)
+        view = svc.documents.load_view(config, source)
         assert view is not None
         copied = svc.text_for_copy(view, anonymize=anonymize, language="German")
         svc.export_text(config, source, out, anonymize=anonymize, language="German")
@@ -4168,7 +4163,7 @@ def test_describe_sent_texts_shows_the_cached_text_that_a_run_sends(tmp_path: Pa
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ):
         svc.build_cached_anonymizer("English", anon_config).anonymize("Anna wrote")
-        view = svc.load_view(config, source)
+        view = svc.documents.load_view(config, source)
         assert view is not None
         report = svc.describe_sent_texts(config, view)
 
@@ -4194,7 +4189,7 @@ def test_describe_sent_texts_without_anonymization_sends_names_as_written(
     )
 
     with patch("teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer") as ctor:
-        view = svc.load_view(config, source)
+        view = svc.documents.load_view(config, source)
         assert view is not None
         report = svc.describe_sent_texts(config, view)
 
@@ -4214,7 +4209,7 @@ def test_describe_sent_texts_carries_the_prompts_the_steps_send(tmp_path: Path) 
     svc, source = _svc_with_document(tmp_path, raw_text="Anna schrieb das.")
     config = dataclasses.replace(make_config(tmp_path, language="German"), correction_enabled=True)
 
-    view = svc.load_view(config, source)
+    view = svc.documents.load_view(config, source)
     assert view is not None
     report = svc.describe_sent_texts(config, view)
 
@@ -4238,7 +4233,7 @@ def test_describe_sent_texts_adds_the_notes_for_the_ai(tmp_path: Path) -> None:
         correction_notes="Year 9, second foreign language.",
     )
 
-    view = svc.load_view(config, source)
+    view = svc.documents.load_view(config, source)
     assert view is not None
     report = svc.describe_sent_texts(config, view)
 
@@ -4612,7 +4607,7 @@ def test_worked_on_documents_lists_a_stale_proofreading_the_teacher_worked_on(
     other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    result = svc.worked_on_documents(other, [worked, looked], run_proofreads=True)
+    result = svc.documents.worked_on_documents(other, [worked, looked], run_proofreads=True)
 
     assert result.kept_stale == (worked,)
     assert result.unanswered == (worked,)
@@ -4641,7 +4636,7 @@ def test_worked_on_documents_asks_nothing_about_a_proofreading_a_run_does_not_re
     other = make_config(tmp_path, correction_enabled=False, correction_model="qwen3.5:4b")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    result = svc.worked_on_documents(other, [worked], run_proofreads=False)
+    result = svc.documents.worked_on_documents(other, [worked], run_proofreads=False)
 
     assert result.kept_stale == ()
     assert result.unanswered == ()
@@ -4670,7 +4665,7 @@ def test_worked_on_documents_does_not_ask_again_after_keep_my_changes(tmp_path: 
         worked,
         lambda work: kept_over(work, expected, current_texts(_machine_of(repo, worked), work)),
     )
-    result = svc.worked_on_documents(other, [worked], run_proofreads=True)
+    result = svc.documents.worked_on_documents(other, [worked], run_proofreads=True)
 
     assert result.kept_stale == (worked,)
     assert result.unanswered == ()
@@ -4698,8 +4693,8 @@ def test_worked_on_documents_names_corrections_that_belong_to_no_stored_answer(
     shutil.rmtree(tmp_path / "state")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    proofreading = svc.worked_on_documents(made, [worked], run_proofreads=True)
-    reading_only = svc.worked_on_documents(made, [worked], run_proofreads=False)
+    proofreading = svc.documents.worked_on_documents(made, [worked], run_proofreads=True)
+    reading_only = svc.documents.worked_on_documents(made, [worked], run_proofreads=False)
 
     assert proofreading.unbound == (worked,)
     assert proofreading.kept_stale == ()
@@ -4721,7 +4716,7 @@ def test_worked_on_documents_names_a_transcription_the_teacher_fixed(tmp_path: P
     )
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    result = svc.worked_on_documents(made, [source], run_proofreads=True)
+    result = svc.documents.worked_on_documents(made, [source], run_proofreads=True)
 
     assert result.transcribed == (source,)
 
@@ -4737,7 +4732,7 @@ def test_worked_on_documents_is_empty_without_work(tmp_path: Path) -> None:
     made, repo, [source] = _proofread(tmp_path, "essay.txt")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    result = svc.worked_on_documents(made, [source], run_proofreads=True)
+    result = svc.documents.worked_on_documents(made, [source], run_proofreads=True)
 
     assert result.empty is True
 
@@ -4861,11 +4856,13 @@ def test_corrections_of_no_stored_answer_are_dropped_and_not_asked_about_again(
     )
     shutil.rmtree(tmp_path / "state")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    assert svc.worked_on_documents(made, [worked], run_proofreads=True).unbound == (worked,)
+    assert svc.documents.worked_on_documents(made, [worked], run_proofreads=True).unbound == (
+        worked,
+    )
 
     svc.drop_unbound_corrections(made, files=[worked])
 
-    assert svc.worked_on_documents(made, [worked], run_proofreads=True).unbound == ()
+    assert svc.documents.worked_on_documents(made, [worked], run_proofreads=True).unbound == ()
     assert TeacherWorkStore().load(compute_file_hash(worked)) is None
 
 

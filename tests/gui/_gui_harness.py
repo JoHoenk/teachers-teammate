@@ -289,7 +289,7 @@ def settings_context(service: Any = None, **overrides: Any) -> SettingsContext:
 
 
 class ScriptedSettingsWindow(QObject):
-    """Stands in for ``SettingsWindow`` in the main window: no UI, a scripted outcome.
+    """Stands in for ``SettingsWindow`` in the Settings launcher: no UI, a scripted outcome.
 
     ``exec()`` returns ``code`` and ``values()`` returns ``result``.  Every instance the
     main window creates is kept in :attr:`instances`, with the arguments it was built from.
@@ -328,8 +328,8 @@ class ScriptedSettingsWindow(QObject):
 def install_scripted_settings_window(
     monkeypatch: Any, *, accepted: bool = True, result: SettingsResult | None = None
 ) -> type[ScriptedSettingsWindow]:
-    """Make the main window open a :class:`ScriptedSettingsWindow` that closes with *accepted*."""
-    from teachers_teammate.gui import _main_window  # noqa: PLC0415
+    """Make the Settings launcher open a :class:`ScriptedSettingsWindow` that closes with *accepted*."""
+    from teachers_teammate.gui import _settings_launcher  # noqa: PLC0415
 
     scripted = type(
         "_Scripted",
@@ -340,7 +340,7 @@ def install_scripted_settings_window(
             "instances": [],
         },
     )
-    monkeypatch.setattr(_main_window, "SettingsWindow", scripted)
+    monkeypatch.setattr(_settings_launcher, "SettingsWindow", scripted)
     return scripted
 
 

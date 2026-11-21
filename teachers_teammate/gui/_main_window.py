@@ -17,7 +17,6 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -76,11 +75,12 @@ from ._readiness_line import ReadinessLine
 from ._results_table import ResultsTable
 from ._run_controller import RunController, RunHooks, WorkerLike
 from ._run_session import RunSession, wait_detail_text
+from ._settings_launcher import SettingsHooks, SettingsLauncher
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
 from ._update_check import UpdateCheckThread
 from ._window_geometry import maximize_without_saved_geometry, restore_geometry
-from .settings import SettingsContext, SettingsPage, SettingsResult, SettingsWindow
+from .settings import SettingsPage
 from .settings._page import FOCUS_DETECTION
 
 if TYPE_CHECKING:
@@ -204,8 +204,8 @@ class MainWindow(QMainWindow):
         self._run_session = RunSession()
         self._first_run_task = LatestTask(self)
         self._preprocess_preview: PreprocessPreview
-        #: The Settings window while it is open (dialogs started from it use it as parent).
-        self._settings_window: SettingsWindow | None = None
+        #: Opens the Settings window and takes over what it changed.
+        self._settings_launcher: SettingsLauncher
         self._init_menu_state()
 
         # Declared here; assigned in _build_widgets and _init_controllers.
@@ -420,6 +420,16 @@ class MainWindow(QMainWindow):
         self._export_controller.log_line.connect(self._log.append_text)
         self._preprocess_preview = PreprocessPreview(
             self, services=self._app_service, panel=self._config_panel, table=self._results_table
+        )
+        self._settings_launcher = SettingsLauncher(
+            self,
+            services=self._app_service,
+            panel=self._config_panel,
+            check=self._check_controller,
+            privacy=self._privacy_controller,
+            pull_manager=self._pull_manager,
+            acknowledgements=self._acknowledgements,
+            hooks=self._settings_hooks(),
         )
 
     def _connect_pages(self) -> None:
@@ -1176,8 +1186,7 @@ class MainWindow(QMainWindow):
         self._acknowledgements().forget_all()
         self._check_controller.page.forget_anonymization()
         self._save_settings(notify=False)
-        self._readiness_controller.start_check()
-        self._refresh_queue_from_inputs()
+        self._after_settings_applied()
 
     def _on_results_changed(self) -> None:
         """Step "Results" changed: save it, and show what is cached for the new folder."""
@@ -1347,23 +1356,7 @@ class MainWindow(QMainWindow):
 
     def _dialog_parent(self) -> QWidget:
         """Return the window a new dialog belongs to: the open Settings window, else this one."""
-        window = self._settings_window
-        if window is not None and window.isVisible():
-            return window
-        return self
-
-    def _settings_context(self) -> SettingsContext:
-        language, anonymizer_config = self._config_panel.anonymizer_context()
-        return SettingsContext(
-            settings=self._config_panel.get_settings_dict(),
-            app_service=self._app_service,
-            language=language,
-            anonymizer_config=anonymizer_config,
-            acknowledgements=self._acknowledgements(),
-            display_anonymized=self._privacy_controller.display_anonymized,
-            privacy_available=self._privacy_controller.privacy_available,
-            pull_manager=self._pull_manager,
-        )
+        return self._settings_launcher.visible_window or self
 
     def open_settings(
         self,
@@ -1373,60 +1366,24 @@ class MainWindow(QMainWindow):
         preselect: Sequence[str] = (),
         parent: QWidget | None = None,
     ) -> None:
-        """Open the Settings window on *page* (focused on *focus*) and apply it on OK.
+        """Open the Settings window on *page* (focused on *focus*) and apply it on OK."""
+        self._settings_launcher.open(page, focus=focus, preselect=preselect, parent=parent)
 
-        If the window is already open (a deep link from a dialog opened on top of it), it
-        only switches to *page*.
-        """
-        if self._settings_window is not None and self._settings_window.isVisible():
-            self._settings_window.show_page(page, focus, preselect)
-            return
-        window = SettingsWindow(
-            self._settings_context(),
-            parent or self,
-            page=page,
-            focus=focus,
-            preselect=preselect,
+    def _settings_hooks(self) -> SettingsHooks:
+        """What the Settings window asks of the window."""
+        return SettingsHooks(
+            restored_all=self._restore_all_settings,
+            save=lambda: self._save_settings(notify=False),
+            applied=self._after_settings_applied,
+            addon_installed=self._on_addon_installed,
+            packages_changed=self.packages_changed.emit,
+            preprocess_preview=lambda ocr_config, parent: self._preprocess_preview.request(
+                ocr_config, parent=parent
+            ),
         )
-        window.preprocess_preview_requested.connect(
-            lambda ocr_config: self._preprocess_preview.request(ocr_config, parent=window)
-        )
-        window.packages_changed.connect(self.packages_changed)
-        window.addon_installed.connect(self._on_addon_installed)
-        # What the Privacy page showed: its checkbox was usable only if hiding was possible
-        # when the window opened (later changes to the panel must not decide that).
-        hiding_was_possible = self._privacy_controller.privacy_available
-        self._settings_window = window
-        try:
-            code = window.exec()
-            result = window.values()
-        finally:
-            self._settings_window = None
-        if result.restore_all:
-            self._restore_all_settings()
-        elif code == QDialog.DialogCode.Accepted:
-            self._apply_settings_result(result, hiding_was_possible=hiding_was_possible)
-        window.deleteLater()
 
-    def _apply_settings_result(self, result: SettingsResult, *, hiding_was_possible: bool) -> None:
-        """Take over what the Settings window changed, then save once."""
-        self._config_panel.update_settings(result.settings)
-        if result.turn_on_anonymization:
-            # The AI models page said it would: an online service was chosen while names would
-            # be sent as written.  The checkbox's own handler guards the stage and refreshes
-            # the data-flow box; it comes before the save so the choice is kept.
-            self._config_panel.set_anonymization_enabled(True)
-        if result.anonymizer_config is not None:
-            before = self._config_panel.build_anonymizer_config()
-            self._config_panel.update_anonymizer_config(result.anonymizer_config)
-            if self._config_panel.build_anonymizer_config() != before:
-                # New models or patterns produce different placeholders for the shown text.
-                self._check_controller.page.forget_anonymization()
-        if result.display_anonymized is not None and hiding_was_possible:
-            # Without the add-on the checkbox is disabled and shows "off"; applying that
-            # would overwrite the saved preference.
-            self._privacy_controller.apply_display_anonymized(result.display_anonymized)
-        self._save_settings(notify=False)
+    def _after_settings_applied(self) -> None:
+        """Look again at what a run needs, and at what is cached for the new folder."""
         self._readiness_controller.start_check()
         self._refresh_queue_from_inputs()
 

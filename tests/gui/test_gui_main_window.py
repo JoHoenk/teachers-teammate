@@ -1588,8 +1588,8 @@ def test_opening_settings_while_it_is_open_only_switches_the_page(main_window, m
     """
     scripted = install_scripted_settings_window(monkeypatch)
     scripted.isVisible = lambda self: True  # ty: ignore[invalid-assignment]
-    first = scripted(main_window._settings_context(), main_window, page=SettingsPage.AI_MODELS)
-    main_window._settings_window = first
+    first = scripted(main_window._settings_launcher.context(), main_window, page=SettingsPage.AI_MODELS)
+    main_window._settings_launcher._open_window = first
     created_before = len(scripted.instances)
 
     main_window.open_settings(SettingsPage.ADDONS, focus=FOCUS_LOCAL_MODELS, preselect=["x"])

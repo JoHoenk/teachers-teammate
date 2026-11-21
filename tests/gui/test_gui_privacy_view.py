@@ -316,7 +316,7 @@ def test_the_eye_button_and_the_privacy_page_stay_in_step(qtbot, main_window, mo
 
 def _privacy_page(qtbot, win: MainWindow, monkeypatch: pytest.MonkeyPatch) -> PrivacyPage:
     """Return the Privacy page for *win*'s current state (not shown, no spaCy discovery)."""
-    context = win._settings_context()
+    context = win._settings_launcher.context()
     monkeypatch.setattr(
         context.app_service.anonymization, "list_installed_spacy_models", lambda: []
     )  # no spaCy here

@@ -6,7 +6,7 @@ teacher changed and decided must not go with it.  So their work has a store of i
 essay has one work wherever its results go and whatever it is called, and a changed file is
 another essay.
 
-One writer: the window, through ``ApplicationCommands``.  Runs and the CLI only read.
+One writer: the window, through ``DocumentCommands``.  Runs and the CLI only read.
 
 Robustness is the point of the small print here.  A file written by a newer version of the app
 is ignored and never overwritten — the older app does not know what it would lose.  A file that

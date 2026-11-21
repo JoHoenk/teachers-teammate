@@ -46,9 +46,9 @@ from .._model_guidance import SPACY_PREFIX
 from .._ocr_config_selector import OcrModelPicker
 from . import _page
 from ._ai_service_section import CONTENT_REVIEW, PROOFREADING, AiServiceSection
+from ._computer_box import ComputerBox
 from ._credentials import ApiKeyDrafts
 from ._page import SettingsContext, SettingsPage, SettingsPageBase
-from ._computer_box import ComputerBox
 
 TITLE = "AI models"
 DESCRIPTION = (

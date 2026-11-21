@@ -20,7 +20,8 @@ package "Presentation Layer" {
 
 package "Application Layer" {
   [ProcessingApplicationService\n(service.py)] as A_SERVICE
-  [Application Commands\n(commands.py)] as A_CMD
+  [DocumentCommands\n(commands.py)] as A_CMD
+  [DocumentQueries\n(documents.py)] as A_QUERY
   [BenchmarkApplicationService\n(benchmark_service.py)] as A_BENCH
 }
 
@@ -73,9 +74,10 @@ P_WORKER --> A_SERVICE
 P_WIDGETS --> P_GUI
 
 ' Application internal
-A_SERVICE --> A_CMD : delegates write ops
+A_SERVICE *-- A_CMD : .commands (writes)
+A_SERVICE *-- A_QUERY : .documents (reads)
 A_SERVICE --> I_PIPELINE : run / run_preview_only
-A_SERVICE --> I_STATE : queue_rows / load_view
+A_QUERY --> I_STATE : queue_rows / load_view
 A_SERVICE --> I_DISC : collect_input_files
 A_SERVICE --> I_LLM : list_providers / list_models
 

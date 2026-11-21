@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-import dataclasses
 from enum import Enum
 import logging
 import os
@@ -47,6 +46,7 @@ import qdarkstyle
 from .. import __version__ as _APP_VERSION
 from ..application.check_document import CheckDocument
 from ..application.composition import inject_addon_packages_dir
+from ..application.documents import WorkedOn
 from ..application.queue import StageState
 from ..application.sent_text import SentTexts
 from ..application.service import (
@@ -57,17 +57,16 @@ from ..application.service import (
     ProcessingApplicationService,
     RequirementIssue,
     RunPreflight,
-    WorkedOn,
     WorkNotSavedError,
 )
 from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
 from ..domain.data_location import STAGE_CORRECTION, DataFlow
-from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection, short_model_name
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
 from ..domain.performance_estimate import TimeRange
 from ..domain.run_summary import FileStatus, RunSummary
+from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..domain.stages import (
     PROGRESS_STAGE_CORRECTION,
     PROGRESS_STAGE_OCR,
@@ -1360,7 +1359,7 @@ class MainWindow(QMainWindow):
             config = self._config_panel.lookup_config()
         else:
             self._ensure_hardware_known_for_cache_state(config)
-        rows = self._app_service.queue_rows(config, files)
+        rows = self._app_service.documents.queue_rows(config, files)
         self._results_table.set_queue(rows)
         if any(row.ocr is StageState.DONE for row in rows):
             self._set_export_enabled(True)
@@ -1585,9 +1584,9 @@ class MainWindow(QMainWindow):
             return
         service = self._app_service
         if answer.choice.id == dlg.KEEP_MY_CHANGES:
-            service.keep_teacher_work(config, files=worked_on.unanswered)
+            service.commands.keep_teacher_work(config, files=worked_on.unanswered)
         elif answer.choice.id == dlg.PROOFREAD_AGAIN:
-            failures = service.invalidate_from_stage(
+            failures = service.commands.invalidate_from_stage(
                 config, files=worked_on.unanswered, stage="correction"
             )
             if failures:
@@ -1595,7 +1594,7 @@ class MainWindow(QMainWindow):
                 return
         # The teacher was told that a new proofreading will not contain these corrections and
         # went on: they belong to no stored answer, so they are not asked about again.
-        service.drop_unbound_corrections(config, files=worked_on.unbound)
+        service.commands.drop_unbound_corrections(config, files=worked_on.unbound)
         on_ready()
 
     def _continue_run(self, config: Config) -> None:
@@ -1606,7 +1605,9 @@ class MainWindow(QMainWindow):
             queued_files = self._app_service.collect_input_files(config)
             self._queued_files_by_source_id = {str(file.resolve()): file for file in queued_files}
             queued_source_ids = [str(file.resolve()) for file in queued_files]
-            self._results_table.set_queue(self._app_service.queue_rows(config, queued_files))
+            self._results_table.set_queue(
+                self._app_service.documents.queue_rows(config, queued_files)
+            )
 
         if not queued_source_ids:
             _dialogs.notify(self, dlg.no_files_found(str(config.input_dir)))
@@ -1768,7 +1769,7 @@ class MainWindow(QMainWindow):
         files = self._queued_files(selected_source_ids)
         service = self._app_service
         run_in_background(
-            lambda: service.worked_on_documents(
+            lambda: service.documents.worked_on_documents(
                 config, files, run_proofreads=stage == "correction"
             ),
             lambda result, error: self._confirm_rerun_then(
@@ -1817,7 +1818,9 @@ class MainWindow(QMainWindow):
             _dialogs.notify(self, dlg.selection_mismatch())
             return
 
-        failures = self._app_service.invalidate_from_stage(config, files=files, stage=stage)
+        failures = self._app_service.commands.invalidate_from_stage(
+            config, files=files, stage=stage
+        )
         if failures:
             _dialogs.notify(self, dlg.cache_invalidation_failed(list(failures)))
             return
@@ -1986,7 +1989,7 @@ class MainWindow(QMainWindow):
         for source_id, out_path in targets:
             # The text and its notation come from the stored document, so the file carries the
             # teacher's transcription where they fixed or checked it.
-            view = service.load_view(config, Path(source_id))
+            view = service.documents.load_view(config, Path(source_id))
             if view is None or not view.raw_text.strip():
                 errors.append(f"{Path(source_id).name}: {NO_TEXT_MESSAGE}")
             else:
@@ -2277,7 +2280,7 @@ class MainWindow(QMainWindow):
             # the lookup config names the same state folder and needs no valid folder.
             config = self._config_panel.lookup_config()
         try:
-            row = self._app_service.queue_row(config, source)
+            row = self._app_service.documents.queue_row(config, source)
         except OSError, ValueError:
             return  # nothing readable: the row keeps what it showed
         self._results_table.update_row(row)
@@ -2632,7 +2635,7 @@ class MainWindow(QMainWindow):
             # A setting that is not valid yet (no output folder) must not hide stored results:
             # reading them needs no more than the lookup config does.
             config = self._config_panel.lookup_config()
-        return self._app_service.check_document(config, Path(source_id))
+        return self._app_service.documents.check_document(config, Path(source_id))
 
     def _apply_lock(self) -> None:
         """Make the open document read-only while the run works on it, or free it again."""
@@ -2730,7 +2733,7 @@ class MainWindow(QMainWindow):
             config = self._config_panel.to_config()
         except ValueError:
             config = self._config_panel.lookup_config()
-        self._app_service.mark_looked_at(config, source=Path(source_id), keys=[key])
+        self._app_service.commands.mark_looked_at(config, source=Path(source_id), keys=[key])
 
     def _on_checked_toggled(self, checked: bool) -> None:
         """The teacher pressed *Checked*: store the decision and show what the store says.
@@ -2753,7 +2756,7 @@ class MainWindow(QMainWindow):
             self._check.refresh_checked()
             return
         try:
-            view = self._app_service.set_checked(config, source=source, checked=checked)
+            view = self._app_service.commands.set_checked(config, source=source, checked=checked)
         except WorkNotSavedError as exc:
             _dialogs.notify(self, dlg.work_not_saved(exc.name, too_new=exc.too_new))
             self._check.refresh_checked()
@@ -2763,7 +2766,7 @@ class MainWindow(QMainWindow):
             # The button goes back to what the store says, not to what was pressed.
             self._load_check(source_id)
             return
-        doc = self._app_service.check_document(config, source)
+        doc = self._app_service.documents.check_document(config, source)
         self._sync_row(source_id)
         if doc is not None:
             self._check.update_document(doc)
@@ -2918,7 +2921,7 @@ class MainWindow(QMainWindow):
             return
         service = self._app_service
         # The text comes from the stored document, so a copy carries what the Check tab shows.
-        view = service.load_view(config, Path(source_id))
+        view = service.documents.load_view(config, Path(source_id))
         if view is None:
             return
         if not kind.is_anonymized:
@@ -3023,11 +3026,11 @@ class MainWindow(QMainWindow):
         text_format = self._results_table.text_format_for_source(source_id)
         try:
             if kind == _EDIT_RAW:
-                view = self._app_service.edit_transcription(
+                view = self._app_service.commands.edit_transcription(
                     config, source=source, text=edited_text, text_format=text_format
                 )
             else:
-                view = self._app_service.edit_corrected_text(
+                view = self._app_service.commands.edit_corrected_text(
                     config, source=source, text=edited_text
                 )
         except WorkNotSavedError as exc:
@@ -3037,7 +3040,7 @@ class MainWindow(QMainWindow):
         if view is None:
             return
         # One read of the stored state serves the row and the page.
-        doc = self._app_service.check_document(config, source)
+        doc = self._app_service.documents.check_document(config, source)
         self._sync_row(source_id)
         if doc is None:
             return
@@ -3067,7 +3070,7 @@ class MainWindow(QMainWindow):
 
         def _describe() -> object:
             # The stored results say what really went out; the report says what would go next.
-            view = service.load_view(config, Path(source_id))
+            view = service.documents.load_view(config, Path(source_id))
             if view is None:
                 return None
             return service.describe_sent_texts(config, view)

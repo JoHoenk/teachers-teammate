@@ -1,4 +1,4 @@
-"""Application-layer write commands for state transitions.
+"""The teacher's writes: their transcription, their corrections, their marks.
 
 Two stores, two owners.  The cache holds the machine's results and is written by the run; the
 teacher's work holds what they changed and decided, and is written here — the window is its only
@@ -66,7 +66,7 @@ _PART_DROP: dict[str, Callable[[TeacherWork], TeacherWork]] = {
 }
 
 
-class ApplicationCommands:
+class DocumentCommands:
     """The write operations of the window: the teacher's work, and the cache's stages."""
 
     def __init__(
@@ -311,7 +311,7 @@ class ApplicationCommands:
         for file in files:
             # The work goes first: it is what the teacher confirmed to lose.  If it cannot be
             # dropped nothing is reset, so the document stays as it was.
-            if not ApplicationCommands._drop_parts(work_store, file, stage_name):
+            if not DocumentCommands._drop_parts(work_store, file, stage_name):
                 failures.append(f"{file.name}: your changes could not be removed")
                 continue
             try:

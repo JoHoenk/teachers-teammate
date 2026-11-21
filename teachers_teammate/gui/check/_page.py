@@ -313,6 +313,16 @@ class CheckBody(QWidget):
         self._splitter.addWidget(self.panel)
         layout.addWidget(self._splitter, 1)
 
+        self._connect_views()
+
+        self._undo_action = self._build_history_action(QKeySequence.StandardKey.Undo, self._on_undo)
+        self._redo_action = self._build_history_action(QKeySequence.StandardKey.Redo, self._on_redo)
+        document = self.final_view.document()
+        document.undoAvailable.connect(self._refresh_history_actions)
+        document.redoAvailable.connect(self._refresh_history_actions)
+
+    def _connect_views(self) -> None:
+        """Pass on what the text views and the side panel report."""
         self.read_view.text_edited.connect(self.raw_text_edited)
         self.final_view.text_edited.connect(self.corrected_text_edited)
         for view in (self.read_view, self.marked_view, self.final_view):
@@ -326,12 +336,6 @@ class CheckBody(QWidget):
         self.panel.take_out_all_requested.connect(self._on_take_out_all)
         self.panel.replace_requested.connect(self._on_replace)
         self.panel.card_split_changed.connect(self._on_card_split_changed)
-
-        self._undo_action = self._build_history_action(QKeySequence.StandardKey.Undo, self._on_undo)
-        self._redo_action = self._build_history_action(QKeySequence.StandardKey.Redo, self._on_redo)
-        document = self.final_view.document()
-        document.undoAvailable.connect(self._refresh_history_actions)
-        document.redoAvailable.connect(self._refresh_history_actions)
 
     def _build_history_action(self, key: QKeySequence.StandardKey, slot) -> QAction:
         """Return an action of the page for one of the corrected text's own history steps.
@@ -593,7 +597,7 @@ class CheckBody(QWidget):
     def _shown_sizes(self, sizes: Sequence[int]) -> list[int]:
         """Return *sizes* with the panes that are hidden set to nothing."""
         hidden = (self.scan.isHidden(), False, self.panel.isHidden())
-        return [0 if hide else size for size, hide in zip(sizes, hidden)]
+        return [0 if hide else size for size, hide in zip(sizes, hidden, strict=False)]
 
     def _on_splitter_moved(self, _position: int, _index: int) -> None:
         """Remember the widths the teacher dragged the panes to."""

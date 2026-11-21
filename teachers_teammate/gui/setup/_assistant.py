@@ -24,8 +24,8 @@ from ...application.setup_plan import (
 )
 from ...texts import dialogs as dlg
 from .. import _dialogs
-from .._window_geometry import fit_to_screen
 from .._install_round import InstallRound
+from .._window_geometry import fit_to_screen
 from ..settings._credentials import ApiKeyDrafts, discard_key_drafts, store_key_drafts
 from ._context import SetupContext, SetupResult
 from ._flow import ORDER, SetupPageId

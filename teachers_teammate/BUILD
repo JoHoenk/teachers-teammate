@@ -172,6 +172,7 @@ _APPLICATION_SRCS = [
     "application/correction_options.py",
     "application/data_flow.py",
     "application/document_view.py",
+    "application/documents.py",
     "application/formatting.py",
     "application/merged_view.py",
     "application/model_recommendations.py",

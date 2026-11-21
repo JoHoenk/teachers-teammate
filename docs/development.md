@@ -925,8 +925,8 @@ so it is stored with the result:
   `llm_location()` the box uses, so the two cannot disagree.
 - `DocumentState` keeps `correction_sent_text`, `correction_sent_map`, `correction_sent` and
   `evaluation_sent`; `DocumentStateView.sent` exposes them keyed by stage name.
-  `ProcessingApplicationService._sent_verdict()` adds the comparison in `_documents()` (behind
-  `queue_rows()`) and `load_view()` — the state repository does not know the
+  `DocumentQueries._sent_verdict()` (`application/documents.py`) adds the comparison in
+  `_documents()` (behind `queue_rows()`) and `load_view()` — the state repository does not know the
   settings.  The current fingerprint is computed lazily, only for a view that has a record.
   `sent_location()` writes a bare IPv6 host (`::1`) in brackets before it asks `llm_location()`.
 - The record belongs to its result: every path that clears a result clears its record too
@@ -1880,7 +1880,7 @@ that are downloaded; then the PDF DPI and text-layer entries.  Downloading the p
 new `AUTO_VERSION` or another engine's output re-reads pages **once**, and that is intended.
 Bump `AUTO_VERSION` whenever a step, a threshold or a page model revision changes.  The model
 store reaches the key through `CacheReconciliationService(model_store=…)`,
-`ApplicationCommands(model_store=…)` and `compute_ocr_config_hash(…, store)`; with `None` it is
+`DocumentCommands(model_store=…)` and `compute_ocr_config_hash(…, store)`; with `None` it is
 the default folder (the tests point that at an empty temporary one).
 
 **How to change it.**  A new step is a `Step` in `auto_steps`, with its gate and a named
@@ -2046,7 +2046,7 @@ where they exist.
 document, the `source_hash` the cache already computes.  One essay has one work wherever its
 results go and whatever it is called; a changed file is another essay.  Written atomically
 (`infrastructure/atomic_file.py:write_text_atomic`, the temp-file-and-replace the state store
-uses too).  **One writer**: the window, through `ApplicationCommands`; runs and the CLI only read.
+uses too).  **One writer**: the window, through `DocumentCommands`; runs and the CLI only read.
 
 **Two parts, two validity rules.**
 
@@ -2428,7 +2428,7 @@ is *Check* (`gui/check/_page.py:CheckPage`).  `_check` is disabled while no docu
 result (`ResultsTable.checkable_source_ids()`), and the tab labels carry the state:
 *Documents · 12 of 28* and *Check — Anna_Mueller.pdf*.
 
-**One query feeds the page.**  `ProcessingApplicationService.check_document(config, source)`
+**One query feeds the page.**  `DocumentQueries.check_document(config, source)`
 (`application/check_document.py`) reads the stored state and returns a `CheckDocument`: both
 texts and their plain forms, the review aligned with them, the items the list numbers, the pages
 of the scan, how the results were sent.  The window asks for it once per document
@@ -2498,7 +2498,7 @@ app's own and no approval step per correction: every correction is applied, the 
 or changes what is wrong, and *looked at* and *Checked* say how far they got.
 
 **Where an edit goes.**  `_store_edit(kind, text)` calls `edit_transcription` or
-`edit_corrected_text` on `ApplicationCommands`, which writes the teacher's work and returns the
+`edit_corrected_text` on `DocumentCommands`, which writes the teacher's work and returns the
 merged view; `_sync_row(view)` fills the row from it.  The cache's texts are never written by an
 edit, so the machine result stays what the models produced and the teacher's text is what every
 reader sees.  The undo stack is untouched by a stored edit coming back (`update_document`), so

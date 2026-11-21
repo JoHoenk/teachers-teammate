@@ -10,10 +10,9 @@ from typing import Any, Protocol
 
 from PySide6.QtCore import QThread, Signal
 
-from ..application.service import ProcessingApplicationService, ProgressCallbacks
+from ..application.service import ProgressCallbacks
 from ..config import Config
-from ..domain.run_summary import RunSummary
-from ..domain.run_summary import FileOutcome
+from ..domain.run_summary import FileOutcome, RunSummary
 from ..infrastructure.reporting import CallbackReporter, KeepAwakeState
 from ._types import FileDoneEvent
 

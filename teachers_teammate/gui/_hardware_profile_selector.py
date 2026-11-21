@@ -165,14 +165,14 @@ class HardwareProfileSelector(QWidget):
 
     # ── the free memory ────────────────────────────────────────────────────
 
-    def showEvent(self, event) -> None:  # noqa: N802  # Qt's name
+    def showEvent(self, event) -> None:  # Qt's name
         super().showEvent(event)
         if self._read_only:
             return
         self._read_available_memory()
         self._memory_timer.start()
 
-    def hideEvent(self, event) -> None:  # noqa: N802  # Qt's name
+    def hideEvent(self, event) -> None:  # Qt's name
         super().hideEvent(event)
         self._memory_timer.stop()
 

@@ -32,7 +32,6 @@ from ..domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentStatu
 from ..domain.formatted_text import TextFormat
 from ..domain.proofreading.review import CorrectionReview
 from ..domain.run_summary import FileOutcome, FileStatus
-from ..domain.stages import STAGE_ORDER
 from ..texts import dialogs as dlg
 from . import _dialogs
 from . import _user_text as txt
@@ -319,7 +318,7 @@ class ResultsTable(QTableWidget):
         *source_ids* goes back to what the store says.  Idempotent: the readiness check calls
         it after every answer.
         """
-        wanted = {source_id: reason for source_id in source_ids}
+        wanted = dict.fromkeys(source_ids, reason)
         if wanted == self._skipped:
             return
         self._skipped = wanted

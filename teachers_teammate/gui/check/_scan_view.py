@@ -305,7 +305,7 @@ class ScanView(ZoomableImageView):
         return 0.0
 
     def _max_zoom(self) -> float:
-        """Return the largest zoom: twice the page's own pixels, and never less than 4× fitted."""
+        """Return the largest zoom: twice the page's own pixels, and never less than 4x fitted."""
         scale = self._fitted_scale()
         return max(_ZOOM_MAX, _ZOOM_NATIVE / scale) if scale > 0 else _ZOOM_MAX
 
@@ -380,6 +380,27 @@ class ScanPane(QWidget):
         self.view = ScanView()
         self._steps: Sequence[str] | None = None
 
+        self._build_switch()
+        self._build_zoom()
+
+        self._caption = QLabel()
+        self._caption.setStyleSheet("color: #888;")
+        self._caption.setVisible(False)
+
+        strip = QHBoxLayout()
+        strip.setContentsMargins(4, 0, 4, 0)
+        strip.addWidget(self._switch)
+        strip.addWidget(self._caption, 1)
+        strip.addWidget(self._zoom)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addLayout(strip)
+        layout.addWidget(self.view, 1)
+
+    def _build_switch(self) -> None:
+        """Build the *Prepared · Original* switch, hidden until a page has an original."""
         self._prepared_btn = QPushButton(check_text.SCAN_PREPARED)
         self._prepared_btn.setToolTip(check_text.SCAN_PREPARED_TIP)
         self._original_btn = QPushButton(check_text.SCAN_ORIGINAL)
@@ -400,6 +421,8 @@ class ScanPane(QWidget):
         switch.addWidget(self._original_btn)
         self._switch.setVisible(False)
 
+    def _build_zoom(self) -> None:
+        """Build the zoom buttons and tie them to the view."""
         self._zoom_out_btn = QPushButton(check_text.SCAN_ZOOM_OUT)
         self._zoom_out_btn.setToolTip(check_text.SCAN_ZOOM_OUT_TIP)
         self._zoom_in_btn = QPushButton(check_text.SCAN_ZOOM_IN)
@@ -428,22 +451,6 @@ class ScanPane(QWidget):
         self._fit_width_btn.clicked.connect(lambda: self.view.set_fit_page(False))
         self.view.view_changed.connect(self._sync_zoom_buttons)
         self._sync_zoom_buttons()
-
-        self._caption = QLabel()
-        self._caption.setStyleSheet("color: #888;")
-        self._caption.setVisible(False)
-
-        strip = QHBoxLayout()
-        strip.setContentsMargins(4, 0, 4, 0)
-        strip.addWidget(self._switch)
-        strip.addWidget(self._caption, 1)
-        strip.addWidget(self._zoom)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        layout.addLayout(strip)
-        layout.addWidget(self.view, 1)
 
     @property
     def page_count(self) -> int:

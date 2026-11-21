@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 import dataclasses
 from dataclasses import dataclass
 from enum import StrEnum
-import functools
 import importlib.util
 import logging
 import os
 from pathlib import Path
-import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -104,10 +102,8 @@ from ..infrastructure.stage_builder import (
     window_of_model,
 )
 from ..infrastructure.state_repository import (
-    DocumentState,
     StateRepository,
     compute_file_hash_cached,
-    machine_texts,
 )
 from ..infrastructure.storage_root import (
     default_config_path as _infra_default_config_path,
@@ -120,20 +116,11 @@ from ..infrastructure.storage_root import (
     resolve_config_path as _infra_resolve_config_path,
 )
 from ..infrastructure.teacher_work_store import TeacherWorkStore
-from ..infrastructure.workflow.cache_service import (
-    ExpectedHashes,
-    compute_correction_config_hash,
-    expected_hashes,
-    privacy_fingerprint,
-    stage_hashes,
-)
 from ..interfaces import SUPPORTED_SUFFIXES, SleepBlocker
-from .check_document import CheckDocument, check_document_of
-from .commands import ApplicationCommands
+from .commands import DocumentCommands
 from .commands import WorkNotSavedError as WorkNotSavedError  # noqa: PLC0414
 from .context_choice import ContextChoice, context_choice
 from .correction_options import prompt_step_title
-from .document_view import DocumentStateView, to_view
 from .data_flow import (
     describe_data_flow,
     llm_location,
@@ -141,10 +128,10 @@ from .data_flow import (
     ocr_refusal,
     text_goes_online,
 )
+from .document_view import DocumentStateView
+from .documents import DocumentQueries, WorkedOn
 from .formatting import TextFormatter
-from .merged_view import merged_view, reconciled_view
 from .model_recommendations import ModelRecommendationService
-from .queue import QueueRow, StoredStages, queue_row
 from .sent_text import Anonymize, SentTexts, describe_sent_texts
 from .setup_plan import (
     LocalModelChoices,
@@ -218,34 +205,6 @@ class DocxExport:
 
 
 @dataclass(frozen=True)
-class WorkedOn:
-    """The documents of a run whose corrections or transcription the teacher worked on.
-
-    Worked out before a run starts, so the window can ask what to do with them: a run keeps a
-    proofreading the teacher worked on (it is not stale by its settings), and only an explicit
-    answer replaces it.
-    """
-
-    kept_stale: tuple[Path, ...] = ()
-    """The proofreading is stale only by its settings and was worked on: a run keeps it."""
-    unanswered: tuple[Path, ...] = ()
-    """Of those, the ones not yet answered for these settings: the run-start question lists them."""
-    unbound: tuple[Path, ...] = ()
-    """Worked-on corrections that belong to no stored proofreading: a new one will not have them."""
-    transcribed: tuple[Path, ...] = ()
-    """The teacher fixed or checked the transcription: reading the pages again replaces it."""
-    worked_on: tuple[Path, ...] = ()
-    """The corrections part applies and was worked on: an explicit re-run would drop it."""
-
-    @property
-    def empty(self) -> bool:
-        """Whether the teacher worked on nothing this run touches."""
-        return not (
-            self.kept_stale or self.unanswered or self.unbound or self.transcribed or self.worked_on
-        )
-
-
-@dataclass(frozen=True)
 class RunPreflight:
     """Outcome of the checks made before a run starts (first blocker wins)."""
 
@@ -273,10 +232,10 @@ class RunPreflight:
     skipped: tuple[Path, ...] = ()
     #: The documents whose corrections or transcription the teacher worked on, so the window can
     #: ask what to do with them before the run replaces anything.
-    worked_on: WorkedOn = WorkedOn()
+    worked_on: WorkedOn = dataclasses.field(default_factory=WorkedOn)
     #: Another model is in the way on the Ollama server, so the first file waits for it.  A
     #: note, never a refusal: the run works, it just waits.
-    ollama_wait: WaitDetail = WaitDetail()
+    ollama_wait: WaitDetail = dataclasses.field(default_factory=WaitDetail)
 
     @property
     def blocked(self) -> bool:
@@ -416,11 +375,18 @@ class ProcessingApplicationService:
         )
         # Owns the speed test, the stored measurements and the server facts behind them.
         self._speeds = SpeedEstimateService()
-        self._commands = ApplicationCommands(
+        self.commands = DocumentCommands(
             state_store_factory=self._state_store,
             windows_for=self.resolved_windows,
             model_store=self._model_store,
             work_store=self._work_store,
+        )
+        # Read-only queries over the store; the adapters use this one directly.
+        self.documents = DocumentQueries(
+            state_store_factory=self._state_store,
+            work_store=self._work_store,
+            model_store=self._model_store,
+            windows_for=self.resolved_windows,
         )
 
     def _state_store(self, config: Config) -> StateRepository:
@@ -495,183 +461,6 @@ class ProcessingApplicationService:
     def collect_input_files(self, config: Config) -> list[Path]:
         """Return supported source files for the current config."""
         return self._discovery.collect_input_files(config)
-
-    def _documents(
-        self, config: Config, files: Iterable[Path], *, reconciled: bool
-    ) -> Iterator[tuple[Path, DocumentState | None, DocumentStateView | None]]:
-        """Yield ``(file, state, view)`` for every file of *files*.
-
-        The one place a stored document becomes a view.  *reconciled* marks the stages the next
-        run would read again, worked out exactly as the run works them out
-        (:func:`~teachers_teammate.infrastructure.workflow.cache_service.stage_hashes`), so the
-        queue and the next run agree on what is stale and what the teacher's work keeps; without
-        it the view says what is stored.  A file the store has no result for yields ``None`` for
-        both.
-        """
-        store = self._state_store(config)
-        windows = self.resolved_windows(config) if reconciled else None
-        current_privacy = functools.cache(lambda: privacy_fingerprint(config))
-        for file in files:
-            state = store.load_valid(file)
-            if state is None:
-                yield file, None, None
-                continue
-            if reconciled:
-                view = reconciled_view(
-                    file,
-                    state,
-                    self._work_store.load(state.source_hash),
-                    expected_hashes(config, file, windows, self._model_store),
-                )
-            else:
-                view = self._merged(to_view(file, state), state)
-            yield file, state, self._sent_verdict(view, current_privacy)
-
-    def queue_rows(self, config: Config, files: Sequence[Path]) -> list[QueueRow]:
-        """Return what the queue shows for *files*, read from the store.
-
-        One row per file, in the order given: the stage states the next run would find, and
-        what the document has.  The texts themselves are not part of a row; an action that
-        needs them reads the document (:meth:`load_view`), so the queue holds no copy that
-        could drift from the store.
-        """
-        rows: list[QueueRow] = []
-        for file, state, view in self._documents(config, files, reconciled=True):
-            if state is None or view is None:
-                rows.append(QueueRow.empty(file))
-                continue
-            stored = StoredStages(
-                ocr=state.ocr_done,
-                correction=state.correction_done,
-                evaluation=state.evaluation_done,
-            )
-            rows.append(queue_row(view, stored))
-        return rows
-
-    def queue_row(self, config: Config, source: Path) -> QueueRow:
-        """Return what the queue shows for one file, read from the store."""
-        return self.queue_rows(config, [source])[0]
-
-    def worked_on_documents(
-        self, config: Config, files: Collection[Path], *, run_proofreads: bool
-    ) -> WorkedOn:
-        """Return the documents of a run whose corrections or transcription the teacher worked on.
-
-        Reads every file that was not read since it last changed, so call it from a background
-        thread.  *run_proofreads* says whether the run makes a proofreading at all: without
-        one it replaces nothing, so no stored proofreading needs a question and corrections that
-        belong to no stored answer are not worth one.
-        """
-        from ..domain.freshness import correction_kept_over_settings  # noqa: PLC0415
-        from ..domain.teacher_work import current_texts  # noqa: PLC0415
-
-        store = self._state_store(config)
-        expected_correction_hash = compute_correction_config_hash(
-            config, self.resolved_windows(config)
-        )
-
-        kept_stale: list[Path] = []
-        unanswered: list[Path] = []
-        unbound: list[Path] = []
-        transcribed: list[Path] = []
-        worked_on_documents: list[Path] = []
-        for file in files:
-            try:
-                work = self._work_store.load(compute_file_hash_cached(file))
-            except OSError:
-                continue
-            if work is None:
-                continue
-            if work.transcription is not None:
-                transcribed.append(file)
-            corrections = work.corrections
-            worked_on = corrections is not None and corrections.worked_on
-            state = store.load_valid(file)
-            if state is None:
-                # No stored result: the corrections part applies to nothing.
-                if run_proofreads and worked_on:
-                    unbound.append(file)
-                continue
-            # Only the proofreading's freshness is asked about, so the other two hashes are
-            # the stored ones: they are never different, and the file is not read for them.
-            flags = stage_hashes(
-                state,
-                work,
-                ExpectedHashes(
-                    ocr_config_hash=state.ocr_config_hash,
-                    correction_config_hash=expected_correction_hash,
-                    eval_config_hash=state.eval_config_hash,
-                    correction_enabled=config.correction_enabled,
-                    evaluation_enabled=config.evaluation_enabled,
-                ),
-            )
-            applies = current_texts(machine_texts(state), work).corrections_work is not None
-            if applies and worked_on:
-                worked_on_documents.append(file)
-            if run_proofreads and correction_kept_over_settings(flags):
-                kept_stale.append(file)
-                if corrections is not None and corrections.kept_under != expected_correction_hash:
-                    unanswered.append(file)
-            elif run_proofreads and worked_on and not applies:
-                unbound.append(file)
-        return WorkedOn(
-            kept_stale=tuple(kept_stale),
-            unanswered=tuple(unanswered),
-            unbound=tuple(unbound),
-            transcribed=tuple(transcribed),
-            worked_on=tuple(worked_on_documents),
-        )
-
-    def load_view(self, config: Config, source: Path) -> DocumentStateView | None:
-        """Return the view of *source*, with the texts the document has now."""
-        for _file, _state, view in self._documents(config, [source], reconciled=False):
-            return view
-        return None
-
-    def _merged(
-        self, view: DocumentStateView, state: DocumentState, *, kept_over_settings: bool = False
-    ) -> DocumentStateView:
-        """Return *view* with the teacher's texts over the machine's."""
-        work = self._work_store.load(state.source_hash)
-        return merged_view(view, state, work, kept_over_settings=kept_over_settings)
-
-    def check_document(self, config: Config, source: Path) -> CheckDocument | None:
-        """Return everything the Check tab shows about *source*, or ``None`` without state.
-
-        One query for the whole tab: the texts, the review aligned with them, the items the list
-        numbers, the pages of the scan and how the results were sent.  The window asks for it
-        once per document and once per stored edit, so nothing else assembles that state.
-        """
-        view = self.load_view(config, source)
-        if view is None:
-            return None
-        return check_document_of(view)
-
-    @staticmethod
-    def _sent_verdict(
-        view: DocumentStateView, current_privacy: Callable[[], str]
-    ) -> DocumentStateView:
-        """Add whether each stored result was made with other privacy settings than today's.
-
-        The comparison is by settings, not by text: working out the text would need a spaCy
-        pass per document.  So a changed pattern that hides nothing new in a document still
-        says "other privacy settings" — the wording says *settings*, not *text*.
-
-        *current_privacy* is called only when the view has a stored result, so a file without
-        one costs no fingerprint.
-        """
-        if not view.sent:
-            return view
-        current = current_privacy()
-        return dataclasses.replace(
-            view,
-            sent={
-                stage: dataclasses.replace(
-                    status, other_privacy_settings=status.record.privacy != current
-                )
-                for stage, status in view.sent.items()
-            },
-        )
 
     def list_providers(self) -> list[str]:
         """Return available LLM providers."""
@@ -1148,7 +937,7 @@ class ProcessingApplicationService:
         """
         from ..infrastructure.docx_builder import DocxDocumentCreator  # noqa: PLC0415
 
-        view = self.load_view(config, source)
+        view = self.documents.load_view(config, source)
         if view is None or not view.raw_text.strip():
             raise ValueError(NO_TEXT_MESSAGE)
         chosen = options or DocxExport()
@@ -1228,7 +1017,7 @@ class ProcessingApplicationService:
                 f"{out_path.name} is an input document and would be overwritten; "
                 "choose another name or folder."
             )
-        view = self.load_view(config, source)
+        view = self.documents.load_view(config, source)
         if view is None or not view.raw_text.strip():
             raise ValueError(NO_TEXT_MESSAGE)
         text = self.text_for_copy(
@@ -1746,18 +1535,11 @@ class ProcessingApplicationService:
             and not self.reader_installed()
         ):
             return ""
-        if not self.needs_text_recognition(files, recognised=self._recognised_files(config, files)):
+        if not self.needs_text_recognition(
+            files, recognised=self.documents.recognised_files(config, files)
+        ):
             return ""
         return READER_NOT_DOWNLOADED
-
-    def _recognised_files(self, config: Config, files: Sequence[Path]) -> set[Path]:
-        """Return the *files* whose recognised text is already stored (best effort)."""
-        try:
-            store = self._state_store(config)
-            states = [(file, store.load_valid(file)) for file in files]
-        except Exception:  # noqa: BLE001  # a lookup that fails only means "read it again"
-            return set()
-        return {file for file, state in states if state is not None and state.ocr_done}
 
     @staticmethod
     def output_refusal_for_run(config: Config) -> str:
@@ -1891,7 +1673,7 @@ class ProcessingApplicationService:
             # The question about the teacher's work belongs to a run that will start.
             result = dataclasses.replace(
                 result,
-                worked_on=self.worked_on_documents(
+                worked_on=self.documents.worked_on_documents(
                     config, files, run_proofreads=config.correction_enabled
                 ),
             )
@@ -2626,56 +2408,3 @@ class ProcessingApplicationService:
         return None
 
     # ── Commands ──────────────────────────────────────────────────────────
-
-    def invalidate_from_stage(
-        self,
-        config: Config,
-        *,
-        files: Sequence[Path],
-        stage: str,
-    ) -> tuple[str, ...]:
-        return self._commands.invalidate_from_stage(config, files=files, stage=stage)
-
-    def edit_transcription(
-        self, config: Config, *, source: Path, text: str, text_format: str = "plain"
-    ) -> DocumentStateView | None:
-        """Store the teacher's transcription of *source*; ``None`` when it has no state.
-
-        Raises:
-            WorkNotSavedError: the work could not be stored.
-        """
-        return self._commands.edit_transcription(
-            config, source=source, text=text, text_format=text_format
-        )
-
-    def edit_corrected_text(
-        self, config: Config, *, source: Path, text: str
-    ) -> DocumentStateView | None:
-        """Store the teacher's corrections of *source*; ``None`` when there is nothing to bind.
-
-        Raises:
-            WorkNotSavedError: the work could not be stored.
-        """
-        return self._commands.edit_corrected_text(config, source=source, text=text)
-
-    def set_checked(
-        self, config: Config, *, source: Path, checked: bool
-    ) -> DocumentStateView | None:
-        """Mark *source* as checked, or take the mark back.
-
-        Raises:
-            WorkNotSavedError: the work could not be stored.
-        """
-        return self._commands.set_checked(config, source=source, checked=checked)
-
-    def mark_looked_at(self, config: Config, *, source: Path, keys: Collection[str]) -> None:
-        """Record that the teacher looked at the items *keys* of *source*."""
-        self._commands.mark_looked_at(config, source=source, keys=keys)
-
-    def keep_teacher_work(self, config: Config, *, files: Collection[Path]) -> None:
-        """Record that the teacher keeps their corrections over the settings of this run."""
-        self._commands.keep_teacher_work(config, files=files)
-
-    def drop_unbound_corrections(self, config: Config, *, files: Collection[Path]) -> None:
-        """Drop the corrections of *files* that belong to no stored proofreading."""
-        self._commands.drop_unbound_corrections(config, files=files)

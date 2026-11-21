@@ -145,17 +145,11 @@ ALLOWED: dict[str, frozenset[str]] = {
         {
             "Change the explanations (their language, or corrections only) and add notes\nfor the AI. The instructions themselves are fixed; the dialog shows them.",
             "Change the instructions used to generate the content review report.",
-            "Generate a Word document for each input file containing the image,\nextracted text, and (if enabled) the proofread text.",
             "Level:",
             "Set which types of personal information to hide and how.",
-            "Table — side-by-side columns: Image | Extracted text | Proofread text.\nComments — two columns with tracked changes shown as Word comments.",
-            "Text file",
-            "Text files need an output folder outside the input folder; otherwise the next run would read them as new documents.",
-            "Word document",
             "f\"{('▾' if expanded else '▸')} {txt.PROMPTS_HEADING}\"",
             "f'Use an AI to fix spelling and grammar in the extracted text.\\nWhich AI: see {WHERE_AI_MODELS}.'",
             "f'▸ {txt.PROMPTS_HEADING}'",
-            "i",
         }
     ),
     "teachers_teammate/gui/_data_flow_summary.py": frozenset(
@@ -275,6 +269,20 @@ ALLOWED: dict[str, frozenset[str]] = {
         {
             "",
             "Whether a run can start with the current settings. It never blocks Run: the requirements are checked again when you press Run.",
+        }
+    ),
+    "teachers_teammate/gui/_results_step.py": frozenset(
+        {
+            "Generate a Word document for each input file containing the image,\nextracted text, and (if enabled) the proofread text.",
+            "Table — side-by-side columns: Image | Extracted text | Proofread text.\nComments — two columns with tracked changes shown as Word comments.",
+            "Text file",
+            "Text files need an output folder outside the input folder; otherwise the next run would read them as new documents.",
+            "Word document",
+        }
+    ),
+    "teachers_teammate/gui/_step_section.py": frozenset(
+        {
+            "i",
         }
     ),
     "teachers_teammate/gui/_results_table.py": frozenset(

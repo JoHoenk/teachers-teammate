@@ -2120,12 +2120,9 @@ def test_file_menu_opens_documents_and_exports(main_window, monkeypatch) -> None
     Then   the panel's folder and file selection are started, and Export ▸ lists the export kinds
     """
     calls: list[str] = []
-    monkeypatch.setattr(
-        main_window._config_panel, "_on_select_folder", lambda: calls.append("folder")
-    )
-    monkeypatch.setattr(
-        main_window._config_panel, "_on_select_files", lambda: calls.append("files")
-    )
+    selection = main_window._config_panel._selection
+    monkeypatch.setattr(selection, "choose_folder", lambda: calls.append("folder"))
+    monkeypatch.setattr(selection, "choose_files", lambda: calls.append("files"))
     menu = _menu(main_window, "File")
     by_text = {a.text(): a for a in menu.actions()}
 
@@ -2183,7 +2180,7 @@ def test_results_step_change_saves_and_refreshes_the_queue(main_window, monkeypa
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: calls.append("save"))
     monkeypatch.setattr(main_window, "_refresh_queue_from_inputs", lambda: calls.append("queue"))
 
-    main_window._config_panel._text_enabled.setChecked(True)
+    main_window._config_panel._results._text_enabled.setChecked(True)
 
     assert calls == ["save", "queue"]
 
@@ -4622,7 +4619,7 @@ def test_the_line_asks_for_a_results_folder_and_choose_opens_the_dialog(
     from teachers_teammate.gui import _config_panel  # noqa: PLC0415
 
     panel = ready_window._config_panel
-    panel._docx_enabled.setChecked(True)
+    panel._results._docx_enabled.setChecked(True)
     ready_window._readiness_controller.update()
     assert "Choose where to save the results" in _line(ready_window)
     assert _buttons(ready_window) == ["Choose…"]
@@ -4695,7 +4692,7 @@ def test_the_line_says_checking_only_when_the_first_answer_is_slow(
 
     monkeypatch.setattr(RunService, "check_run_preflight", slow)
     panel = ready_window._config_panel
-    panel._selected_folder = tmp_path  # no scan of the folder: the queue below is the queue
+    panel._selection.set_folder(tmp_path)  # no scan of the folder: the queue is the queue below
     ready_window._results_table.set_queue([_queue_row(str(tmp_path / "a.png"), "a.png")])
     ready_window._results_table.selectRow(0)
 
@@ -4931,8 +4928,8 @@ def test_ticking_a_results_box_asks_the_readiness_check_again(ready_window, monk
     )
     panel = ready_window._config_panel
 
-    panel._text_enabled.setChecked(True)
-    panel._text_mode.setCurrentText("anonymized")
+    panel._results._text_enabled.setChecked(True)
+    panel._results._text_mode.setCurrentText("anonymized")
 
     assert scheduled
 
@@ -4950,9 +4947,9 @@ def test_the_line_warns_about_text_files_saved_in_a_subfolder_of_the_documents(
     panel = ready_window._config_panel
     panel.set_input_dir(str(tmp_path))
     results = str(tmp_path / "results")
-    panel._output_dir.setText(results)
+    panel._results._output_dir.setText(results)
     panel._settings_dict["output"] = results
-    panel._text_enabled.setChecked(True)
+    panel._results._text_enabled.setChecked(True)
     ready_window._results_table.selectAll()
 
     ready_window._readiness_controller.update()

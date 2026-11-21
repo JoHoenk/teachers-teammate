@@ -3,7 +3,7 @@
 :class:`ChunkingCorrector` decorates any :class:`~teachers_teammate.interfaces.Corrector` whose
 provider can only carry a limited amount of text per request; its
 :meth:`~teachers_teammate.interfaces.Corrector.pieces` counts the requests a text takes, so the
-GUI counter, the console line and the run cannot disagree.
+console line and the run cannot disagree.
 
 The pieces are the app's own concern, not the exchange's: an online provider manages its own
 window and is left unwrapped, while the Ollama port asks for a fixed one.
@@ -70,9 +70,7 @@ class ChunkingCorrector(Corrector):
             return None
         return tuple(split_for_budget(raw_text, max_chars, text_format))
 
-    def pieces(
-        self, text: str, language: str, *, text_format: TextFormat = "plain"
-    ) -> int | None:
+    def pieces(self, text: str, language: str, *, text_format: TextFormat = "plain") -> int | None:
         """Return how many requests proofreading *text* takes, ``None`` when unbounded."""
         if self._inner.max_text_chars(language, text_format=text_format) is None:
             return None

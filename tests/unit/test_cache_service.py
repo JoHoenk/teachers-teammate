@@ -1769,8 +1769,7 @@ def test_the_correction_key_of_the_default_profile_is_pinned(tmp_path: Path) -> 
     """
     Given  the default configuration
     When   the correction config hash is computed
-    Then   it is the value it had before the exchange was named in the tools' words, so the
-           rename makes no stored proofreading stale
+    Then   it is the pinned value, so stored proofreadings stay fresh
     """
     from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
         compute_correction_config_hash,

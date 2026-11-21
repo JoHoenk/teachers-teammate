@@ -4,8 +4,8 @@ Separates the responsibility of building individual pipeline stages
 from the orchestration logic in :mod:`infrastructure.pipeline`.
 
 :class:`PipelineComponentFactory` holds the constructor callables used
-to build each stage.  Swap any callable to inject a test double or
-alternative implementation.
+to build each stage, each typed by a :class:`~typing.Protocol` whose parameters are
+keyword-only.  Swap any callable to inject a test double or alternative implementation.
 
 :class:`StageBuilder` applies a :class:`PipelineComponentFactory` to a
 :class:`~teachers_teammate.config.Config` to produce concrete service
@@ -16,11 +16,10 @@ full pipeline.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -28,13 +27,13 @@ if TYPE_CHECKING:
     from .ocr_formats import OcrOutputPostprocessor
 
 from ..config import Config, OcrConfig
+from ..domain import correction_policy
 from ..domain.anonymization import AnonymizerConfig
 from ..domain.context_budget import (
     BASE_NUM_CTX,
     RunWindows,
     stage_windows,
 )
-from ..domain.correction_policy import cut_off_tries
 from ..domain.data_location import (
     ENGINE_PPOCR,
     DataLocation,
@@ -74,7 +73,7 @@ from .workflow.preprocess_service import PreprocessService
 
 
 def default_build_preprocessor(
-    tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore | None = None
+    *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore | None = None
 ) -> ImagePreprocessor:
     """Build the preprocessor for *ocr*'s settings; shared by real runs and the GUI preview.
 
@@ -86,38 +85,44 @@ def default_build_preprocessor(
     )
 
 
-def _default_build_ppocr_ocr(store: ModelStore, stop_event: threading.Event | None) -> OCRProcessor:
+def _default_build_ppocr_ocr(
+    *, store: ModelStore, stop_event: threading.Event | None
+) -> OCRProcessor:
     return PpOcrProcessor(store, stop_event=stop_event)
 
 
 def _default_build_ollama_ocr(
-    model_name: str, client: OllamaClient, timeout: int, temperature: float
+    *, model: str, client: OllamaClient, timeout: int, temperature: float
 ) -> OCRProcessor:
     return OllamaOCRProcessor(
-        model_name=model_name, client=client, timeout=timeout, temperature=temperature
+        model_name=model, client=client, timeout=timeout, temperature=temperature
     )
 
 
 def _default_build_llm(
-    provider: str, model: str, base_url: str, temperature: float
+    *, provider: str, model: str, base_url: str, temperature: float
 ) -> BaseChatModel:
     return build_llm(provider, model, base_url=base_url, temperature=temperature)
 
 
 def _default_build_corrector(
+    *,
     port: ModelPort,
     settings: ProofreadingSettings,
     profile: RequestProfile,
-    tries: int,
+    cut_off_tries: int,
 ) -> Corrector:
-    return build_exchange_corrector(port, profile=profile, settings=settings, cut_off_tries=tries)
+    return build_exchange_corrector(
+        port, profile=profile, settings=settings, cut_off_tries=cut_off_tries
+    )
 
 
-def _default_build_evaluator(llm: BaseChatModel, prompt: str) -> Evaluator:
+def _default_build_evaluator(*, llm: BaseChatModel, prompt: str) -> Evaluator:
     return LangChainEvaluator(llm, prompt)
 
 
 def _default_build_native_ollama_evaluator(
+    *,
     model: str,
     client: OllamaClient,
     prompt: str,
@@ -137,17 +142,17 @@ def _default_build_native_ollama_evaluator(
     )
 
 
-def _default_build_doc_creator(fmt: str, labels_language: str = "") -> DocumentCreator:
+def _default_build_doc_creator(*, fmt: str, labels_language: str = "") -> DocumentCreator:
     return DocxDocumentCreator(fmt=fmt, labels_language=labels_language)
 
 
-def _default_build_anonymizer(language: str, config: AnonymizerConfig) -> Anonymizer:
+def _default_build_anonymizer(*, language: str, config: AnonymizerConfig) -> Anonymizer:
     from .anonymizer import SpacyAnonymizer  # noqa: PLC0415
 
     return SpacyAnonymizer(language, config)
 
 
-def _default_check_ocr_model(url: str, model: str, reporter: Reporter) -> None:
+def _default_check_ocr_model(*, url: str, model: str, reporter: Reporter) -> None:
     """Ask the Ollama server at *url* whether *model* is there; raise when it is not."""
     OllamaClient(url).check_model(model, reporter)
 
@@ -215,38 +220,141 @@ def window_of_model(config: Config, windows: RunWindows, tag: str) -> int:
 # ── Factory ────────────────────────────────────────────────────────────────
 
 
+class PreprocessorBuilder(Protocol):
+    """Builds the image preprocessor of a run."""
+
+    def __call__(
+        self, *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore | None
+    ) -> ImagePreprocessor:
+        """Return the preprocessor for *ocr*'s settings."""
+        ...
+
+
+class ReaderBuilder(Protocol):
+    """Builds the built-in reader."""
+
+    def __call__(self, *, store: ModelStore, stop_event: threading.Event | None) -> OCRProcessor:
+        """Return the reader that reads pages with *store*'s models."""
+        ...
+
+
+class OllamaOcrBuilder(Protocol):
+    """Builds the OCR processor that reads pages with an Ollama vision model."""
+
+    def __call__(
+        self, *, model: str, client: OllamaClient, timeout: int, temperature: float
+    ) -> OCRProcessor:
+        """Return the processor for *model* on *client*."""
+        ...
+
+
+class LlmBuilder(Protocol):
+    """Builds the chat model of an online provider."""
+
+    def __call__(
+        self, *, provider: str, model: str, base_url: str, temperature: float
+    ) -> BaseChatModel:
+        """Return the chat model of *provider*."""
+        ...
+
+
+class CorrectorBuilder(Protocol):
+    """Builds the corrector of an exchange on a connection."""
+
+    def __call__(
+        self,
+        *,
+        port: ModelPort,
+        settings: ProofreadingSettings,
+        profile: RequestProfile,
+        cut_off_tries: int,
+    ) -> Corrector:
+        """Return the corrector of *profile*'s exchange on *port*."""
+        ...
+
+
+class EvaluatorBuilder(Protocol):
+    """Builds the content review over a chat model."""
+
+    def __call__(self, *, llm: BaseChatModel, prompt: str) -> Evaluator:
+        """Return the evaluator that asks *llm* with *prompt*."""
+        ...
+
+
+class NativeOllamaEvaluatorBuilder(Protocol):
+    """Builds the content review that asks an Ollama server directly."""
+
+    def __call__(
+        self,
+        *,
+        model: str,
+        client: OllamaClient,
+        prompt: str,
+        timeout: float,
+        temperature: float,
+        num_ctx: int,
+        think: bool | str = False,
+    ) -> Evaluator:
+        """Return the evaluator for *model* on *client*."""
+        ...
+
+
+class DocCreatorBuilder(Protocol):
+    """Builds the Word document writer."""
+
+    def __call__(self, *, fmt: str, labels_language: str = "") -> DocumentCreator:
+        """Return the writer for *fmt*."""
+        ...
+
+
+class AnonymizerBuilder(Protocol):
+    """Builds the anonymizer of a language."""
+
+    def __call__(self, *, language: str, config: AnonymizerConfig) -> Anonymizer:
+        """Return the anonymizer for *language*."""
+        ...
+
+
+class OcrPostprocessorBuilder(Protocol):
+    """Builds the notation detector applied to every page of OCR output."""
+
+    def __call__(self) -> OcrOutputPostprocessor:
+        """Return the postprocessor."""
+        ...
+
+
+class OcrModelCheck(Protocol):
+    """Asks the Ollama server whether the model a run reads pages with is there."""
+
+    def __call__(self, *, url: str, model: str, reporter: Reporter) -> None:
+        """Raise when *model* is not on the server at *url*."""
+        ...
+
+
 @dataclass(frozen=True)
 class PipelineComponentFactory:
     """Callable set for pipeline stage construction.
 
-    Every field is a constructor callable with a fixed signature.
-    Swap any callable in tests or adapters to inject alternative
-    implementations without subclassing.
+    Every field is a constructor callable with a fixed signature, and every parameter of it is
+    keyword-only, so two values of the same type cannot be swapped unnoticed.  Swap any callable
+    in tests or adapters to inject alternative implementations without subclassing.
     """
 
-    build_preprocessor: Callable[[Path, bool, OcrConfig, ModelStore | None], ImagePreprocessor] = (
-        default_build_preprocessor
+    build_preprocessor: PreprocessorBuilder = default_build_preprocessor
+    build_ppocr_ocr: ReaderBuilder = _default_build_ppocr_ocr
+    build_ollama_ocr: OllamaOcrBuilder = _default_build_ollama_ocr
+    build_llm: LlmBuilder = _default_build_llm
+    build_corrector: CorrectorBuilder = _default_build_corrector
+    build_evaluator: EvaluatorBuilder = _default_build_evaluator
+    build_native_ollama_evaluator: NativeOllamaEvaluatorBuilder = (
+        _default_build_native_ollama_evaluator
     )
-    build_ppocr_ocr: Callable[[ModelStore, threading.Event | None], OCRProcessor] = (
-        _default_build_ppocr_ocr
-    )
-    build_ollama_ocr: Callable[[str, OllamaClient, int, float], OCRProcessor] = (
-        _default_build_ollama_ocr
-    )
-    build_llm: Callable[[str, str, str, float], BaseChatModel] = _default_build_llm
-    build_corrector: Callable[[ModelPort, ProofreadingSettings, RequestProfile, int], Corrector] = (
-        _default_build_corrector
-    )
-    build_evaluator: Callable[[BaseChatModel, str], Evaluator] = _default_build_evaluator
-    build_native_ollama_evaluator: Callable[
-        [str, OllamaClient, str, float, float, int, bool | str], Evaluator
-    ] = _default_build_native_ollama_evaluator
-    build_doc_creator: Callable[[str, str], DocumentCreator] = _default_build_doc_creator
-    build_anonymizer: Callable[[str, AnonymizerConfig], Anonymizer] = _default_build_anonymizer
-    build_ocr_postprocessor: Callable[[], OcrOutputPostprocessor] = _default_build_ocr_postprocessor
+    build_doc_creator: DocCreatorBuilder = _default_build_doc_creator
+    build_anonymizer: AnonymizerBuilder = _default_build_anonymizer
+    build_ocr_postprocessor: OcrPostprocessorBuilder = _default_build_ocr_postprocessor
     #: The check a run makes before it reads pages with Ollama: is the server there, and is the
     #: model?  A seam, so a test can answer without a server.
-    check_ocr_model: Callable[[str, str, Reporter], None] = _default_check_ocr_model
+    check_ocr_model: OcrModelCheck = _default_check_ocr_model
 
 
 # ── Builder ────────────────────────────────────────────────────────────────
@@ -282,7 +390,10 @@ class StageBuilder:
 
     def build_preprocessor(self, output_dir: Path) -> ImagePreprocessor:
         return self.factory.build_preprocessor(
-            output_dir, self.config.debug, self.config.ocr, self.model_store
+            tmp_dir=output_dir,
+            save_steps=self.config.debug,
+            ocr=self.config.ocr,
+            store=self.model_store,
         )
 
     def build_preprocessor_service(self, output_dir: Path) -> PreprocessService:
@@ -324,9 +435,13 @@ class StageBuilder:
         if reason and cfg.recognition_enabled:
             raise OnlineOcrNotAllowedError(reason)
         if ocr.engine == ENGINE_PPOCR:
-            return factory.build_ppocr_ocr(self.model_store or ModelStore(), stop_event)
+            return factory.build_ppocr_ocr(
+                store=self.model_store or ModelStore(), stop_event=stop_event
+            )
         client = ollama_client or self._build_ollama_client()
-        return factory.build_ollama_ocr(ocr.model, client, cfg.ocr_timeout, ocr.temperature)
+        return factory.build_ollama_ocr(
+            model=ocr.model, client=client, timeout=cfg.ocr_timeout, temperature=ocr.temperature
+        )
 
     def build_corrector(self, ollama_client: OllamaClient | None = None) -> Corrector | None:
         """Build the corrector of this run, or ``None`` when proofreading is off.
@@ -348,7 +463,9 @@ class StageBuilder:
         settings = self._correction_settings()
         # Step ① is the step whose answer is as long as the text, so its temperature decides
         # how often a cut-off answer is asked again.
-        tries = cut_off_tries(online=self._correction_is_online(), temperature=profile.temperature)
+        tries = correction_policy.cut_off_tries(
+            online=self._correction_is_online(), temperature=profile.temperature
+        )
         if cfg.correction_provider == "ollama":
             client = ollama_client or self._build_ollama_client()
             port: ModelPort = OllamaPort(
@@ -360,14 +477,19 @@ class StageBuilder:
         else:
             port = LangChainPort(
                 factory.build_llm(
-                    cfg.correction_provider,
-                    cfg.effective_correction_model,
-                    cfg.ollama_url,
-                    cfg.correction_temperature,
+                    provider=cfg.correction_provider,
+                    model=cfg.effective_correction_model,
+                    base_url=cfg.ollama_url,
+                    temperature=cfg.correction_temperature,
                 ),
                 strict=cfg.correction_provider == "openai",
             )
-        return _chunked(factory.build_corrector(port, settings, profile, tries), cfg.language)
+        return _chunked(
+            factory.build_corrector(
+                port=port, settings=settings, profile=profile, cut_off_tries=tries
+            ),
+            cfg.language,
+        )
 
     def build_correction_and_anonymizer(
         self, ollama_client: OllamaClient | None = None
@@ -431,7 +553,7 @@ class StageBuilder:
                 installed_models=installed_spacy_models(),
                 warn=self.reporter.warn,
             )
-            return self.factory.build_anonymizer(cfg.language, anon_config)
+            return self.factory.build_anonymizer(language=cfg.language, config=anon_config)
         except (ImportError, OSError) as exc:
             raise ProviderNotAvailableError(f"Cannot initialise anonymizer: {exc}") from exc
 
@@ -459,21 +581,21 @@ class StageBuilder:
         if cfg.evaluate_provider == "ollama":
             client = ollama_client or self._build_ollama_client()
             return factory.build_native_ollama_evaluator(
-                cfg.effective_evaluate_model,
-                client,
-                cfg.evaluate_prompt,
-                float(cfg.ocr_timeout),
-                cfg.evaluate_temperature,
-                self.resolved_windows().evaluation,
-                cfg.evaluate_think,
+                model=cfg.effective_evaluate_model,
+                client=client,
+                prompt=cfg.evaluate_prompt,
+                timeout=float(cfg.ocr_timeout),
+                temperature=cfg.evaluate_temperature,
+                num_ctx=self.resolved_windows().evaluation,
+                think=cfg.evaluate_think,
             )
         llm = factory.build_llm(
-            cfg.evaluate_provider,
-            cfg.effective_evaluate_model,
-            cfg.ollama_url,
-            cfg.evaluate_temperature,
+            provider=cfg.evaluate_provider,
+            model=cfg.effective_evaluate_model,
+            base_url=cfg.ollama_url,
+            temperature=cfg.evaluate_temperature,
         )
-        return factory.build_evaluator(llm, cfg.evaluate_prompt)
+        return factory.build_evaluator(llm=llm, prompt=cfg.evaluate_prompt)
 
     def build_ocr_postprocessor(self) -> OcrOutputPostprocessor:
         """Build the notation detector/parser applied to every page of OCR output."""
@@ -484,5 +606,5 @@ class StageBuilder:
             return None
         cfg = self.config
         return self.factory.build_doc_creator(
-            cfg.docx_format, cfg.explanation_language or cfg.language
+            fmt=cfg.docx_format, labels_language=cfg.explanation_language or cfg.language
         )

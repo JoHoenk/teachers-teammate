@@ -35,7 +35,7 @@ Public API
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -47,7 +47,7 @@ from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import output_folder_refusal
 from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..exceptions import OllamaConnectionError, ProviderNotAvailableError
-from ..interfaces import ImagePreprocessor, ProgressCallbacks, Reporter
+from ..interfaces import ProgressCallbacks, Reporter
 from . import run_report
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
 from .ollama_utils import OllamaClient
@@ -57,7 +57,7 @@ from .reporting import StdoutReporter
 from .run_stats import RunStatsCollector
 from .speed_store import SampleStore
 from .stage_builder import PipelineComponentFactory as PipelineComponentFactory  # noqa: PLC0414
-from .stage_builder import StageBuilder, default_build_preprocessor
+from .stage_builder import PreprocessorBuilder, StageBuilder, default_build_preprocessor
 from .state_repository import StateRepository
 from .storage_root import resolve_artifact_dir, resolve_storage_root
 from .teacher_work_store import TeacherWorkStore
@@ -105,9 +105,7 @@ def preprocess_preview(
     source_path: Path,
     ocr: OcrConfig,
     tmp_dir: Path,
-    build_preprocessor: Callable[
-        [Path, bool, OcrConfig, ModelStore | None], ImagePreprocessor
-    ] = default_build_preprocessor,
+    build_preprocessor: PreprocessorBuilder = default_build_preprocessor,
     model_store: ModelStore | None = None,
 ) -> tuple[Path, Path, list[str]]:
     """Preprocess *source_path* and return paths for both the original and processed image.
@@ -150,7 +148,7 @@ def preprocess_preview(
     if image_path is None:
         raise ValueError(f"Preview is only available for image-based inputs: '{source_path.name}'.")
 
-    preprocessor = build_preprocessor(tmp_dir, False, ocr, model_store)
+    preprocessor = build_preprocessor(tmp_dir=tmp_dir, save_steps=False, ocr=ocr, store=model_store)
     out_path, steps = preprocessor.preprocess(image_path)
     return image_path, out_path, steps
 
@@ -259,7 +257,9 @@ class OCRPipeline:
         )
         if cfg.recognition_enabled and cfg.ocr.engine == "ollama":
             try:
-                self._component_factory.check_ocr_model(cfg.ollama_url, cfg.ocr.model, reporter)
+                self._component_factory.check_ocr_model(
+                    url=cfg.ollama_url, model=cfg.ocr.model, reporter=reporter
+                )
                 reporter.status("Checking Ollama connection... OK")
             except (RuntimeError, OllamaConnectionError) as exc:
                 reporter.error(str(exc))

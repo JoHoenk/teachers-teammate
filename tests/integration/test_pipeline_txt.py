@@ -106,6 +106,7 @@ def test_pipeline_txt_input_enters_correction_pipeline(tmp_path: Path) -> None:
     source.write_text("Text to be corrected", encoding="utf-8")
 
     mock_corrector = MagicMock()
+    mock_corrector.pieces.return_value = None
     mock_corrector.correct.return_value = CorrectionOutcome("corrected text")
 
     with (

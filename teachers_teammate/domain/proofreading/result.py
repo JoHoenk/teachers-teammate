@@ -22,6 +22,7 @@ from .review import CorrectionReview
 StepName = Literal["correct", "explain", "unclear", "review"]
 """The steps a request can belong to: ① correct, ② explain, ③ unclear, and R's review."""
 
+
 class ExchangeKind(StrEnum):
     """Which exchange proofreads a text."""
 
@@ -30,17 +31,17 @@ class ExchangeKind(StrEnum):
 
 
 _STORED_EXCHANGE_IDS: dict[ExchangeKind, str] = {ExchangeKind.TEXT_FIRST: "T"}
-"""The id each exchange has in a stored cache key."""
+"""The id in a stored cache key, for an exchange whose id is not its enum value."""
 
 
 def stored_exchange_id(kind: ExchangeKind) -> str:
     """Return the id *kind* has in a stored cache key.
 
-    The correction cache key carries ``"T"`` for the text-first exchange, while the enum's value
-    is the word the evaluation tools use.  Renaming the value must not make every stored
-    proofreading stale.
+    The cache key carries ``"T"`` for the text-first exchange; the enum's value is the word the
+    evaluation tools use.  Any other exchange is keyed by its value.
     """
-    return _STORED_EXCHANGE_IDS[kind]
+    return _STORED_EXCHANGE_IDS.get(kind, kind.value)
+
 
 FailureKind = Literal["", "truncated", "invalid", "transport"]
 """How a request ended.
@@ -74,7 +75,7 @@ DEFAULT_EXCHANGE_COST = ExchangeCost(
     answer_tokens_per_100_words={"correct": 141, "explain": 60, "unclear": 20},
     text_copies={"correct": 1, "explain": 2, "unclear": 1},
 )
-"""What exchange ``T`` costs, until a measurement on the official test set replaces it.
+"""What the text-first exchange costs, until a measurement on the official test set replaces it.
 
 Provisional figures from the proof-of-concept sweep: one request per step and page, and the
 answer lengths of the three steps relative to the text.  Step ① is a plain rewrite, so its

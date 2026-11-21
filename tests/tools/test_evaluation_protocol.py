@@ -468,3 +468,15 @@ def test_the_request_side_is_byte_identical_to_the_pinned_one() -> None:
     assert side["repair"] == _PINNED["repair"]
     assert side["answer_format_version"] == _PINNED["answer_format_version"]
     assert side["repair_answer_tokens"] == _PINNED["repair_answer_tokens"]
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_the_tools_name_the_apps_exchange_with_the_apps_word() -> None:
+    """
+    Given  the exchange the app proofreads with and the tools' name for it
+    When   their values are compared
+    Then   they are the same word, so a stored run and the app speak of one exchange
+    """
+    from teachers_teammate.domain.proofreading.result import ExchangeKind  # noqa: PLC0415
+
+    assert Exchange.TEXT_FIRST.value == ExchangeKind.TEXT_FIRST.value

@@ -1,8 +1,6 @@
 """How a model is asked, in the one vocabulary the tools and the app share.
 
-The old tools said ``mode: exchange`` and meant the app's ``ExchangeKind`` ``"T"``, while every file
-name said ``T`` and meant the temperature.  One word, two meanings, and the exchange itself was
-never named.  Here an answer is described by two axes instead:
+An answer is described by two axes:
 
 * **``exchange``** — how the text travels: ``text-first`` (the app's exchange: the corrected text
   first, then the explanations), ``one-request-text`` (the corrected text in one JSON answer),

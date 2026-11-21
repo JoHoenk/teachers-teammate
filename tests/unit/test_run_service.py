@@ -1240,7 +1240,9 @@ def test_run_selected_passes_a_component_factory_with_the_shared_anonymizer(tmp_
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ):
-        built = dependencies.component_factory.build_anonymizer("English", AnonymizerConfig())
+        built = dependencies.component_factory.build_anonymizer(
+            language="English", config=AnonymizerConfig()
+        )
         built.anonymize("Anna wrote")
 
     assert len(svc.anonymization._anonymization_cache) == 1

@@ -162,6 +162,7 @@ def test_a_proofreading_is_made_from_the_teachers_transcription(tmp_path: Path) 
     _check(reading, second)
 
     corrector = MagicMock()
+    corrector.pieces.return_value = None
     corrector.correct.return_value = CorrectionOutcome("proofread")
     assert _run(_proofreading_config(tmp_path), corrector=corrector) == 0
 
@@ -205,6 +206,7 @@ def test_a_changed_reading_setting_does_not_read_a_fixed_transcription_again(
     frozen_hash = _state_for(reading, fixed).ocr_config_hash
 
     corrector = MagicMock()
+    corrector.pieces.return_value = None
     corrector.correct.return_value = CorrectionOutcome("proofread")
     assert _run(_proofreading_config(tmp_path), corrector=corrector) == 0
     assert corrector.correct.call_count == 2
@@ -240,6 +242,7 @@ def test_a_changed_proofreading_setting_keeps_corrections_the_teacher_worked_on(
     looked.write_text("teh looked essay", encoding="utf-8")
 
     corrector = MagicMock()
+    corrector.pieces.return_value = None
     corrector.correct.return_value = CorrectionOutcome("proofread")
     assert _run(first, corrector=corrector) == 0
 
@@ -279,6 +282,7 @@ def test_a_proofreading_made_from_a_transcription_that_is_gone_is_stale(
     _fix_transcription(reading, source, "the essay")
 
     corrector = MagicMock()
+    corrector.pieces.return_value = None
     corrector.correct.return_value = CorrectionOutcome("proofread")
     assert _run(_proofreading_config(tmp_path), corrector=corrector) == 0
     assert corrector.correct.call_args.args[0] == "the essay"
@@ -311,6 +315,7 @@ def test_the_outputs_carry_the_teachers_texts(tmp_path: Path) -> None:
     _fix_transcription(reading, source, "the essay, as read")
 
     corrector = MagicMock()
+    corrector.pieces.return_value = None
     corrector.correct.return_value = CorrectionOutcome("the essay")
     assert _run(_proofreading_config(tmp_path), corrector=corrector) == 0
     _fix_corrected(_proofreading_config(tmp_path), source, "the essay, corrected by the teacher")
@@ -354,6 +359,7 @@ def test_an_emptied_cache_proofreads_the_teachers_transcription(tmp_path: Path) 
     _fix_transcription(reading, source, "the essay, as read")
 
     corrector = MagicMock()
+    corrector.pieces.return_value = None
     corrector.correct.return_value = CorrectionOutcome("the essay")
     assert _run(_proofreading_config(tmp_path), corrector=corrector) == 0
     _fix_corrected(_proofreading_config(tmp_path), source, "the essay, corrected by the teacher")
@@ -455,6 +461,7 @@ def test_a_changed_reading_setting_does_not_read_a_scan_whose_corrections_were_w
     reader = MagicMock()
     reader.process_image.return_value = "teh essay"
     corrector = MagicMock()
+    corrector.pieces.return_value = None
     corrector.correct.return_value = CorrectionOutcome("the essay")
     assert _run_scans(first, reader, corrector=corrector) == 0
     _fix_corrected(first, scan, "the essay, corrected by the teacher")

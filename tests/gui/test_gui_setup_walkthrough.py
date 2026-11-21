@@ -469,7 +469,7 @@ class Walkthrough:
     def run(self, script: Callable[[Driver], None]) -> Driver:
         """Open the assistant from the Tools menu and run *script* against it."""
         self._script = script
-        self.win._setup_action.trigger()
+        self.win._menu_bar.setup_action.trigger()
         assert self.drivers, "the Tools menu never opened the assistant"
         return self.drivers[-1]
 
@@ -827,7 +827,7 @@ def test_s5_a_failed_pull_drops_the_queue_and_leaves_the_window_usable(
     assert driver.rows[reading].startswith("✗"), driver.rows[reading]
     assert driver.rows[writing] == DONE_WAITING
 
-    assert walk.win._setup_action.isEnabled(), "the window stopped answering"
+    assert walk.win._menu_bar.setup_action.isEnabled(), "the window stopped answering"
     assert walk.readiness_note() != CHECKING
     assert any("failed" in title.lower() for title, _text in modal_boxes), modal_boxes
 

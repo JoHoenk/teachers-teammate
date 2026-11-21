@@ -136,8 +136,8 @@ def _open_document(main_window, monkeypatch, tmp_path, raw: str, corrected: str 
             )
         ]
     )
-    main_window._update_check_tab()
-    main_window._load_check(str(source))
+    main_window._check_controller.update_tab()
+    main_window._check_controller.load(str(source))
 
 
 @pytest.fixture(autouse=True)
@@ -191,10 +191,10 @@ def test_the_eye_button_switches_the_setting(main_window, settings) -> None:
     When   the button is clicked
     Then   the preview shows the names and the choice is stored
     """
-    main_window._check._hide_names_box.click()
+    main_window._check_controller.page._hide_names_box.click()
 
-    assert not main_window._check._masking.enabled
-    assert not main_window._display_anonymized
+    assert not main_window._check_controller.page._masking.enabled
+    assert not main_window._privacy_controller.display_anonymized
     assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
 
 
@@ -229,24 +229,24 @@ def test_ok_in_privacy_settings_applies_the_checkbox(main_window, settings, open
     assert window.focus == FOCUS_DETECTION
     assert window.context.display_anonymized is True
     assert window.context.privacy_available is True
-    assert not main_window._check._masking.enabled
+    assert not main_window._check_controller.page._masking.enabled
     assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
 
 
 @pytest.mark.gui
 def test_ok_in_privacy_settings_keeps_the_saved_choice_while_hiding_is_unavailable(
-    main_window, settings, open_privacy
+    main_window, monkeypatch, settings, open_privacy
 ) -> None:
     """
     Given  a window whose names are hidden, but whose spaCy model has gone missing
     When   the Settings window closes with OK (its disabled checkbox reads "off")
     Then   the saved choice is not overwritten, so hiding comes back once the model does
     """
-    main_window._privacy_available = False
+    monkeypatch.setattr(main_window._privacy_controller, "_available", False)
 
     open_privacy(accepted=True, choice=False)
 
-    assert main_window._display_anonymized is True
+    assert main_window._privacy_controller.display_anonymized is True
     assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
 
 
@@ -261,7 +261,7 @@ def test_cancel_in_privacy_settings_leaves_the_setting_alone(
     """
     open_privacy(accepted=False, choice=False)
 
-    assert main_window._check._masking.enabled
+    assert main_window._check_controller.page._masking.enabled
     assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
 
 
@@ -276,7 +276,7 @@ def test_settings_without_the_privacy_page_leave_the_setting_alone(
     """
     open_privacy(accepted=True, choice=None)
 
-    assert main_window._display_anonymized is True
+    assert main_window._privacy_controller.display_anonymized is True
     assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
 
 
@@ -307,7 +307,7 @@ def test_the_eye_button_and_the_privacy_page_stay_in_step(qtbot, main_window, mo
     When   the eye button shows them
     Then   the Privacy page opened afterwards shows a cleared checkbox
     """
-    main_window._check._hide_names_box.click()
+    main_window._check_controller.page._hide_names_box.click()
 
     page = _privacy_page(qtbot, main_window, monkeypatch)
 
@@ -316,7 +316,7 @@ def test_the_eye_button_and_the_privacy_page_stay_in_step(qtbot, main_window, mo
 
 def _privacy_page(qtbot, win: MainWindow, monkeypatch: pytest.MonkeyPatch) -> PrivacyPage:
     """Return the Privacy page for *win*'s current state (not shown, no spaCy discovery)."""
-    context = win._settings_context()
+    context = win._settings_launcher.context()
     monkeypatch.setattr(
         context.app_service.anonymization, "list_installed_spacy_models", lambda: []
     )  # no spaCy here
@@ -344,15 +344,15 @@ def test_the_eye_button_says_while_the_names_are_being_hidden(
     monkeypatch.setattr(AnonymizationService, "anonymize_preview", _slow_anonymize)
     main_window.show()
     _open_document(main_window, monkeypatch, tmp_path, RAW)
-    box = main_window._check._hide_names_box
-    banner = main_window._check.body.banner
+    box = main_window._check_controller.page._hide_names_box
+    banner = main_window._check_controller.page.body.banner
 
     assert box.text() == txt.HIDE_PERSONAL_INFO_BUTTON_WORKING
     assert box.toolTip() == txt.HIDING_PERSONAL_INFO
     assert banner.isHidden()
 
     release.set()
-    _wait_for(lambda: not main_window._check._masking.pending)
+    _wait_for(lambda: not main_window._check_controller.page._masking.pending)
 
     assert box.text() == txt.HIDE_PERSONAL_INFO_BUTTON
     assert box.toolTip() == txt.HIDE_PERSONAL_INFO_BUTTON_TIP
@@ -374,17 +374,17 @@ def test_the_eye_button_makes_the_texts_editable(
     )
     main_window.show()
     _open_document(main_window, monkeypatch, tmp_path, RAW)  # names are hidden by default
-    body = main_window._check.body
-    _wait_for(lambda: not main_window._check._masking.pending)
+    body = main_window._check_controller.page.body
+    _wait_for(lambda: not main_window._check_controller.page._masking.pending)
     assert body.read_view.isReadOnly()
     assert body.read_view.toolTip() != txt.SHOW_NAMES_TO_CHANGE
 
-    main_window._check._hide_names_box.click()
+    main_window._check_controller.page._hide_names_box.click()
 
-    assert not main_window._check._masking.enabled
+    assert not main_window._check_controller.page._masking.enabled
     assert not body.read_view.isReadOnly()
     assert body.read_view.toPlainText() == RAW
-    assert not main_window._display_anonymized
+    assert not main_window._privacy_controller.display_anonymized
     assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
 
 
@@ -396,8 +396,8 @@ def test_personal_information_is_hidden_on_the_first_start(main_window, settings
     Then   the names are hidden, in the window state and in the preview
     """
     assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
-    assert main_window._display_anonymized
-    assert main_window._check._masking.enabled
+    assert main_window._privacy_controller.display_anonymized
+    assert main_window._check_controller.page._masking.enabled
 
 
 @pytest.mark.gui
@@ -416,8 +416,8 @@ def test_a_stored_choice_to_show_the_names_is_kept(qtbot, monkeypatch, settings)
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
-    assert not win._display_anonymized
-    assert not win._check._masking.enabled
+    assert not win._privacy_controller.display_anonymized
+    assert not win._check_controller.page._masking.enabled
 
 
 @pytest.mark.gui
@@ -436,8 +436,8 @@ def test_the_setting_is_restored_from_the_last_session(qtbot, monkeypatch, setti
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
-    assert win._display_anonymized
-    assert win._check._masking.enabled
+    assert win._privacy_controller.display_anonymized
+    assert win._check_controller.page._masking.enabled
 
 
 @pytest.mark.gui
@@ -459,13 +459,13 @@ def test_the_string_language_without_spacy_disables_the_choice(
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
-    assert not win._check._hide_names_box.isEnabled()
+    assert not win._check_controller.page._hide_names_box.isEnabled()
     page = _privacy_page(qtbot, win, monkeypatch)
     checkbox = page.hide_personal_checkbox()
     assert not checkbox.isEnabled()
     assert not checkbox.isChecked()
     assert WHERE_ADDONS in checkbox.toolTip()
-    assert win._check._masking.enabled is False
+    assert win._check_controller.page._masking.enabled is False
 
 
 @pytest.mark.gui
@@ -483,12 +483,12 @@ def test_the_placeholders_arrive_from_the_service(main_window, monkeypatch, tmp_
 
     monkeypatch.setattr(AnonymizationService, "anonymize_preview", _fake_anonymize)
     _open_document(main_window, monkeypatch, tmp_path, RAW, CORRECTED)
-    main_window._apply_display_anonymized(True)
+    main_window._privacy_controller.apply_display_anonymized(True)
 
-    _wait_for(lambda: not main_window._check._masking.pending)
+    _wait_for(lambda: not main_window._check_controller.page._masking.pending)
 
     assert calls == [(RAW, main_window._config_panel.lookup_language())]
-    assert main_window._check.body.read_view.toPlainText() == ANONYMIZED
+    assert main_window._check_controller.page.body.read_view.toPlainText() == ANONYMIZED
 
 
 def _wait_for(predicate, timeout_ms: int = 5000) -> None:
@@ -515,19 +515,19 @@ def test_changing_the_language_updates_the_privacy_availability(main_window, mon
         lambda self, language, _config=None: language == "English",
     )
     main_window._config_panel._language.setCurrentText("English")
-    main_window._refresh_privacy_availability()
-    assert main_window._privacy_available
-    assert main_window._check._hide_names_box.isEnabled()
+    main_window._privacy_controller.refresh_availability()
+    assert main_window._privacy_controller.privacy_available
+    assert main_window._check_controller.page._hide_names_box.isEnabled()
 
     main_window._config_panel._language.setCurrentText("German")
 
-    assert not main_window._privacy_available
-    assert not main_window._check._hide_names_box.isEnabled()
+    assert not main_window._privacy_controller.privacy_available
+    assert not main_window._check_controller.page._hide_names_box.isEnabled()
 
     main_window._config_panel._language.setCurrentText("English")
 
-    assert main_window._privacy_available
-    assert main_window._check._hide_names_box.isEnabled()
+    assert main_window._privacy_controller.privacy_available
+    assert main_window._check_controller.page._hide_names_box.isEnabled()
 
 
 @pytest.mark.gui
@@ -543,13 +543,13 @@ def test_a_finished_download_enables_the_setting(main_window, monkeypatch) -> No
         "anonymizer_available",
         lambda self, _l, _config=None: installed["yes"],
     )
-    main_window._refresh_privacy_availability()
-    assert not main_window._check._hide_names_box.isEnabled()
+    main_window._privacy_controller.refresh_availability()
+    assert not main_window._check_controller.page._hide_names_box.isEnabled()
 
     installed["yes"] = True
     main_window._on_packages_changed()
 
-    assert main_window._check._hide_names_box.isEnabled()
+    assert main_window._check_controller.page._hide_names_box.isEnabled()
 
 
 @pytest.mark.gui
@@ -570,15 +570,15 @@ def test_a_round_of_installs_that_outlives_its_window_enables_the_setting(
         "anonymizer_available",
         lambda self, _l, _config=None: installed["yes"],
     )
-    main_window._refresh_privacy_availability()
-    assert not main_window._check._hide_names_box.isEnabled()
+    main_window._privacy_controller.refresh_availability()
+    assert not main_window._check_controller.page._hide_names_box.isEnabled()
 
     round_ = InstallRound(main_window._app_service, None, main_window)
     round_.finished.connect(main_window._on_install_round_finished)
     installed["yes"] = True
     round_.finished.emit(True)
 
-    assert main_window._check._hide_names_box.isEnabled()
+    assert main_window._check_controller.page._hide_names_box.isEnabled()
 
 
 @pytest.mark.gui
@@ -600,13 +600,13 @@ def test_only_the_newest_anonymization_reaches_the_page(
 
     monkeypatch.setattr(AnonymizationService, "anonymize_preview", _fake_anonymize)
     _open_document(main_window, monkeypatch, tmp_path, RAW)
-    main_window._apply_display_anonymized(True)
+    main_window._privacy_controller.apply_display_anonymized(True)
     _open_document(main_window, monkeypatch, tmp_path, "Clara West ist hier.")
 
-    _wait_for(lambda: not main_window._check._masking.pending)
+    _wait_for(lambda: not main_window._check_controller.page._masking.pending)
     release_first.set()
     from PySide6.QtTest import QTest  # noqa: PLC0415
 
     QTest.qWait(100)
 
-    assert main_window._check.body.read_view.toPlainText() == "[PERSON_1] ist hier."
+    assert main_window._check_controller.page.body.read_view.toPlainText() == "[PERSON_1] ist hier."

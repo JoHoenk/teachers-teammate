@@ -11,16 +11,12 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import (
-    QAction,
     QDragEnterEvent,
     QDropEvent,
     QIcon,
-    QKeySequence,
-    QShortcut,
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -39,8 +35,6 @@ from PySide6.QtWidgets import (
 import qdarkstyle
 
 from .. import __version__ as _APP_VERSION
-from ..application.check_document import CheckDocument
-from ..application.commands import WorkNotSavedError
 from ..application.composition import (
     AppServices,
     diagnostics_phase,
@@ -50,97 +44,45 @@ from ..application.composition import (
 from ..application.documents import WorkedOn
 from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
-from ..application.run import IssueKind, RunPreflight
-from ..application.sent_text import SentTexts
-from ..config import DEFAULTS, Config, dump_config_file, load_config_file
+from ..application.run import RunPreflight
+from ..config import DEFAULTS, Config
 from ..domain.data_location import DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
-from ..domain.model_catalog import HardwareDetection
-from ..domain.ollama_discovery import ServerKind
-from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
-from ..texts import privacy
-from ..texts.settings import WHERE_ADDONS, WHERE_GENERAL
+from ..texts.settings import WHERE_GENERAL
 from . import _dialogs
-from . import _user_text as txt
 from ._app_bootstrap import create_app, finish_process
 from ._background import LatestTask, run_in_background, wait_for_background_tasks
 from ._chart_widget import ChartWidget
+from ._check_controller import CheckController, CheckHooks
 from ._config_panel import ConfigPanel
 from ._credential_store import CredentialStore
 from ._data_flow_summary import advice_text, level_text, stage_tooltips
-from ._error_text import spacy_problem
 from ._export_controller import ExportController
-from ._export_menu import ExportKind, build_export_menu
-from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
-from ._model_wording import profile_text
+from ._menu_bar import MenuBar, MenuHooks
 from ._preprocess_preview import PreprocessPreview
-from ._privacy_settings import (
-    DISPLAY_ANONYMIZED_DEFAULT,
-    FlowAcknowledgements,
-    display_anonymized,
-    set_display_anonymized,
-)
+from ._privacy_settings import DISPLAY_ANONYMIZED_DEFAULT, FlowAcknowledgements
+from ._privacy_view_controller import PrivacyViewController
 from ._pull_manager import PullManager
 from ._readiness_controller import ReadinessController, ReadinessHooks
 from ._readiness_line import ReadinessLine
 from ._results_table import ResultsTable
 from ._run_controller import RunController, RunHooks, WorkerLike
-from ._run_session import (
-    STOP_NOW_TEXT,
-    STOP_TEXT,
-    RunSession,
-    StopStage,
-    wait_detail_text,
-)
+from ._run_session import RunSession, wait_detail_text
+from ._settings_file import SettingsFile, SettingsFileHooks
+from ._settings_launcher import SettingsHooks, SettingsLauncher
+from ._setup_launcher import SetupHooks, SetupLauncher
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
 from ._update_check import UpdateCheckThread
-from ._view_settings import (
-    check_card_split,
-    check_split,
-    set_check_card_split,
-    set_check_split,
-    set_text_point_size,
-    text_point_size,
-)
-from ._what_is_sent_dialog import WhatIsSentDialog
-from ._window_geometry import maximize_without_saved_geometry, restore_geometry
-from .check import CheckLayout, CheckPage, CopyKind, CopyState, RunState
-from .settings import (
-    PAGE_TITLES,
-    SettingsContext,
-    SettingsPage,
-    SettingsResult,
-    SettingsWindow,
-    last_page,
-)
-from .settings._page import FOCUS_DETECTION, FOCUS_OCR, FOCUS_PROOFREADING
-from .settings._window import SUB_PAGES
+from .settings import SettingsPage
+from .settings._page import FOCUS_DETECTION
 
 if TYPE_CHECKING:
     from .benchmark._benchmark_window import BenchmarkWindow
-    from .setup import SetupResult
-
-
-def _debounce_timer(parent: QWidget, interval_ms: int, slot: Callable[[], None]) -> QTimer:
-    """Return a single-shot timer that calls *slot* once *interval_ms* have passed."""
-    timer = QTimer(parent)
-    timer.setSingleShot(True)
-    timer.setInterval(interval_ms)
-    timer.timeout.connect(slot)
-    return timer
-
-
-def _is_shown(widget: QWidget) -> bool:
-    """Return whether *widget* still exists and is visible (a closed window is not)."""
-    try:
-        return widget.isVisible()
-    except RuntimeError:  # its C++ object was deleted
-        return False
 
 
 def _app_icon() -> QIcon | None:
@@ -172,27 +114,6 @@ def _app_icon() -> QIcon | None:
     return None
 
 
-#: The two texts the Check tab lets the teacher type in, as the store names them.
-_EDIT_RAW = "raw"
-_EDIT_CORRECTED = "corrected"
-
-#: How much of a document's name the Check tab label shows before it is shortened.
-_CHECK_TAB_NAME_CHARS = 28
-
-#: Whose computer a found server is on, as the readiness line says it.
-_SERVER_PLACES = {
-    ServerKind.THIS_COMPUTER: "this computer",
-    ServerKind.WINDOWS_HOST: "the Windows computer",
-    ServerKind.NETWORK: "another computer",
-}
-
-#: The kinds that mean "Ollama isn't answering": the line keeps looking while one of them
-#: blocks the run, so an Ollama installed or started meanwhile turns it green by itself.
-_OLLAMA_KINDS = frozenset(
-    {IssueKind.OLLAMA_UNREACHABLE, IssueKind.OLLAMA_NOT_FOUND, IssueKind.OLLAMA_NOT_RUNNING}
-)
-
-
 class MainWindow(QMainWindow):
     """Teacher's Teammate main application window."""
 
@@ -216,7 +137,6 @@ class MainWindow(QMainWindow):
         if _icon is not None:
             self.setWindowIcon(_icon)
         self._init_runtime_state()
-        self._init_run_state()
 
         self._pull_manager.progress.connect(self._on_pull_progress)
         self._pull_manager.started.connect(self._on_pull_started)
@@ -232,50 +152,26 @@ class MainWindow(QMainWindow):
         self._load_toml_if_present()
 
     def _init_menu_state(self) -> None:
-        """Declare what the menu bar fills in and the tools open later."""
-        self._settings_actions: dict[SettingsPage, QAction] = {}
-        self._all_settings_action: QAction
-        self._benchmark_action: QAction
-        self._monitor_action: QAction
-        self._setup_action: QAction
+        """Declare the menu bar and what its tools open later."""
+        #: Built in ``_build_ui``; the window lays nothing out on it.
+        self._menu_bar: MenuBar
         #: The Benchmark window once opened (parentless, see ``_open_benchmark``).
         self._benchmark_window: BenchmarkWindow | None = None
-        #: Whether the Setup Assistant is open, so a second click cannot open a second one.
-        self._setup_open = False
-
-    def _init_run_state(self) -> None:
-        """Declare what the window needs for a run that is going: the clock, the notes, closing."""
-        #: Set once the teacher agreed to stop the run and close (File → Quit asks itself).
-        self._close_confirmed = False
-        #: Under the progress bar; built in ``_build_left_panel``.
-        self._awake_note: QLabel
-        self._battery_note: QLabel
+        #: Opens the Setup Assistant, also on a first start.
+        self._setup_launcher: SetupLauncher
 
     def _init_runtime_state(self) -> None:
         """Initialise per-window runtime state and declare widgets built later."""
-        self._config_path: Path | None = None
+        #: Set once the teacher agreed to stop the run and close (File → Quit asks itself).
+        self._close_confirmed = False
+        self._settings_file: SettingsFile
         self._pull_manager = PullManager(self, service=self._app_service)
-        self._sent_texts_task = LatestTask(self)
-        self._last_sent_texts: SentTexts | None = None
-        self._anonymize_task = LatestTask(self)
-        self._anonymize_running = False
         #: What the run in progress is doing: the file, the step, the pace and the Stop stage.
         self._run_session = RunSession()
-        #: The "Hide personal information in texts" view setting (not part of Config).
-        self._display_anonymized = display_anonymized(self._settings_store)
-        #: Whether the texts can be hidden for the current document language.
-        self._privacy_available = True
-        #: What the Copy menu offers for the open document, so a privacy change can redraw it.
-        self._copy_state: CopyState | None = None
-        #: The text and language of the running hiding job, to not start it twice.
-        self._anonymize_key: tuple[str, str] | None = None
-        self._first_run_task = LatestTask(self)
         self._preprocess_preview: PreprocessPreview
-        #: The Settings window while it is open (dialogs started from it use it as parent).
-        self._settings_window: SettingsWindow | None = None
+        #: Opens the Settings window and takes over what it changed.
+        self._settings_launcher: SettingsLauncher
         self._init_menu_state()
-        #: The document the Check tab shows; empty when none is open.
-        self._current_preview_source_id: str = ""
 
         # Declared here; assigned in _build_widgets and _init_controllers.
         self._config_panel: ConfigPanel
@@ -283,13 +179,10 @@ class MainWindow(QMainWindow):
         self._export_controller: ExportController
         self._run_controller: RunController
         self._readiness_controller: ReadinessController
+        self._check_controller: CheckController
+        self._privacy_controller: PrivacyViewController
         # True while the requirement check of a Run / stage re-run is in flight.
         self._preflight_running = False
-        # A drag of a pane reports every pixel: the settings are written once it settles.
-        self._pending_check_layout: CheckLayout | None = None
-        self._layout_debounce = _debounce_timer(
-            self, self._LAYOUT_DEBOUNCE_MS, self._flush_check_layout
-        )
         # The same for the expected cache keys of the queue: they depend on the card.
         self._cache_state_task = LatestTask(self)
         self._update_thread: UpdateCheckThread | None = None
@@ -308,7 +201,6 @@ class MainWindow(QMainWindow):
         self._log: LogWidget
         self._results_table: ResultsTable
         self._chart: ChartWidget
-        self._check: CheckPage
         self._main_splitter: QSplitter
 
     def _setup_tray(self) -> None:
@@ -349,8 +241,25 @@ class MainWindow(QMainWindow):
         self._build_widgets()
         self._init_controllers()
         root.addWidget(self._build_tabs(), 1)
-        self._build_menu_bar()
+        self._menu_bar = MenuBar(
+            self,
+            panel=self._config_panel,
+            export=self._export_controller,
+            hooks=self._menu_hooks(),
+        )
         self._connect_pages()
+        self._settings_file = SettingsFile(
+            self,
+            services=self._app_service,
+            panel=self._config_panel,
+            splitter=self._main_splitter,
+            log=self._log,
+            settings_store=self._settings_store,
+            hooks=SettingsFileHooks(
+                ask_first_start=lambda: self._setup_launcher.open(first_start=True),
+                queue_loaded=self._refresh_queue_from_inputs,
+            ),
+        )
 
         # No parent: the thread outlives the window if it is closed during the request.
         # The switch is read once, at start: turning it off takes effect at the next start.
@@ -367,14 +276,12 @@ class MainWindow(QMainWindow):
         self._config_panel.set_service(self._app_service)
         self._results_table = ResultsTable()
         self._log = LogWidget()
-        self._check = CheckPage()
-        self._check.set_point_size(text_point_size(self._settings_store))
-        self._check.set_layout(
-            CheckLayout(
-                split=check_split(self._settings_store),
-                card_split=check_card_split(self._settings_store),
-            )
-        )
+        # The tabs are filled once the controllers exist: the Check page is one of them.
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
+        _tab_bar_font = self._tabs.tabBar().font()
+        _tab_bar_font.setPointSize(14)
+        self._tabs.tabBar().setFont(_tab_bar_font)
         # Built now and kept hidden, so the chart collects the data of every run.  Parentless on
         # purpose (see SystemMonitorWindow): closeEvent closes it with this window.
         self._monitor = SystemMonitorWindow(self._app_service.recommendations.read_gpu_usage)
@@ -384,13 +291,13 @@ class MainWindow(QMainWindow):
     def _run_hooks(self) -> RunHooks:
         """What the run asks of this window. Looked up when a run happens, not now."""
         return RunHooks(
-            apply_lock=self._apply_lock,
-            update_check_tab=self._update_check_tab,
-            refresh_check_run=self._refresh_check_run,
+            apply_lock=self._check_controller.apply_lock,
+            update_check_tab=self._check_controller.update_tab,
+            refresh_check_run=self._check_controller.refresh_run,
             sync_row=self._sync_row,
             # The two a test puts its own in the place of: looked up when the run gets there.
-            load_check=lambda source_id: self._load_check(source_id),  # noqa: PLW0108
-            current_source_id=lambda: self._current_preview_source_id,
+            load_check=lambda source_id: self._check_controller.load(source_id),  # noqa: PLW0108
+            current_source_id=lambda: self._check_controller.current,
             queued_files=self._queued_files,
             save_settings=lambda **kwargs: self._save_settings(**kwargs),  # noqa: PLW0108
             show_documents=lambda: self._tabs.setCurrentIndex(0),
@@ -412,14 +319,54 @@ class MainWindow(QMainWindow):
             log_line=self._log.append_text,
         )
 
+    def _check_hooks(self) -> CheckHooks:
+        """What the Check tab asks of this window. Looked up when it asks, not now."""
+        return CheckHooks(
+            sync_row=self._sync_row,
+            run_busy=self._run_in_progress,
+            warn_busy=lambda: self._run_controller.warn_busy(),  # noqa: PLW0108
+            run_stage=lambda ids, stage: self._on_stage_run_requested(ids, stage),  # noqa: PLW0108
+            open_settings=lambda page, focus: self.open_settings(page, focus=focus),
+            privacy_available=lambda: self._privacy_controller.privacy_available,
+            export=lambda ids, kind: self._export_controller.on_requested(ids, kind),  # noqa: PLW0108
+        )
+
+    def _menu_hooks(self) -> MenuHooks:
+        """What the menu bar asks of the window."""
+        return MenuHooks(
+            quit_requested=self._on_quit_requested,
+            open_settings=self.open_settings,
+            open_benchmark=self._open_benchmark,
+            open_monitor=self._open_system_monitor,
+            open_setup_assistant=self._setup_launcher.open,
+        )
+
     def _init_controllers(self) -> None:
         """Build the controllers, each given the widgets it works on."""
+        self._check_controller = CheckController(
+            self,
+            services=self._app_service,
+            panel=self._config_panel,
+            table=self._results_table,
+            session=self._run_session,
+            tabs=self._tabs,
+            settings_store=self._settings_store,
+            hooks=self._check_hooks(),
+        )
+        self._privacy_controller = PrivacyViewController(
+            self,
+            services=self._app_service,
+            panel=self._config_panel,
+            table=self._results_table,
+            check=self._check_controller,
+            settings_store=self._settings_store,
+        )
         self._readiness_controller = ReadinessController(
             self,
             services=self._app_service,
             panel=self._config_panel,
             table=self._results_table,
-            page=self._check,
+            page=self._check_controller.page,
             hooks=self._readiness_hooks(),
         )
         self._readiness_line = self._readiness_controller.line
@@ -436,11 +383,9 @@ class MainWindow(QMainWindow):
         self._run_btn = self._run_controller.run_button
         self._stop_btn = self._run_controller.stop_button
         self._progress = self._run_controller.progress_bar
-        self._awake_note = self._run_controller.awake_note
-        self._battery_note = self._run_controller.battery_note
         self._run_btn.clicked.connect(self._on_run)
         self._stop_btn.clicked.connect(self._run_controller.on_stop_clicked)
-        self._check.stop_requested.connect(self._run_controller.on_stop_clicked)
+        self._check_controller.page.stop_requested.connect(self._run_controller.on_stop_clicked)
         self._export_controller = ExportController(
             self,
             services=self._app_service,
@@ -451,12 +396,33 @@ class MainWindow(QMainWindow):
         self._preprocess_preview = PreprocessPreview(
             self, services=self._app_service, panel=self._config_panel, table=self._results_table
         )
+        self._setup_launcher = SetupLauncher(
+            self,
+            services=self._app_service,
+            panel=self._config_panel,
+            pull_manager=self._pull_manager,
+            privacy=self._privacy_controller,
+            log=self._log,
+            hooks=self._setup_hooks(),
+        )
+        self._settings_launcher = SettingsLauncher(
+            self,
+            services=self._app_service,
+            panel=self._config_panel,
+            check=self._check_controller,
+            privacy=self._privacy_controller,
+            pull_manager=self._pull_manager,
+            acknowledgements=self._acknowledgements,
+            hooks=self._settings_hooks(),
+        )
 
     def _connect_pages(self) -> None:
         """Wire the panels and the pages to the window."""
-        self._results_table.check_requested.connect(self._open_check)
+        self._results_table.check_requested.connect(self._check_controller.open_document)
         self._results_table.stage_run_requested.connect(self._on_stage_run_requested)
-        self._results_table.what_is_sent_requested.connect(self._on_what_is_sent_requested)
+        self._results_table.what_is_sent_requested.connect(
+            self._privacy_controller.on_what_is_sent_requested
+        )
         self._config_panel.data_flow_changed.connect(self._on_data_flow_changed)
         self._results_table.itemSelectionChanged.connect(self._readiness_controller.update)
         # The box rendered once while the panels were built, before these connections.
@@ -471,9 +437,7 @@ class MainWindow(QMainWindow):
         self._config_panel.results_changed.connect(self._on_results_changed)
         self._config_panel.instructions_changed.connect(self._on_instructions_changed)
         self._readiness_line.action_chosen.connect(self._readiness_controller.run_fix)
-        self._connect_check_page()
-        self._refresh_privacy_availability()
-        self._check.set_display_anonymized(self._display_anonymized)
+        self._privacy_controller.refresh_availability()
         # Kick off the first readiness check once the window is laid out.
         # Pass self as the receiver so the callback is cancelled if the window is destroyed.
         QTimer.singleShot(500, self, self._readiness_controller.start_check)
@@ -483,162 +447,17 @@ class MainWindow(QMainWindow):
 
         The Check tab holds the preview panel full width, so the queue keeps its own tab.
         """
-        self._tabs = QTabWidget()
-        self._tabs.setDocumentMode(True)
-        _tab_bar_font = self._tabs.tabBar().font()
-        _tab_bar_font.setPointSize(14)
-        self._tabs.tabBar().setFont(_tab_bar_font)
-
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._main_splitter.addWidget(self._build_left_panel())
         self._main_splitter.addWidget(self._build_right_panel())
         self._main_splitter.setStretchFactor(0, 0)
         self._main_splitter.setStretchFactor(1, 1)
-        self._tabs.addTab(self._main_splitter, "Documents")
+        self._tabs.addTab(self._main_splitter, check_text.TAB_DOCUMENTS)
 
-        self._tabs.addTab(self._check, "Check")
+        self._tabs.addTab(self._check_controller.page, check_text.TAB_CHECK)
         self._tabs.setTabEnabled(1, False)  # nothing to check before a document has a result
-        self._tabs.currentChanged.connect(self._on_tab_changed)
+        self._tabs.currentChanged.connect(self._check_controller.on_tab_changed)
         return self._tabs
-
-    def _connect_check_page(self) -> None:
-        """Wire the Check tab's header to the window, and the two tab shortcuts."""
-        self._check.previous_requested.connect(self._on_check_previous)
-        self._check.next_requested.connect(self._on_check_next)
-        self._check.copy_requested.connect(self._on_check_copy)
-        self._check.save_requested.connect(self._on_check_save)
-        self._check.back_requested.connect(self._show_documents_tab)
-        self._check.raw_text_edited.connect(self._on_ocr_text_edited)
-        self._check.corrected_text_edited.connect(self._on_correction_text_edited)
-        self._check.proofread_requested.connect(self._on_check_proofread_requested)
-        self._check.proofreading_setup_requested.connect(
-            lambda: self.open_settings(SettingsPage.AI_MODELS, focus=FOCUS_PROOFREADING)
-        )
-        self._check.read_settings_requested.connect(
-            lambda: self.open_settings(SettingsPage.AI_MODELS, focus=FOCUS_OCR)
-        )
-        self._check.checked_toggled.connect(self._on_checked_toggled)
-        self._check.item_shown.connect(self._on_item_shown)
-        self._check.display_anonymized_changed.connect(self._apply_display_anonymized)
-        self._check.anonymization_needed.connect(self._on_anonymization_needed)
-        self._check.text_zoom_changed.connect(self._store_text_zoom)
-        self._check.layout_changed.connect(self._store_check_layout)
-        # Ctrl+1 / Ctrl+2 reach the tabs from anywhere in the window; Esc is the Check page's.
-        QShortcut(QKeySequence("Ctrl+1"), self, self._show_documents_tab)
-        QShortcut(QKeySequence("Ctrl+2"), self, self._show_check_tab)
-
-    def _build_menu_bar(self) -> None:
-        bar = self.menuBar()
-        assert bar is not None
-        self._build_file_menu(bar)
-        self._build_settings_menu(bar)
-        self._build_tools_menu(bar)
-
-        help_menu = bar.addMenu("Help")
-        assert help_menu is not None
-        guide_act = QAction("User Guide\u2026", self)
-        guide_act.triggered.connect(self._open_help_dialog)
-        help_menu.addAction(guide_act)
-        help_menu.addSeparator()
-        licenses_act = QAction("Third-Party Licenses\u2026", self)
-        licenses_act.triggered.connect(self._open_licenses_dialog)
-        help_menu.addAction(licenses_act)
-        help_menu.addSeparator()
-        about_act = QAction("About Teacher\u2019s Teammate\u2026", self)
-        about_act.triggered.connect(self._open_about_dialog)
-        help_menu.addAction(about_act)
-
-    def _build_file_menu(self, bar: Any) -> None:
-        """File: open documents, export results, quit."""
-        file_menu = bar.addMenu("File")
-        assert file_menu is not None
-        open_folder_act = QAction("Open Folder\u2026", self)
-        # The panel does not exist yet when the menu bar is built, hence the lambdas.
-        open_folder_act.triggered.connect(
-            lambda: self._config_panel.select_folder()  # noqa: PLW0108
-        )
-        file_menu.addAction(open_folder_act)
-        open_files_act = QAction("Open Files\u2026", self)
-        open_files_act.triggered.connect(
-            lambda: self._config_panel.select_files()  # noqa: PLW0108
-        )
-        file_menu.addAction(open_files_act)
-        export_menu, kinds = build_export_menu(file_menu)
-        export_menu.triggered.connect(
-            lambda action: self._export_controller.on_toolbar_action(kinds[action])
-        )
-        file_menu.addMenu(export_menu)
-        # Enabled together with the Export button: there is nothing to export before a run.
-        self._export_controller.add_actions(list(kinds))
-        file_menu.addSeparator()
-        quit_act = QAction("Quit", self)
-        quit_act.setShortcut(QKeySequence(QKeySequence.StandardKey.Quit))
-        quit_act.setMenuRole(QAction.MenuRole.QuitRole)
-        quit_act.triggered.connect(self._on_quit_requested)
-        file_menu.addAction(quit_act)
-
-    def _build_settings_menu(self, bar: Any) -> None:
-        """Settings: one entry per main page of the Settings window, and "All settings…"."""
-        settings_menu = bar.addMenu("Settings")
-        assert settings_menu is not None
-        tooltips = {
-            SettingsPage.GENERAL: (
-                "How the app behaves while it works, for example keeping the computer awake "
-                "during a run."
-            ),
-            SettingsPage.AI_MODELS: "Which AI reads the handwriting, proofreads and reviews.",
-            SettingsPage.AI_SETUP: (
-                "What the AI models need from this computer: how powerful it is and where "
-                "the local AI server is."
-            ),
-            SettingsPage.ONLINE_SERVICES: (
-                "The access keys (API keys) of the online AI services you can use."
-            ),
-            SettingsPage.SCAN_QUALITY: "How scans are cleaned up before the text is read.",
-            SettingsPage.PRIVACY: (
-                "What may leave this computer, and how names and other personal information "
-                "are found and replaced."
-            ),
-            SettingsPage.ADDONS: "Download AI models and install optional parts.",
-        }
-        for page in SettingsPage:
-            if page in SUB_PAGES:
-                continue  # reached from AI models and in the window's sidebar, not from here
-            action = QAction(f"{PAGE_TITLES[page]}\u2026", self)
-            action.setToolTip(tooltips[page])
-            action.triggered.connect(lambda _checked=False, p=page: self.open_settings(p))
-            settings_menu.addAction(action)
-            self._settings_actions[page] = action
-        settings_menu.addSeparator()
-        all_act = QAction("All settings\u2026", self)
-        all_act.setShortcut(QKeySequence("Ctrl+,"))
-        all_act.setMenuRole(QAction.MenuRole.PreferencesRole)
-        all_act.triggered.connect(lambda: self.open_settings(last_page()))
-        settings_menu.addAction(all_act)
-        self._all_settings_action = all_act
-
-    def _build_tools_menu(self, bar: Any) -> None:
-        """Tools: things that are not part of a batch (Benchmark, System Monitor, Setup)."""
-        tools_menu = bar.addMenu("Tools")
-        assert tools_menu is not None
-        benchmark_act = QAction("Benchmark\u2026", self)
-        benchmark_act.setToolTip(
-            "Try a document with different text-recognition settings and compare the results."
-        )
-        benchmark_act.triggered.connect(self._open_benchmark)
-        tools_menu.addAction(benchmark_act)
-        monitor_act = QAction("System Monitor", self)
-        monitor_act.setToolTip("How busy this computer is, and how long each document took.")
-        monitor_act.triggered.connect(self._open_system_monitor)
-        tools_menu.addAction(monitor_act)
-        tools_menu.addSeparator()
-        setup_act = QAction("Setup Assistant\u2026", self)
-        setup_act.setToolTip("Answer a few questions to set up the AI for this computer.")
-        setup_act.triggered.connect(lambda _checked=False: self._open_setup_assistant())
-        tools_menu.addAction(setup_act)
-        self._benchmark_action = benchmark_act
-        self._monitor_action = monitor_act
-        self._setup_action = setup_act
 
     def _open_system_monitor(self) -> None:
         self._monitor.show_and_raise()
@@ -663,15 +482,6 @@ class MainWindow(QMainWindow):
         window.show()
         window.raise_()
         window.activateWindow()
-
-    def _open_help_dialog(self) -> None:
-        HelpDialog(self).exec()
-
-    def _open_licenses_dialog(self) -> None:
-        ThirdPartyLicensesDialog(self).exec()
-
-    def _open_about_dialog(self) -> None:
-        AboutDialog(self).exec()
 
     def _build_left_panel(self) -> QWidget:
         left = QWidget()
@@ -699,8 +509,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(btn_row)
 
         layout.addWidget(self._progress)
-        layout.addWidget(self._awake_note)
-        layout.addWidget(self._battery_note)
+        layout.addWidget(self._run_controller.awake_note)
+        layout.addWidget(self._run_controller.battery_note)
 
         left.setMinimumWidth(340)
         left.setMaximumWidth(420)
@@ -716,234 +526,16 @@ class MainWindow(QMainWindow):
 
     # ── Settings persistence ──────────────────────────────────────────────
 
-    #: How long a drag of a pane waits before the layout is written to the settings.
-    _LAYOUT_DEBOUNCE_MS = 400
     _QSETTINGS_ORG = "TeachersTeammate"
     _QSETTINGS_APP = "TeachersTeammate"
 
-    def _restore_gui_state(self) -> None:
-        """Restore the window geometry and the splitter sizes from QSettings."""
-        qs = QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
-        if not restore_geometry(self, qs.value("gui/geometry")):
-            # The first start: the window is as large as the screen allows.  A saved geometry,
-            # normal or maximized, always wins over this.
-            maximize_without_saved_geometry(self)
-        sizes = [360, 1140]
-        raw_sizes = qs.value("gui/panel_sizes")
-        if isinstance(raw_sizes, list) and len(raw_sizes) == 2:
-            try:
-                restored = [int(v) for v in raw_sizes]
-                if restored[0] >= 200 and restored[1] >= 400:
-                    sizes = restored
-            except ValueError, TypeError:
-                pass
-        QTimer.singleShot(0, lambda s=sizes: self._main_splitter.setSizes(s))
-
     def _load_toml_if_present(self) -> None:
-        config_path = self._app_service.setup.resolve_config_path(None)
-        self._restore_gui_state()
-
-        installer_choices = self._app_service.setup.first_start_settings(config_path)
-        if installer_choices is not None or config_path is None:
-            # First start (no ocr.toml yet, or only what the installer wrote): the assistant
-            # asks what only the teacher knows and works the models out from the answers.  It
-            # opens on top of this window, so the teacher sees the app first.  What the
-            # installer chose is loaded first, so the first save keeps it.
-            if installer_choices and config_path is not None:
-                self._config_path = config_path
-                self._config_panel.load_from_dict(installer_choices)
-            QTimer.singleShot(0, self._open_setup_assistant_first_start)
-            return
-        self._config_path = config_path
-        try:
-            loaded = load_config_file(config_path)
-            values = loaded.values
-            base = config_path.parent.resolve()
-            for key in ("input", "output"):
-                if values.get(key):
-                    p = Path(str(values[key]))
-                    if not p.is_absolute():
-                        values[key] = str((base / p).resolve())
-            self._config_panel.load_from_dict(values)
-            # Signals fired during bulk field restoration can run queue refresh
-            # before all dependent settings (e.g. docx_enabled) are applied. Run one
-            # final refresh after the full config is loaded so cached state is
-            # shown consistently on startup.
-            self._refresh_queue_from_inputs()
-            self._log.append_text(f"Loaded settings from {config_path}\n")
-            for notice in loaded.notices:
-                self._show_setting_notice(notice)
-        except Exception as exc:  # noqa: BLE001  # config file may be missing, malformed, or use an unexpected type; log the warning and continue
-            self._log.append_text(f"WARNING: Could not load {config_path}: {exc}\n")
-
-    def _show_setting_notice(self, setting_notice: SettingNotice) -> None:
-        """Say what the app changed about a saved setting instead of changing it silently.
-
-        A replaced text-recognition engine changes what the next run does, so it interrupts
-        the teacher; the other notices are in the log.
-        """
-        notice = dlg.setting_notice(setting_notice)
-        self._log.append_text(f"NOTICE: {notice.body}\n")
-        if setting_notice.kind is SettingNoticeKind.ENGINE_REPLACED:
-            _dialogs.notify(self, notice)
-
-    def _open_setup_assistant_first_start(self) -> None:
-        """Open the assistant on a first start, on top of the window that just appeared."""
-        self._open_setup_assistant(first_start=True)
-
-    def _open_setup_assistant(self, *, first_start: bool = False) -> None:
-        """Ask the questions a first start needs, then apply the setup plan the teacher agreed to.
-
-        On a first start the assistant starts on the system language, because there is no
-        saved one yet; from the Tools menu it starts on the settings as they are.  Cancel on a
-        first start leaves today's setup in place (the best models for this computer and the
-        system language); from the Tools menu it changes nothing.
-        """
-        if self._setup_open:
-            return
-        from .setup import SetupAssistant, SetupContext  # noqa: PLC0415  # loaded on demand
-
-        language = ""
-        if first_start:
-            language = (
-                self._app_service.setup.system_language() or self._config_panel.lookup_language()
-            )
-        context = SetupContext(
-            settings=self._config_panel.get_settings_dict(),
-            app_service=self._app_service,
-            pull_manager=self._pull_manager,
-            language=language,
-            privacy_available=self._privacy_available,
-            first_start=first_start,
-            display_anonymized=self._display_anonymized,
-        )
-        assistant = SetupAssistant(context, self)
-        assistant.committed.connect(self._apply_setup_result)
-        # The round outlives the assistant: a download that finishes after the window closed
-        # must still tell this window that packages changed.
-        install_round = assistant.install_round()
-        install_round.finished.connect(self._on_install_round_finished)
-        self._setup_open = True
-        try:
-            assistant.exec()
-        finally:
-            self._setup_open = False
-        # The round was handed to this window so it can finish after the assistant: it goes
-        # when it is over, or at once when nothing is running.
-        if install_round.running():
-            install_round.finished.connect(install_round.deleteLater)
-        else:
-            install_round.deleteLater()
-        wants_documents = assistant.documents_wanted()
-        # Set up decides, not how the window closed: the X on the done page is a reject too.
-        was_set_up = assistant.is_committed()
-        assistant.deleteLater()
-        if first_start and not was_set_up:
-            self._apply_first_start_defaults()
-        if wants_documents:
-            self._config_panel.select_folder()
-
-    def _apply_first_start_defaults(self) -> None:
-        """Leave a first start with a working setup when the assistant was cancelled.
-
-        The system language goes into the panel, because no settings file names one yet; then
-        today's first start runs: the best models for this computer, once detection finishes.
-        """
-        language = self._app_service.setup.system_language()
-        if language:
-            self._config_panel.load_from_dict({"language": language})
-            self._save_settings(notify=False)
-        self._apply_first_start_model_settings()
-
-    def _apply_setup_result(self, result: SetupResult) -> None:
-        """Take over what the assistant set up, then save once.
-
-        The main-window keys go through ``load_from_dict``, which skips the stage guard: the
-        models are still downloading, so a guard would untick Proofread and open a dialog.
-        """
-        self._config_panel.update_settings(result.settings)
-        self._config_panel.load_from_dict(result.panel)
-        if result.display_anonymized is not None:
-            # The name detection may still be on its way: the wish is stored as it is, and the
-            # view follows it as soon as hiding is possible (_refresh_privacy_availability).
-            set_display_anonymized(self._settings_store, result.display_anonymized)
-            self._display_anonymized = result.display_anonymized
-            self._check.set_display_anonymized(result.display_anonymized)
-        self._save_settings(notify=False)
-        self._readiness_controller.start_check()
-        self._refresh_queue_from_inputs()
-
-    def _apply_first_start_model_settings(self) -> None:
-        """Start first-start hardware detection in the background (AC12/AC13)."""
-        service = self._app_service
-        ollama_url = self._current_ollama_url()
-        # Detection must never get in the way of starting the app: any failure
-        # simply leaves the static defaults in place.
-        self._first_run_task.submit(
-            lambda: service.recommendations.detect_hardware(ollama_url),
-            self._on_first_start_detection,
-        )
-
-    def _on_first_start_detection(self, detection: object, error: BaseException | None) -> None:
-        """Replace untouched static defaults with the BEST models for the profile."""
-        if error is not None or not isinstance(detection, HardwareDetection):
-            return
-        settings = self._config_panel.get_settings_dict()
-        best = self._app_service.recommendations.first_run_model_settings(
-            detection.profile,
-            system_memory_gb=detection.system_memory_gb,
-            card_gb=detection.card_gb,
-        )
-        apply: dict[str, str] = {}
-        if (
-            settings.get("ocr_engine") == "ollama"
-            and settings.get("ocr_model") == DEFAULTS["ocr_model"]
-        ):
-            apply["ocr_model"] = best["ocr_model"]
-        if (
-            settings.get("correction_provider") == "ollama"
-            and settings.get("correction_model") == DEFAULTS["correction_model"]
-        ):
-            apply["correction_model"] = best["correction_model"]
-        if (
-            settings.get("evaluate_provider") == "ollama"
-            and settings.get("evaluate_model") == DEFAULTS["evaluate_model"]
-        ):
-            apply["evaluate_model"] = best["evaluate_model"]
-        if not apply:
-            return
-        self._config_panel.update_settings(apply)
-        ocr_model = apply.get("ocr_model", str(settings.get("ocr_model", "")))
-        general_model = apply.get("correction_model") or apply.get(
-            "evaluate_model", best["correction_model"]
-        )
-        self._log.append_text(
-            f"First start: chose reading model {ocr_model} and writing model "
-            f"{general_model} for your computer ({profile_text(detection.profile)}). "
-            f"You can download them under {WHERE_ADDONS}.\n"
-        )
-        self._save_settings(notify=False)
-        self._readiness_controller.start_check()
+        """Read the settings file, or ask the first-start questions when there is none."""
+        self._settings_file.load_if_present()
 
     def _save_settings(self, *, notify: bool = True, silent_on_error: bool = False) -> None:
-        # Persist window geometry and splitter sizes to QSettings (UI state, not pipeline config)
-        qs = QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
-        qs.setValue("gui/geometry", self.saveGeometry())
-        qs.setValue("gui/panel_sizes", self._main_splitter.sizes())
-
-        values = self._config_panel.to_dict()
-        out = (
-            self._config_path
-            if self._config_path is not None
-            else self._app_service.setup.default_config_path()
-        )
-        try:
-            out.write_text(dump_config_file(values), encoding="utf-8")
-            if notify:
-                self._log.append_text(f"Settings saved to {out.resolve()}\n")
-        except OSError as exc:
-            if not silent_on_error:
-                _dialogs.notify(self, dlg.save_failed(str(exc)))
+        """Write the settings file and remember the window geometry."""
+        self._settings_file.save(notify=notify, silent_on_error=silent_on_error)
 
     def _confirm_close_during_run(self) -> bool:
         """Ask whether to stop the run and close; the default answer keeps the run going."""
@@ -969,21 +561,19 @@ class MainWindow(QMainWindow):
             self._save_settings(notify=False, silent_on_error=True)
         except Exception:  # noqa: BLE001  # never block window close on a settings-save error
             pass
-        self._layout_debounce.stop()
-        self._flush_check_layout()
+        self._check_controller.flush_layout()
         # Only close() runs the Benchmark window's own closeEvent, which stops its worker;
         # deleting it with a parent would not.  Closing the last window ends the app.
         if self._benchmark_window is not None:
             self._benchmark_window.close()
         # The System Monitor is parentless too: closing the last visible window ends the app.
         self._monitor.close()
-        self._first_run_task.cancel()
+        self._setup_launcher.shutdown()
         self._readiness_controller.shutdown()
         # Let the window disappear before waiting: running background tasks are
         # given a moment to end, and the user should not see a frozen window.
         self.hide()
-        self._sent_texts_task.cancel()
-        self._anonymize_task.cancel()
+        self._privacy_controller.shutdown()
         self._run_controller.stop_for_close()
         wait_for_background_tasks()
         event.accept()
@@ -998,10 +588,6 @@ class MainWindow(QMainWindow):
             else QSystemTrayIcon.MessageIcon.Information
         )
         self._tray.showMessage("Teacher's Teammate", text, icon, 4000)
-
-    def _get_file_names(self, config: Config) -> list[str]:
-        """Return queued file names via application-layer file discovery."""
-        return [file.name for file in self._app_service.run.collect_input_files(config)]
 
     def _scan_input_files(self) -> list[Path]:
         """Scan the input folder through the run service while the config is incomplete."""
@@ -1036,8 +622,8 @@ class MainWindow(QMainWindow):
         # reports progress, so it stays "Idle" until something runs.
         if not self._run_in_progress():
             self._run_controller.show_idle()
-        self._sync_check_with_queue()
-        self._update_check_tab()
+        self._check_controller.sync_with_queue()
+        self._check_controller.update_tab()
         self._readiness_controller.update()
         # Other documents may need another engine (text files need none, recognised ones
         # no more recognition): ask again what a run over them requires.
@@ -1151,7 +737,7 @@ class MainWindow(QMainWindow):
             on_ready(RunPreflight())
             return
         if result.blocked:
-            self._show_blocking_preflight(result)
+            self._readiness_controller.show_blocking(result)
             return
         note = wait_detail_text(result.ollama_wait)
         if note:
@@ -1171,10 +757,6 @@ class MainWindow(QMainWindow):
         """
         if _dialogs.ask(self, dlg.not_enough_memory(warning)):
             on_ready()
-
-    def _show_blocking_preflight(self, result: RunPreflight) -> None:
-        """Explain the requirement that stops the run, with a button for each way to fix it."""
-        self._readiness_controller.show_blocking(result)
 
     def _settings_store(self) -> QSettings:
         """Return a QSettings for the window's GUI preferences (not pipeline settings)."""
@@ -1289,7 +871,7 @@ class MainWindow(QMainWindow):
         """Ask what an explicit re-run would drop, then invalidate the cache and start the worker."""
         # A typed edit is stored first: after the invalidation it would be stored on top of the
         # state the run is about to work on, and a run would redo or skip the wrong thing.
-        self._check.flush_pending_edit()
+        self._check_controller.page.flush_pending_edit()
         if stage == "evaluation":
             # A content review is made from the corrected text; nothing of the teacher's goes.
             self._invalidate_and_run(config, selected_source_ids, stage)
@@ -1361,12 +943,11 @@ class MainWindow(QMainWindow):
         self._config_panel.restore_defaults()
         # Not part of the settings file: the "hide personal information" view and the
         # remembered "Don't ask again" answers (so the next run asks before sending).
-        self._apply_display_anonymized(DISPLAY_ANONYMIZED_DEFAULT)
+        self._privacy_controller.apply_display_anonymized(DISPLAY_ANONYMIZED_DEFAULT)
         self._acknowledgements().forget_all()
-        self._check.forget_anonymization()
+        self._check_controller.page.forget_anonymization()
         self._save_settings(notify=False)
-        self._readiness_controller.start_check()
-        self._refresh_queue_from_inputs()
+        self._after_settings_applied()
 
     def _on_results_changed(self) -> None:
         """Step "Results" changed: save it, and show what is cached for the new folder."""
@@ -1416,7 +997,7 @@ class MainWindow(QMainWindow):
         if event.type() != QEvent.Type.ActivationChange or not self.isActiveWindow():
             return
         self._app_service.anonymization.reread_installed_models()
-        self._refresh_privacy_availability()
+        self._privacy_controller.refresh_availability()
         if self._readiness_controller.blocker is not None:
             self._readiness_controller.start_check(fresh=True)
 
@@ -1434,14 +1015,10 @@ class MainWindow(QMainWindow):
         self._app_service.recommendations.on_ollama_models_changed(
             self._pull_manager.current_url or self._current_ollama_url()
         )
-        self._end_download()
+        self._readiness_controller.end_download()
 
     def _on_pull_error(self, msg: str) -> None:
         self._readiness_controller.model_download_failed(msg)
-
-    def _end_download(self) -> None:
-        """Hand the line back; the model that was missing may be there now."""
-        self._readiness_controller.end_download()
 
     # ── Drag-and-drop ─────────────────────────────────────────────────────
 
@@ -1462,366 +1039,6 @@ class MainWindow(QMainWindow):
             self._config_panel.set_selected_files(paths)
         else:
             self._config_panel.set_input_dir(str(paths[0].parent))
-
-    # ── The Check tab ─────────────────────────────────────────────────────
-
-    def _load_check(self, source_id: str) -> bool:
-        """Show *source_id* in the Check tab, with its texts and the items of its review.
-
-        The loader never switches tabs. A finished file reloads the open document, and only
-        the teacher (or a run start, which goes to Documents) decides which tab is in front.
-        Returns whether the document was shown; when it was not, the teacher was told why and
-        what was open before stays open.
-        """
-        doc = self._check_document(source_id)
-        if doc is None:
-            _dialogs.notify(self, dlg.check_without_state(Path(source_id).name))
-            # What was open stays open; a lock the run put on it must still lift with the run.
-            self._apply_lock()
-            self._update_check_tab()
-            return False
-        self._current_preview_source_id = source_id
-        self._check.show_document(doc, *self._check_position(source_id))
-        self._set_copy_state(doc.raw_text, doc.corrected_text)
-        self._sync_row(source_id)
-        self._apply_lock()
-        self._update_check_tab()
-        return True
-
-    def _check_document(self, source_id: str) -> CheckDocument | None:
-        """Return what the Check tab shows about *source_id*, or ``None`` without a state."""
-        try:
-            config = self._config_panel.to_config()
-        except ValueError:
-            # A setting that is not valid yet (no output folder) must not hide stored results:
-            # reading them needs no more than the lookup config does.
-            config = self._config_panel.lookup_config()
-        return self._app_service.documents.check_document(config, Path(source_id))
-
-    def _apply_lock(self) -> None:
-        """Make the open document read-only while the run works on it, or free it again."""
-        source_id = self._current_preview_source_id
-        if not source_id:
-            return
-        if source_id == self._run_session.current:
-            self._check.set_lock(txt.BEING_PROOFREAD)
-        elif source_id in self._run_session.pending:
-            self._check.set_lock(txt.WAITING_FOR_RUN)
-        else:
-            self._check.set_lock(None)
-        self._refresh_check_run()
-
-    def _refresh_check_run(self) -> None:
-        """Tell the Check tab what the run does with the open document: working, waiting, or not.
-
-        Fed from what the window already follows (the run's file, step and pace, and the Stop
-        stage), so the teacher who proofreads from Check sees the run without leaving the tab.
-        """
-        source_id = self._current_preview_source_id
-        if not source_id or not (
-            source_id == self._run_session.current or source_id in self._run_session.pending
-        ):
-            self._check.set_run(None)
-            return
-        stop_text = {
-            StopStage.RUNNING: STOP_TEXT,
-            StopStage.AFTER_FILE: STOP_NOW_TEXT,
-            StopStage.NOW: STOP_NOW_TEXT,
-        }.get(self._run_session.stop_stage, "")
-        stop_enabled = self._run_session.stop_stage in (StopStage.RUNNING, StopStage.AFTER_FILE)
-        if source_id != self._run_session.current:
-            self._check.set_run(
-                RunState(
-                    check_text.RUN_WAITING,
-                    busy=False,
-                    stop_text=stop_text,
-                    stop_enabled=stop_enabled,
-                )
-            )
-            return
-        step = self._run_session.step or (
-            check_text.RUN_PROOFREADING.format(model=self._run_session.model)
-            if self._run_session.model
-            else check_text.RUN_READING
-        )
-        snapshot = self._run_session.snapshot
-        self._check.set_run(
-            RunState(
-                step,
-                time_left=snapshot.note,
-                time_left_tip=snapshot.tooltip,
-                stop_text=stop_text,
-                stop_enabled=stop_enabled,
-            )
-        )
-
-    def _store_text_zoom(self, point_size: int) -> None:
-        """Remember the text size the teacher zoomed to, for the next document and restart."""
-        set_text_point_size(self._settings_store, point_size)
-
-    def _store_check_layout(self, layout: CheckLayout) -> None:
-        """Note how the teacher sized the Check tab's panes; stored once the drag settles."""
-        self._pending_check_layout = layout
-        self._layout_debounce.start()
-
-    def _flush_check_layout(self) -> None:
-        """Remember the last pane sizes, for the next restart."""
-        layout, self._pending_check_layout = self._pending_check_layout, None
-        if layout is None:
-            return
-        set_check_split(self._settings_store, layout.split)
-        set_check_card_split(self._settings_store, layout.card_split)
-
-    def _on_check_proofread_requested(self) -> None:
-        """Proofread the open document: the strip's button and the header's *Proofread again*."""
-        source_id = self._current_preview_source_id
-        if not source_id:
-            return
-        if self._run_in_progress():
-            self._run_controller.warn_busy()  # nothing starts, so the tab must not be marked as the origin
-            return
-        self._run_session.from_check = True
-        self._on_stage_run_requested([source_id], "correction")
-
-    def _on_item_shown(self, key: str) -> None:
-        """An item became the one the card shows: record that the teacher looked at it.
-
-        Stored at once, a few KB, and never undone.  Looking at an item is not work a run has to
-        keep, so it does not make the proofreading one to keep.
-        """
-        source_id = self._current_preview_source_id
-        if not source_id or not self._check.mark_looked_at(key):
-            return
-        try:
-            config = self._config_panel.to_config()
-        except ValueError:
-            config = self._config_panel.lookup_config()
-        self._app_service.commands.mark_looked_at(config, source=Path(source_id), keys=[key])
-
-    def _on_checked_toggled(self, checked: bool) -> None:
-        """The teacher pressed *Checked*: store the decision and show what the store says.
-
-        The toggle marks what the document has now — the corrections with a proofreading, the
-        transcription without one — and is its own undo.  It does not move to the next document;
-        ▶ does.  A typed edit is stored first, so the mark names the text the teacher sees.
-        """
-        source_id = self._current_preview_source_id
-        if not source_id:
-            return
-        self._check.flush_pending_edit()
-        source = Path(source_id)
-        try:
-            config = self._config_panel.to_config()
-        except ValueError:
-            # Without folders there is no store to write to: the button goes back to what the
-            # document says, not to what was pressed.
-            _dialogs.notify(self, dlg.checked_not_saved())
-            self._check.refresh_checked()
-            return
-        try:
-            view = self._app_service.commands.set_checked(config, source=source, checked=checked)
-        except WorkNotSavedError as exc:
-            _dialogs.notify(self, dlg.work_not_saved(exc.name, too_new=exc.too_new))
-            self._check.refresh_checked()
-            return
-        if view is None:
-            _dialogs.notify(self, dlg.checked_not_saved())
-            # The button goes back to what the store says, not to what was pressed.
-            self._load_check(source_id)
-            return
-        doc = self._app_service.documents.check_document(config, source)
-        self._sync_row(source_id)
-        if doc is not None:
-            self._check.update_document(doc)
-        self._update_check_tab()
-
-    def _check_position(self, source_id: str) -> tuple[int, int]:
-        """Return where *source_id* sits among the documents the Check tab can open."""
-        openable = self._results_table.checkable_source_ids()
-        position = openable.index(source_id) + 1 if source_id in openable else 0
-        return position, len(openable)
-
-    def _open_check(self, source_id: str) -> None:
-        """Show *source_id* in the Check tab: what a double-click, Enter or the menu asks for.
-
-        The row is selected too, so the queue shows the document that is open.  Clicking the
-        tab itself does not do this: a selection is how rows are chosen for a run, and reading
-        it on every tab click would swap the essay under the teacher.
-        """
-        self._load_check(source_id)
-        self._results_table.select_source(source_id)
-        self._tabs.setCurrentIndex(1)
-
-    def _set_copy_state(self, raw_txt: str, corr_txt: str) -> None:
-        """Say what the Copy menu may offer for a document with these texts."""
-        self._copy_state = CopyState(
-            has_raw=bool(raw_txt.strip()),
-            has_corrected=bool(corr_txt.strip()),
-            can_hide_names=self._privacy_available,
-        )
-        self._check.set_copy_state(self._copy_state)
-
-    def _refresh_copy_state(self) -> None:
-        """Bring the Copy menu of the open document up to date (names may now be hideable)."""
-        if self._copy_state is None:
-            return
-        self._check.set_copy_state(
-            CopyState(
-                has_raw=self._copy_state.has_raw,
-                has_corrected=self._copy_state.has_corrected,
-                can_hide_names=self._privacy_available,
-            )
-        )
-
-    def _update_check_tab(self) -> None:
-        """Label both tabs and enable Check only while a document can be opened."""
-        self._tabs.setTabEnabled(1, bool(self._results_table.checkable_source_ids()))
-        self._tabs.setTabText(0, self._documents_tab_label())
-        self._tabs.setTabText(1, self._check_tab_label())
-        self._tabs.setTabToolTip(0, "Documents (Ctrl+1)")
-        self._tabs.setTabToolTip(1, self._check_tab_tooltip())
-
-    def _documents_tab_label(self) -> str:
-        """``Documents``, or how far the running batch has got."""
-        if not self._run_in_progress() or not self._run_session.source_ids:
-            return "Documents"
-        return f"Documents \u00b7 {len(self._run_session.names)} of {len(self._run_session.source_ids)}"
-
-    def _check_tab_label(self) -> str:
-        """``Check``, or the name of the open document."""
-        name = self._open_document_name()
-        if not name:
-            return "Check"
-        if len(name) > _CHECK_TAB_NAME_CHARS:
-            name = name[: _CHECK_TAB_NAME_CHARS - 1] + "\u2026"
-        return f"Check \u2014 {name}"
-
-    def _check_tab_tooltip(self) -> str:
-        """The full name of the open document above the shortcut, so a short label stays clear."""
-        name = self._open_document_name()
-        return f"{name}\nCheck (Ctrl+2)" if name else "Check (Ctrl+2)"
-
-    def _open_document_name(self) -> str:
-        """The name of the document the Check tab shows, or ``""`` when none is open."""
-        row = self._results_table.row_for(self._current_preview_source_id)
-        return row.name if row is not None else ""
-
-    def _sync_check_with_queue(self) -> None:
-        """Close the Check tab when its document is no longer in the queue."""
-        if not self._current_preview_source_id:
-            return
-        if self._results_table.row_for(self._current_preview_source_id) is not None:
-            return
-        self._close_check()
-
-    def _close_check(self) -> None:
-        """Forget the open document and go back to Documents."""
-        self._current_preview_source_id = ""
-        self._check.clear()
-        self._tabs.setCurrentIndex(0)
-
-    def _on_tab_changed(self, index: int) -> None:
-        """Opening the Check tab with nothing open shows a document; the tab is never empty."""
-        if index == 0:
-            self._run_session.from_check = False  # a request that never started a run is forgotten
-        if index != 1 or self._current_preview_source_id:
-            return
-        target = self._check_target()
-        if target:
-            self._load_check(target)
-
-    def _check_target(self) -> str:
-        """The document Check opens when none is open: the current row, else the first."""
-        openable = self._results_table.checkable_source_ids()
-        selected = self._results_table.selected_source_ids()
-        current = selected[0] if selected else ""
-        if current in openable:
-            return current
-        return openable[0] if openable else ""
-
-    def _show_documents_tab(self) -> None:
-        """Go back to the queue: Ctrl+1, or Esc in the Check tab."""
-        self._tabs.setCurrentIndex(0)
-
-    def _show_check_tab(self) -> None:
-        """Go to the Check tab, opening a document when none is open (Ctrl+2)."""
-        if self._tabs.isTabEnabled(1):
-            self._tabs.setCurrentIndex(1)  # _on_tab_changed opens a document when none is
-
-    def _on_check_previous(self) -> None:
-        """Show the document before the open one in the queue."""
-        self._step_check(-1)
-
-    def _on_check_next(self) -> None:
-        """Show the document after the open one in the queue."""
-        self._step_check(1)
-
-    def _step_check(self, step: int) -> None:
-        """Move *step* documents on and select the row that is now shown.
-
-        The selection follows the open document, because a run takes its documents from the
-        selected rows: the teacher moving through the set keeps the queue in step.
-        """
-        openable = self._results_table.checkable_source_ids()
-        if self._current_preview_source_id not in openable:
-            return
-        index = openable.index(self._current_preview_source_id) + step
-        if not 0 <= index < len(openable):
-            return
-        target = openable[index]
-        self._load_check(target)
-        self._results_table.select_source(target)
-
-    def _on_check_copy(self, kind: CopyKind) -> None:
-        """Put the open document's text on the clipboard, as the Copy menu asked."""
-        source_id = self._current_preview_source_id
-        if not source_id:
-            return
-        self._check.flush_pending_edit()  # a typed edit must be in the text that is copied
-        try:
-            config = self._config_panel.to_config()
-        except ValueError:
-            return
-        service = self._app_service
-        # The text comes from the stored document, so a copy carries what the Check tab shows.
-        view = service.documents.load_view(config, Path(source_id))
-        if view is None:
-            return
-        if not kind.is_anonymized:
-            QApplication.clipboard().setText(
-                service.export.text_for_copy(view, corrected=kind.is_corrected)
-            )
-            self._check.show_copied()
-            return
-        language = self._config_panel.lookup_language()
-        anon_config = self._config_panel.build_anonymizer_config()
-
-        def _copy() -> object:
-            return service.export.text_for_copy(
-                view,
-                corrected=kind.is_corrected,
-                anonymize=True,
-                language=language,
-                anonymizer_config=anon_config,
-            )
-
-        def _on_done(result: object, error: BaseException | None) -> None:
-            if error is not None:
-                _dialogs.notify(self, dlg.copy_failed(spacy_problem(error) or str(error)))
-                return
-            QApplication.clipboard().setText(str(result))
-            self._check.show_copied()
-
-        # Hiding names runs spaCy, which is not a job for the GUI thread.
-        run_in_background(_copy, _on_done, owner=self)
-
-    def _on_check_save(self, kind: ExportKind) -> None:
-        """Save the open document's text through the window's own export path."""
-        source_id = self._current_preview_source_id
-        if not source_id:
-            return
-        self._check.flush_pending_edit()
-        self._export_controller.on_requested([source_id], kind)
 
     def _ensure_hardware_known_for_cache_state(self, config: Config) -> None:
         """Probe this computer in the background when the cache keys need to know the card.
@@ -1849,198 +1066,13 @@ class MainWindow(QMainWindow):
 
         self._cache_state_task.submit(detect, done)
 
-    def _open_source_for_edit(self) -> tuple[Path, bool] | None:
-        """Resolve the open document to its input path and whether it has a transcription.
-
-        An edit belongs to the document the Check tab shows, not to the selected row: the
-        selection is how a run picks its documents, and the two may differ.
-        """
-        source_id = self._current_preview_source_id
-        if not source_id:
-            return None
-        source = Path(source_id)
-        if not source.exists():
-            return None
-        return source, self._results_table.has_text(source_id)
-
-    def _on_ocr_text_edited(self, edited_text: str) -> None:
-        """The transcription was typed into: store it and show what the store now says."""
-        self._store_edit(_EDIT_RAW, edited_text)
-
-    def _on_correction_text_edited(self, edited_text: str) -> None:
-        """The final text was typed into: store it and show what the store now says."""
-        self._store_edit(_EDIT_CORRECTED, edited_text)
-
-    def _store_edit(self, kind: str, edited_text: str) -> None:
-        """Store one typed edit of the open document, then show the document it left behind.
-
-        One handler for both texts: they differ only in which part of the teacher's work the
-        store writes, and everything after it — the row, the page, the tab label — is the same.
-        """
-        selected = self._open_source_for_edit()
-        if selected is None:
-            return
-        source, has_text = selected
-        if kind == _EDIT_CORRECTED and not has_text:
-            return
-        try:
-            config = self._config_panel.to_config()
-        except ValueError:
-            return
-        source_id = str(source.resolve())
-        text_format = self._results_table.text_format_for_source(source_id)
-        try:
-            if kind == _EDIT_RAW:
-                view = self._app_service.commands.edit_transcription(
-                    config, source=source, text=edited_text, text_format=text_format
-                )
-            else:
-                view = self._app_service.commands.edit_corrected_text(
-                    config, source=source, text=edited_text
-                )
-        except WorkNotSavedError as exc:
-            # What was typed stays in the text view, so the teacher can still copy it.
-            _dialogs.notify(self, dlg.work_not_saved(exc.name, too_new=exc.too_new))
-            return
-        if view is None:
-            return
-        # One read of the stored state serves the row and the page.
-        doc = self._app_service.documents.check_document(config, source)
-        self._sync_row(source_id)
-        if doc is None:
-            return
-        if kind == _EDIT_RAW:
-            # The proofreading went with the transcription: the page falls back to it.
-            self._check.show_document(doc, *self._check_position(source_id), typed=True)
-            self._set_copy_state(doc.raw_text, doc.corrected_text)
-        else:
-            self._check.update_document(doc)
-        self._update_check_tab()
-
-    def _on_what_is_sent_requested(self, source_id: str) -> None:
-        """Open "What is sent for this file…" for one row of the results table."""
-        row = self._results_table.row_for(source_id)
-        name = row.name if row is not None else Path(source_id).name
-        if not self._results_table.has_text(source_id):
-            _dialogs.notify(self, privacy.what_is_sent_without_text())
-            return
-
-        config = self._config_panel.lookup_config()
-
-        busy = QDialog(self)
-        busy.setWindowTitle(privacy.what_is_sent_title(name))
-        busy_vbox = QVBoxLayout(busy)
-        busy_vbox.addWidget(QLabel(privacy.WHAT_IS_SENT_WORKING))
-        service = self._app_service
-
-        def _describe() -> object:
-            # The stored results say what really went out; the report says what would go next.
-            view = service.documents.load_view(config, Path(source_id))
-            if view is None:
-                return None
-            return service.documents.describe_sent_texts(config, view)
-
-        def _on_done(result: object, error: BaseException | None) -> None:
-            busy.accept()
-            if error is not None:
-                _dialogs.notify(
-                    self, privacy.what_is_sent_failed(spacy_problem(error) or str(error))
-                )
-                return
-            if not isinstance(result, SentTexts):
-                _dialogs.notify(self, privacy.what_is_sent_unreadable())
-                return
-            self._show_what_is_sent(result, name)
-
-        self._sent_texts_task.submit(_describe, _on_done)
-        busy.exec()
-
-    # ── hiding personal information in the view ──────────────────────────────────
-
-    def _apply_display_anonymized(self, enabled: bool) -> None:
-        """Store the view setting and show the texts accordingly.
-
-        Called by the eye button in the preview panel and by Settings → Privacy, so both
-        stay in step and the preference survives a restart.
-        """
-        enabled = bool(enabled) and self._privacy_available
-        set_display_anonymized(self._settings_store, enabled)
-        self._display_anonymized = enabled
-        self._check.set_display_anonymized(enabled)
-
-    def _refresh_privacy_availability(self) -> None:
-        """Enable the setting only while personal information can actually be hidden.
-
-        Needs the Privacy add-on and the spaCy models the view would load, resolved the way a
-        run resolves them — so a chosen primary model counts.  Asked every time instead of
-        cached: the answer is cheap, and a cache is what went stale when a download finished
-        after the window that started it had closed.
-        """
-        language = self._config_panel.lookup_language()
-        available = self._app_service.anonymization.anonymizer_available(
-            language, self._config_panel.build_anonymizer_config()
-        )
-        changed = available != self._privacy_available
-        self._privacy_available = available
-        self._check.set_display_anonymized_available(available)
-        self._refresh_copy_state()
-        if changed and available and self._display_anonymized:
-            # The setting was on but could not be applied; it can now.
-            self._check.set_display_anonymized(True)
-
-    def _on_anonymization_needed(self, raw_text: str) -> None:
-        """Start hiding the personal information of the text the preview shows."""
-        if not raw_text.strip():
-            self._check.set_anonymization({})
-            return
-        language = self._config_panel.lookup_language()
-        if self._anonymize_running and self._anonymize_key == (raw_text, language):
-            return  # already being worked out
-        self._anonymize_key = (raw_text, language)
-        self._anonymize_running = True
-        service = self._app_service
-        anon_config = self._config_panel.build_anonymizer_config()
-
-        def _anonymize() -> object:
-            return service.anonymization.anonymize_preview(raw_text, language, anon_config)
-
-        def _on_done(result: object, error: BaseException | None) -> None:
-            self._on_anonymization_done(result, error)
-
-        # Only the latest request counts: a slow result for a text the preview already left
-        # is dropped, and no thread object can be destroyed while it still runs.
-        self._anonymize_task.submit(_anonymize, _on_done)
-
-    def _on_anonymization_done(self, payload: object, error: BaseException | None) -> None:
-        """Hand the placeholders to the Check tab (only the newest request gets here)."""
-        self._anonymize_key = None
-        self._anonymize_running = False
-        if error is not None or not isinstance(payload, tuple) or len(payload) != 2:
-            reason = (
-                (spacy_problem(error) or str(error)) if error is not None else dlg.UNKNOWN_ERROR
-            )
-            self._check.set_anonymization({}, error=reason)
-            return
-        _anonymized, raw_mapping = payload
-        mapping = (
-            {str(key): str(value) for key, value in raw_mapping.items()}
-            if isinstance(raw_mapping, dict)
-            else {}
-        )
-        self._check.set_anonymization(mapping)
-
     def _on_data_flow_changed(self, flow: object) -> None:
         """Say under the proofreading and content-review cells where their text goes."""
         if not isinstance(flow, DataFlow):
             return
         self._results_table.set_stage_tooltips(stage_tooltips(flow))
-        self._refresh_privacy_availability()  # the document language may have changed
+        self._privacy_controller.refresh_availability()  # the document language may have changed
         self._readiness_controller.schedule_check()  # ... and what a run needs with it
-
-    def _show_what_is_sent(self, report: SentTexts, name: str) -> None:
-        """Show the report for one file, remembering it so tests and callers can read it."""
-        self._last_sent_texts = report
-        WhatIsSentDialog(report, file_name=name, parent=self).exec()
 
     def _build_update_banner(self) -> QFrame:
         banner = QFrame()
@@ -2081,23 +1113,7 @@ class MainWindow(QMainWindow):
 
     def _dialog_parent(self) -> QWidget:
         """Return the window a new dialog belongs to: the open Settings window, else this one."""
-        window = self._settings_window
-        if window is not None and window.isVisible():
-            return window
-        return self
-
-    def _settings_context(self) -> SettingsContext:
-        language, anonymizer_config = self._config_panel.anonymizer_context()
-        return SettingsContext(
-            settings=self._config_panel.get_settings_dict(),
-            app_service=self._app_service,
-            language=language,
-            anonymizer_config=anonymizer_config,
-            acknowledgements=self._acknowledgements(),
-            display_anonymized=self._display_anonymized,
-            privacy_available=self._privacy_available,
-            pull_manager=self._pull_manager,
-        )
+        return self._settings_launcher.visible_window or self
 
     def open_settings(
         self,
@@ -2107,60 +1123,33 @@ class MainWindow(QMainWindow):
         preselect: Sequence[str] = (),
         parent: QWidget | None = None,
     ) -> None:
-        """Open the Settings window on *page* (focused on *focus*) and apply it on OK.
+        """Open the Settings window on *page* (focused on *focus*) and apply it on OK."""
+        self._settings_launcher.open(page, focus=focus, preselect=preselect, parent=parent)
 
-        If the window is already open (a deep link from a dialog opened on top of it), it
-        only switches to *page*.
-        """
-        if self._settings_window is not None and self._settings_window.isVisible():
-            self._settings_window.show_page(page, focus, preselect)
-            return
-        window = SettingsWindow(
-            self._settings_context(),
-            parent or self,
-            page=page,
-            focus=focus,
-            preselect=preselect,
+    def _setup_hooks(self) -> SetupHooks:
+        """What the Setup Assistant asks of the window."""
+        return SetupHooks(
+            save=lambda: self._save_settings(notify=False),
+            applied=self._after_settings_applied,
+            install_round_finished=self._on_install_round_finished,
+            select_folder=self._config_panel.select_folder,
         )
-        window.preprocess_preview_requested.connect(
-            lambda ocr_config: self._preprocess_preview.request(ocr_config, parent=window)
-        )
-        window.packages_changed.connect(self.packages_changed)
-        window.addon_installed.connect(self._on_addon_installed)
-        # What the Privacy page showed: its checkbox was usable only if hiding was possible
-        # when the window opened (later changes to the panel must not decide that).
-        hiding_was_possible = self._privacy_available
-        self._settings_window = window
-        try:
-            code = window.exec()
-            result = window.values()
-        finally:
-            self._settings_window = None
-        if result.restore_all:
-            self._restore_all_settings()
-        elif code == QDialog.DialogCode.Accepted:
-            self._apply_settings_result(result, hiding_was_possible=hiding_was_possible)
-        window.deleteLater()
 
-    def _apply_settings_result(self, result: SettingsResult, *, hiding_was_possible: bool) -> None:
-        """Take over what the Settings window changed, then save once."""
-        self._config_panel.update_settings(result.settings)
-        if result.turn_on_anonymization:
-            # The AI models page said it would: an online service was chosen while names would
-            # be sent as written.  The checkbox's own handler guards the stage and refreshes
-            # the data-flow box; it comes before the save so the choice is kept.
-            self._config_panel.set_anonymization_enabled(True)
-        if result.anonymizer_config is not None:
-            before = self._config_panel.build_anonymizer_config()
-            self._config_panel.update_anonymizer_config(result.anonymizer_config)
-            if self._config_panel.build_anonymizer_config() != before:
-                # New models or patterns produce different placeholders for the shown text.
-                self._check.forget_anonymization()
-        if result.display_anonymized is not None and hiding_was_possible:
-            # Without the add-on the checkbox is disabled and shows "off"; applying that
-            # would overwrite the saved preference.
-            self._apply_display_anonymized(result.display_anonymized)
-        self._save_settings(notify=False)
+    def _settings_hooks(self) -> SettingsHooks:
+        """What the Settings window asks of the window."""
+        return SettingsHooks(
+            restored_all=self._restore_all_settings,
+            save=lambda: self._save_settings(notify=False),
+            applied=self._after_settings_applied,
+            addon_installed=self._on_addon_installed,
+            packages_changed=self.packages_changed.emit,
+            preprocess_preview=lambda ocr_config, parent: self._preprocess_preview.request(
+                ocr_config, parent=parent
+            ),
+        )
+
+    def _after_settings_applied(self) -> None:
+        """Look again at what a run needs, and at what is cached for the new folder."""
         self._readiness_controller.start_check()
         self._refresh_queue_from_inputs()
 
@@ -2173,7 +1162,7 @@ class MainWindow(QMainWindow):
         """
         self._app_service.anonymization.clear_anonymizer_cache()  # also forgets the installed models
         self._config_panel.refresh_data_flow()  # also refreshes the privacy availability
-        self._refresh_privacy_availability()
+        self._privacy_controller.refresh_availability()
         self._readiness_controller.start_check()
 
     def _on_install_round_finished(self, installed_any: bool) -> None:

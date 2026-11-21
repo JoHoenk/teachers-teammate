@@ -347,9 +347,9 @@ def test_the_lookup_config_carries_the_results_step(qtbot) -> None:
     qtbot.addWidget(panel)
     panel.set_service(services_of(_GuardService()))
     panel.update_settings({"hardware_profile": "16gb", "proofreading_context": "16384"})
-    panel._docx_enabled.setChecked(False)
-    panel._text_enabled.setChecked(True)
-    panel._text_mode.setCurrentText("anonymized")
+    panel._results._docx_enabled.setChecked(False)
+    panel._results._text_enabled.setChecked(True)
+    panel._results._text_mode.setCurrentText("anonymized")
 
     config = panel.lookup_config()
 
@@ -369,14 +369,55 @@ def test_the_results_problem_is_a_file_output_without_a_folder(qtbot) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel._docx_enabled.setChecked(False)
+    panel._results._docx_enabled.setChecked(False)
     assert panel.results_problem() is False
 
-    panel._text_enabled.setChecked(True)
+    panel._results._text_enabled.setChecked(True)
     assert panel.results_problem() is True
 
-    panel._output_dir.setText("/tmp/results")
+    panel._results._output_dir.setText("/tmp/results")
     assert panel.results_problem() is False
+
+
+@pytest.mark.gui
+def test_the_results_step_shows_what_it_stores(qtbot) -> None:
+    """
+    Given  a Results step
+    When   the two text-file choices are stored as one answer and shown again
+    Then   the row stands for both files at once, and the folder comes back unchanged
+    """
+    from PySide6.QtWidgets import QWidget  # noqa: PLC0415
+
+    from teachers_teammate.gui._results_step import (  # noqa: PLC0415
+        ResultsHooks,
+        ResultsStep,
+        ResultsValues,
+    )
+
+    holder = QWidget()
+    qtbot.addWidget(holder)
+    step = ResultsStep(
+        ResultsHooks(
+            changed=lambda: None,
+            folder_changed=lambda: None,
+            start_dir=lambda: "",
+            dialog_parent=holder,
+        )
+    )
+    qtbot.addWidget(step.root)
+    stored = ResultsValues(
+        output="/tmp/results",
+        docx_enabled=True,
+        docx_format="comments",
+        text_enabled=True,
+        text_anonymized_enabled=True,
+    )
+
+    step.apply(stored)
+
+    assert step.values() == stored
+    assert step._text_mode.currentText() == "both"
+    assert step._docx_format.currentText() == "comments"
 
 
 @pytest.mark.gui
@@ -1287,14 +1328,14 @@ def test_results_step_shows_and_saves_the_output_choices(qtbot, tmp_path: Path) 
         }
     )
 
-    assert panel._output_dir.text() == str(tmp_path)
-    assert panel._docx_enabled.isChecked()
-    assert panel._docx_format.currentText() == "comments"
-    assert panel._text_enabled.isChecked()
-    assert panel._text_mode.currentText() == "as written"
+    assert panel._results._output_dir.text() == str(tmp_path)
+    assert panel._results._docx_enabled.isChecked()
+    assert panel._results._docx_format.currentText() == "comments"
+    assert panel._results._text_enabled.isChecked()
+    assert panel._results._text_mode.currentText() == "as written"
 
-    panel._docx_enabled.setChecked(False)
-    panel._text_mode.setCurrentText("both")
+    panel._results._docx_enabled.setChecked(False)
+    panel._results._text_mode.setCurrentText("both")
     saved = panel.to_dict()
 
     assert saved["output"] == str(tmp_path)
@@ -1306,8 +1347,8 @@ def test_results_step_shows_and_saves_the_output_choices(qtbot, tmp_path: Path) 
     reloaded = ConfigPanel()
     qtbot.addWidget(reloaded)
     reloaded.load_from_dict(saved)
-    assert not reloaded._docx_enabled.isChecked()
-    assert reloaded._text_mode.currentText() == "both"
+    assert not reloaded._results._docx_enabled.isChecked()
+    assert reloaded._results._text_mode.currentText() == "both"
     assert reloaded.get_output_dir() == str(tmp_path)
 
 
@@ -1333,8 +1374,8 @@ def test_the_text_file_row_round_trips_all_four_key_combinations(
     qtbot.addWidget(panel)
     panel.load_from_dict({"text_enabled": as_written, "text_anonymized_enabled": anonymized})
 
-    assert panel._text_enabled.isChecked() is (as_written or anonymized)
-    assert panel._text_mode.currentText() == mode
+    assert panel._results._text_enabled.isChecked() is (as_written or anonymized)
+    assert panel._results._text_mode.currentText() == mode
 
     saved = panel.to_dict()
     assert saved["text_enabled"] is as_written
@@ -1350,13 +1391,13 @@ def test_unticking_the_text_file_keeps_the_choice_for_next_time(qtbot) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel._text_enabled.setChecked(True)
-    panel._text_mode.setCurrentText("both")
+    panel._results._text_enabled.setChecked(True)
+    panel._results._text_mode.setCurrentText("both")
 
-    panel._text_enabled.setChecked(False)
+    panel._results._text_enabled.setChecked(False)
 
-    assert panel._text_mode.currentText() == "both"
-    assert not panel._text_mode.isEnabled()
+    assert panel._results._text_mode.currentText() == "both"
+    assert not panel._results._text_mode.isEnabled()
     assert panel.get_settings_dict()["text_enabled"] is False
     assert panel.get_settings_dict()["text_anonymized_enabled"] is False
 
@@ -1370,14 +1411,14 @@ def test_word_layout_is_only_enabled_while_word_is_ticked(qtbot) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel._docx_enabled.setChecked(True)
-    assert panel._docx_format.isEnabled()
+    panel._results._docx_enabled.setChecked(True)
+    assert panel._results._docx_format.isEnabled()
 
-    panel._docx_enabled.setChecked(False)
-    assert not panel._docx_format.isEnabled()
+    panel._results._docx_enabled.setChecked(False)
+    assert not panel._results._docx_format.isEnabled()
 
-    panel._docx_enabled.setChecked(True)
-    assert panel._docx_format.isEnabled()
+    panel._results._docx_enabled.setChecked(True)
+    assert panel._results._docx_format.isEnabled()
 
 
 @pytest.mark.gui
@@ -1401,14 +1442,14 @@ def test_changing_the_results_step_tells_the_main_window(
     assert changes == []
 
     monkeypatch.setattr(_dialogs, "pick_folder", lambda *_a, **_k: tmp_path / "chosen")
-    panel._output_browse.click()
+    panel._results._output_browse.click()
     assert changes == [True]
     assert panel.get_output_dir() == str(tmp_path / "chosen")
 
-    panel._output_browse.click()  # the same folder again: nothing changed
+    panel._results._output_browse.click()  # the same folder again: nothing changed
     assert changes == [True]
 
-    panel._text_enabled.setChecked(True)
+    panel._results._text_enabled.setChecked(True)
     assert changes == [True, True]
     assert panel.get_settings_dict()["text_enabled"] is True
 
@@ -1423,11 +1464,11 @@ def test_text_files_without_a_folder_turn_the_hint_orange(qtbot) -> None:
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel.update_settings({"output": ""})
-    assert "#888" in panel._text_hint.styleSheet()
+    assert "#888" in panel._results._text_hint.styleSheet()
 
-    panel._text_enabled.setChecked(True)
+    panel._results._text_enabled.setChecked(True)
 
-    assert "#e67e22" in panel._text_hint.styleSheet()
+    assert "#e67e22" in panel._results._text_hint.styleSheet()
 
 
 @pytest.mark.gui
@@ -1444,8 +1485,8 @@ def test_settings_from_the_settings_window_reach_the_results_step(qtbot, tmp_pat
 
     panel.update_settings({"output": str(tmp_path), "docx_format": "comments"})
 
-    assert panel._output_dir.text() == str(tmp_path)
-    assert panel._docx_format.currentText() == "comments"
+    assert panel._results._output_dir.text() == str(tmp_path)
+    assert panel._results._docx_format.currentText() == "comments"
     assert changes == []
 
 
@@ -1571,10 +1612,10 @@ def test_both_path_rows_are_read_only(qtbot) -> None:
     panel = ConfigPanel()
     qtbot.addWidget(panel)
 
-    assert isinstance(panel._input_row, PathRow)
-    assert isinstance(panel._output_row, PathRow)
-    assert panel._input_row.field().isReadOnly()
-    assert panel._output_row.field().isReadOnly()
+    assert isinstance(panel._selection.row, PathRow)
+    assert isinstance(panel._results._output_row, PathRow)
+    assert panel._selection.row.field().isReadOnly()
+    assert panel._results._output_row.field().isReadOnly()
 
 
 @pytest.mark.gui
@@ -1607,9 +1648,9 @@ def test_the_pickers_pass_the_panel_and_the_results_start_next_to_the_documents(
     panel = ConfigPanel()
     qtbot.addWidget(panel)
 
-    panel._select_folder_btn.click()
-    panel._select_files_btn.click()
-    panel._output_browse.click()
+    panel._selection.folder_button.click()
+    panel._selection.files_button.click()
+    panel._results._output_browse.click()
 
     assert [c[0] for c in calls] == ["folder", "files", "folder"]
     assert all(c[1] is panel for c in calls)
@@ -1633,8 +1674,8 @@ def test_a_file_selection_shows_how_many_files_were_picked(qtbot, tmp_path: Path
     qtbot.addWidget(panel)
     panel.set_selected_files(files)
 
-    assert panel._input_row.text() == f"3 files from {docs}"
-    assert "a.pdf" in panel._input_row.field().toolTip()
+    assert panel._selection.row.text() == f"3 files from {docs}"
+    assert "a.pdf" in panel._selection.row.field().toolTip()
 
 
 @pytest.mark.gui
@@ -1654,7 +1695,7 @@ def test_a_long_file_selection_lists_twenty_names_and_counts_the_rest(
     qtbot.addWidget(panel)
     panel.set_selected_files(files)
 
-    lines = panel._input_row.field().toolTip().split("\n")
+    lines = panel._selection.row.field().toolTip().split("\n")
     assert len(lines) == 21
     assert lines[-1] == "… and 5 more"
 
@@ -1669,8 +1710,8 @@ def test_the_output_folder_field_does_not_promise_a_blank_folder_works(qtbot) ->
     panel = ConfigPanel()
     qtbot.addWidget(panel)
 
-    assert panel._output_dir.placeholderText() == "Choose a folder for the results"
-    assert "next to your documents" not in panel._output_dir.placeholderText()
+    assert panel._results._output_dir.placeholderText() == "Choose a folder for the results"
+    assert "next to your documents" not in panel._results._output_dir.placeholderText()
 
 
 # ── "Recognize text" is a real step ──────────────────────────────────────────

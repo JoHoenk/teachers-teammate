@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -37,7 +36,6 @@ from ..application.correction_options import (
     proofreading_prompts,
 )
 from ..application.data_flow import ticked_steps
-from ..application.run import RequirementIssue
 from ..config import DEFAULTS, Config
 from ..domain.correction_policy import LEVELS
 from ..domain.correction_prompts import NOTES_LIMIT
@@ -52,9 +50,8 @@ from ..domain.output_files import folder_problem
 from ..settings_schema import SECONDARY_MODEL_NONE, normalize_notes, normalize_settings
 from ..texts import dialogs as dlg
 from ..texts.settings import WHERE_ADDONS, WHERE_AI_MODELS
-from . import _dialogs
+from . import _anonymizer_settings
 from . import _user_text as txt
-from ._background import LatestTask
 from ._constants import _LANGUAGES
 from ._data_flow_summary import (
     DataFlowSummary,
@@ -64,16 +61,18 @@ from ._data_flow_summary import (
     uses_line,
     uses_tooltip,
 )
-from ._fix_targets import FixAction, fix_for
-from ._path_row import PathRow
+from ._input_selection import InputSelection, SelectionHooks
 from ._prompt_editor import PromptEditor
+from ._results_step import (
+    ResultsHooks,
+    ResultsStep,
+    ResultsValues,
+    start_folder,
+)
+from ._stage_guard import GuardHooks, StageGuard
+from ._step_section import separator, step_header
 from ._types import SettingsDict
 from .settings._page import FOCUS_OCR, FOCUS_PROOFREADING, FOCUS_REVIEW, SettingsPage
-
-#: The three choices of the "Text file" row: which text files a run writes.
-TEXT_MODE_AS_WRITTEN = "as written"
-TEXT_MODE_ANONYMIZED = "anonymized"
-TEXT_MODE_BOTH = "both"
 
 #: The settings keys a widget shows: loading them means setting the widget, not the dict.
 _WIDGET_KEYS = frozenset(
@@ -95,12 +94,12 @@ _WIDGET_KEYS = frozenset(
 #: subfolders and has no toggle for it, so it never writes the key either.
 _UNSTORED_KEYS = frozenset({"recursive"})
 
-#: The step the teacher sees for each stage the requirement guard can untick.
-_STAGE_STEP_TITLES = {
-    "ocr": txt.RECOGNIZE_TEXT,
-    "correction": txt.PROOFREAD,
-    "evaluation": txt.REVIEW_CONTENT,
-    "anonymizer": txt.REMOVE_PERSONAL_INFO,
+#: The settings key each stage the requirement guard can untick is stored under.
+_STAGE_KEYS = {
+    "ocr": "recognition_enabled",
+    "correction": "correction_enabled",
+    "evaluation": "evaluation_enabled",
+    "anonymizer": "anonymization_enabled",
 }
 
 
@@ -282,8 +281,6 @@ class ConfigPanel(QScrollArea):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._service: AppServices | None = None
-        # One per stage: ticking a box must only make *its own* earlier check stale.
-        self._guard_tasks: dict[str, LatestTask] = {}
         # True while load_from_dict applies saved state: stage requirement guards only
         # make sense for a user ticking a box, not for restoring settings at startup.
         self._loading = False
@@ -332,10 +329,6 @@ class ConfigPanel(QScrollArea):
         self._settings_dict["anonymizer_secondary_model"] = DEFAULTS["anonymizer_secondary_model"]
         self._settings_dict["anonymizer_patterns"] = None
 
-        # Input selection state: either a folder or an explicit file list.
-        self._selected_folder: Path | None = None
-        self._selected_files: list[Path] = []
-
         inner = QWidget()
         self._layout = QVBoxLayout(inner)
         self._layout.setContentsMargins(8, 8, 8, 8)
@@ -343,14 +336,19 @@ class ConfigPanel(QScrollArea):
 
         self._data_flow: DataFlow | None = None
         self._data_flow_summary = DataFlowSummary()
+        self._selection = InputSelection(
+            SelectionHooks(changed=self.paths_changed.emit, dialog_parent=self), self
+        )
+        self._results = ResultsStep(self._results_hooks(), self)
+        self._stage_guard = StageGuard(self._guard_hooks(), self)
         self._layout.addWidget(self._data_flow_summary)
-        self._layout.addWidget(self._separator())
+        self._layout.addWidget(separator())
         self._build_step1_select_input()
-        self._layout.addWidget(self._separator())
+        self._layout.addWidget(separator())
         self._build_step2_language()
-        self._layout.addWidget(self._separator())
+        self._layout.addWidget(separator())
         self._build_step3_what_should_happen()
-        self._layout.addWidget(self._separator())
+        self._layout.addWidget(separator())
         self._build_step4_results()
         self._layout.addStretch()
 
@@ -361,58 +359,34 @@ class ConfigPanel(QScrollArea):
         self._on_language_changed(self._language.currentText())
 
         self._update_correction_visibility()
-        self._update_anonymize_visibility()
 
-    # ── step header helper ────────────────────────────────────────────────────────
+    # ── hooks ─────────────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _step_header(text: str, tooltip: str) -> QWidget:
-        row = QWidget()
-        h = QHBoxLayout(row)
-        h.setContentsMargins(0, 4, 0, 2)
-        lbl = QLabel(text.upper())
-        lbl.setStyleSheet("QLabel { font-size: 11pt; font-weight: bold; color: #aaa; }")
-        info = QLabel("i")
-        info.setStyleSheet(
-            "QLabel { color: white; background: #2980b9; border-radius: 9px; "
-            "padding: 1px 5px; font-size: 11pt; font-weight: normal; }"
+    def _results_hooks(self) -> ResultsHooks:
+        """Return what the Results step asks of the panel."""
+        return ResultsHooks(
+            changed=self._on_results_widget_changed,
+            folder_changed=self._on_output_dir_edited,
+            start_dir=lambda: start_folder(self.get_input_dir()),
+            dialog_parent=self,
         )
-        info.setToolTip(tooltip)
-        h.addWidget(lbl)
-        h.addStretch()
-        h.addWidget(info)
-        return row
 
     # ── section builders ──────────────────────────────────────────────────────────
 
     def _build_step1_select_input(self) -> None:
         self._layout.addWidget(
-            self._step_header(
+            step_header(
                 "1  Documents",
                 "Choose the documents you want to process.\n"
                 "You can pick individual files or a whole folder.\n"
                 "Subfolders are included automatically.",
             )
         )
-        inner = QWidget()
-        v = QVBoxLayout(inner)
-        v.setContentsMargins(0, 2, 0, 4)
-        v.setSpacing(6)
-
-        self._input_row = PathRow(txt.DOCUMENTS_LABEL, txt.DOCUMENTS_PLACEHOLDER)
-        self._select_folder_btn = self._input_row.add_button(
-            txt.DOCUMENTS_FOLDER_BUTTON, txt.DOCUMENTS_FOLDER_TOOLTIP, self._on_select_folder
-        )
-        self._select_files_btn = self._input_row.add_button(
-            txt.DOCUMENTS_FILES_BUTTON, txt.DOCUMENTS_FILES_TOOLTIP, self._on_select_files
-        )
-        v.addWidget(self._input_row)
-
-        self._layout.addWidget(inner)
+        self._layout.addWidget(self._selection.row)
 
     def _build_step2_language(self) -> None:
         self._layout.addWidget(
-            self._step_header(
+            step_header(
                 "2  Language",
                 "Select the language the documents are written in.\n"
                 "This helps the app recognise text accurately and\n"
@@ -449,7 +423,7 @@ class ConfigPanel(QScrollArea):
 
     def _build_step3_what_should_happen(self) -> None:
         self._layout.addWidget(
-            self._step_header(
+            step_header(
                 "3  What should happen",
                 "The text is always read from the scans. The other steps are optional.\n"
                 "Removing personal info runs on this computer, before anything is sent\n"
@@ -552,236 +526,56 @@ class ConfigPanel(QScrollArea):
 
     def _build_step4_results(self) -> None:
         self._layout.addWidget(
-            self._step_header(
+            step_header(
                 "4  Results",
                 "Where the results are saved, and which files a run creates there.",
             )
         )
-        inner = QWidget()
-        form = QFormLayout(inner)
-        form.setContentsMargins(0, 2, 0, 4)
-        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
-
-        self._output_row = PathRow(txt.RESULTS_LABEL, txt.RESULTS_PLACEHOLDER)
-        self._output_dir = self._output_row.field()
-        self._output_row.set_tooltip(txt.RESULTS_TOOLTIP)
-        self._output_browse = self._output_row.add_button(
-            txt.RESULTS_BUTTON, txt.RESULTS_BUTTON_TOOLTIP, self._on_browse_output_dir
-        )
-        form.addRow(self._output_row)
-
-        docx_row = QWidget()
-        drl = QHBoxLayout(docx_row)
-        drl.setContentsMargins(0, 0, 0, 0)
-        self._docx_enabled = QCheckBox("Word document")
-        self._docx_enabled.setToolTip(
-            "Generate a Word document for each input file containing the image,\n"
-            "extracted text, and (if enabled) the proofread text."
-        )
-        self._docx_format = QComboBox()
-        self._docx_format.addItems(["table", "comments"])
-        self._docx_format.setToolTip(
-            "Table — side-by-side columns: Image | Extracted text | Proofread text.\n"
-            "Comments — two columns with tracked changes shown as Word comments."
-        )
-        drl.addWidget(self._docx_enabled)
-        drl.addWidget(self._docx_format)
-        drl.addStretch(1)
-        form.addRow(docx_row)
-
-        text_row = QWidget()
-        trl = QHBoxLayout(text_row)
-        trl.setContentsMargins(0, 0, 0, 0)
-        self._text_enabled = QCheckBox("Text file")
-        self._text_enabled.setToolTip(txt.TEXT_FILE_TOOLTIP)
-        self._text_mode = QComboBox()
-        self._text_mode.addItems([TEXT_MODE_AS_WRITTEN, TEXT_MODE_ANONYMIZED, TEXT_MODE_BOTH])
-        self._text_mode.setToolTip(txt.TEXT_MODE_TOOLTIP)
-        trl.addWidget(self._text_enabled)
-        trl.addWidget(self._text_mode)
-        trl.addStretch(1)
-        form.addRow(text_row)
-
-        self._text_hint = QLabel(
-            "Text files need an output folder outside the input folder; otherwise the next "
-            "run would read them as new documents."
-        )
-        self._text_hint.setWordWrap(True)
-        form.addRow(self._text_hint)
-
-        self._docx_enabled.toggled.connect(lambda _on: self._on_results_widget_changed())
-        self._docx_format.currentTextChanged.connect(lambda _t: self._on_results_widget_changed())
-        self._text_enabled.toggled.connect(lambda _on: self._on_results_widget_changed())
-        self._text_mode.currentTextChanged.connect(lambda _t: self._on_results_widget_changed())
-        self._layout.addWidget(inner)
-        self._sync_results_widgets()
+        self._layout.addWidget(self._results.root)
 
     # ── results step ──────────────────────────────────────────────────────────────
 
-    def _results_widgets(self) -> tuple[QWidget, ...]:
-        return (
-            self._output_dir,
-            self._docx_enabled,
-            self._docx_format,
-            self._text_enabled,
-            self._text_mode,
-        )
-
-    def _sync_results_widgets(self) -> None:
-        """Show the Results keys of ``_settings_dict`` without reporting a change."""
-        settings = self._settings_dict
-        for widget in self._results_widgets():
-            widget.blockSignals(True)
-        try:
-            self._output_dir.setText(str(settings.get("output", "") or ""))
-            self._docx_enabled.setChecked(
-                bool(settings.get("docx_enabled", DEFAULTS["docx_enabled"]))
-            )
-            index = self._docx_format.findText(
-                str(settings.get("docx_format", DEFAULTS["docx_format"]))
-            )
-            if index >= 0:
-                self._docx_format.setCurrentIndex(index)
-            as_written = bool(settings.get("text_enabled", DEFAULTS["text_enabled"]))
-            anonymized = bool(
-                settings.get("text_anonymized_enabled", DEFAULTS["text_anonymized_enabled"])
-            )
-            self._text_enabled.setChecked(as_written or anonymized)
-            mode = (
-                TEXT_MODE_BOTH
-                if as_written and anonymized
-                else TEXT_MODE_ANONYMIZED
-                if anonymized
-                else TEXT_MODE_AS_WRITTEN
-            )
-            index = self._text_mode.findText(mode)
-            if index >= 0:
-                self._text_mode.setCurrentIndex(index)
-        finally:
-            for widget in self._results_widgets():
-                widget.blockSignals(False)
-        self._update_results_state()
-
-    def _update_results_state(self) -> None:
-        """Enable the Word layout only for Word; warn when text files have no folder."""
-        self._docx_format.setEnabled(self._docx_enabled.isChecked())
-        self._text_mode.setEnabled(self._text_enabled.isChecked())
-        wants_text = self._text_enabled.isChecked()
-        missing_folder = wants_text and not self._output_dir.text().strip()
-        color = "#e67e22" if missing_folder else "#888"
-        self._text_hint.setStyleSheet(f"color: {color}; font-size: 8pt;")
-
     def _on_results_widget_changed(self) -> None:
-        """Write the Results step into the settings dict and tell the main window."""
-        self._settings_dict["docx_enabled"] = self._docx_enabled.isChecked()
-        self._settings_dict["docx_format"] = self._docx_format.currentText()
-        text_enabled, text_anonymized = self._text_keys()
-        self._settings_dict["text_enabled"] = text_enabled
-        self._settings_dict["text_anonymized_enabled"] = text_anonymized
-        self._update_results_state()
+        """Store the Results choices and tell the main window."""
+        self._store_results(self._results.values())
         if not self._loading:
             self.results_changed.emit()
 
-    def _text_keys(self) -> tuple[bool, bool]:
-        """Return the two text-file keys the row stands for: (as written, anonymized)."""
-        if not self._text_enabled.isChecked():
-            return False, False
-        mode = self._text_mode.currentText()
-        return mode in (TEXT_MODE_AS_WRITTEN, TEXT_MODE_BOTH), mode in (
-            TEXT_MODE_ANONYMIZED,
-            TEXT_MODE_BOTH,
-        )
-
     def _on_output_dir_edited(self) -> None:
-        folder = self._output_dir.text().strip()
-        if folder == str(self._settings_dict.get("output", "") or "").strip():
-            return  # focus left the field without a change
-        self._settings_dict["output"] = folder
-        self._update_results_state()
+        """Store a new results folder, which the data-flow box depends on."""
+        values = self._results.values()
+        if values.output == str(self._settings_dict.get("output", "") or "").strip():
+            return  # the folder was chosen again, nothing to store
+        self._store_results(values)
         self.refresh_data_flow()
         if not self._loading:
             self.results_changed.emit()
 
+    def _store_results(self, values: ResultsValues) -> None:
+        """Write the Results step into the settings dict, which is the one store."""
+        self._settings_dict.update(cast("SettingsDict", values.as_settings()))
+
+    def _settings(self) -> dict[str, Any]:
+        """Return the settings dict as a plain dict, for helpers that take one by key."""
+        return cast("dict[str, Any]", self._settings_dict)
+
     def results_problem(self) -> bool:
         """Return whether a file output is on but no folder to write it to is chosen."""
-        wants_files = self._docx_enabled.isChecked() or self._text_enabled.isChecked()
-        return wants_files and not self._output_dir.text().strip()
+        return self._results.problem()
 
     def choose_output_dir(self) -> None:
         """Ask for the results folder (the "…" button and the readiness line's "Choose…")."""
-        self._on_browse_output_dir()
-
-    def _on_browse_output_dir(self) -> None:
-        start = self._output_dir.text().strip() or self._results_start_dir()
-        chosen = _dialogs.pick_folder(self, dlg.select_output_folder(start))
-        if chosen is not None:
-            self._output_dir.setText(str(chosen))
-            self._on_output_dir_edited()
-
-    def _results_start_dir(self) -> str:
-        """Return where the results picker starts: next to the documents."""
-        input_dir = self.get_input_dir()
-        if input_dir:
-            return str(Path(input_dir).parent)
-        return str(Path.home())
-
-    # ── static helpers ────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _separator() -> QWidget:
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 6, 0, 6)
-        layout.setSpacing(0)
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("color: #444;")
-        layout.addWidget(line)
-        return container
+        self._results.choose()
 
     # ── input selection ───────────────────────────────────────────────────────────
 
     def select_folder(self) -> None:
         """Ask for an input folder (the "Select Folder…" button and File → Open Folder…)."""
-        self._on_select_folder()
+        self._selection.choose_folder()
 
     def select_files(self) -> None:
         """Ask for input files (the "Select Files…" button and File → Open Files…)."""
-        self._on_select_files()
-
-    def _on_select_folder(self) -> None:
-        start = str(self._selected_folder or Path.home())
-        path = _dialogs.pick_folder(self, dlg.select_input_folder(start))
-        if path is not None:
-            self._selected_folder = path
-            self._selected_files = []
-            self._update_input_label()
-            self.paths_changed.emit()
-
-    def _on_select_files(self) -> None:
-        start = str(self._selected_folder or Path.home())
-        paths = _dialogs.pick_files(self, dlg.select_input_files(start))
-        if paths:
-            self._selected_files = paths
-            self._selected_folder = None
-            self._update_input_label()
-            self.paths_changed.emit()
-
-    def _update_input_label(self) -> None:
-        if self._selected_files:
-            n = len(self._selected_files)
-            parent = self._selected_files[0].parent
-            self._input_row.set_text(txt.files_from_folder(n, parent))
-            names = [p.name for p in self._selected_files[:20]]
-            if n > len(names):
-                names.append(txt.files_more(n - len(names)))
-            self._input_row.set_tooltip("\n".join(names))
-        elif self._selected_folder is not None:
-            self._input_row.set_text(str(self._selected_folder))
-            self._input_row.set_tooltip(str(self._selected_folder))
-        else:
-            self._input_row.set_text("")
-            self._input_row.set_tooltip("")
+        self._selection.choose_files()
 
     # ── prompt dialogs ────────────────────────────────────────────────────────────
 
@@ -947,7 +741,7 @@ class ConfigPanel(QScrollArea):
             return
         self._correction_prompt_btn.setEnabled(True)
         # The review comes back with proofreading, so its requirements count again: they are
-        # checked once proofreading's are met (see :meth:`_on_stage_guard_result`), so a
+        # checked once proofreading's are met (see ``_stage_guard``), so a
         # problem both share is explained once, by proofreading.
         self._guard_stage("correction")
 
@@ -960,9 +754,6 @@ class ConfigPanel(QScrollArea):
         proofreading = self._correction_enabled.isChecked()
         self._evaluation_enabled.setEnabled(proofreading)
         self._evaluation_enabled.setToolTip("" if proofreading else txt.REVIEW_NEEDS_PROOFREADING)
-
-    def _update_anonymize_visibility(self) -> None:
-        pass  # driven by _on_anonymization_changed
 
     def _on_evaluation_enabled_changed(self, checked: bool) -> None:
         self._settings_dict["evaluation_enabled"] = checked
@@ -987,24 +778,10 @@ class ConfigPanel(QScrollArea):
     def build_anonymizer_config(self) -> object:
         """Build an :class:`AnonymizerConfig` from the current settings dict.
 
-        ``anonymizer_patterns`` of ``None`` (or the list of the earlier built-in
-        defaults) means "use the current default patterns"; any other list, even an
-        empty one, overrides them (mirrors ``Config.anonymizer_patterns``).
         Centralised here so callers (this panel and the main window's privacy
         preview) do not each rebuild the config from raw settings keys.
         """
-        from ..domain.anonymization import (  # noqa: PLC0415
-            AnonymizerConfig,
-            resolve_patterns,
-        )
-
-        return AnonymizerConfig(
-            primary_model=self._settings_dict.get("anonymizer_primary_model") or None,
-            # "auto:system" and "none" are meaningful values, not "not set"
-            secondary_model=self._settings_dict.get("anonymizer_secondary_model")
-            or SECONDARY_MODEL_NONE,
-            patterns=resolve_patterns(self._settings_dict.get("anonymizer_patterns")),
-        )
+        return _anonymizer_settings.build(self._settings_dict)
 
     def _on_configure_anonymizer(self) -> None:
         language = self._language.currentText().strip()
@@ -1020,20 +797,7 @@ class ConfigPanel(QScrollArea):
 
     def update_anonymizer_config(self, config: object) -> None:
         """Write an updated AnonymizerConfig back into the settings dict."""
-        from ..domain.anonymization import (  # noqa: PLC0415
-            DEFAULT_PATTERNS,
-            AnonymizerConfig,
-        )
-
-        if not isinstance(config, AnonymizerConfig):
-            return
-        self._settings_dict["anonymizer_primary_model"] = config.primary_model
-        self._settings_dict["anonymizer_secondary_model"] = config.secondary_model
-        # Unchanged defaults stay symbolic (None) so later changes to them reach this user;
-        # an empty list is kept, it means "no regex anonymization".
-        self._settings_dict["anonymizer_patterns"] = (
-            None if config.patterns == tuple(DEFAULT_PATTERNS) else list(config.patterns)
-        )
+        _anonymizer_settings.store(self._settings(), config)
 
     # ── public API ────────────────────────────────────────────────────────────────
 
@@ -1042,31 +806,20 @@ class ConfigPanel(QScrollArea):
 
         Returns the selected folder, or the common parent of selected files, or empty string.
         """
-        if self._selected_folder is not None:
-            return str(self._selected_folder)
-        if self._selected_files:
-            return str(self._selected_files[0].parent)
-        return ""
+        return self._selection.folder()
 
     def set_input_dir(self, path: str) -> None:
         """Set folder-mode input (e.g. from drag-and-drop). Clears any explicit file selection."""
-        if path:
-            self._selected_folder = Path(path)
-        else:
-            self._selected_folder = None
-        self._selected_files = []
-        self._update_input_label()
+        self._selection.set_folder(path)
         self.paths_changed.emit()
 
     def get_selected_files(self) -> list[Path] | None:
         """Return the explicitly selected file list, or None when using folder-based discovery."""
-        return list(self._selected_files) if self._selected_files else None
+        return self._selection.files()
 
     def set_selected_files(self, paths: list[Path]) -> None:
         """Set an explicit list of input files (e.g. from drag-and-drop of individual files)."""
-        self._selected_files = list(paths)
-        self._selected_folder = None
-        self._update_input_label()
+        self._selection.set_files(paths)
         self.paths_changed.emit()
 
     def get_correction_notes(self) -> str:
@@ -1101,7 +854,7 @@ class ConfigPanel(QScrollArea):
         """Apply values returned by the Settings window (or another source of settings)."""
         # Callers pass all keys or only a subset (e.g. just ``ollama_url``).
         self._settings_dict.update(cast("SettingsDict", settings))
-        self._sync_results_widgets()
+        self._results.apply(ResultsValues.from_settings(self._settings_dict))
         self.refresh_data_flow()
 
     def review_will_run(self) -> bool:
@@ -1181,9 +934,7 @@ class ConfigPanel(QScrollArea):
         if "input" in loaded:
             path = Path(str(loaded["input"]))
             if path.is_dir():
-                self._selected_folder = path
-                self._selected_files = []
-            self._update_input_label()
+                self._selection.set_folder(path)
         if "output" in loaded:
             self._settings_dict["output"] = str(loaded["output"])
 
@@ -1200,7 +951,7 @@ class ConfigPanel(QScrollArea):
             self._evaluation_enabled.setChecked(bool(loaded["evaluation_enabled"]))
 
         self._apply_settings_dict_values(loaded)
-        self._sync_results_widgets()
+        self._results.apply(ResultsValues.from_settings(self._settings_dict))
 
         self._update_correction_visibility(self._correction_enabled.isChecked())
         self._sync_review_enabled()
@@ -1248,98 +999,36 @@ class ConfigPanel(QScrollArea):
             return self._evaluation_enabled
         return self._anonymization_enabled
 
+    def _guard_hooks(self) -> GuardHooks:
+        """Return what the requirement guard asks of the panel."""
+        return GuardHooks(
+            service=lambda: self._service,
+            config=self.lookup_config,
+            loading=lambda: self._loading,
+            checkbox=self._stage_checkbox,
+            unticked=self._on_stage_unticked,
+            language=self.lookup_language,
+            open_settings=self._open_settings_page,
+            dialog_parent=self,
+        )
+
+    def _open_settings_page(self, page: SettingsPage, focus: str, preselect: list[str]) -> None:
+        """Have the main window open *page* on *focus*, with the *preselect* entries chosen."""
+        self.open_settings_requested.emit(page, focus, preselect)
+
     def _guard_stage(self, stage: str) -> None:
-        """Check the requirements of *stage* in the background after the user enabled it.
+        """Check the requirements of *stage* after the user enabled it, off the GUI thread.
 
-        The check contacts Ollama (or imports spaCy), so it must never run on the GUI
-        thread.  The box stays ticked meanwhile; if a requirement is unmet it is
-        unticked and the guard dialog explains why.  Nothing happens while saved
-        settings are being loaded.
+        The box stays ticked meanwhile; if a requirement is unmet the guard unticks it and
+        explains why.  Nothing happens while saved settings are being loaded.
         """
-        checkbox = self._stage_checkbox(stage)
-        if self._loading or not checkbox.isChecked() or self._service is None:
-            return
-        service = self._service
-        config = self.lookup_config()
-        task = self._guard_tasks.setdefault(stage, LatestTask(self))
-        task.submit(
-            lambda: service.run.check_stage_requirements(config, stage),
-            lambda result, error: self._on_stage_guard_result(config, stage, result, error),
-        )
+        self._stage_guard.check(stage)
 
-    @staticmethod
-    def _stage_inputs(config: Config, stage: str) -> tuple[str, ...]:
-        """Return the config values the requirements of *stage* depend on."""
-        if stage == "ocr":
-            return (config.ocr.engine,)
-        if stage == "correction":
-            return (
-                config.correction_provider,
-                config.effective_correction_model,
-                config.ollama_url,
-            )
-        if stage == "evaluation":
-            return (config.evaluate_provider, config.effective_evaluate_model, config.ollama_url)
-        return (config.language,)
-
-    def _on_stage_guard_result(
-        self, config: Config, stage: str, result: object, error: BaseException | None
-    ) -> None:
-        """Untick *stage* and explain when its background requirement check failed."""
-        issues = (
-            [issue for issue in result if isinstance(issue, RequirementIssue)]
-            if error is None and isinstance(result, list)
-            else []
-        )
-        if not issues:
-            # All met (or the check itself failed: never block the UI on that).  A review that
-            # was ticked before proofreading came back is checked now.
-            if stage == "correction" and self._evaluation_enabled.isChecked():
-                self._guard_stage("evaluation")
-            return
-        checkbox = self._stage_checkbox(stage)
-        if not checkbox.isChecked():
-            return  # the user unticked it in the meantime
-        if stage == "evaluation" and not self._correction_enabled.isChecked():
-            return  # no review without proofreading: its tick stays for when it comes back
-        if self._stage_inputs(self.lookup_config(), stage) != self._stage_inputs(config, stage):
-            return  # the user chose another model/provider/server: this answer is outdated
-        checkbox.blockSignals(True)
-        checkbox.setChecked(False)
-        checkbox.blockSignals(False)
-        if stage == "ocr":
-            self._settings_dict["recognition_enabled"] = False
-        elif stage == "correction":
-            self._settings_dict["correction_enabled"] = False
-        elif stage == "evaluation":
-            self._settings_dict["evaluation_enabled"] = False
-        else:
-            self._settings_dict["anonymization_enabled"] = False
+    def _on_stage_unticked(self, stage: str) -> None:
+        """Store the unticked *stage* and re-render what its state decides."""
+        self._settings()[_STAGE_KEYS[stage]] = False
         self._sync_review_enabled()
         self.refresh_data_flow()  # signals were blocked: the box must be told itself
-
-        from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
-
-        title = txt.GUARD_TITLE.format(step=_STAGE_STEP_TITLES.get(stage, stage))
-        service = self._service
-        if service is None:
-            return  # no service, no check that could have failed
-        fix = fix_for(
-            stage,
-            issues[0],
-            lambda provider: str(
-                service.providers.get_provider_info(provider).get("display_name", provider)
-            ),
-            language=self._language.currentText().strip(),
-        )
-        dialog = DependencyGuardDialog(title, issues, fix.actions, self)
-        dialog.action_chosen.connect(self._open_fix)
-        dialog.exec()
-
-    def _open_fix(self, action: FixAction) -> None:
-        """Open the Settings place a fix button names."""
-        if action.page is not None:
-            self.open_settings_requested.emit(action.page, action.focus, list(action.preselect))
 
     def restore_defaults(self) -> None:
         self.load_from_dict(DEFAULTS)

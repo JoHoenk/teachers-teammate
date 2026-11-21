@@ -65,7 +65,7 @@ from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts._types import Answer, Notice, Question, StandardButton
 from tests.conftest import make_config
 
-from ._gui_harness import install_scripted_settings_window
+from ._gui_harness import install_scripted_settings_window, real_service
 
 #: How long a background thread and the notice it queues may take: a loaded runner is slow.
 THREAD_WAIT_MS = 10_000
@@ -230,7 +230,7 @@ def main_window(qtbot, monkeypatch) -> MainWindow:
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
     return win
 
@@ -1644,7 +1644,7 @@ def test_the_pull_manager_pulls_the_whole_queue_on_its_own(qtbot, monkeypatch) -
         finished_ok = Signal(str)
         finished_err = Signal(str)
 
-        def __init__(self, url: str, model: str) -> None:
+        def __init__(self, _service: Any, url: str, model: str) -> None:
             super().__init__()
             self.url, self.model = url, model
             threads.append(self)
@@ -1665,7 +1665,7 @@ def test_the_pull_manager_pulls_the_whole_queue_on_its_own(qtbot, monkeypatch) -
             pass
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager()
+    manager = main_window_module.OllamaDownloadManager(service=real_service())
     started: list[str] = []
     queue_seen: list[list[str]] = []
     manager.started.connect(started.append)
@@ -1705,7 +1705,7 @@ def test_a_pull_thread_outlives_the_manager_that_started_it(qtbot, monkeypatch) 
         finished_ok = Signal(str)
         finished_err = Signal(str)
 
-        def __init__(self, url: str, model: str) -> None:
+        def __init__(self, _service: Any, url: str, model: str) -> None:
             super().__init__()
             threads.append(self)
 
@@ -1722,7 +1722,7 @@ def test_a_pull_thread_outlives_the_manager_that_started_it(qtbot, monkeypatch) 
             return True
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager()
+    manager = main_window_module.OllamaDownloadManager(service=real_service())
     held_before = set(_model_fetch._RETIRED_THREADS)
 
     manager.start("http://host:11434", "a:1b")
@@ -1752,7 +1752,7 @@ def test_aborting_a_pull_drops_the_queue(qtbot, monkeypatch) -> None:
         finished_ok = Signal(str)
         finished_err = Signal(str)
 
-        def __init__(self, url: str, model: str) -> None:
+        def __init__(self, _service: Any, url: str, model: str) -> None:
             super().__init__()
 
         def start(self) -> None:
@@ -1771,7 +1771,7 @@ def test_aborting_a_pull_drops_the_queue(qtbot, monkeypatch) -> None:
             pass
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager()
+    manager = main_window_module.OllamaDownloadManager(service=real_service())
     manager.start("http://host:11434", "a:1b", ["b:1b", "c:1b"])
 
     manager.abort()
@@ -2648,8 +2648,9 @@ class _FakeBenchmarkWindow(QWidget):
 
     created: ClassVar[list[_FakeBenchmarkWindow]] = []
 
-    def __init__(self) -> None:
+    def __init__(self, *, processing: object = None) -> None:
         super().__init__()
+        self.processing = processing
         self.closed = 0
         self.shown = 0
         self.reloaded = 0
@@ -2670,10 +2671,10 @@ class _FakeBenchmarkWindow(QWidget):
 @pytest.fixture
 def fake_benchmark(monkeypatch):
     """Replace the Benchmark window factory with a recording stand-in."""
-    from teachers_teammate.gui.benchmark import _benchmark_window  # noqa: PLC0415
+    from teachers_teammate.gui.benchmark import composition  # noqa: PLC0415
 
     _FakeBenchmarkWindow.created = []
-    monkeypatch.setattr(_benchmark_window, "build_benchmark_window", _FakeBenchmarkWindow)
+    monkeypatch.setattr(composition, "build_benchmark_window", _FakeBenchmarkWindow)
     return _FakeBenchmarkWindow
 
 
@@ -2695,6 +2696,23 @@ def test_tools_benchmark_opens_one_window_and_a_second_click_reuses_it(
     assert window.shown == 2
     assert window.parent() is None
     assert window.reloaded == 0  # it never went away: nothing to reload
+
+
+@pytest.mark.gui
+def test_the_benchmark_window_shares_the_main_windows_service(
+    qtbot, main_window, fake_benchmark
+) -> None:
+    """
+    Given  the main window
+    When   Tools > Benchmark… opens the Benchmark window
+    Then   it is built with the main window's own application service, so both share one set of
+           caches
+    """
+    main_window._benchmark_action.trigger()
+
+    window = fake_benchmark.created[0]
+    qtbot.addWidget(window)
+    assert window.processing is main_window._app_service
 
 
 @pytest.mark.gui
@@ -3038,7 +3056,7 @@ def test_main_window_load_toml_if_present_loads_values(qtbot, monkeypatch, tmp_p
         "teachers_teammate.gui._main_window.load_config_file",
         lambda _path: {"language": "German"},
     )
-    win = MainWindow()
+    win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
     assert win._config_path == config_path
 
@@ -3052,7 +3070,7 @@ def test_main_window_load_toml_if_present_no_path(qtbot, monkeypatch) -> None:
     """
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    win = MainWindow()
+    win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
 
     monkeypatch.setattr(
@@ -3076,7 +3094,7 @@ def test_main_window_load_toml_if_present_exception_logged(qtbot, monkeypatch, t
 
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    win = MainWindow()
+    win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
 
     monkeypatch.setattr(
@@ -3421,7 +3439,7 @@ def test_main_window_loads_credentials_on_startup(qtbot, monkeypatch, credential
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
     assert os.environ.get("OPENAI_API_KEY") == "test-value-from-settings"
@@ -3444,7 +3462,7 @@ def test_main_window_env_var_takes_priority_over_stored_credential(
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setenv("OPENAI_API_KEY", "env-value")
 
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
     assert os.environ["OPENAI_API_KEY"] == "env-value"
@@ -3476,7 +3494,7 @@ def _make_first_start_window(qtbot, monkeypatch, tmp_path: Path, detection) -> M
     monkeypatch.setattr(
         ProcessingApplicationService, "detect_hardware", lambda self, url, **_kw: detection
     )
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
     return win
 
@@ -3510,7 +3528,7 @@ def test_a_settings_file_from_the_installer_is_still_a_first_start(
         ProcessingApplicationService, "resolve_config_path", lambda self, explicit: settings
     )
 
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
     qtbot.waitUntil(lambda: bool(opened), timeout=5000)
     qtbot.waitUntil(lambda: "check_for_updates = false" in settings.read_text("utf-8"))
@@ -3580,7 +3598,7 @@ def test_existing_config_models_untouched(qtbot, monkeypatch, tmp_path: Path) ->
         return detection
 
     monkeypatch.setattr(ProcessingApplicationService, "detect_hardware", _spy_detect)
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
     settings = win._config_panel.get_settings_dict()
@@ -4496,7 +4514,7 @@ def test_online_ocr_engine_in_saved_settings_is_announced(
         ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
     )
 
-    win = MainWindow()
+    win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
 
     assert shown and shown[0].title == "Text recognition changed"
@@ -4523,7 +4541,7 @@ def test_a_removed_local_engine_in_saved_settings_is_announced(
         ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
     )
 
-    win = MainWindow()
+    win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
 
     assert [notice.title for notice in shown] == ["Text recognition changed"]
@@ -4551,7 +4569,7 @@ def test_local_ocr_engine_in_saved_settings_is_not_announced(
         ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
     )
 
-    qtbot.addWidget(MainWindow())
+    qtbot.addWidget(MainWindow(app_service=real_service()))
 
     assert "Text recognition changed" not in [notice.title for notice in shown]
 
@@ -4574,7 +4592,7 @@ def test_an_unusable_saved_value_is_logged_not_shown_as_a_dialog(
         ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
     )
 
-    win = MainWindow()
+    win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
 
     assert shown == []
@@ -5178,7 +5196,7 @@ def test_a_pull_requested_while_one_runs_is_queued_not_dropped(qtbot, monkeypatc
         finished_ok = Signal(str)
         finished_err = Signal(str)
 
-        def __init__(self, url: str, model: str) -> None:
+        def __init__(self, _service: Any, url: str, model: str) -> None:
             super().__init__()
             self.model = model
             threads.append(self)
@@ -5199,7 +5217,7 @@ def test_a_pull_requested_while_one_runs_is_queued_not_dropped(qtbot, monkeypatc
             pass
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager()
+    manager = main_window_module.OllamaDownloadManager(service=real_service())
     manager.start("http://host:11434", "a:1b")
 
     manager.start("http://host:11434", "a:1b", ["b:1b"])
@@ -5298,7 +5316,7 @@ def ready_window(qtbot, monkeypatch) -> MainWindow:
     """A MainWindow whose readiness check is the real one (the shared fixture silences it)."""
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
     return win
 
@@ -5981,7 +5999,7 @@ def _window_with_update_setting(qtbot, monkeypatch, value: bool | None) -> MainW
         return settings
 
     monkeypatch.setattr(ConfigPanel, "get_settings_dict", settings_dict)
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
     return win
 
@@ -6640,7 +6658,7 @@ def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
-    first = MainWindow(worker_factory=_DummyWorker)
+    first = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(first)
 
     first._check.layout_changed.emit(CheckLayout(split=(300, 100, 400), card_split=(100, 100)))
@@ -6653,7 +6671,7 @@ def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
     assert _MemorySettings.store["view/check_split"] == "300,500,400"
     assert _MemorySettings.store["view/check_card_split"] == "200,300"
 
-    second = MainWindow(worker_factory=_DummyWorker)
+    second = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(second)
 
     assert second._check.body._stored_split == (300, 500, 400)

@@ -24,7 +24,7 @@ from teachers_teammate.infrastructure.state_repository import (
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from tests.conftest import make_config
 
-from ._gui_harness import install_scripted_settings_window
+from ._gui_harness import install_scripted_settings_window, real_service
 from teachers_teammate.texts.settings import WHERE_ADDONS
 
 RAW = "Anna Müller schreibt an Bernd."
@@ -163,7 +163,7 @@ def main_window(qtbot, monkeypatch, settings) -> MainWindow:
     monkeypatch.setattr(
         ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
     # The Check tab is disabled while no document can be opened, and these tests drive the
     # preview panel that lives in it, so they open the tab themselves.
@@ -291,7 +291,7 @@ def test_the_privacy_checkbox_reflects_a_stored_choice(qtbot, monkeypatch, setti
     monkeypatch.setattr(
         ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
     page = _privacy_page(qtbot, win)
@@ -414,7 +414,7 @@ def test_a_stored_choice_to_show_the_names_is_kept(qtbot, monkeypatch, settings)
         ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
 
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
     assert not win._display_anonymized
@@ -434,7 +434,7 @@ def test_the_setting_is_restored_from_the_last_session(qtbot, monkeypatch, setti
         ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
 
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
     assert win._display_anonymized
@@ -457,7 +457,7 @@ def test_the_string_language_without_spacy_disables_the_choice(
         lambda self, _lang, _config=None: False,
     )
 
-    win = MainWindow(worker_factory=_DummyWorker)
+    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
     assert not win._check._hide_names_box.isEnabled()

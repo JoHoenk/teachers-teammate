@@ -129,7 +129,7 @@ pip call goes through `pip_policy_arguments()` (`--only-binary :all:`, `-c addon
 `outdated_shared_packages()` / `foreign_python_packages()` keep stale folders **off**
 `sys.path`; `IssueKind.ADDONS_OUTDATED` and the Add-ons banner offer **Update add-ons**
 (`ProcessingApplicationService.update_addons()`). Every entry point calls
-`ProcessingApplicationService.inject_addon_packages_dir()` first. A new add-on = its requirement
+`inject_addon_packages_dir()` (`application/composition.py`) first. A new add-on = its requirement
 in `_ADDON_PACKAGES`; `tools/build/check_addon_resolution.py` (CI) proves it fits the bundle.
 See {doc}`development` → "The bundle's constraints and add-ons after an app update"
 

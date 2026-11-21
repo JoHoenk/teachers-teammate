@@ -24,6 +24,7 @@ from typing import Any, ClassVar
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import QWidget
 
+from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.application.service import ProcessingApplicationService
 from teachers_teammate.domain.benchmark import PairComparison, compare_pair
 from teachers_teammate.domain.formatted_text import TextFormat
@@ -183,8 +184,19 @@ class FakeGuiService(LocalDataFlowStub):
     def addon_packages_dir(self) -> Path:
         return Path(tempfile.gettempdir()) / "teachers-teammate-addons"
 
-    def inject_addon_packages_dir(self) -> None:
-        pass
+    def install_addon(self, addon: str, target: Path, progress_cb: Any) -> None:
+        _ = (addon, target, progress_cb)
+
+    def clear_stale_addon_modules(self, addon: str) -> None:
+        _ = addon
+
+    def download_spacy_model(self, model: str, target: Path, progress_cb: Any) -> None:
+        _ = (model, target, progress_cb)
+
+    def pull_ollama_model(
+        self, url: str, model_name: str, progress_cb: Any = None, abort_event: Any = None
+    ) -> None:
+        _ = (url, model_name, progress_cb, abort_event)
 
     def first_run_model_settings(self, profile) -> dict[str, str]:
         _ = profile
@@ -346,3 +358,8 @@ def install_scripted_settings_window(
     )
     monkeypatch.setattr(_main_window, "SettingsWindow", scripted)
     return scripted
+
+
+def real_service() -> ProcessingApplicationService:
+    """Return a fresh application service, for a test that needs the real one."""
+    return build_app_services().processing

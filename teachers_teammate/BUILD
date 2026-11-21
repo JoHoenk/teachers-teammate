@@ -167,6 +167,7 @@ _APPLICATION_SRCS = [
     "application/check_document.py",
     "application/check_items.py",
     "application/commands.py",
+    "application/composition.py",
     "application/context_choice.py",
     "application/correction_options.py",
     "application/data_flow.py",

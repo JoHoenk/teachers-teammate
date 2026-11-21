@@ -486,6 +486,17 @@ py_test(
     deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
+# A service is built in one place, so every adapter shares its caches.
+py_test(
+    name = "test_service_construction",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_service_construction.py"],
+    args = ["unit/test_service_construction.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
 # Every reader shows the merged view, never a DocumentState text of its own.
 py_test(
     name = "test_teacher_work_readers",
@@ -1993,7 +2004,10 @@ py_test(
 py_test(
     name = "test_gui_worker",
     size = "medium",
-    srcs = _COMMON_SRCS + ["gui/test_gui_worker.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_worker.py",
+    ],
     args = ["gui/test_gui_worker.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
@@ -2282,7 +2296,10 @@ py_test(
 py_test(
     name = "test_gui_addon_installer_dialog",
     size = "medium",
-    srcs = _COMMON_SRCS + ["gui/test_gui_addon_installer_dialog.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_addon_installer_dialog.py",
+    ],
     args = ["gui/test_gui_addon_installer_dialog.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
@@ -2354,7 +2371,10 @@ py_test(
 py_test(
     name = "test_gui_install_round",
     size = "medium",
-    srcs = _COMMON_SRCS + ["gui/test_gui_install_round.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_install_round.py",
+    ],
     args = ["gui/test_gui_install_round.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
@@ -2430,7 +2450,10 @@ py_test(
 py_test(
     name = "test_benchmark_integration",
     size = "small",
-    srcs = _COMMON_SRCS + ["gui/test_benchmark_integration.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_benchmark_integration.py",
+    ],
     args = ["gui/test_benchmark_integration.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
@@ -2705,6 +2728,7 @@ test_suite(
         ":test_sent_text",
         ":test_sentences",
         ":test_service",
+        ":test_service_construction",
         ":test_setup_plan",
         ":test_spacy_models",
         ":test_speed_estimates",

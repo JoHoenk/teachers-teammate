@@ -79,12 +79,12 @@ class OCRWorker(QThread):
         config: Config,
         files: Sequence[Path],
         *,
-        app_service: _RunSelectedService | None = None,
+        app_service: _RunSelectedService,
     ) -> None:
         super().__init__()
         self._config = config
         self._files = list(files)
-        self._app_service = app_service or ProcessingApplicationService()
+        self._app_service = app_service
         self.stop_event = threading.Event()
         self.stop_after_file_event = threading.Event()
 
@@ -198,14 +198,14 @@ class _ConnectionCheckThread(QThread):
         provider: str = "",
         url: str = "http://127.0.0.1:11434",
         model: str = "",
-        app_service: _ConnectionService | None = None,
+        app_service: _ConnectionService,
     ) -> None:
         super().__init__()
         self._engine = engine
         self._provider = provider
         self._url = url
         self._model = model
-        self._app_service = app_service or ProcessingApplicationService()
+        self._app_service = app_service
 
     def run(self) -> None:
         connected, model_ok, msg = self._app_service.check_connection(

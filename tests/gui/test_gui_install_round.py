@@ -12,6 +12,7 @@ from PySide6.QtCore import QMetaMethod, QObject, QThread, Signal
 from teachers_teammate.gui import _addon_installer_dialog, _install_round, _model_fetch
 from teachers_teammate.gui._install_round import InstallRound
 
+from ._gui_harness import real_service
 from ._service_stubs import FinishedThreadStub, RecommendationServiceStub
 
 
@@ -92,7 +93,7 @@ class _FakeSpacyThread(FinishedThreadStub, QObject):
     finished_ok = Signal()
     finished_err = Signal(str)
 
-    def __init__(self, model: str, _target: Any) -> None:
+    def __init__(self, _service: Any, model: str, _target: Any) -> None:
         super().__init__()
         self._model = model
 
@@ -112,7 +113,7 @@ class _FakePullThread(FinishedThreadStub, QObject):
     finished_ok = Signal(str)
     finished_err = Signal(str)
 
-    def __init__(self, _url: str, model: str) -> None:
+    def __init__(self, _service: Any, _url: str, model: str) -> None:
         super().__init__()
         self._model = model
 
@@ -437,22 +438,18 @@ def test_a_round_installs_pip_then_spacy_then_pulls(qtbot, fake_threads) -> None
 
 
 @pytest.mark.use_case("Runtime_Addon_Installation")
-def test_the_packages_dir_is_injected_after_pip_and_after_spacy(qtbot, fake_threads) -> None:
+def test_the_packages_dir_is_injected_after_pip_and_after_spacy(
+    qtbot, fake_threads, monkeypatch
+) -> None:
     """
     Given  a round that installs a package and then a spaCy model
     When   each step finishes
     Then   the add-on packages directory is put on sys.path both times, so the new
            package is importable before the next step uses it
     """
-    round_, service = _round()
+    round_, _service = _round()
     injected: list[bool] = []
-    original = service.inject_addon_packages_dir
-
-    def _count() -> None:
-        injected.append(True)
-        original()
-
-    service.inject_addon_packages_dir = _count  # ty: ignore[invalid-assignment]
+    monkeypatch.setattr(_install_round, "inject_addon_packages_dir", lambda: injected.append(True))
 
     round_.start(packages=["spacy"], spacy_models=["en_core_web_sm"])
 
@@ -633,7 +630,7 @@ def test_the_real_manager_can_be_followed_with_the_bytes_of_a_large_model(qtbot)
     """
     from teachers_teammate.gui._main_window import OllamaDownloadManager  # noqa: PLC0415
 
-    manager = OllamaDownloadManager()
+    manager = OllamaDownloadManager(service=real_service())
     round_, _service = _round(manager)
     seen = _record(round_)
     round_._connect_pull_manager()
@@ -846,13 +843,13 @@ def test_a_round_with_two_spacy_models_downloads_both_with_the_real_thread(
     """
     downloaded: list[str] = []
 
-    class _Downloader:
-        def download_spacy_model(self, model: str, _target: Any, log: Any) -> None:
-            downloaded.append(model)
-            log(f"Successfully installed {model}")
+    round_, service = _round()
 
-    monkeypatch.setattr(_addon_installer_dialog, "ProcessingApplicationService", _Downloader)
-    round_, _service = _round()
+    def _download(model: str, _target: Any, log: Any) -> None:
+        downloaded.append(model)
+        log(f"Successfully installed {model}")
+
+    monkeypatch.setattr(service, "download_spacy_model", _download)
     seen = _record(round_)
 
     with qtbot.waitSignal(round_.finished, timeout=5000):

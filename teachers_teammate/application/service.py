@@ -2597,18 +2597,6 @@ class ProcessingApplicationService:
         """
         warm_up_own_host_names()
 
-    @staticmethod
-    def inject_addon_packages_dir() -> None:
-        """Prepend the addon packages directory to sys.path (idempotent).
-
-        Every entry point calls this first, so packages installed under Add-ons are importable
-        after a restart however the app was started.  A folder left by an older app version is
-        not added (see :meth:`addons_outdated`).
-        """
-        from ..infrastructure.addon_manager import inject_packages_dir  # noqa: PLC0415
-
-        inject_packages_dir()
-
     # ── Storage root / config path helpers ───────────────────────────────
 
     def default_config_path(self) -> Path:

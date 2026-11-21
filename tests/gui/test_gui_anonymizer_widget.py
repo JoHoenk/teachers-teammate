@@ -17,17 +17,13 @@ from teachers_teammate.texts._types import Notice
 def _make_dialog(qtbot, config=None, app_service=None, sample_text=""):
     """Create an AnonymizerConfigWidget with spaCy model fetching suppressed.
 
-    Patches ``ProcessingApplicationService`` to return ``[]`` from
-    ``list_installed_spacy_models`` and immediately quits the background thread
-    so tests are deterministic.
+    The service it is given reports no installed model, and the background thread is quit at
+    once, so tests are deterministic.
     """
     svc = app_service or MagicMock()
+    svc.list_installed_spacy_models.return_value = []
     cfg = config if config is not None else AnonymizerConfig()
-    with patch(
-        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
-    ) as MockSvc:
-        MockSvc.return_value.list_installed_spacy_models.return_value = []
-        dlg = AnonymizerConfigWidget("English", cfg, svc, sample_text=sample_text)
+    dlg = AnonymizerConfigWidget("English", cfg, svc, sample_text=sample_text)
     # Stop the thread to avoid teardown races
     dlg._spacy_fetch_thread.quit()
     dlg._spacy_fetch_thread.wait(500)
@@ -163,11 +159,9 @@ def test_dialog_secondary_model_combo_selects_installed_model(qtbot) -> None:
     installed = ["xx_ent_wiki_sm", "de_core_news_sm"]
     cfg = AnonymizerConfig(secondary_model="xx_ent_wiki_sm")
 
-    with patch(
-        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
-    ) as MockSvc:
-        MockSvc.return_value.list_installed_spacy_models.return_value = installed
-        dlg = AnonymizerConfigWidget("English", cfg, MagicMock())
+    svc = MagicMock()
+    svc.list_installed_spacy_models.return_value = installed
+    dlg = AnonymizerConfigWidget("English", cfg, svc)
     dlg._spacy_fetch_thread.quit()
     dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
@@ -186,11 +180,9 @@ def test_dialog_secondary_model_falls_back_to_none_when_not_installed(qtbot) -> 
     """
     cfg = AnonymizerConfig(secondary_model="missing_model_sm")
 
-    with patch(
-        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
-    ) as MockSvc:
-        MockSvc.return_value.list_installed_spacy_models.return_value = []
-        dlg = AnonymizerConfigWidget("English", cfg, MagicMock())
+    svc = MagicMock()
+    svc.list_installed_spacy_models.return_value = []
+    dlg = AnonymizerConfigWidget("English", cfg, svc)
     dlg._spacy_fetch_thread.quit()
     dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
@@ -240,6 +232,7 @@ def test_dialog_secondary_auto_entry_says_none_for_the_same_language(qtbot) -> N
     """
     dlg = _make_dialog(qtbot)
     # English document, English system: the primary model already covers it.
+    dlg._app_service.spacy_model_for_language.return_value = "en_core_web_sm"
     with patch.object(AnonymizerConfigWidget, "_system_spacy_model", return_value="en_core_web_sm"):
         dlg._on_spacy_models_fetched(["en_core_web_sm"])
 
@@ -315,11 +308,9 @@ def test_dialog_anonymizer_config_property(qtbot) -> None:
     installed = ["xx_ent_wiki_sm"]
     cfg = AnonymizerConfig(secondary_model="xx_ent_wiki_sm", patterns=(("ID", r"\d+"),))
 
-    with patch(
-        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
-    ) as MockSvc:
-        MockSvc.return_value.list_installed_spacy_models.return_value = installed
-        dlg = AnonymizerConfigWidget("English", cfg, MagicMock())
+    svc = MagicMock()
+    svc.list_installed_spacy_models.return_value = installed
+    dlg = AnonymizerConfigWidget("English", cfg, svc)
     dlg._spacy_fetch_thread.quit()
     dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
@@ -390,13 +381,10 @@ def test_dialog_combos_disabled_while_loading(qtbot) -> None:
     Then   both model combos are disabled (showing the loading placeholder)
     """
     svc = MagicMock()
+    svc.list_installed_spacy_models.return_value = []
     cfg = AnonymizerConfig()
     # Do NOT call _on_spacy_models_fetched — simulate thread still running
-    with patch(
-        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
-    ) as MockSvc:
-        MockSvc.return_value.list_installed_spacy_models.return_value = []
-        dlg = AnonymizerConfigWidget("English", cfg, svc)
+    dlg = AnonymizerConfigWidget("English", cfg, svc)
     dlg._spacy_fetch_thread.quit()
     dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
@@ -637,16 +625,13 @@ def test_dialog_on_model_downloaded_refreshes_combos(qtbot) -> None:
     Then   both secondary and primary combos are refreshed
     """
     dlg = _make_dialog(qtbot)
+    dlg._app_service.list_installed_spacy_models.return_value = ["xx_ent_wiki_sm"]
 
-    with patch(
-        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
-    ) as MockSvc:
-        MockSvc.return_value.list_installed_spacy_models.return_value = ["xx_ent_wiki_sm"]
-        dlg._on_model_downloaded("xx_ent_wiki_sm")
-        dlg._spacy_fetch_thread.quit()
-        dlg._spacy_fetch_thread.wait(500)
-        # Simulate the async fetch completing
-        dlg._on_spacy_models_fetched(["xx_ent_wiki_sm"])
+    dlg._on_model_downloaded("xx_ent_wiki_sm")
+    dlg._spacy_fetch_thread.quit()
+    dlg._spacy_fetch_thread.wait(500)
+    # Simulate the async fetch completing
+    dlg._on_spacy_models_fetched(["xx_ent_wiki_sm"])
 
     assert dlg._secondary_model.findData("xx_ent_wiki_sm") >= 0
     assert dlg._primary_model.findData("xx_ent_wiki_sm") >= 0
@@ -743,20 +728,15 @@ def test_shutdown_parks_a_running_model_discovery(qtbot) -> None:
 
     release = threading.Event()
     svc = MagicMock()
-    with patch(
-        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
-    ) as MockSvc:
-        MockSvc.return_value.list_installed_spacy_models.side_effect = lambda: (
-            release.wait(10) and []
-        )
-        dlg = AnonymizerConfigWidget("English", AnonymizerConfig(), svc)
-        qtbot.addWidget(dlg)
-        thread = dlg._spacy_fetch_thread
-        assert thread is not None and thread.isRunning()
+    svc.list_installed_spacy_models.side_effect = lambda: release.wait(10) and []
+    dlg = AnonymizerConfigWidget("English", AnonymizerConfig(), svc)
+    qtbot.addWidget(dlg)
+    thread = dlg._spacy_fetch_thread
+    assert thread is not None and thread.isRunning()
 
-        dlg.shutdown()
-        release.set()
-        qtbot.waitUntil(thread.isFinished, timeout=5000)
+    dlg.shutdown()
+    release.set()
+    qtbot.waitUntil(thread.isFinished, timeout=5000)
 
     assert not dlg._primary_model.isEnabled()  # the late answer was not applied
 

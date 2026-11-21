@@ -18,6 +18,8 @@ from teachers_teammate.gui.benchmark.composition import build_benchmark_window
 from teachers_teammate.infrastructure.benchmark.run_store import BenchmarkRunStore
 from teachers_teammate.infrastructure.benchmark.runner import OcrRunResult
 
+from ._gui_harness import real_service
+
 
 class _SyncSignal:
     """Minimal synchronous signal stand-in for a deterministic worker."""
@@ -67,6 +69,7 @@ def window(qtbot, tmp_path, monkeypatch):
     monkeypatch.setenv("TEACHERS_TEAMMATE_TMPDIR", str(tmp_path / "storage"))
     texts = iter(["alpha beta gamma", "alpha beta delta", "x"])
     service = BenchmarkApplicationService(
+        processing_service=real_service(),
         run_store=BenchmarkRunStore(tmp_path / "bench"),
         runner=lambda *a, **k: OcrRunResult(next(texts), None, 0.1, None),
     )

@@ -254,6 +254,7 @@ _GUI_SRCS = [
     "gui/_qt_stream.py",
     "gui/_readiness_line.py",
     "gui/_results_table.py",
+    "gui/_run_controller.py",
     "gui/_run_session.py",
     "gui/_run_status.py",
     "gui/_stats_widget.py",

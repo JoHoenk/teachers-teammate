@@ -7,8 +7,7 @@ import logging
 import os
 from pathlib import Path
 import sys
-import time
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
@@ -55,7 +54,7 @@ from ..application.queue import StageState
 from ..application.run import IssueKind, RequirementIssue, RunPreflight
 from ..application.sent_text import SentTexts
 from ..config import DEFAULTS, Config, dump_config_file, load_config_file
-from ..domain.data_location import STAGE_CORRECTION, DataFlow
+from ..domain.data_location import DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import (
@@ -63,16 +62,11 @@ from ..domain.ollama_discovery import (
     DiscoveredServer,
     DiscoveryScope,
     ServerKind,
-    WaitDetail,
-    WaitKind,
 )
-from ..domain.performance_estimate import TimeRange
-from ..domain.run_summary import FileStatus, KeepAwakeState, RunSummary
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts import privacy
-from ..texts.run import BATTERY_WARNING
 from ..texts.settings import WHERE_ADDONS, WHERE_GENERAL
 from . import _dialogs
 from . import _user_text as txt
@@ -114,22 +108,16 @@ from ._privacy_settings import (
 from ._pull_manager import PullManager
 from ._readiness_line import ReadinessLine, readiness
 from ._results_table import ResultsTable
+from ._run_controller import RunController, RunHooks, WorkerLike
 from ._run_session import (
-    PROGRESS_RESOLUTION,
-    PROGRESS_TICK_MS,
     STOP_NOW_TEXT,
-    STOP_NOW_TOOLTIP,
     STOP_TEXT,
-    STOP_TOOLTIP,
-    STOPPING_NOW_TEXT,
-    STOPPING_SUFFIX,
     RunSession,
     StopStage,
+    wait_detail_text,
 )
-from ._run_status import RunProgress, RunTone, describe_run
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
-from ._types import FileDoneEvent
 from ._update_check import UpdateCheckThread
 from ._view_settings import (
     check_card_split,
@@ -141,7 +129,6 @@ from ._view_settings import (
 )
 from ._what_is_sent_dialog import WhatIsSentDialog
 from ._window_geometry import maximize_without_saved_geometry, restore_geometry
-from ._worker import OCRWorker, detach_running_worker
 from .check import CheckLayout, CheckPage, CopyKind, CopyState, RunState
 from .settings import (
     PAGE_TITLES,
@@ -166,52 +153,6 @@ def _debounce_timer(parent: QWidget, interval_ms: int, slot: Callable[[], None])
     timer.setInterval(interval_ms)
     timer.timeout.connect(slot)
     return timer
-
-
-#: How long closing the window waits for a stopping run (milliseconds): enough for a cancelled
-#: Ollama request and a state write, never for the run itself.
-CLOSE_GRACE_MS = 3000
-AWAKE_HELD_TEXT = (
-    "Keeping the computer awake while documents are processed. The screen may turn off."
-)
-AWAKE_REFUSED_TEXT = "This computer did not allow staying awake; it may go to sleep during the run."
-AWAKE_UNAVAILABLE_TEXT = (
-    "The app cannot keep this computer awake (the system decides); "
-    "check its power settings if a long run must not be interrupted."
-)
-
-
-def _wait_detail_text(detail: WaitDetail) -> str:
-    """Return what to say about a request to Ollama that has no answer yet."""
-    if detail.kind is WaitKind.BUSY:
-        return check_text.RUN_WAITING_FOR_MODEL.format(other=detail.other)
-    if detail.kind is WaitKind.LOADING:
-        return check_text.RUN_LOADING_MODEL.format(model=detail.model)
-    if detail.kind is WaitKind.QUEUED:
-        return check_text.RUN_QUEUED_FOR_MODEL.format(other=detail.other, model=detail.model)
-    return ""
-
-
-class _WorkerLike(Protocol):
-    log_line: Any
-    file_started: Any
-    stage_started: Any
-    ocr_done: Any
-    stage_detail: Any
-    first_token: Any
-    file_done: Any
-    keep_awake_changed: Any
-    run_finished: Any
-    stop_event: Any
-    stop_after_file_event: Any
-
-    def start(self) -> None: ...
-
-    def request_stop(self, *, now: bool) -> None: ...
-
-    def wait(self, msecs: int, /) -> bool: ...
-
-    def isRunning(self) -> bool: ...
 
 
 def _is_shown(widget: QWidget) -> bool:
@@ -284,7 +225,7 @@ class MainWindow(QMainWindow):
         self,
         *,
         app_service: AppServices,
-        worker_factory: Callable[..., _WorkerLike] | None = None,
+        worker_factory: Callable[..., WorkerLike] | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Teacher's Teammate")
@@ -326,11 +267,6 @@ class MainWindow(QMainWindow):
         """Declare what the window needs for a run that is going: the clock, the notes, closing."""
         #: Set once the teacher agreed to stop the run and close (File → Quit asks itself).
         self._close_confirmed = False
-        #: Moves the bar and counts the time left down between two events of the run.
-        self._progress_timer = QTimer(self)
-        self._progress_timer.setInterval(PROGRESS_TICK_MS)
-        self._progress_timer.timeout.connect(self._refresh_progress)
-        self._pages_task = LatestTask(self)
         #: Under the progress bar; built in ``_build_left_panel``.
         self._awake_note: QLabel
         self._battery_note: QLabel
@@ -349,7 +285,6 @@ class MainWindow(QMainWindow):
 
     def _init_runtime_state(self) -> None:
         """Initialise per-window runtime state and declare widgets built later."""
-        self._worker: _WorkerLike | None = None
         self._config_path: Path | None = None
         self._pull_manager = PullManager(self, service=self._app_service)
         self._sent_texts_task = LatestTask(self)
@@ -379,6 +314,7 @@ class MainWindow(QMainWindow):
         self._config_panel: ConfigPanel
         self._readiness_line: ReadinessLine
         self._export_controller: ExportController
+        self._run_controller: RunController
         # The readiness line: the last answer of the background check (None: nothing blocks),
         # whether the first check has answered, and whether "Checking…" may be shown yet.
         self._blocker: tuple[str, RequirementIssue] | None = None
@@ -495,8 +431,45 @@ class MainWindow(QMainWindow):
         self._chart = self._monitor.chart
         self._stats = self._monitor.stats
 
+    def _run_hooks(self) -> RunHooks:
+        """What the run asks of this window. Looked up when a run happens, not now."""
+        return RunHooks(
+            apply_lock=self._apply_lock,
+            update_check_tab=self._update_check_tab,
+            refresh_check_run=self._refresh_check_run,
+            sync_row=self._sync_row,
+            # The two a test puts its own in the place of: looked up when the run gets there.
+            load_check=lambda source_id: self._load_check(source_id),  # noqa: PLW0108
+            current_source_id=lambda: self._current_preview_source_id,
+            queued_files=self._queued_files,
+            save_settings=lambda **kwargs: self._save_settings(**kwargs),  # noqa: PLW0108
+            show_documents=lambda: self._tabs.setCurrentIndex(0),
+            enable_export=lambda: self._export_controller.set_enabled(True),
+            notify=self._show_run_message,
+            worker_factory=lambda: self._worker_factory,
+            preflight_running=lambda: self._preflight_running,
+        )
+
     def _init_controllers(self) -> None:
         """Build the controllers, each given the widgets it works on."""
+        self._run_controller = RunController(
+            self,
+            services=self._app_service,
+            table=self._results_table,
+            session=self._run_session,
+            log=self._log,
+            chart=self._chart,
+            hooks=self._run_hooks(),
+        )
+        # The run's widgets are the controller's; the window lays them out and reads them.
+        self._run_btn = self._run_controller.run_button
+        self._stop_btn = self._run_controller.stop_button
+        self._progress = self._run_controller.progress_bar
+        self._awake_note = self._run_controller.awake_note
+        self._battery_note = self._run_controller.battery_note
+        self._run_btn.clicked.connect(self._on_run)
+        self._stop_btn.clicked.connect(self._run_controller.on_stop_clicked)
+        self._check.stop_requested.connect(self._run_controller.on_stop_clicked)
         self._export_controller = ExportController(
             self,
             services=self._app_service,
@@ -573,7 +546,6 @@ class MainWindow(QMainWindow):
         self._check.read_settings_requested.connect(
             lambda: self.open_settings(SettingsPage.AI_MODELS, focus=FOCUS_OCR)
         )
-        self._check.stop_requested.connect(self._on_stop)
         self._check.checked_toggled.connect(self._on_checked_toggled)
         self._check.item_shown.connect(self._on_item_shown)
         self._check.display_anonymized_changed.connect(self._apply_display_anonymized)
@@ -746,59 +718,17 @@ class MainWindow(QMainWindow):
         # Whether a run can start, and what to press if it can't -- right above Run.
         layout.addWidget(self._readiness_line)
 
-        _style = self.style()
-        assert _style is not None
-
         btn_row = QWidget()
         btn_layout = QHBoxLayout(btn_row)
         btn_layout.setContentsMargins(0, 0, 0, 0)
-        self._run_btn = QPushButton("Run Selected")
-        self._run_btn.setIcon(
-            QIcon.fromTheme(
-                "media-playback-start",
-                _style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
-            )
-        )
-        self._run_btn.setStyleSheet(
-            "QPushButton { background: #27ae60; color: white; font-weight: bold; "
-            "font-size: 10pt; padding: 6px 12px; border-radius: 4px; } "
-            "QPushButton:hover { background: #219a52; } "
-            "QPushButton:disabled { background: #95a5a6; }"
-        )
-        self._run_btn.clicked.connect(self._on_run)
-        self._stop_btn = QPushButton(STOP_TEXT)
-        self._stop_btn.setToolTip(STOP_TOOLTIP)
-        self._stop_btn.setIcon(
-            QIcon.fromTheme(
-                "media-playback-stop",
-                _style.standardIcon(QStyle.StandardPixmap.SP_MediaStop),
-            )
-        )
-        self._stop_btn.setMinimumHeight(32)
-        self._stop_btn.setEnabled(False)
-        self._stop_btn.clicked.connect(self._on_stop)
         self._export_btn = self._export_controller.create_button()
         btn_layout.addWidget(self._run_btn)
         btn_layout.addWidget(self._stop_btn)
         btn_layout.addWidget(self._export_btn)
         layout.addWidget(btn_row)
 
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 100)
-        self._progress.setValue(0)
-        self._progress.setTextVisible(True)
-        self._progress.setFormat("Idle")
         layout.addWidget(self._progress)
-
-        self._awake_note = QLabel()
-        self._awake_note.setWordWrap(True)
-        self._awake_note.setStyleSheet("color: #888888; font-size: 11px;")
-        self._awake_note.setVisible(False)
         layout.addWidget(self._awake_note)
-        self._battery_note = QLabel(BATTERY_WARNING)
-        self._battery_note.setWordWrap(True)
-        self._battery_note.setStyleSheet("color: #e6a23c; font-size: 11px;")
-        self._battery_note.setVisible(False)
         layout.addWidget(self._battery_note)
 
         left.setMinimumWidth(340)
@@ -1048,51 +978,20 @@ class MainWindow(QMainWindow):
             if not silent_on_error:
                 _dialogs.notify(self, dlg.save_failed(str(exc)))
 
-    def _run_active(self) -> bool:
-        """Return whether an OCR worker is running right now."""
-        return bool(self._worker and self._worker.isRunning())
-
     def _confirm_close_during_run(self) -> bool:
         """Ask whether to stop the run and close; the default answer keeps the run going."""
         return _dialogs.ask(self, dlg.close_during_run())
 
     def _on_quit_requested(self) -> None:
         """File → Quit: ask first when a run is going, then close like the window's X."""
-        if self._run_active() and not self._confirm_close_during_run():
+        if self._run_controller.active and not self._confirm_close_during_run():
             return
         self._close_confirmed = True
         self.close()
 
-    def _stop_worker_for_close(self) -> None:
-        """Stop the run at once, forget its signals and give it a moment to end.
-
-        Never waits for the run to finish: a worker that is still running after the grace
-        period (an online service cannot be interrupted) is detached, and the process ends
-        without destroying it (see :func:`~._app_bootstrap.finish_process`).
-        """
-        worker = self._worker
-        if worker is None or not worker.isRunning():
-            return
-        worker.request_stop(now=True)
-        for name in (
-            "log_line",
-            "file_started",
-            "stage_started",
-            "ocr_done",
-            "file_done",
-            "keep_awake_changed",
-            "run_finished",
-        ):
-            try:
-                getattr(worker, name).disconnect()
-            except RuntimeError, TypeError, AttributeError:
-                pass  # nothing connected, or a test double without disconnect
-        if not worker.wait(CLOSE_GRACE_MS):
-            detach_running_worker(worker)  # ty: ignore[invalid-argument-type]  # a QThread
-
     def closeEvent(self, event: Any) -> None:
         if (
-            self._run_active()
+            self._run_controller.active
             and not self._close_confirmed
             and event.spontaneous()
             and not self._confirm_close_during_run()
@@ -1121,11 +1020,20 @@ class MainWindow(QMainWindow):
         self.hide()
         self._sent_texts_task.cancel()
         self._anonymize_task.cancel()
-        self._stop_worker_for_close()
+        self._run_controller.stop_for_close()
         wait_for_background_tasks()
         event.accept()
 
     # ── Run / Stop ────────────────────────────────────────────────────────
+
+    def _show_run_message(self, text: str, warning: bool) -> None:
+        """Say how the run ended in the notification area, with the icon that fits it."""
+        icon = (
+            QSystemTrayIcon.MessageIcon.Warning
+            if warning
+            else QSystemTrayIcon.MessageIcon.Information
+        )
+        self._tray.showMessage("Teacher's Teammate", text, icon, 4000)
 
     def _get_file_names(self, config: Config) -> list[str]:
         """Return queued file names via application-layer file discovery."""
@@ -1163,9 +1071,7 @@ class MainWindow(QMainWindow):
         # The readiness line says what is in the queue and what to do next; the bar only
         # reports progress, so it stays "Idle" until something runs.
         if not self._run_in_progress():
-            self._progress.setRange(0, 100)
-            self._progress.setValue(0)
-            self._progress.setFormat("Idle")
+            self._run_controller.show_idle()
         self._sync_check_with_queue()
         self._update_check_tab()
         self._update_readiness()
@@ -1193,10 +1099,7 @@ class MainWindow(QMainWindow):
 
     def _run_in_progress(self) -> bool:
         """Return whether a requirement check or an OCR worker is already active."""
-        return self._preflight_running or self._run_active()
-
-    def _warn_busy(self) -> None:
-        _dialogs.notify(self, dlg.busy_with_run())
+        return self._run_controller.busy
 
     def _on_run(self) -> None:
         if self._run_in_progress():
@@ -1248,9 +1151,7 @@ class MainWindow(QMainWindow):
             return
         self._preflight_running = True
         self._run_btn.setEnabled(False)
-        self._progress.setRange(0, 100)
-        self._progress.setValue(0)
-        self._progress.setFormat("Checking requirements…")
+        self._run_controller.show_checking()
         service = self._app_service
         recognised = self._recognised_files()
         run_in_background(
@@ -1278,7 +1179,7 @@ class MainWindow(QMainWindow):
         """Show the first unmet requirement, or continue with *on_ready*."""
         self._preflight_running = False
         self._run_btn.setEnabled(True)
-        self._progress.setFormat("Idle")
+        self._run_controller.show_idle()
         if error is not None or not isinstance(result, RunPreflight):
             # The check itself failed: do not block; the pipeline reports real problems.
             on_ready(RunPreflight())
@@ -1286,7 +1187,7 @@ class MainWindow(QMainWindow):
         if result.blocked:
             self._show_blocking_preflight(result)
             return
-        note = _wait_detail_text(result.ollama_wait)
+        note = wait_detail_text(result.ollama_wait)
         if note:
             # A note, not a question: the run works, the first file just waits.
             self._log.append_text(note + "\n")
@@ -1409,99 +1310,12 @@ class MainWindow(QMainWindow):
             return
 
         self._run_session.steps_per_file = 1 if not config.correction_enabled else 2
-        self._start_worker(config, selected_source_ids)
-
-    def _start_worker(
-        self,
-        config: Config,
-        selected_source_ids: list[str],
-        files: list[Path] | None = None,
-    ) -> None:
-        """Start an OCR worker for *selected_source_ids*; *files* are their queued files."""
-        if files is None:
-            files = self._queued_files(selected_source_ids)
-        self._log.clear_log()
-        self._save_settings(notify=False)
-        self._results_table.set_output_dir(config.output_dir)
-        self._chart.clear_data()
-        # A document the run redoes is read-only from the run's start until its own result
-        # arrives: an edit stored meanwhile would race the run. It stays the open document, so
-        # its result reloads it (without a tab switch), and a run that ends before reaching it
-        # reloads it too. Documents the run leaves alone stay open for work.
-        self._run_session.start(config, selected_source_ids)
-        self._apply_lock()
-        self._progress.setRange(0, self._run_session.steps_total)
-        self._progress.setValue(0)
-        self._start_pace(config, files)
-        self._progress_timer.start()
-        self._set_progress_text(self._run_session.progress_base)
-        if self._run_session.from_check:
-            # Started from the Check header: the teacher stays with the document.
-            self._run_session.from_check = False
-        else:
-            self._tabs.setCurrentIndex(0)
-        self._update_check_tab()
-
-        worker_factory = self._worker_factory or OCRWorker
-        self._worker = worker_factory(
-            config,
-            files,
-            app_service=self._app_service,
-        )
-        self._worker.log_line.connect(self._log.append_text)
-        self._worker.file_started.connect(self._on_file_started)
-        self._worker.stage_started.connect(self._on_stage_started)
-        self._worker.ocr_done.connect(self._on_ocr_done)
-        self._worker.stage_detail.connect(self._on_stage_detail)
-        self._worker.first_token.connect(self._on_first_token)
-        self._worker.file_done.connect(self._on_file_done)
-        self._worker.keep_awake_changed.connect(self._on_keep_awake)
-        self._worker.run_finished.connect(self._on_run_finished)
-
-        self._run_btn.setEnabled(False)
-        self._set_stop_stage(StopStage.RUNNING)
-        self._awake_note.setVisible(False)
-        self._battery_note.setVisible(False)
-        self._worker.start()
-
-    def _start_pace(self, config: Config, files: list[Path]) -> None:
-        """Start the time-left figure: the estimate from the store, then the page counts.
-
-        The estimate is for *config*, the configuration this run really starts with (after a
-        right-click on a single step has switched the others off), not for the panel's ticks.
-
-        The estimate is read from the store on this thread (a small file); the page counts open
-        PDFs, so they are counted in the background and the figure is redrawn when they arrive.
-        """
-        self._run_session.start_pace(self._estimate_per_page(config), len(files))
-        if not files:
-            return
-        service = self._app_service
-        self._pages_task.submit(lambda: service.run.page_counts(files), self._on_pages_known)
-
-    def _estimate_per_page(self, config: Config) -> TimeRange | None:
-        """Return how long one page takes on this computer, or ``None`` when nothing is known."""
-        try:
-            choices = self._app_service.speeds.choices_for_config(config)
-            return self._app_service.speeds.speed_summary(choices).per_page
-        except Exception:  # noqa: BLE001  # an estimate must never keep a run from starting
-            return None
-
-    def _on_pages_known(self, result: object, error: BaseException | None) -> None:
-        """Take the page counts of the run's files and redraw the time left."""
-        if error is not None or not isinstance(result, dict):
-            return
-        pages = cast("dict[str, int]", result)
-        self._run_session.pages = pages
-        self._run_session.pace.set_pages(sum(pages.values()))
-        self._take_snapshot()
-        self._set_progress_text(self._run_session.progress_base)
-        self._refresh_check_run()
+        self._run_controller.start(config, selected_source_ids)
 
     def _on_stage_run_requested(self, selected_source_ids: list[str], stage: str) -> None:
         """Check the requirements, then invalidate cache from *stage* onward and run rows."""
         if self._run_in_progress():
-            self._warn_busy()
+            self._run_controller.warn_busy()
             return
         try:
             config = self._config_panel.to_config()
@@ -1593,7 +1407,7 @@ class MainWindow(QMainWindow):
             return
 
         self._run_session.steps_per_file = 1 if not config.correction_enabled else 2
-        self._start_worker(config, [str(file.resolve()) for file in files], files)
+        self._run_controller.start(config, [str(file.resolve()) for file in files], files)
 
     def _restore_all_settings(self) -> None:
         """Reset every setting to its default and save (Settings already asked twice)."""
@@ -1617,156 +1431,7 @@ class MainWindow(QMainWindow):
         """The proofreading instructions changed: save them, and re-count the parts."""
         self._save_settings(notify=False)
 
-    def _on_stop(self) -> None:
-        """First click: finish the document being processed; second click: stop at once."""
-        if not (self._worker and self._worker.isRunning()):
-            return
-        if self._run_session.stop_stage is StopStage.RUNNING:
-            self._worker.request_stop(now=False)
-            self._set_stop_stage(StopStage.AFTER_FILE)
-        elif self._run_session.stop_stage is StopStage.AFTER_FILE:
-            self._worker.request_stop(now=True)
-            self._set_stop_stage(StopStage.NOW)
-
-    def _set_stop_stage(self, stage: StopStage) -> None:
-        """Move the Stop button to *stage*: its text, tooltip and whether it can be pressed."""
-        self._run_session.stop_stage = stage
-        if stage is StopStage.AFTER_FILE:
-            self._stop_btn.setText(STOP_NOW_TEXT)
-            self._stop_btn.setToolTip(STOP_NOW_TOOLTIP)
-            self._stop_btn.setEnabled(True)
-            self._set_progress_text(self._run_session.progress_base)
-        elif stage is StopStage.NOW:
-            self._stop_btn.setEnabled(False)
-            self._progress.setFormat(STOPPING_NOW_TEXT)
-        else:
-            self._stop_btn.setText(STOP_TEXT)
-            self._stop_btn.setToolTip(STOP_TOOLTIP)
-            self._stop_btn.setEnabled(stage is StopStage.RUNNING)
-        self._refresh_check_run()
-
-    def _set_progress_text(self, text: str) -> None:
-        """Show *text* in the progress bar, with a note while the run stops after this file."""
-        self._run_session.progress_base = text
-        if self._run_session.stop_stage is StopStage.NOW:
-            return
-        suffix = STOPPING_SUFFIX if self._run_session.stop_stage is StopStage.AFTER_FILE else ""
-        self._progress.setFormat(text + self._time_left_suffix() + suffix)
-
-    def _time_left_suffix(self) -> str:
-        """Return the note about the time left, and put its range in the bar's tooltip.
-
-        One figure in the bar, the range behind it: a range in the bar itself would not fit,
-        and the teacher who wants to know how sure the figure is can hover over it.
-        """
-        snapshot = self._run_session.snapshot
-        self._progress.setToolTip(snapshot.tooltip)
-        return " · " + snapshot.note if snapshot.note else ""
-
-    def _take_snapshot(self) -> RunProgress:
-        """Ask the pace where the run is now, and keep the answer for both displays."""
-        self._run_session.snapshot = self._run_session.pace.snapshot(time.monotonic())
-        return self._run_session.snapshot
-
-    def _on_keep_awake(self, state: KeepAwakeState) -> None:
-        """Say under the progress bar whether the computer is kept awake, and warn on battery."""
-        if state.enabled:
-            if state.held:
-                text = AWAKE_HELD_TEXT
-            elif state.available:
-                text = AWAKE_REFUSED_TEXT
-            else:
-                text = AWAKE_UNAVAILABLE_TEXT
-            self._awake_note.setText(text)
-        self._awake_note.setVisible(state.enabled)
-        self._battery_note.setVisible(bool(state.enabled and state.on_battery))
-
     # ── Worker signal handlers ────────────────────────────────────────────
-
-    def _set_steps_done(self, steps: int) -> None:
-        """Move the bar to *steps* finished steps, unless it follows the time of the run."""
-        if not self._run_session.time_driven:
-            self._progress.setValue(steps)
-
-    def _refresh_progress(self) -> None:
-        """Move the bar and the time left to where the clock says the run is.
-
-        Without an estimate the pace has no figure and the bar keeps counting steps.
-        """
-        fraction = self._take_snapshot().fraction
-        if fraction is None or not self._run_in_progress():
-            return
-        if not self._run_session.time_driven:
-            self._run_session.time_driven = True
-            self._progress.setRange(0, PROGRESS_RESOLUTION)
-        # Full only when the run says so: a file that is nearly done is not yet done.
-        self._progress.setValue(min(round(fraction * PROGRESS_RESOLUTION), PROGRESS_RESOLUTION - 1))
-        self._set_progress_text(self._run_session.progress_base)
-        self._refresh_check_run()
-
-    def _on_file_started(self, source_id: str, name: str, idx: int, total: int) -> None:
-        self._set_steps_done((idx - 1) * self._run_session.steps_per_file)
-        self._run_session.file_started(source_id, name, idx, total)
-        self._set_progress_text(self._run_session.progress_base)
-        self._results_table.mark_processing(source_id)
-        self._apply_lock()
-        # The text format is deliberately kept: the row still shows the previous texts, and
-        # a format that no longer matches them would save an edit in the wrong notation.
-
-    def _on_stage_started(
-        self, _source_id: str, name: str, stage: str, idx: int, total: int
-    ) -> None:
-        text = self._run_session.stage_started(name, stage, idx, total, time.monotonic())
-        if text is not None:
-            self._set_progress_text(text)
-        self._refresh_check_run()
-
-    def _on_stage_detail(self, source_id: str, detail: object) -> None:
-        """Say what Ollama is doing with the request, in the bar and in the Check tab."""
-        if not isinstance(detail, WaitDetail):
-            return
-        text = self._run_session.stage_detail(source_id, _wait_detail_text(detail))
-        if text is None:
-            return
-        self._set_progress_text(text)
-        self._refresh_check_run()
-
-    def _on_first_token(self, source_id: str) -> None:
-        """The model began answering: a wait note goes, and the proofreading's clock starts."""
-        if source_id != self._run_session.current:
-            return
-        text = self._run_session.first_token(source_id, time.monotonic())
-        if text is not None:
-            self._set_progress_text(text)
-        self._refresh_check_run()
-
-    def _on_file_done(self, event: FileDoneEvent) -> None:
-        outcome = event.outcome
-        source_id = outcome.source_id
-        self._results_table.add_result(event)
-        self._export_controller.set_enabled(True)
-        # A skipped or stopped file is not an error: its row says why, the final line counts it.
-        if outcome.status is FileStatus.FAILED and outcome.error:
-            _dialogs.notify(self, dlg.processing_error(outcome.name, outcome.error))
-        self._run_session.file_done(event)
-        self._set_steps_done(self._run_session.steps_done())
-        self._set_progress_text(self._run_session.progress_base)
-        self._refresh_progress()
-        self._chart.update_data(
-            self._run_session.names,
-            self._run_session.ocr_times,
-            self._run_session.correction_times,
-        )
-
-        # Only the open document is reloaded: a finished file never takes the tab away from
-        # the document the teacher is working on, and never switches tabs.
-        # The open document is read once, for the page and the row together; any other row
-        # is read for itself.  Both refresh from the persisted state even on failure or stop,
-        # when on_ocr_done never fired.
-        if not (source_id == self._current_preview_source_id and self._load_check(source_id)):
-            self._sync_row(source_id)
-            self._apply_lock()
-        self._update_check_tab()
 
     def _sync_row(self, source_id: str) -> None:
         """Show what the store now says about *source_id* in its row.
@@ -2037,45 +1702,6 @@ class MainWindow(QMainWindow):
         self._readiness_line.end_download()
         QTimer.singleShot(0, self._start_readiness_check)
 
-    def _on_run_finished(self, summary: RunSummary) -> None:
-        """Announce how the run ended: done, stopped (not an error) or finished with errors."""
-        self._run_btn.setEnabled(True)
-        self._set_stop_stage(StopStage.IDLE)
-        self._awake_note.setVisible(False)
-        self._battery_note.setVisible(False)
-        self._progress_timer.stop()
-        text = describe_run(summary)
-        if text.complete:
-            self._progress.setValue(self._progress.maximum())
-        self._run_session.progress_base = text.progress
-        self._progress.setFormat(text.progress)
-        self._progress.setToolTip("")
-        reload = self._current_preview_source_id in self._run_session.pending
-        self._run_session.finished()
-        if reload:
-            # The run ended (stopped, failed) before it reached the open document: show what
-            # it still has instead of leaving the tab locked.
-            self._load_check(self._current_preview_source_id)
-        else:
-            self._apply_lock()
-        self._update_check_tab()
-        icon = (
-            QSystemTrayIcon.MessageIcon.Warning
-            if text.tone is RunTone.WARNING
-            else QSystemTrayIcon.MessageIcon.Information
-        )
-        self._tray.showMessage("Teacher's Teammate", text.tray, icon, 4000)
-
-    def _on_ocr_done(self, source_id: str, name: str, idx: int, total: int) -> None:
-        self._run_session.ocr_done()
-        self._refresh_check_run()
-        if self._run_session.steps_per_file > 1:
-            self._set_steps_done((idx - 1) * 2 + 1)
-            self._set_progress_text(f"[{idx}/{total}] {name} — {check_text.PROGRESS_CORRECTING}")
-            # The reading is stored, so the row can be opened while the proofreading runs.
-            self._sync_row(source_id)
-            self._results_table.mark_stage_running(source_id, STAGE_CORRECTION)
-
     # ── Drag-and-drop ─────────────────────────────────────────────────────
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
@@ -2211,7 +1837,7 @@ class MainWindow(QMainWindow):
         if not source_id:
             return
         if self._run_in_progress():
-            self._warn_busy()  # nothing starts, so the tab must not be marked as the origin
+            self._run_controller.warn_busy()  # nothing starts, so the tab must not be marked as the origin
             return
         self._run_session.from_check = True
         self._on_stage_run_requested([source_id], "correction")

@@ -12,6 +12,7 @@ from enum import Enum
 
 from ..config import Config
 from ..domain.model_catalog import short_model_name
+from ..domain.ollama_discovery import WaitDetail, WaitKind
 from ..domain.performance_estimate import TimeRange
 from ..domain.stages import (
     PROGRESS_STAGE_CORRECTION,
@@ -21,6 +22,17 @@ from ..domain.stages import (
 from ..texts import check as check_text
 from ._run_status import RunPace, RunProgress
 from ._types import FileDoneEvent
+
+
+def wait_detail_text(detail: WaitDetail) -> str:
+    """Return what to say about a request to Ollama that has no answer yet."""
+    if detail.kind is WaitKind.BUSY:
+        return check_text.RUN_WAITING_FOR_MODEL.format(other=detail.other)
+    if detail.kind is WaitKind.LOADING:
+        return check_text.RUN_LOADING_MODEL.format(model=detail.model)
+    if detail.kind is WaitKind.QUEUED:
+        return check_text.RUN_QUEUED_FOR_MODEL.format(other=detail.other, model=detail.model)
+    return ""
 
 
 class StopStage(Enum):

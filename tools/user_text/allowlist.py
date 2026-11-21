@@ -182,6 +182,12 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Export",
         }
     ),
+    "teachers_teammate/gui/_run_controller.py": frozenset(
+        {
+            "",
+            "Run Selected",
+        }
+    ),
     "teachers_teammate/gui/_hardware_profile_selector.py": frozenset(
         {
             '<a href="detect">Detect again</a>',
@@ -200,7 +206,6 @@ ALLOWED: dict[str, frozenset[str]] = {
     ),
     "teachers_teammate/gui/_main_window.py": frozenset(
         {
-            "",
             "About Teacher\u2019s Teammate…",
             "All settings…",
             "Answer a few questions to set up the AI for this computer.",
@@ -213,7 +218,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Open Files…",
             "Open Folder…",
             "Quit",
-            "Run Selected",
             "Settings",
             "Setup Assistant…",
             "System Monitor",

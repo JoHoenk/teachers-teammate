@@ -49,7 +49,7 @@ class _DummySignal:
 
 
 class _DummyWorker:
-    def __init__(self, _config, selected_source_paths=None, app_service=None) -> None:
+    def __init__(self, _config, files=None, app_service=None) -> None:
         self.log_line = _DummySignal()
         self.file_started = _DummySignal()
         self.stage_started = _DummySignal()

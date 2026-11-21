@@ -47,7 +47,11 @@ class _CliAppService(Protocol):
 
     def resolve_config_path(self, explicit: str | None) -> Path | None: ...
 
-    def run_selected(self, config: Config, /, *, config_file: Path | None = None) -> RunSummary: ...
+    def collect_input_files(self, config: Config, /) -> list[Path]: ...
+
+    def run_selected(
+        self, config: Config, files: Sequence[Path], /, *, config_file: Path | None = None
+    ) -> RunSummary: ...
 
     def describe_data_flow(self, config: Config, /) -> DataFlow: ...
 
@@ -57,9 +61,9 @@ class _CliAppService(Protocol):
 
     def memory_warning_for_run(self, config: Config, /) -> str: ...
 
-    def run_preview_only(self, config: Config, /) -> int: ...
+    def run_preview_only(self, config: Config, files: Sequence[Path], /) -> RunSummary: ...
 
-    def reader_refusal_for_run(self, config: Config, /) -> str: ...
+    def reader_refusal_for_run(self, config: Config, files: Sequence[Path], /) -> str: ...
 
     def page_models_notice_for_run(self, config: Config, /) -> str: ...
 
@@ -668,11 +672,12 @@ def run_cli(
         recursive=args.recursive,
     )
 
+    files = service.collect_input_files(config)
     if args.preview_only:
-        return service.run_preview_only(config)
+        return service.run_preview_only(config, files).exit_code
     refusal = (
         service.ocr_refusal_for_run(config)
-        or service.reader_refusal_for_run(config)
+        or service.reader_refusal_for_run(config, files)
         or service.output_refusal_for_run(config)
     )
     if refusal:
@@ -689,7 +694,7 @@ def run_cli(
     if notice:
         print(notice, file=sys.stderr)
     _print_data_flow(service.describe_data_flow(config))
-    return service.run_selected(config, config_file=config_path).exit_code
+    return service.run_selected(config, files, config_file=config_path).exit_code
 
 
 def main(

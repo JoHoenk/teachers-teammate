@@ -31,7 +31,6 @@ from ...domain.teacher_work import (
     TranscriptionWork,
     current_texts,
     text_identity,
-    work_status,
 )
 from ...exceptions import (
     RECOGNITION_OFF_MESSAGE,
@@ -83,10 +82,10 @@ class ProcessingResult:
     stopped_stage: str = ""
     """With ``stopped``: the step the stop cut short (``"ocr"``, ``"correction"`` or
     ``"evaluation"``); empty when the file did not get as far as telling."""
-    checked_label: str = ""
-    """What the teacher checked: ``"checked"`` (the corrections), ``"text"`` (the transcription
-    alone) or ``""``.  Read from the work, so the row shows what the Check tab would."""
 
+
+#: What a file says that was queued and is gone when its turn comes.
+FILE_GONE_MESSAGE = "The file is no longer there."
 
 #: What a stopped file says, by the step it did not get to.
 STOPPED_BEFORE_RECOGNITION = "Stopped before the text was read."
@@ -282,11 +281,7 @@ class FileProcessor:
             review=review,
             anonymized_raw=reused,
         )
-        return replace(
-            result,
-            correction_warning="; ".join(correction_warnings),
-            checked_label=work_status(ctx.work, texts).checked_label,
-        )
+        return replace(result, correction_warning="; ".join(correction_warnings))
 
     # ── Stage helpers ─────────────────────────────────────────────────────
 
@@ -298,6 +293,11 @@ class FileProcessor:
     def _prepare_cache(self, file: Path) -> CacheContext:
         try:
             return self._cache_service.prepare(file)
+        except FileNotFoundError as exc:
+            self._reporter.status(f"       → Skipped: {FILE_GONE_MESSAGE}")
+            raise _StageAbort(
+                ProcessingResult(False, FILE_GONE_MESSAGE, "", "", "", "", skipped=True)
+            ) from exc
         except OSError as exc:
             raise _StageAbort(
                 ProcessingResult(False, f"Could not read input file: {exc}", "", "", "", "")

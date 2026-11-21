@@ -8,6 +8,7 @@ tests fail when a key is added to one of the places that read it and not to the 
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -86,7 +87,7 @@ class _RecordingService:
     def ocr_refusal_for_run(self, config: Config) -> str:
         return ""
 
-    def reader_refusal_for_run(self, config: Config) -> str:
+    def reader_refusal_for_run(self, config: Config, files: Sequence[Path]) -> str:
         return ""
 
     def output_refusal_for_run(self, config: Config) -> str:
@@ -98,7 +99,10 @@ class _RecordingService:
     def page_models_notice_for_run(self, config: Config) -> str:
         return ""
 
-    def run_preview_only(self, config: Config, /) -> int:
+    def collect_input_files(self, config: Config) -> list[Path]:
+        return []
+
+    def run_preview_only(self, config: Config, files, /) -> RunSummary:
         raise AssertionError("the preview must not run")
 
     def download_reader(self, on_progress=None, cancel=None) -> None:
@@ -107,7 +111,7 @@ class _RecordingService:
     def download_page_models(self, on_progress=None, cancel=None) -> None:
         raise AssertionError("nothing may be downloaded")
 
-    def run_selected(self, config: Config, /, **kwargs: object) -> RunSummary:
+    def run_selected(self, config: Config, files, /, **kwargs: object) -> RunSummary:
         self.configs.append(config)
         return RunSummary()
 

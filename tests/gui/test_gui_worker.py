@@ -11,8 +11,8 @@ from teachers_teammate.gui._worker import (
     OCRWorker,
     _ConnectionCheckThread,
 )
-from teachers_teammate.domain.run_summary import RunStatus, RunSummary
-from teachers_teammate.infrastructure.reporting import FileDoneResult, KeepAwakeState
+from teachers_teammate.domain.run_summary import FileOutcome, FileStatus, RunStatus, RunSummary
+from teachers_teammate.infrastructure.reporting import KeepAwakeState
 from tests.conftest import make_config
 
 
@@ -20,8 +20,8 @@ class _DummyAppService:
     def run_selected(
         self,
         _config,
+        _files,
         *,
-        selected_source_paths=None,
         stop_event=None,
         stop_after_file_event=None,
         reporter=None,
@@ -29,7 +29,6 @@ class _DummyAppService:
     ) -> RunSummary:
         _ = stop_event
         _ = stop_after_file_event
-        _ = selected_source_paths
         _ = reporter
         source_id = "/tmp/a.png"
         if progress is not None:
@@ -44,14 +43,7 @@ class _DummyAppService:
                 progress.on_ocr_done(source_id, "a.png")
             if progress.on_file_done:
                 progress.on_file_done(
-                    FileDoneResult(
-                        source_id,
-                        "a.png",
-                        True,
-                        "saved",
-                        raw_text="raw.txt",
-                        text_format="markdown",
-                    )
+                    FileOutcome(source_id, "a.png", FileStatus.SAVED, warnings=("a remark",))
                 )
         return RunSummary(succeeded=("a.png",))
 
@@ -86,7 +78,7 @@ def test_ocr_worker_emits_lifecycle_signals(qtbot, tmp_path: Path) -> None:
     Then   file_started, ocr_done, file_done, keep_awake_changed and run_finished are emitted
     """
     cfg = make_config(tmp_path)
-    worker = OCRWorker(cfg, app_service=_DummyAppService())
+    worker = OCRWorker(cfg, [Path("/tmp/a.png")], app_service=_DummyAppService())
 
     seen: dict[str, int] = {"started": 0, "ocr": 0, "done": 0, "awake": 0, "finished": 0}
     worker.file_started.connect(lambda *_: seen.__setitem__("started", seen["started"] + 1))
@@ -109,7 +101,7 @@ def test_ocr_worker_emits_stage_started_with_file_position(qtbot, tmp_path: Path
     Then   stage_started is emitted for each stage with the file name and its idx/total
     """
     cfg = make_config(tmp_path)
-    worker = OCRWorker(cfg, app_service=_DummyAppService())
+    worker = OCRWorker(cfg, [Path("/tmp/a.png")], app_service=_DummyAppService())
     stages: list[tuple] = []
     worker.stage_started.connect(lambda *args: stages.append(args))
 
@@ -123,33 +115,31 @@ def test_ocr_worker_emits_stage_started_with_file_position(qtbot, tmp_path: Path
 
 
 @pytest.mark.gui
-def test_ocr_worker_passes_selected_source_paths(qtbot, tmp_path: Path) -> None:
+def test_ocr_worker_passes_its_files(qtbot, tmp_path: Path) -> None:
     """
-    Given  an OCRWorker created with selected source paths
+    Given  an OCRWorker created with two files
     When   run() is invoked
-    Then   selected source paths are forwarded to OCRPipeline
+    Then   the application service receives exactly those files
     """
 
-    captured: dict[str, list[str]] = {"selected": []}
+    captured: dict[str, list[Path]] = {"files": []}
 
     class _CaptureAppService(_DummyAppService):
-        def run_selected(self, _config, *, selected_source_paths=None, **kwargs) -> RunSummary:
-            captured["selected"] = list(selected_source_paths or [])
-            return super().run_selected(
-                _config, selected_source_paths=selected_source_paths, **kwargs
-            )
+        def run_selected(self, _config, files, **kwargs) -> RunSummary:
+            captured["files"] = list(files)
+            return super().run_selected(_config, files, **kwargs)
 
     cfg = make_config(tmp_path)
     worker = OCRWorker(
         cfg,
-        selected_source_paths=["/tmp/a.png", "/tmp/b.png"],
+        [Path("/tmp/a.png"), Path("/tmp/b.png")],
         app_service=_CaptureAppService(),
     )
 
     worker.run()
     qtbot.wait(10)
 
-    assert captured["selected"] == ["/tmp/a.png", "/tmp/b.png"]
+    assert captured["files"] == [Path("/tmp/a.png"), Path("/tmp/b.png")]
 
 
 @pytest.mark.gui
@@ -165,7 +155,7 @@ def test_ocr_worker_emits_fatal_error_on_pipeline_exception(qtbot, tmp_path: Pat
             raise RuntimeError("boom")
 
     cfg = make_config(tmp_path)
-    worker = OCRWorker(cfg, app_service=_RaiseAppService())
+    worker = OCRWorker(cfg, [Path("/tmp/a.png")], app_service=_RaiseAppService())
 
     logs: list[str] = []
     summaries: list[RunSummary] = []
@@ -199,21 +189,21 @@ def test_connection_thread_no_engine_or_provider(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_ocr_worker_file_done_event_carries_the_text_format(qtbot, tmp_path: Path) -> None:
+def test_ocr_worker_file_done_event_carries_the_outcome(qtbot, tmp_path: Path) -> None:
     """
-    Given  a pipeline that reports the text format of a finished file
+    Given  a pipeline that reports a saved file with a remark
     When   run() is invoked
-    Then   the file_done event carries that format, so the preview does not depend on a
-           later state lookup
+    Then   the file_done event carries the run's outcome, not a copy of it
     """
-    worker = OCRWorker(make_config(tmp_path), app_service=_DummyAppService())
+    worker = OCRWorker(make_config(tmp_path), [Path("/tmp/a.png")], app_service=_DummyAppService())
     events: list = []
     worker.file_done.connect(events.append)
 
     worker.run()
     qtbot.wait(10)
 
-    assert [event.text_format for event in events] == ["markdown"]
+    assert [event.outcome.status for event in events] == [FileStatus.SAVED]
+    assert [event.outcome.warnings for event in events] == [("a remark",)]
 
 
 @pytest.mark.gui
@@ -223,7 +213,7 @@ def test_ocr_worker_request_stop_sets_the_right_events(tmp_path: Path) -> None:
     When   request_stop(now=False) and then request_stop(now=True) are called
     Then   the first sets only the stop-after-file event, the second also "Stop now"
     """
-    worker = OCRWorker(make_config(tmp_path), app_service=_DummyAppService())
+    worker = OCRWorker(make_config(tmp_path), [Path("/tmp/a.png")], app_service=_DummyAppService())
 
     worker.request_stop(now=False)
     assert worker.stop_after_file_event.is_set() is True
@@ -243,11 +233,11 @@ def test_ocr_worker_passes_both_stop_events_to_the_service(qtbot, tmp_path: Path
     seen: dict = {}
 
     class _Capture(_DummyAppService):
-        def run_selected(self, _config, **kwargs) -> RunSummary:
+        def run_selected(self, _config, _files, **kwargs) -> RunSummary:
             seen.update(kwargs)
             return RunSummary()
 
-    worker = OCRWorker(make_config(tmp_path), app_service=_Capture())
+    worker = OCRWorker(make_config(tmp_path), [Path("/tmp/a.png")], app_service=_Capture())
 
     worker.run()
     qtbot.wait(10)
@@ -265,20 +255,26 @@ def test_ocr_worker_file_done_event_carries_the_stopped_flag(qtbot, tmp_path: Pa
     """
 
     class _Stopped(_DummyAppService):
-        def run_selected(self, _config, *, progress=None, **_kwargs) -> RunSummary:
+        def run_selected(self, _config, _files, *, progress=None, **_kwargs) -> RunSummary:
             assert progress is not None and progress.on_file_done is not None
             progress.on_file_done(
-                FileDoneResult(
-                    "/tmp/a.png", "a.png", False, "Stopped before proofreading.", stopped=True
+                FileOutcome(
+                    "/tmp/a.png",
+                    "a.png",
+                    FileStatus.STOPPED,
+                    error="Stopped before proofreading.",
+                    stopped_stage="correction",
                 )
             )
             return RunSummary(stopped=("a.png",))
 
-    worker = OCRWorker(make_config(tmp_path), app_service=_Stopped())
+    worker = OCRWorker(make_config(tmp_path), [Path("/tmp/a.png")], app_service=_Stopped())
     events: list = []
     worker.file_done.connect(events.append)
 
     worker.run()
     qtbot.wait(10)
 
-    assert [(e.stopped, e.ok) for e in events] == [(True, False)]
+    assert [(e.outcome.status, e.outcome.stopped_stage) for e in events] == [
+        (FileStatus.STOPPED, "correction")
+    ]

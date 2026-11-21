@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QMenu
 
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.domain.proofreading.review import CorrectionReview, UnclearNote
+from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._results_table import ResultsTable
@@ -48,10 +49,12 @@ def test_a_warning_of_the_run_gives_way_when_the_stored_result_goes_stale(qtbot)
     table.mark_stage_running(source_id, "correction")
     table.add_result(
         FileDoneEvent(
-            source_id=source_id,
-            name="a.png",
-            ok=True,
-            message="kept the original",
+            outcome=FileOutcome(
+                source_id=source_id,
+                name="a.png",
+                status=FileStatus.SAVED,
+                warnings=("kept the original",),
+            ),
             ocr_s=0.0,
             correction_s=1.0,
         )
@@ -91,10 +94,11 @@ def test_a_finished_file_shows_its_duration_and_keeps_the_store_row(qtbot) -> No
 
     table.add_result(
         FileDoneEvent(
-            source_id="/tmp/preview.png",
-            name="preview.png",
-            ok=True,
-            message="",
+            outcome=FileOutcome(
+                source_id="/tmp/preview.png",
+                name="preview.png",
+                status=FileStatus.SAVED,
+            ),
             ocr_s=1.2,
             correction_s=0.3,
         )
@@ -416,10 +420,12 @@ def test_results_table_failed_correction_shows_cross_with_tooltip(qtbot) -> None
     error_msg = "Correction failed: model 'typo-model' not found"
     table.add_result(
         FileDoneEvent(
-            source_id="/tmp/doc.pdf",
-            name="doc.pdf",
-            ok=False,
-            message=error_msg,
+            outcome=FileOutcome(
+                source_id="/tmp/doc.pdf",
+                name="doc.pdf",
+                status=FileStatus.FAILED,
+                error=error_msg,
+            ),
             ocr_s=1.5,
             correction_s=0.0,
         )
@@ -444,10 +450,12 @@ def test_results_table_failed_ocr_shows_cross_with_tooltip(qtbot) -> None:
     error_msg = "OCR failed: empty response"
     table.add_result(
         FileDoneEvent(
-            source_id="/tmp/doc.pdf",
-            name="doc.pdf",
-            ok=False,
-            message=error_msg,
+            outcome=FileOutcome(
+                source_id="/tmp/doc.pdf",
+                name="doc.pdf",
+                status=FileStatus.FAILED,
+                error=error_msg,
+            ),
             ocr_s=0.5,
             correction_s=0.0,
         )
@@ -603,13 +611,14 @@ def test_a_skipped_result_is_shown_as_skipped_not_as_a_failure(qtbot) -> None:
 
     table.add_result(
         FileDoneEvent(
-            source_id="/in/scan.png",
-            name="scan.png",
-            ok=False,
-            message="Needs text recognition, which is switched off.",
+            outcome=FileOutcome(
+                source_id="/in/scan.png",
+                name="scan.png",
+                status=FileStatus.SKIPPED,
+                error="Needs text recognition, which is switched off.",
+            ),
             ocr_s=0.0,
             correction_s=0.0,
-            skipped=True,
         )
     )
 
@@ -651,15 +660,16 @@ def test_queued_scans_can_be_marked_skipped_before_the_run_and_unmarked_again(qt
 
 def _stopped_event(source: str, stage: str, **extra) -> FileDoneEvent:
     return FileDoneEvent(
-        source_id=source,
-        name="essay.png",
-        ok=False,
-        message=f"Stopped at {stage}.",
+        outcome=FileOutcome(
+            source_id=source,
+            name="essay.png",
+            status=FileStatus.STOPPED,
+            error=f"Stopped at {stage}.",
+            stopped_stage=stage,
+            **extra,
+        ),
         ocr_s=1.0,
         correction_s=0.0,
-        stopped=True,
-        stopped_stage=stage,
-        **extra,
     )
 
 
@@ -779,10 +789,11 @@ def test_a_finished_file_brings_its_checked_mark(qtbot) -> None:
 
     table.add_result(
         FileDoneEvent(
-            source_id="/a.png",
-            name="a.png",
-            ok=True,
-            message="",
+            outcome=FileOutcome(
+                source_id="/a.png",
+                name="a.png",
+                status=FileStatus.SAVED,
+            ),
             ocr_s=1.0,
             correction_s=0.0,
         )
@@ -826,10 +837,12 @@ def test_a_failed_file_keeps_the_checked_mark_it_had(qtbot) -> None:
 
     table.add_result(
         FileDoneEvent(
-            source_id="/a.png",
-            name="a.png",
-            ok=False,
-            message="OCR failed",
+            outcome=FileOutcome(
+                source_id="/a.png",
+                name="a.png",
+                status=FileStatus.FAILED,
+                error="OCR failed",
+            ),
             ocr_s=1.0,
             correction_s=0.0,
         )
@@ -849,10 +862,11 @@ def test_a_refresh_after_a_stage_run_keeps_the_row_it_showed(qtbot) -> None:
     table.mark_stage_running("/a.png", "correction")
     table.add_result(
         FileDoneEvent(
-            source_id="/a.png",
-            name="a.png",
-            ok=True,
-            message="",
+            outcome=FileOutcome(
+                source_id="/a.png",
+                name="a.png",
+                status=FileStatus.SAVED,
+            ),
             ocr_s=1.0,
             correction_s=2.0,
         )

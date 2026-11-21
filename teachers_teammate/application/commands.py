@@ -8,7 +8,7 @@ reader merges the two (:func:`~teachers_teammate.application.merged_view.merged_
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 import logging
 from pathlib import Path
 
@@ -27,7 +27,6 @@ from ..domain.teacher_work import (
     without_corrections,
     without_work_for_reading,
 )
-from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.stage_builder import resolve_run_windows
 from ..infrastructure.state_repository import (
@@ -73,13 +72,11 @@ class ApplicationCommands:
     def __init__(
         self,
         *,
-        discovery: FileDiscovery,
         state_store_factory: Callable[[Config], StateRepository],
         windows_for: Callable[[Config], RunWindows] | None = None,
         model_store: ModelStore | None = None,
         work_store: TeacherWorkStore | None = None,
     ) -> None:
-        self._discovery = discovery
         self._state_store_factory = state_store_factory
         #: The context windows a run with a config uses on this computer, so a hash written
         #: here matches the one the run writes.  Without it only the settings are known.
@@ -259,13 +256,16 @@ class ApplicationCommands:
         self,
         config: Config,
         *,
-        selected_source_ids: list[str],
+        files: Sequence[Path],
         stage: str,
-    ) -> tuple[list[str], list[str], bool]:
-        """Invalidate state for *selected_source_ids* from *stage* onwards."""
-        files = self._discovery.collect_input_files(config)
+    ) -> tuple[str, ...]:
+        """Invalidate the state of *files* from *stage* onwards; return what could not be reset.
+
+        The caller names the files: the run that follows processes exactly these, so the
+        invalidation cannot reach a document the teacher did not pick.  Each failure names
+        its file and says why.
+        """
         return self._invalidate_from_stage(
-            selected_source_ids=selected_source_ids,
             stage=stage,
             files=files,
             store=self._state_store_factory(config),
@@ -301,27 +301,14 @@ class ApplicationCommands:
     @staticmethod
     def _invalidate_from_stage(
         *,
-        selected_source_ids: list[str],
         stage: str,
-        files: list[Path],
+        files: Sequence[Path],
         store: StateRepository,
         work_store: TeacherWorkStore | None = None,
-    ) -> tuple[list[str], list[str], bool]:
+    ) -> tuple[str, ...]:
         stage_name = normalize_stage(stage)
-        if not files:
-            return [], [], True
-
-        files_by_source_id = {str(file.resolve()): file for file in files}
-        matched = [
-            files_by_source_id[source_id]
-            for source_id in selected_source_ids
-            if source_id in files_by_source_id
-        ]
-        if not matched:
-            return [], [], False
-
         failures: list[str] = []
-        for file in matched:
+        for file in files:
             # The work goes first: it is what the teacher confirmed to lose.  If it cannot be
             # dropped nothing is reset, so the document stays as it was.
             if not ApplicationCommands._drop_parts(work_store, file, stage_name):
@@ -332,8 +319,7 @@ class ApplicationCommands:
             except OSError as exc:
                 failures.append(f"{file.name}: {exc}")
 
-        run_source_ids = [str(file.resolve()) for file in matched]
-        return run_source_ids, failures, False
+        return tuple(failures)
 
     @staticmethod
     def _drop_parts(work_store: TeacherWorkStore | None, file: Path, stage: str) -> bool:

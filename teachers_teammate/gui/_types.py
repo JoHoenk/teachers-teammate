@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, TypedDict
+from typing import TypedDict
 
-if TYPE_CHECKING:
-    from ..domain.proofreading.review import CorrectionReview
+from ..domain.run_summary import FileOutcome
 
 
 class StageStatus(StrEnum):
@@ -21,38 +20,16 @@ class StageStatus(StrEnum):
 
 @dataclass(frozen=True)
 class FileDoneEvent:
-    """One completed file's result — emitted by ``OCRWorker.file_done`` and rendered by the GUI.
+    """One completed file — emitted by ``OCRWorker.file_done`` and rendered by the GUI.
 
-    Bundling the fields into a single payload keeps the ``file_done`` signal and
-    its slots from carrying ten positional arguments.
+    The run's own result (:class:`~teachers_teammate.domain.run_summary.FileOutcome`) plus the
+    two durations the worker measured; the texts are not carried, a row that needs one reads
+    the document from the store.
     """
 
-    source_id: str
-    name: str
-    ok: bool
-    message: str
+    outcome: FileOutcome
     ocr_s: float
     correction_s: float
-    preview_img: str = ""
-    raw_txt: str = ""
-    corr_txt: str = ""
-    eval_txt: str = ""
-    text_format: str = "plain"
-    """Notation of ``raw_txt`` / ``corr_txt``: ``"plain"`` or ``"markdown"``."""
-    correction_review: CorrectionReview | None = None
-    """Explanations and unclear expressions, ``None`` when the file has no review."""
-    correction_warning: str = ""
-    """Why the file has no review (fallback to corrections-only); empty when there is one."""
-    skipped: bool = False
-    """The file was left out on purpose (a scan while text recognition is off), not a failure."""
-    stopped: bool = False
-    """The run was stopped while the file was processed: not a failure; what was done is kept."""
-    stopped_stage: str = ""
-    """With ``stopped``: the step the stop cut short (``"ocr"``, ``"correction"`` or
-    ``"evaluation"``); empty when the file did not get as far as telling."""
-    checked_label: str = ""
-    """What the teacher checked: ``"checked"`` (the corrections), ``"text"`` (the transcription
-    alone) or ``""``.  The wording of the cell is the table's."""
 
     @property
     def total_s(self) -> float:

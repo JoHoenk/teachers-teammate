@@ -8,8 +8,8 @@ from pathlib import Path
 import threading
 
 from ...domain.proofreading.review import align, review_summary
-from ...domain.run_summary import RunSummary
-from ..reporting import FileDoneResult, OnFileDoneFn, OnFileStartedFn, Reporter, StdoutReporter
+from ...domain.run_summary import FileOutcome, FileStatus, RunSummary
+from ..reporting import OnFileDoneFn, OnFileStartedFn, Reporter, StdoutReporter
 from .file_processor import ProcessingResult
 
 _logger = logging.getLogger(__name__)
@@ -56,42 +56,21 @@ def run_files(
             if on_file_started:
                 on_file_started(source_id, file.name, idx, total)
             result = process_file(file)
+            outcome = _outcome(source_id, file.name, result)
             if on_file_done:
-                # When ok=True, result.message is the saved filename (never shown in the GUI).
-                # Replace it with the joined stage warnings so the GUI can mark the correction
-                # column with ⚠ on partial failure; empty string means all stages succeeded.
-                msg = "; ".join(result.warnings) if result.ok else result.message
-                on_file_done(
-                    FileDoneResult(
-                        source_id=source_id,
-                        name=file.name,
-                        ok=result.ok,
-                        message=msg,
-                        preview_img=result.preview_img,
-                        raw_text=result.raw_text,
-                        correction_text=result.correction_text,
-                        evaluation_text=result.evaluation_text,
-                        text_format=result.text_format,
-                        correction_review=result.correction_review,
-                        correction_warning=result.correction_warning,
-                        skipped=result.skipped,
-                        stopped=result.stopped,
-                        stopped_stage=result.stopped_stage,
-                        checked_label=result.checked_label,
-                    )
-                )
-            if result.stopped:
+                on_file_done(outcome)
+            if outcome.status is FileStatus.STOPPED:
                 reporter.status(f"       → {result.message}")
                 stopped.append(file.name)
-            elif result.skipped:
+            elif outcome.status is FileStatus.SKIPPED:
                 _logger.info("%s", result.message)
                 skipped.append(file.name)
-            elif result.ok:
+            elif outcome.status is FileStatus.SAVED:
                 reporter.status(f"       → Saved: {result.message}")
                 summary = _review_line(result)
                 if summary:
                     reporter.status(f"       → {summary}")
-                for warning in result.warnings:
+                for warning in outcome.warnings:
                     _logger.warning("%s", warning)
                 succeeded.append(file.name)
             else:
@@ -105,6 +84,29 @@ def run_files(
         skipped=tuple(skipped),
         stopped=tuple(stopped),
         not_started=tuple(not_started),
+    )
+
+
+def _outcome(source_id: str, name: str, result: ProcessingResult) -> FileOutcome:
+    """Return what happened to one file, as the adapters read it."""
+    if result.stopped:
+        return FileOutcome(
+            source_id=source_id,
+            name=name,
+            status=FileStatus.STOPPED,
+            error=result.message,
+            stopped_stage=result.stopped_stage,
+        )
+    if result.skipped:
+        return FileOutcome(
+            source_id=source_id, name=name, status=FileStatus.SKIPPED, error=result.message
+        )
+    if result.ok:
+        return FileOutcome(
+            source_id=source_id, name=name, status=FileStatus.SAVED, warnings=result.warnings
+        )
+    return FileOutcome(
+        source_id=source_id, name=name, status=FileStatus.FAILED, error=result.message
     )
 
 

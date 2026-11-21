@@ -1249,6 +1249,9 @@ class _RecordingReporter:
     def warn(self, line: str) -> None:
         self.warnings.append(line)
 
+    def error(self, line: str) -> None:
+        self.warnings.append(line)
+
 
 def _make_check_model_ollama(
     models: list[str], show_resp: object, ps_models: list[str] | None = None

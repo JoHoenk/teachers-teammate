@@ -19,8 +19,8 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass, field, replace
 import hashlib
 import importlib.util
+import logging
 import re
-import sys
 import threading
 from typing import TYPE_CHECKING
 
@@ -30,6 +30,8 @@ from ..domain.formatted_text import INLINE_TAG_ALTERNATION
 from ..interfaces import AnonymizationMap, Anonymizer
 from . import system_locale
 from .spacy_models import spacy_model_for
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -461,20 +463,19 @@ class SpacyAnonymizer(Anonymizer):
             if importlib.util.find_spec("spacy") is not None:
                 # Installed but broken: say what failed, not that it is missing.
                 raise ImportError(f"spacy is installed but cannot be loaded: {exc}") from exc
-            print(
-                "ERROR: spacy is not installed. "
-                "Install the privacy extras: pip install 'teachers_teammate[privacy]'",
-                file=sys.stderr,
+            _logger.error(
+                "spacy is not installed. "
+                "Install the privacy extras: pip install 'teachers_teammate[privacy]'"
             )
             raise ImportError("spacy is required for anonymization") from exc
         try:
             spacy.prefer_gpu()
             self._nlp = spacy.load(primary_model)
         except OSError:
-            print(
-                f"ERROR: spacy model '{primary_model}' is not downloaded. "
-                f"Run: python -m spacy download {primary_model}",
-                file=sys.stderr,
+            _logger.error(
+                "spacy model '%s' is not downloaded. Run: python -m spacy download %s",
+                primary_model,
+                primary_model,
             )
             raise
 
@@ -483,11 +484,11 @@ class SpacyAnonymizer(Anonymizer):
             try:
                 self._nlp_secondary = spacy.load(self._config.secondary_model)
             except OSError:
-                print(
-                    f"ERROR: secondary spacy model '{self._config.secondary_model}' "
-                    "is not downloaded. "
-                    f"Run: python -m spacy download {self._config.secondary_model}",
-                    file=sys.stderr,
+                _logger.error(
+                    "secondary spacy model '%s' is not downloaded. "
+                    "Run: python -m spacy download %s",
+                    self._config.secondary_model,
+                    self._config.secondary_model,
                 )
                 raise
 

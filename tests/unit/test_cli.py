@@ -29,7 +29,7 @@ class _AppServiceStub:
     def ocr_refusal_for_run(self, config) -> str:
         return ""
 
-    def reader_refusal_for_run(self, config) -> str:
+    def reader_refusal_for_run(self, config, files) -> str:
         return ""
 
     def page_models_notice_for_run(self, config) -> str:
@@ -47,10 +47,13 @@ class _AppServiceStub:
     def memory_warning_for_run(self, config) -> str:
         return ""
 
-    def run_selected(self, config, /, **kwargs) -> RunSummary:
+    def collect_input_files(self, config) -> list[Path]:
+        return []
+
+    def run_selected(self, config, files, /, **kwargs) -> RunSummary:
         raise AssertionError("the run must not start")
 
-    def run_preview_only(self, config) -> int:
+    def run_preview_only(self, config, files, /) -> RunSummary:
         raise AssertionError("preview-only path should not be used")
 
 
@@ -238,7 +241,7 @@ def test_main_allows_missing_output_when_no_docx(tmp_path: Path, monkeypatch) ->
     captured: list = []
 
     class _FakeAppService(_AppServiceStub):
-        def run_selected(self, config, /, **kwargs) -> RunSummary:
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             captured.append(config)
             return RunSummary()
 
@@ -270,7 +273,7 @@ def test_the_proofreading_context_flag_reaches_the_config(tmp_path: Path, monkey
     captured: list = []
 
     class _FakeAppService(_AppServiceStub):
-        def run_selected(self, config, /, **kwargs) -> RunSummary:
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             captured.append(config)
             return RunSummary()
 
@@ -342,7 +345,7 @@ def test_main_loads_config_file_defaults(tmp_path: Path) -> None:
         def resolve_config_path(self, explicit: str | None) -> Path | None:
             return Path(explicit) if explicit else None
 
-        def run_selected(self, config, /, **kwargs) -> RunSummary:
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             captured.append(config)
             return RunSummary()
 
@@ -368,7 +371,7 @@ def test_main_uses_exit_fn_with_run_cli_result(tmp_path: Path) -> None:
     captured_codes: list[int] = []
 
     class _FakeAppService(_AppServiceStub):
-        def run_selected(self, config, /, **kwargs) -> RunSummary:
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             return RunSummary(failed=("a.png",))
 
     main(
@@ -545,7 +548,7 @@ def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch)
     captured: list = []
 
     class _FakeAppService(_AppServiceStub):
-        def run_selected(self, config, /, **kwargs) -> RunSummary:
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             captured.append(config)
             return RunSummary()
 
@@ -656,7 +659,7 @@ def test_run_cli_tells_where_documents_are_processed(tmp_path: Path, capsys) -> 
             calls.append("describe")
             return flow
 
-        def run_selected(self, config, /, **kwargs) -> RunSummary:
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             calls.append("run")
             return RunSummary()
 
@@ -689,7 +692,7 @@ def test_run_cli_refuses_online_text_recognition_before_anything_starts(
         def describe_data_flow(self, config) -> DataFlow:
             raise AssertionError("no data flow may be announced for a refused run")
 
-        def run_selected(self, config, /, **kwargs) -> RunSummary:
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             raise AssertionError("a refused run must not start")
 
     rc = run_cli(
@@ -711,7 +714,7 @@ def test_run_cli_refuses_the_reader_when_it_is_not_downloaded(tmp_path: Path, ca
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
 
     class _FakeAppService(_AppServiceStub):
-        def reader_refusal_for_run(self, config) -> str:
+        def reader_refusal_for_run(self, config, files) -> str:
             return "The built-in reader is not downloaded yet. Use --download-reader."
 
         def describe_data_flow(self, config) -> DataFlow:
@@ -835,7 +838,7 @@ def test_a_run_with_missing_page_models_prints_one_line_and_still_runs(
         def page_models_notice_for_run(self, config) -> str:
             return PAGE_MODELS_SKIPPED_NOTICE
 
-        def run_selected(self, config, /, **kwargs) -> RunSummary:
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             started.append(True)
             return RunSummary()
 
@@ -863,7 +866,7 @@ class _TextFlagsAppService(_AppServiceStub):
     def output_refusal_for_run(self, config) -> str:
         return self._output_refusal
 
-    def run_selected(self, config, /, **kwargs) -> RunSummary:
+    def run_selected(self, config, files, /, **kwargs) -> RunSummary:
         self.configs.append(config)
         return RunSummary()
 
@@ -1104,7 +1107,7 @@ def test_run_cli_passes_anonymizer_settings_from_the_config_file(tmp_path: Path)
         def resolve_config_path(self, explicit: str | None) -> Path | None:
             return Path(explicit) if explicit else None
 
-        def run_selected(self, config, /, **kwargs) -> RunSummary:
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             captured.append(config)
             return RunSummary()
 
@@ -1129,7 +1132,7 @@ def test_a_stopped_run_exits_with_zero(tmp_path: Path) -> None:
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
 
     class _FakeAppService(_AppServiceStub):
-        def run_selected(self, config, /, **kwargs) -> RunSummary:
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             return RunSummary(stopped=("a.png",), not_started=("b.png",))
 
     rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=_FakeAppService())
@@ -1153,7 +1156,7 @@ def test_the_keep_awake_flags_reach_the_config(tmp_path: Path, flags, expected) 
     captured: list = []
 
     class _FakeAppService(_AppServiceStub):
-        def run_selected(self, config, /, **kwargs) -> RunSummary:
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             captured.append(config)
             return RunSummary()
 

@@ -38,14 +38,14 @@ TABLE --> WIN          : list[source_id]
 deactivate TABLE
 
 WIN -> WIN             : _start_worker(config, selected_ids)
-WIN -> WORKER          : OCRWorker(config, selected_paths, app_service)
+WIN -> WORKER          : OCRWorker(config, files, app_service)
 WIN -> WORKER          : connect signals\n(log_line, file_started, file_done, finished_with_code)
 WIN -> WORKER          : start()   [spawns QThread]
 deactivate WIN
 
 group Background thread (OCRWorker)
   activate WORKER
-  WORKER -> SVC        : run_selected(config, selected_paths,\nprogress: ProgressCallbacks)
+  WORKER -> SVC        : run_selected(config, files,\nprogress: ProgressCallbacks)
   activate SVC
   SVC -> PIPE          : OCRPipeline(config, …).run()
   activate PIPE
@@ -181,7 +181,7 @@ group Background thread (OCRWorker)
       deactivate OUT
     end
 
-    FP -> FP            : emit on_file_done\n(FileDoneResult: source_id, ok, preview_img, raw_text, text_format, …)
+    FP -> FP            : emit on_file_done\n(FileOutcome: source_id, name, status, error, warnings)
     FP --> COORD        :
     deactivate FP
   end

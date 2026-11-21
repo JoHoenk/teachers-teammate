@@ -17,8 +17,9 @@ from dataclasses import dataclass
 import sys
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from ..domain.run_summary import FileOutcome
+
 if TYPE_CHECKING:
-    from ..domain.proofreading.review import CorrectionReview
     from .ollama_utils import WaitDetail
 
 OnFileStartedFn = Callable[[str, str, int, int], None]  # (source_id, name, idx, total)
@@ -26,45 +27,7 @@ OnStageStartedFn = Callable[[str, str], None]  # (source_id, stage)
 OnOcrDoneFn = Callable[[str, str], None]  # (source_id, name)
 OnStageDetailFn = Callable[[str, "WaitDetail"], None]  # (source_id, what the server is doing)
 OnFirstTokenFn = Callable[[str], None]  # (source_id)
-
-
-@dataclass(frozen=True)
-class FileDoneResult:
-    """Outcome of one file, handed to ``ProgressCallbacks.on_file_done``.
-
-    Text strings are empty when the associated stage output was not produced.
-    ``message`` is the joined stage warnings on success (empty when every stage succeeded)
-    and the error otherwise.
-    """
-
-    source_id: str
-    name: str
-    ok: bool
-    message: str
-    preview_img: str = ""
-    raw_text: str = ""
-    correction_text: str = ""
-    evaluation_text: str = ""
-    text_format: str = "plain"
-    """Notation (``"plain"`` or ``"markdown"``) of ``raw_text`` and ``correction_text``."""
-    correction_review: CorrectionReview | None = None
-    """Explanations and unclear expressions; ``None`` when the file has no review."""
-    correction_warning: str = ""
-    """Why the file has no review (fallback to corrections-only); empty when there is one."""
-    skipped: bool = False
-    """The file was left out on purpose (``ok`` is ``False``, ``message`` says why)."""
-    stopped: bool = False
-    """The run was stopped while this file was processed (``ok`` is ``False``, ``message`` says
-    before which step); what was already done is stored and kept."""
-    stopped_stage: str = ""
-    """With ``stopped``: the step the stop cut short (``"ocr"``, ``"correction"`` or
-    ``"evaluation"``); empty when the file did not get as far as telling."""
-    checked_label: str = ""
-    """What the teacher checked: ``"checked"`` (the corrections), ``"text"`` (the transcription
-    alone) or ``""``."""
-
-
-OnFileDoneFn = Callable[[FileDoneResult], None]
+OnFileDoneFn = Callable[[FileOutcome], None]
 
 
 @dataclass(frozen=True)
@@ -97,8 +60,8 @@ class ProgressCallbacks:
     ``on_stage_started(source_id, stage)`` fires when a file enters the ``"preprocessing"``,
     ``"ocr"`` or ``"correction"`` stage (not when that stage is served from the cache).
     ``on_ocr_done(source_id, name)`` fires after OCR, before correction.
-    ``on_file_done(result)`` fires with a :class:`FileDoneResult` after a file completes
-    (success, failure or stop).
+    ``on_file_done(outcome)`` fires with a :class:`FileOutcome` after a file completes
+    (saved, failed, skipped or stopped).
     ``on_keep_awake(state)`` fires once at the start of a run with a :class:`KeepAwakeState`.
     ``on_stage_detail(source_id, detail)`` fires while a request to Ollama has no answer yet,
     with what the server is doing instead.  ``on_first_token(source_id)`` fires when the model
@@ -116,7 +79,7 @@ class ProgressCallbacks:
 
 @runtime_checkable
 class Reporter(Protocol):
-    """Sink for the pipeline's progress narrative and advisory warnings."""
+    """Sink for the pipeline's progress narrative, its warnings and its errors."""
 
     def status(self, line: str) -> None:
         """Report a normal progress line."""
@@ -124,11 +87,14 @@ class Reporter(Protocol):
     def warn(self, line: str) -> None:
         """Report an advisory/warning line."""
 
+    def error(self, line: str) -> None:
+        """Report a line about something that went wrong."""
+
 
 class StdoutReporter:
-    """Default reporter: ``status`` → stdout, ``warn`` → stderr.
+    """Default reporter: ``status`` → stdout, ``warn``/``error`` → stderr.
 
-    Reproduces the prior ``print()`` behaviour so CLI output is unchanged.
+    ``error`` adds the ``ERROR:`` prefix the callers used to write themselves.
     """
 
     def status(self, line: str) -> None:
@@ -136,6 +102,9 @@ class StdoutReporter:
 
     def warn(self, line: str) -> None:
         print(line, file=sys.stderr, flush=True)
+
+    def error(self, line: str) -> None:
+        print(f"ERROR: {line}", file=sys.stderr, flush=True)
 
 
 class CallbackReporter:
@@ -152,3 +121,6 @@ class CallbackReporter:
 
     def warn(self, line: str) -> None:
         self._sink(line)
+
+    def error(self, line: str) -> None:
+        self._sink(f"ERROR: {line}")

@@ -19,6 +19,36 @@ class RunStatus(StrEnum):
     FAILED = "failed"
 
 
+class FileStatus(StrEnum):
+    """What happened to one file of a run: four outcomes, one field."""
+
+    SAVED = "saved"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    """Left out on purpose (a scan while text recognition is off), not a failure."""
+    STOPPED = "stopped"
+    """The run was stopped while this file was processed; what was done is kept."""
+
+
+@dataclass(frozen=True)
+class FileOutcome:
+    """What happened to one file of a run: the one result the adapters read.
+
+    No texts: a row that needs one reads the document from the store, so the run's payload
+    cannot drift from what is stored.
+    """
+
+    source_id: str
+    name: str
+    status: FileStatus
+    error: str = ""
+    """Why the file failed or was left out; empty when it was saved."""
+    warnings: tuple[str, ...] = ()
+    """Remarks about a saved file (a stage that fell back); empty when every stage succeeded."""
+    stopped_stage: str = ""
+    """With ``STOPPED``: the step the stop cut short; empty when the file did not get that far."""
+
+
 @dataclass(frozen=True)
 class RunSummary:
     """The file names of a run, sorted by what happened to them."""

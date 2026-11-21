@@ -953,8 +953,8 @@ The result of a run is `domain/run_summary.py:RunSummary`: `succeeded`, `failed`
 (`workflow/coordinator.py`), `OCRPipeline.run()` and `ProcessingApplicationService.run_selected()`
 return it; `OCRWorker.run_finished` carries it to the GUI, and `gui/_run_status.py:describe_run`
 holds all the wording (progress text, tray message).  A stopped file is neither a success nor
-a failure, like a skipped one: `ProcessingResult.stopped` -> `FileDoneResult.stopped` ->
-`FileDoneEvent.stopped`, shown as a grey row with "stopped" in the cut-short step.
+a failure, like a skipped one: `ProcessingResult.stopped` -> `FileOutcome(status=STOPPED)` ->
+`FileDoneEvent`, shown as a grey row with "stopped" in the cut-short step.
 
 Rules that keep a stop honest:
 
@@ -3747,8 +3747,9 @@ Off, the layers behave like this:
   preprocessed.  Text files and PDFs with a usable text layer pass.  `FileProcessor` turns it into
   `ProcessingResult(ok=False, skipped=True, message=RECOGNITION_OFF_MESSAGE)`.  A file whose OCR
   text is already cached never reaches that code and runs normally.
-- `run_files()` returns `RunOutcome(succeeded, failed, skipped)`; a skipped file is neither of the
-  others (exit code 0).  `FileDoneResult.skipped` -> `FileDoneEvent.skipped`; the main window opens
+- `run_files()` returns `RunSummary`; a skipped file is neither of the
+  others (exit code 0).  `ProcessingResult.skipped` -> `FileOutcome(status=SKIPPED)`; a file that is
+  gone since it was queued is skipped the same way.  The main window opens
   no error dialog for it and `ResultsTable.add_result` shows "skipped" in grey.
 - `_ollama_needed` / `configured_ollama_models` / `ocr_refusal_for_run` ignore the OCR model, the
   pipeline does not check it, and `describe_data_flow` leaves the recognition stage out (no page

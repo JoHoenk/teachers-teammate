@@ -32,6 +32,7 @@ from teachers_teammate.infrastructure.workflow.cache_service import CacheContext
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
 from teachers_teammate.exceptions import RunStoppedError
 from teachers_teammate.infrastructure.workflow.file_processor import (
+    FILE_GONE_MESSAGE,
     REVIEW_UNMATCHED,
     STOPPED_BEFORE_PROOFREADING,
     STOPPED_BEFORE_RECOGNITION,
@@ -300,6 +301,22 @@ def test_oserror_on_prepare_returns_false(tmp_path: Path) -> None:
         == result.evaluation_text
         == ""
     )
+
+
+def test_a_file_that_is_gone_is_skipped_not_failed(tmp_path: Path) -> None:
+    """
+    Given  a queued file that was deleted before its turn
+    When   process() is called
+    Then   the file is skipped, not failed, and nothing else ran
+    """
+    fp, cache_svc, _, _ = _make_processor(tmp_path)
+    cache_svc.prepare.side_effect = FileNotFoundError("gone")
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.skipped is True
+    assert result.ok is False
+    assert result.message == FILE_GONE_MESSAGE
 
 
 def test_preprocessing_failure_returns_false(tmp_path: Path) -> None:

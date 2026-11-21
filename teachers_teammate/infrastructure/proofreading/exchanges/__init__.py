@@ -16,7 +16,6 @@ from .base import (
     ProofreadContext,
     build_exchange,
 )
-from .fallback import FallbackExchange
 from .t import TExchange
 
 EXCHANGES["T"] = TExchange
@@ -27,7 +26,6 @@ __all__ = [
     "ExchangeCost",
     "ExchangeFactory",
     "ExchangeResult",
-    "FallbackExchange",
     "ProofreadContext",
     "TExchange",
     "build_exchange",

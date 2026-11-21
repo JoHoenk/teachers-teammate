@@ -372,15 +372,6 @@ py_test(
 )
 
 py_test(
-    name = "test_fallback_exchange",
-    size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_fallback_exchange.py"],
-    args = ["unit/test_fallback_exchange.py"],
-    main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
-)
-
-py_test(
     name = "test_step_runner",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_step_runner.py"],
@@ -2866,7 +2857,6 @@ test_suite(
         ":test_exchange_t",
         ":test_export_service",
         ":test_fake_ollama",
-        ":test_fallback_exchange",
         ":test_fetch_models",
         ":test_file_processor",
         ":test_frozen_modes",

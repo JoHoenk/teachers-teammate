@@ -2837,7 +2837,7 @@ stores and every reader reads.
 | `infrastructure/proofreading/port.py` | `ModelPort` (Bridge): `OllamaPort`, `LangChainPort` |
 | `infrastructure/proofreading/runner.py` | `StepRunner`: cut-off tries, one repair, window check, timeout |
 | `infrastructure/proofreading/schemas.py` | the answer schemas of steps ② and ③ with their parsers |
-| `infrastructure/proofreading/exchanges/` | `Exchange` protocol, `EXCHANGES` registry, `TExchange`, `FallbackExchange` |
+| `infrastructure/proofreading/exchanges/` | `Exchange` protocol, `EXCHANGES` registry, `TExchange` |
 | `infrastructure/proofreading/chunking.py` | `ChunkingCorrector` and `proofreading_pieces()`: a text longer than one request is proofread in pieces and the results joined |
 
 **The three steps.** ① *Correct* sends the shielded text and gets plain text back; its answer
@@ -2920,10 +2920,9 @@ explanation language, notes, corrections only); the connection's own settings (`
 **Adding an exchange.** Implement `Exchange` (`proofread`, `max_text_chars`, `cost_model`),
 register it in `EXCHANGES` under its `ExchangeKind`, and build it through `build_exchange()`
 so the port, the cut-off tries and the clause check arrive the same way for every exchange.
-`FallbackExchange(primary, fallback)` is the chain of responsibility an exchange uses when it
-can fall back to a cheaper one. Nothing outside `infrastructure/proofreading/` sees an
-exchange's own answer schema: each exchange maps its answer to `ExchangeResult`, and the GUI,
-the DOCX builder and the cache read `CorrectionReview` only.
+Nothing outside `infrastructure/proofreading/` sees an exchange's own answer schema: each
+exchange maps its answer to `ExchangeResult`, and the GUI, the DOCX builder and the cache read
+`CorrectionReview` only.
 
 ## Error handling
 

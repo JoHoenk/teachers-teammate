@@ -919,7 +919,7 @@ def test_the_check_stop_button_stops_the_run_like_the_documents_tab(
 
 @pytest.mark.gui
 def test_the_copy_menu_follows_the_privacy_add_on_for_the_open_document(
-    main_window, stored
+    main_window, monkeypatch, stored
 ) -> None:
     """
     Given  a document open in the Check tab while names cannot be hidden
@@ -927,7 +927,7 @@ def test_the_copy_menu_follows_the_privacy_add_on_for_the_open_document(
     Then   the "names hidden" copy entries of the open document are enabled
     """
     [a] = stored("a.png")
-    main_window._privacy_available = False
+    monkeypatch.setattr(main_window._privacy_controller, "_available", False)
     main_window._check_controller.open_document(a)
     kind = CopyKind.RAW_ANONYMIZED
     assert main_window._check_controller.page._copy_actions[kind].isEnabled() is False
@@ -935,7 +935,7 @@ def test_the_copy_menu_follows_the_privacy_add_on_for_the_open_document(
     main_window._app_service.anonymization.anonymizer_available = lambda _language, _config=None: (
         True
     )
-    main_window._refresh_privacy_availability()
+    main_window._privacy_controller.refresh_availability()
 
     assert main_window._check_controller.page._copy_actions[kind].isEnabled() is True
 
@@ -1084,7 +1084,7 @@ def test_copy_with_names_hidden_puts_the_anonymized_text_on_the_clipboard(
     """
     [a] = stored("a.png")
     main_window._check_controller.open_document(a)
-    main_window._privacy_available = True
+    monkeypatch.setattr(main_window._privacy_controller, "_available", True)
     monkeypatch.setattr(
         main_window._app_service.export,
         "text_for_copy",

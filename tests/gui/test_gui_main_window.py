@@ -1395,7 +1395,9 @@ def test_restore_all_also_forgets_the_remembered_answers_and_the_hide_choice(
     assert acknowledgements.fingerprints() == {"abc123"}
     monkeypatch.setattr(main_window, "_acknowledgements", lambda: acknowledgements)
     shown: list[bool] = []
-    monkeypatch.setattr(main_window, "_apply_display_anonymized", shown.append)
+    monkeypatch.setattr(
+        main_window._privacy_controller, "apply_display_anonymized", shown.append
+    )
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     install_scripted_settings_window(
         monkeypatch, accepted=False, result=SettingsResult(settings={}, restore_all=True)

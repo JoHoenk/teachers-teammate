@@ -48,7 +48,6 @@ from ..application.documents import WorkedOn
 from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
 from ..application.run import IssueKind, RunPreflight
-from ..application.sent_text import SentTexts
 from ..config import DEFAULTS, Config, dump_config_file, load_config_file
 from ..domain.data_location import DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
@@ -56,7 +55,6 @@ from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import ServerKind
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..texts import dialogs as dlg
-from ..texts import privacy
 from ..texts.settings import WHERE_ADDONS, WHERE_GENERAL
 from . import _dialogs
 from ._app_bootstrap import create_app, finish_process
@@ -66,7 +64,6 @@ from ._check_controller import CheckController, CheckHooks
 from ._config_panel import ConfigPanel
 from ._credential_store import CredentialStore
 from ._data_flow_summary import advice_text, level_text, stage_tooltips
-from ._error_text import spacy_problem
 from ._export_controller import ExportController
 from ._export_menu import build_export_menu
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
@@ -77,9 +74,8 @@ from ._preprocess_preview import PreprocessPreview
 from ._privacy_settings import (
     DISPLAY_ANONYMIZED_DEFAULT,
     FlowAcknowledgements,
-    display_anonymized,
-    set_display_anonymized,
 )
+from ._privacy_view_controller import PrivacyViewController
 from ._pull_manager import PullManager
 from ._readiness_controller import ReadinessController, ReadinessHooks
 from ._readiness_line import ReadinessLine
@@ -89,7 +85,6 @@ from ._run_session import RunSession, wait_detail_text
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
 from ._update_check import UpdateCheckThread
-from ._what_is_sent_dialog import WhatIsSentDialog
 from ._window_geometry import maximize_without_saved_geometry, restore_geometry
 from .settings import (
     PAGE_TITLES,
@@ -222,18 +217,8 @@ class MainWindow(QMainWindow):
         """Initialise per-window runtime state and declare widgets built later."""
         self._config_path: Path | None = None
         self._pull_manager = PullManager(self, service=self._app_service)
-        self._sent_texts_task = LatestTask(self)
-        self._last_sent_texts: SentTexts | None = None
-        self._anonymize_task = LatestTask(self)
-        self._anonymize_running = False
         #: What the run in progress is doing: the file, the step, the pace and the Stop stage.
         self._run_session = RunSession()
-        #: The "Hide personal information in texts" view setting (not part of Config).
-        self._display_anonymized = display_anonymized(self._settings_store)
-        #: Whether the texts can be hidden for the current document language.
-        self._privacy_available = True
-        #: The text and language of the running hiding job, to not start it twice.
-        self._anonymize_key: tuple[str, str] | None = None
         self._first_run_task = LatestTask(self)
         self._preprocess_preview: PreprocessPreview
         #: The Settings window while it is open (dialogs started from it use it as parent).
@@ -247,6 +232,7 @@ class MainWindow(QMainWindow):
         self._run_controller: RunController
         self._readiness_controller: ReadinessController
         self._check_controller: CheckController
+        self._privacy_controller: PrivacyViewController
         # True while the requirement check of a Run / stage re-run is in flight.
         self._preflight_running = False
         # The same for the expected cache keys of the queue: they depend on the card.
@@ -376,7 +362,7 @@ class MainWindow(QMainWindow):
             warn_busy=lambda: self._run_controller.warn_busy(),  # noqa: PLW0108
             run_stage=lambda ids, stage: self._on_stage_run_requested(ids, stage),  # noqa: PLW0108
             open_settings=lambda page, focus: self.open_settings(page, focus=focus),
-            privacy_available=lambda: self._privacy_available,
+            privacy_available=lambda: self._privacy_controller.privacy_available,
             export=lambda ids, kind: self._export_controller.on_requested(ids, kind),  # noqa: PLW0108
         )
 
@@ -391,6 +377,14 @@ class MainWindow(QMainWindow):
             tabs=self._tabs,
             settings_store=self._settings_store,
             hooks=self._check_hooks(),
+        )
+        self._privacy_controller = PrivacyViewController(
+            self,
+            services=self._app_service,
+            panel=self._config_panel,
+            table=self._results_table,
+            check=self._check_controller,
+            settings_store=self._settings_store,
         )
         self._readiness_controller = ReadinessController(
             self,
@@ -434,7 +428,9 @@ class MainWindow(QMainWindow):
         """Wire the panels and the pages to the window."""
         self._results_table.check_requested.connect(self._check_controller.open_document)
         self._results_table.stage_run_requested.connect(self._on_stage_run_requested)
-        self._results_table.what_is_sent_requested.connect(self._on_what_is_sent_requested)
+        self._results_table.what_is_sent_requested.connect(
+            self._privacy_controller.on_what_is_sent_requested
+        )
         self._config_panel.data_flow_changed.connect(self._on_data_flow_changed)
         self._results_table.itemSelectionChanged.connect(self._readiness_controller.update)
         # The box rendered once while the panels were built, before these connections.
@@ -449,9 +445,7 @@ class MainWindow(QMainWindow):
         self._config_panel.results_changed.connect(self._on_results_changed)
         self._config_panel.instructions_changed.connect(self._on_instructions_changed)
         self._readiness_line.action_chosen.connect(self._readiness_controller.run_fix)
-        self._connect_check_page()
-        self._refresh_privacy_availability()
-        self._check_controller.page.set_display_anonymized(self._display_anonymized)
+        self._privacy_controller.refresh_availability()
         # Kick off the first readiness check once the window is laid out.
         # Pass self as the receiver so the callback is cancelled if the window is destroyed.
         QTimer.singleShot(500, self, self._readiness_controller.start_check)
@@ -472,12 +466,6 @@ class MainWindow(QMainWindow):
         self._tabs.setTabEnabled(1, False)  # nothing to check before a document has a result
         self._tabs.currentChanged.connect(self._check_controller.on_tab_changed)
         return self._tabs
-
-    def _connect_check_page(self) -> None:
-        """Wire what the window still answers itself: the privacy view."""
-        page = self._check_controller.page
-        page.display_anonymized_changed.connect(self._apply_display_anonymized)
-        page.anonymization_needed.connect(self._on_anonymization_needed)
 
     def _build_menu_bar(self) -> None:
         bar = self.menuBar()
@@ -764,9 +752,9 @@ class MainWindow(QMainWindow):
             app_service=self._app_service,
             pull_manager=self._pull_manager,
             language=language,
-            privacy_available=self._privacy_available,
+            privacy_available=self._privacy_controller.privacy_available,
             first_start=first_start,
-            display_anonymized=self._display_anonymized,
+            display_anonymized=self._privacy_controller.display_anonymized,
         )
         assistant = SetupAssistant(context, self)
         assistant.committed.connect(self._apply_setup_result)
@@ -816,10 +804,8 @@ class MainWindow(QMainWindow):
         self._config_panel.load_from_dict(result.panel)
         if result.display_anonymized is not None:
             # The name detection may still be on its way: the wish is stored as it is, and the
-            # view follows it as soon as hiding is possible (_refresh_privacy_availability).
-            set_display_anonymized(self._settings_store, result.display_anonymized)
-            self._display_anonymized = result.display_anonymized
-            self._check_controller.page.set_display_anonymized(result.display_anonymized)
+            # view follows it as soon as hiding is possible (refresh_availability).
+            self._privacy_controller.store_display_anonymized(result.display_anonymized)
         self._save_settings(notify=False)
         self._readiness_controller.start_check()
         self._refresh_queue_from_inputs()
@@ -932,8 +918,7 @@ class MainWindow(QMainWindow):
         # Let the window disappear before waiting: running background tasks are
         # given a moment to end, and the user should not see a frozen window.
         self.hide()
-        self._sent_texts_task.cancel()
-        self._anonymize_task.cancel()
+        self._privacy_controller.shutdown()
         self._run_controller.stop_for_close()
         wait_for_background_tasks()
         event.accept()
@@ -1311,7 +1296,7 @@ class MainWindow(QMainWindow):
         self._config_panel.restore_defaults()
         # Not part of the settings file: the "hide personal information" view and the
         # remembered "Don't ask again" answers (so the next run asks before sending).
-        self._apply_display_anonymized(DISPLAY_ANONYMIZED_DEFAULT)
+        self._privacy_controller.apply_display_anonymized(DISPLAY_ANONYMIZED_DEFAULT)
         self._acknowledgements().forget_all()
         self._check_controller.page.forget_anonymization()
         self._save_settings(notify=False)
@@ -1366,7 +1351,7 @@ class MainWindow(QMainWindow):
         if event.type() != QEvent.Type.ActivationChange or not self.isActiveWindow():
             return
         self._app_service.anonymization.reread_installed_models()
-        self._refresh_privacy_availability()
+        self._privacy_controller.refresh_availability()
         if self._readiness_controller.blocker is not None:
             self._readiness_controller.start_check(fresh=True)
 
@@ -1439,130 +1424,13 @@ class MainWindow(QMainWindow):
 
         self._cache_state_task.submit(detect, done)
 
-    def _on_what_is_sent_requested(self, source_id: str) -> None:
-        """Open "What is sent for this file…" for one row of the results table."""
-        row = self._results_table.row_for(source_id)
-        name = row.name if row is not None else Path(source_id).name
-        if not self._results_table.has_text(source_id):
-            _dialogs.notify(self, privacy.what_is_sent_without_text())
-            return
-
-        config = self._config_panel.lookup_config()
-
-        busy = QDialog(self)
-        busy.setWindowTitle(privacy.what_is_sent_title(name))
-        busy_vbox = QVBoxLayout(busy)
-        busy_vbox.addWidget(QLabel(privacy.WHAT_IS_SENT_WORKING))
-        service = self._app_service
-
-        def _describe() -> object:
-            # The stored results say what really went out; the report says what would go next.
-            view = service.documents.load_view(config, Path(source_id))
-            if view is None:
-                return None
-            return service.documents.describe_sent_texts(config, view)
-
-        def _on_done(result: object, error: BaseException | None) -> None:
-            busy.accept()
-            if error is not None:
-                _dialogs.notify(
-                    self, privacy.what_is_sent_failed(spacy_problem(error) or str(error))
-                )
-                return
-            if not isinstance(result, SentTexts):
-                _dialogs.notify(self, privacy.what_is_sent_unreadable())
-                return
-            self._show_what_is_sent(result, name)
-
-        self._sent_texts_task.submit(_describe, _on_done)
-        busy.exec()
-
-    # ── hiding personal information in the view ──────────────────────────────────
-
-    def _apply_display_anonymized(self, enabled: bool) -> None:
-        """Store the view setting and show the texts accordingly.
-
-        Called by the eye button in the preview panel and by Settings → Privacy, so both
-        stay in step and the preference survives a restart.
-        """
-        enabled = bool(enabled) and self._privacy_available
-        set_display_anonymized(self._settings_store, enabled)
-        self._display_anonymized = enabled
-        self._check_controller.page.set_display_anonymized(enabled)
-
-    def _refresh_privacy_availability(self) -> None:
-        """Enable the setting only while personal information can actually be hidden.
-
-        Needs the Privacy add-on and the spaCy models the view would load, resolved the way a
-        run resolves them — so a chosen primary model counts.  Asked every time instead of
-        cached: the answer is cheap, and a cache is what went stale when a download finished
-        after the window that started it had closed.
-        """
-        language = self._config_panel.lookup_language()
-        available = self._app_service.anonymization.anonymizer_available(
-            language, self._config_panel.build_anonymizer_config()
-        )
-        changed = available != self._privacy_available
-        self._privacy_available = available
-        self._check_controller.page.set_display_anonymized_available(available)
-        self._check_controller.refresh_copy_state()
-        if changed and available and self._display_anonymized:
-            # The setting was on but could not be applied; it can now.
-            self._check_controller.page.set_display_anonymized(True)
-
-    def _on_anonymization_needed(self, raw_text: str) -> None:
-        """Start hiding the personal information of the text the preview shows."""
-        if not raw_text.strip():
-            self._check_controller.page.set_anonymization({})
-            return
-        language = self._config_panel.lookup_language()
-        if self._anonymize_running and self._anonymize_key == (raw_text, language):
-            return  # already being worked out
-        self._anonymize_key = (raw_text, language)
-        self._anonymize_running = True
-        service = self._app_service
-        anon_config = self._config_panel.build_anonymizer_config()
-
-        def _anonymize() -> object:
-            return service.anonymization.anonymize_preview(raw_text, language, anon_config)
-
-        def _on_done(result: object, error: BaseException | None) -> None:
-            self._on_anonymization_done(result, error)
-
-        # Only the latest request counts: a slow result for a text the preview already left
-        # is dropped, and no thread object can be destroyed while it still runs.
-        self._anonymize_task.submit(_anonymize, _on_done)
-
-    def _on_anonymization_done(self, payload: object, error: BaseException | None) -> None:
-        """Hand the placeholders to the Check tab (only the newest request gets here)."""
-        self._anonymize_key = None
-        self._anonymize_running = False
-        if error is not None or not isinstance(payload, tuple) or len(payload) != 2:
-            reason = (
-                (spacy_problem(error) or str(error)) if error is not None else dlg.UNKNOWN_ERROR
-            )
-            self._check_controller.page.set_anonymization({}, error=reason)
-            return
-        _anonymized, raw_mapping = payload
-        mapping = (
-            {str(key): str(value) for key, value in raw_mapping.items()}
-            if isinstance(raw_mapping, dict)
-            else {}
-        )
-        self._check_controller.page.set_anonymization(mapping)
-
     def _on_data_flow_changed(self, flow: object) -> None:
         """Say under the proofreading and content-review cells where their text goes."""
         if not isinstance(flow, DataFlow):
             return
         self._results_table.set_stage_tooltips(stage_tooltips(flow))
-        self._refresh_privacy_availability()  # the document language may have changed
+        self._privacy_controller.refresh_availability()  # the document language may have changed
         self._readiness_controller.schedule_check()  # ... and what a run needs with it
-
-    def _show_what_is_sent(self, report: SentTexts, name: str) -> None:
-        """Show the report for one file, remembering it so tests and callers can read it."""
-        self._last_sent_texts = report
-        WhatIsSentDialog(report, file_name=name, parent=self).exec()
 
     def _build_update_banner(self) -> QFrame:
         banner = QFrame()
@@ -1616,8 +1484,8 @@ class MainWindow(QMainWindow):
             language=language,
             anonymizer_config=anonymizer_config,
             acknowledgements=self._acknowledgements(),
-            display_anonymized=self._display_anonymized,
-            privacy_available=self._privacy_available,
+            display_anonymized=self._privacy_controller.display_anonymized,
+            privacy_available=self._privacy_controller.privacy_available,
             pull_manager=self._pull_manager,
         )
 
@@ -1651,7 +1519,7 @@ class MainWindow(QMainWindow):
         window.addon_installed.connect(self._on_addon_installed)
         # What the Privacy page showed: its checkbox was usable only if hiding was possible
         # when the window opened (later changes to the panel must not decide that).
-        hiding_was_possible = self._privacy_available
+        hiding_was_possible = self._privacy_controller.privacy_available
         self._settings_window = window
         try:
             code = window.exec()
@@ -1681,7 +1549,7 @@ class MainWindow(QMainWindow):
         if result.display_anonymized is not None and hiding_was_possible:
             # Without the add-on the checkbox is disabled and shows "off"; applying that
             # would overwrite the saved preference.
-            self._apply_display_anonymized(result.display_anonymized)
+            self._privacy_controller.apply_display_anonymized(result.display_anonymized)
         self._save_settings(notify=False)
         self._readiness_controller.start_check()
         self._refresh_queue_from_inputs()
@@ -1695,7 +1563,7 @@ class MainWindow(QMainWindow):
         """
         self._app_service.anonymization.clear_anonymizer_cache()  # also forgets the installed models
         self._config_panel.refresh_data_flow()  # also refreshes the privacy availability
-        self._refresh_privacy_availability()
+        self._privacy_controller.refresh_availability()
         self._readiness_controller.start_check()
 
     def _on_install_round_finished(self, installed_any: bool) -> None:

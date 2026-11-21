@@ -159,6 +159,9 @@ def _make_processor(
     **config_extras: Any,
 ) -> tuple[FileProcessor, MagicMock, MagicMock, MagicMock]:
     returns = returns or _StubReturns()
+    if isinstance(corrector, MagicMock):
+        # A stand-in corrector sends any length in one request, as an online provider does.
+        corrector.pieces.return_value = None
     cache_service = MagicMock()
     preprocess_service = MagicMock()
     ocr_stage_service = MagicMock()

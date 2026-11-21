@@ -150,6 +150,22 @@ def test_a_long_text_is_proofread_in_three_requests() -> None:
 
 
 @pytest.mark.use_case("Chunking_Corrector")
+def test_the_corrector_counts_the_requests_a_text_takes() -> None:
+    """
+    Given  a corrector with a request budget, one without a budget and a text that fits
+    When   pieces() is asked for a long text, for the same text on an unbounded corrector and
+           for a short text
+    Then   the count is the number of non-blank pieces, ``None`` when the corrector sends any
+           length in one request, and 1 when the text goes out whole
+    """
+    text = _german_text()
+
+    assert ChunkingCorrector(_RecordingCorrector()).pieces(text, "German") == 3
+    assert ChunkingCorrector(_RecordingCorrector(max_chars=None)).pieces(text, "German") is None
+    assert ChunkingCorrector(_RecordingCorrector()).pieces("Ein Satz.", "German") == 1
+
+
+@pytest.mark.use_case("Chunking_Corrector")
 def test_the_pieces_are_the_original_text_piece_by_piece() -> None:
     """
     Given  a long text

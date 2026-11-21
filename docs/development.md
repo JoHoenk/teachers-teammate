@@ -2838,7 +2838,7 @@ stores and every reader reads.
 | `infrastructure/proofreading/runner.py` | `StepRunner`: cut-off tries, one repair, window check, timeout |
 | `infrastructure/proofreading/schemas.py` | the answer schemas of steps ② and ③ with their parsers |
 | `infrastructure/proofreading/exchanges/` | `Exchange` protocol, `EXCHANGES` registry, `TExchange` |
-| `infrastructure/proofreading/chunking.py` | `ChunkingCorrector` and `proofreading_pieces()`: a text longer than one request is proofread in pieces and the results joined |
+| `infrastructure/proofreading/chunking.py` | `ChunkingCorrector`: a text longer than one request is proofread in pieces and the results joined; `Corrector.pieces()` counts them |
 
 **The three steps.** ① *Correct* sends the shielded text and gets plain text back; its answer
 is restored into the source notation and stored. ② *Explain* sends the sentences of a batch

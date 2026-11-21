@@ -29,6 +29,7 @@ filegroup(
         "gui/test_benchmark_worker.py",
         "gui/test_gui_addon_installer_dialog.py",
         "gui/test_gui_addons_page.py",
+        "gui/test_gui_addons_tabs.py",
         "gui/test_gui_anonymizer_widget.py",
         "gui/test_gui_main_window.py",
         "gui/test_gui_privacy_settings.py",
@@ -2525,6 +2526,18 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_addons_tabs",
+    size = "medium",
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_addons_tabs.py",
+    ],
+    args = ["gui/test_gui_addons_tabs.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+py_test(
     name = "test_gui_addons_page",
     size = "medium",
     srcs = _COMMON_SRCS + [
@@ -2917,6 +2930,7 @@ test_suite(
         ":test_credential_store",
         ":test_gui_addon_installer_dialog",
         ":test_gui_addons_page",
+        ":test_gui_addons_tabs",
         ":test_gui_anonymizer_widget",
         ":test_gui_bootstrap",
         ":test_gui_chart_widget",

@@ -10,12 +10,11 @@ import pytest
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.data_location import DataLocation, StageLocation
-from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
 from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 
-from ._service_stubs import RecommendationServiceStub
+from ._service_stubs import RecommendationServiceStub, services_of
 
 
 class _DummyAppService(RecommendationServiceStub):
@@ -52,14 +51,10 @@ class _DummyAppService(RecommendationServiceStub):
         _ = module
         return True
 
-    def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
-        _ = text_format
-        return ""
-
 
 @pytest.fixture
 def selector(qtbot) -> OcrConfigSelector:
-    widget = OcrConfigSelector(app_service=_DummyAppService())
+    widget = OcrConfigSelector(app_service=services_of(_DummyAppService()))
     qtbot.addWidget(widget)
     return widget
 
@@ -218,7 +213,9 @@ def _ollama_selector(
     qtbot, models: list[str] | None = None, open_downloads=None
 ) -> OcrConfigSelector:
     widget = OcrConfigSelector(
-        app_service=_OllamaCatalogAppService(models if models is not None else _INSTALLED),
+        app_service=services_of(
+            _OllamaCatalogAppService(models if models is not None else _INSTALLED)
+        ),
         hardware_profile="8gb",
         open_downloads=open_downloads,
     )
@@ -360,7 +357,7 @@ def test_ollama_cloud_models_are_not_offered_for_reading_pages(qtbot) -> None:
     """
     models = ["qwen3-vl:8b", "qwen3-vl:235b-cloud"]
     selector = OcrConfigSelector(
-        app_service=_OllamaCatalogAppService(models), hardware_profile="8gb"
+        app_service=services_of(_OllamaCatalogAppService(models)), hardware_profile="8gb"
     )
     qtbot.addWidget(selector)
     with qtbot.waitSignal(selector._picker._hw_selector.resolved_changed, timeout=5000):
@@ -410,7 +407,7 @@ def test_selector_says_where_pages_are_read(qtbot, location, expected) -> None:
     When   the hint is rendered
     Then   it names the place and what that means for the pages
     """
-    widget = OcrConfigSelector(app_service=_LocationAppService(location))
+    widget = OcrConfigSelector(app_service=services_of(_LocationAppService(location)))
     qtbot.addWidget(widget)
 
     text = widget._picker._where_hint.text()
@@ -427,7 +424,9 @@ def test_selector_refuses_a_hosted_ollama_server_even_for_a_plain_model(qtbot) -
     Then   the hint says it is not allowed, as it does for cloud models
     """
     widget = OcrConfigSelector(
-        app_service=_LocationAppService(StageLocation(DataLocation.ONLINE, "Ollama cloud"))
+        app_service=services_of(
+            _LocationAppService(StageLocation(DataLocation.ONLINE, "Ollama cloud"))
+        )
     )
     qtbot.addWidget(widget)
 
@@ -445,7 +444,9 @@ def test_selector_warns_when_a_cloud_model_is_typed_in(qtbot) -> None:
            Ollama's servers
     """
     widget = OcrConfigSelector(
-        app_service=_LocationAppService(StageLocation(DataLocation.ONLINE, "Ollama cloud"))
+        app_service=services_of(
+            _LocationAppService(StageLocation(DataLocation.ONLINE, "Ollama cloud"))
+        )
     )
     qtbot.addWidget(widget)
 
@@ -464,7 +465,7 @@ def test_switching_the_engine_retires_a_running_model_fetch(qtbot, monkeypatch) 
     """
     from teachers_teammate.gui import _ocr_config_selector  # noqa: PLC0415
 
-    widget = OcrConfigSelector(app_service=_DummyAppService())
+    widget = OcrConfigSelector(app_service=services_of(_DummyAppService()))
     qtbot.addWidget(widget)
     widget._picker.set_engine("ollama")
     retired: list[object] = []
@@ -484,7 +485,7 @@ def test_a_late_ollama_answer_does_not_touch_another_engines_widgets(qtbot) -> N
     When   an Ollama model list arrives afterwards
     Then   the Ollama hint line stays hidden and the model field is not refilled
     """
-    widget = OcrConfigSelector(app_service=_DummyAppService())
+    widget = OcrConfigSelector(app_service=services_of(_DummyAppService()))
     qtbot.addWidget(widget)
     widget._picker.set_engine("ppocr")
     before = widget._picker._ocr_model.currentText()
@@ -503,7 +504,7 @@ def test_the_ollama_hint_comes_back_when_ollama_does_not_answer(qtbot) -> None:
     When   the answer is an empty list
     Then   the hint line is shown again and the status shows the error
     """
-    widget = OcrConfigSelector(app_service=_DummyAppService())
+    widget = OcrConfigSelector(app_service=services_of(_DummyAppService()))
     qtbot.addWidget(widget)
     widget._picker.set_engine("ollama")
     widget._picker._set_busy(True, "Asking Ollama…")
@@ -533,7 +534,7 @@ def test_the_reader_choice_shows_its_hint_and_hides_the_model_row(qtbot) -> None
     When   the engine is set to the built-in reader
     Then   the hint line explains it, the model row is hidden, and there is no download button
     """
-    widget = OcrConfigSelector(app_service=_ReaderService(present=True))
+    widget = OcrConfigSelector(app_service=services_of(_ReaderService(present=True)))
     qtbot.addWidget(widget)
     widget.show()
 
@@ -553,7 +554,7 @@ def test_the_download_button_shows_only_while_the_reader_is_missing(qtbot) -> No
     When   the engine is set to the built-in reader, then back to Ollama
     Then   "Not downloaded yet." and the Download button show for the reader only
     """
-    widget = OcrConfigSelector(app_service=_ReaderService(present=False))
+    widget = OcrConfigSelector(app_service=services_of(_ReaderService(present=False)))
     qtbot.addWidget(widget)
     widget.show()
 
@@ -578,7 +579,7 @@ def test_a_finished_reader_download_is_reported_and_hides_the_button(qtbot, monk
     from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
 
     service = _ReaderService(present=False)
-    widget = OcrConfigSelector(app_service=service)
+    widget = OcrConfigSelector(app_service=services_of(service))
     qtbot.addWidget(widget)
     widget.show()
     widget._picker.set_engine("ppocr")

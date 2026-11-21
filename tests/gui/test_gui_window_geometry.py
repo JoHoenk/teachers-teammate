@@ -11,6 +11,7 @@ from teachers_teammate.gui.settings import SettingsPage, SettingsWindow
 from teachers_teammate.gui.setup import SetupAssistant, SetupContext
 
 from ._gui_harness import FakeGuiService, settings_context
+from ._service_stubs import services_of
 from ._settings_stubs import SetupAppService
 
 #: A laptop screen with the taskbar taken off.
@@ -79,7 +80,7 @@ def test_the_assistant_fits_a_small_screen(qtbot) -> None:
     Then   the window and its minimum are within the screen, whatever its largest page wants
     """
     assistant = SetupAssistant(
-        SetupContext(settings={}, app_service=SetupAppService(), first_start=False)
+        SetupContext(settings={}, app_service=services_of(SetupAppService()), first_start=False)
     )
     qtbot.addWidget(assistant)
 
@@ -96,7 +97,7 @@ def test_the_assistant_fits_the_screen_it_is_on_when_it_is_shown(qtbot) -> None:
     Then   it is within the share of that screen the window may take
     """
     assistant = SetupAssistant(
-        SetupContext(settings={}, app_service=SetupAppService(), first_start=False)
+        SetupContext(settings={}, app_service=services_of(SetupAppService()), first_start=False)
     )
     qtbot.addWidget(assistant)
     assistant.show()

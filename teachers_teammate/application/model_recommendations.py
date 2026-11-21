@@ -19,16 +19,18 @@ variants that are safe to call from the GUI thread.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import dataclasses
 import logging
 import threading
 from urllib.parse import urlparse
 
+from ..config import DEFAULTS
 from ..domain.model_catalog import (
     HARDWARE_PROFILES,
     OLLAMA_CATALOG,
     DetectionReason,
+    GpuUsage,
     HardwareDetection,
     HardwareProfile,
     LocalHardware,
@@ -46,6 +48,7 @@ from ..domain.model_catalog import (
 )
 from ..exceptions import OllamaConnectionError
 from ..infrastructure.gpu_detector import GpuInfo
+from .context_choice import ContextChoice, context_choice
 
 _logger = logging.getLogger(__name__)
 
@@ -77,15 +80,34 @@ class _LocalProbe:
 class ModelRecommendationService:
     """Hardware profile detection, model classification and model ratings."""
 
-    def __init__(self, *, invalidate_model_list: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        effective_model: Callable[[str, str, str], str],
+        invalidate_model_list: Callable[[str], None] | None = None,
+        invalidate_speed_facts: Callable[[str], None] | None = None,
+        machine_factor: Callable[[str, ModelCategory], float | None] | None = None,
+    ) -> None:
         """Create the service.
 
         Args:
+            effective_model: ``(provider, model, task)`` → the model a run would
+                use; :meth:`context_choice` needs it to promise the window a run
+                really uses.
             invalidate_model_list: Evicts the cached list of installed Ollama
                 models for a (normalised) server URL.  Supplied by the owner of
                 that list; called by :meth:`on_ollama_models_changed`.
+            invalidate_speed_facts: Forgets the stored server facts of a URL: a
+                pull changes the digest a measurement is keyed by.  Called by
+                :meth:`on_ollama_models_changed`, which is what a pull triggers.
+            machine_factor: ``(ollama_url, category)`` → how much slower this
+                computer is than the reference machine, for the speed a rating
+                of :meth:`rate_ollama_models` may carry.
         """
+        self._effective_model = effective_model
         self._invalidate_model_list = invalidate_model_list or (lambda _url: None)
+        self._invalidate_speed_facts = invalidate_speed_facts or (lambda _url: None)
+        self._machine_factor_of = machine_factor or (lambda _url, _category: None)
         self._probe: _LocalProbe | None = None
         self._probe_lock = threading.Lock()
         self._system_memory: tuple[float | None] | None = None  # read once, a 1-tuple when read
@@ -118,6 +140,23 @@ class ModelRecommendationService:
     def detected_gpus(self, *, refresh: bool = False) -> list[GpuInfo]:
         """Return the GPUs of this computer (probed once per process)."""
         return list(self._ensure_probe(refresh=refresh).gpus)
+
+    def available_memory_gb(self) -> float | None:
+        """Return the main memory free right now in GB, or ``None`` when it cannot be read.
+
+        Read when the "My computer" line is drawn, never stored: it changes all the time and no
+        model suggestion depends on it.  It is a quick query, but the GUI still asks for it on a
+        background task, like every other probe of this computer.
+        """
+        from ..infrastructure import gpu_detector  # noqa: PLC0415
+
+        return gpu_detector.detect_available_memory_gb()
+
+    def read_gpu_usage(self) -> GpuUsage | None:
+        """Return how busy the first graphics card is right now, or ``None`` when unreadable."""
+        from ..infrastructure import gpu_detector  # noqa: PLC0415
+
+        return gpu_detector.read_gpu_usage()
 
     def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection:
         """Return the hardware detection for the machine that runs Ollama.
@@ -242,6 +281,31 @@ class ModelRecommendationService:
             "evaluate_model": general,
         }
 
+    def context_choice(
+        self, settings: Mapping[str, object], card_gb: float | None
+    ) -> ContextChoice:
+        """Return what the context setting changes on this computer, and what ``"auto"`` gives.
+
+        The same rule the run uses (:func:`~teachers_teammate.domain.context_budget.run_windows`),
+        so the Settings page cannot promise a window the run does not use.  *card_gb* comes from
+        a detection the caller already has: this does no I/O, so it is safe on the GUI thread.
+        """
+        proofreading_provider = str(
+            settings.get("correction_provider") or DEFAULTS["correction_provider"]
+        )
+        review_provider = str(settings.get("evaluate_provider") or DEFAULTS["evaluate_provider"])
+        return context_choice(
+            proofreading_provider=proofreading_provider,
+            proofreading_model=self._effective_model(
+                proofreading_provider, str(settings.get("correction_model") or ""), "correction"
+            ),
+            review_provider=review_provider,
+            review_model=self._effective_model(
+                review_provider, str(settings.get("evaluate_model") or ""), "evaluation"
+            ),
+            card_gb=card_gb,
+        )
+
     # ── classification & ratings ───────────────────────────────────────────
 
     def classify_ollama_models(
@@ -329,8 +393,14 @@ class ModelRecommendationService:
         *card_gb* is the graphics memory models can use there (``HardwareDetection.card_gb``);
         ``None`` assumes the size the profile stands for.  *machine_factor* is how much slower
         this computer is than the reference machine, for the speed a model is expected to
-        reach; ``None`` leaves every rating without one.
+        reach; ``None`` asks the owner of the measurements, and a caller that gets nothing
+        leaves every rating without one.
         """
+        factor = (
+            machine_factor
+            if machine_factor is not None
+            else self._machine_factor_of(ollama_url, task)
+        )
         classification = self.classify_ollama_models(tags, ollama_url, cached_only=cached_only)
         return [
             rate_model(
@@ -340,7 +410,7 @@ class ModelRecommendationService:
                 detected_uses=classification.get(tag),
                 system_memory_gb=system_memory_gb,
                 card_gb=card_gb,
-                machine_factor=machine_factor,
+                machine_factor=factor,
             )
             for tag in tags
         ]
@@ -357,11 +427,13 @@ class ModelRecommendationService:
     def on_ollama_models_changed(self, ollama_url: str) -> None:
         """Evict everything derived from the installed-model list of *ollama_url*.
 
-        Call this after a pull finished (or a model was removed): the model list
-        and the classifications are stale from that moment on.
+        Call this after a pull finished (or a model was removed): the model list,
+        the classifications and the stored server facts are stale from that moment
+        on — a pull changes the digest a measurement is keyed by.
         """
         from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
 
         url = normalize_ollama_url(ollama_url)
         self._invalidate_model_list(url)
         self.invalidate_classification(url)
+        self._invalidate_speed_facts(url)

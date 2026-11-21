@@ -69,7 +69,7 @@ def window(qtbot, tmp_path, monkeypatch):
     monkeypatch.setenv("TEACHERS_TEAMMATE_TMPDIR", str(tmp_path / "storage"))
     texts = iter(["alpha beta gamma", "alpha beta delta", "x"])
     service = BenchmarkApplicationService(
-        processing_service=real_service(),
+        app_services=real_service(),
         run_store=BenchmarkRunStore(tmp_path / "bench"),
         runner=lambda *a, **k: OcrRunResult(next(texts), None, 0.1, None),
     )

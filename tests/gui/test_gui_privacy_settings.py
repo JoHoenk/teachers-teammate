@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -196,18 +196,16 @@ def _make_page(
     privacy_available: bool = True,
 ) -> PrivacyPage:
     """Build the page with spaCy model fetching suppressed (as the anonymizer tests do)."""
+    service = MagicMock()
+    service.list_installed_spacy_models.return_value = []  # no spaCy discovery in this test
     context = settings_context(
-        MagicMock(),
+        service,
         acknowledgements=acks,
         anonymizer_config=config if config is not None else AnonymizerConfig(),
         display_anonymized=display_anonymized,
         privacy_available=privacy_available,
     )
-    with patch(
-        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
-    ) as service:
-        service.return_value.list_installed_spacy_models.return_value = []
-        page = PrivacyPage(context)
+    page = PrivacyPage(context)
     thread = page.rules()._spacy_fetch_thread
     assert thread is not None
     thread.quit()

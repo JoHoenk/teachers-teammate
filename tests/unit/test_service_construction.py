@@ -25,7 +25,19 @@ PACKAGE = "teachers_teammate"
 COMPOSITION = "teachers_teammate/application/composition.py"
 """The one module that may construct a service."""
 
-CONSTRUCTED = {"ProcessingApplicationService", "AppServices"}
+CONSTRUCTED = {
+    "AddonService",
+    "AnonymizationService",
+    "AppServices",
+    "DataFlowService",
+    "ModelRecommendationService",
+    "OllamaServerService",
+    "ProcessingApplicationService",
+    "ProviderService",
+    "ReaderService",
+    "SetupService",
+    "SpeedEstimateService",
+}
 """The names that build a service, and so the names only the composition module may call."""
 
 

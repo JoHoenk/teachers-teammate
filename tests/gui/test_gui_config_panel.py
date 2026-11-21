@@ -9,7 +9,7 @@ import pytest
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui.settings import SettingsPage
 
-from ._service_stubs import LocalDataFlowStub
+from ._service_stubs import LocalDataFlowStub, services_of
 
 
 @pytest.mark.gui
@@ -143,7 +143,7 @@ def test_a_review_without_proofreading_counts_as_off_in_every_config(qtbot, tmp_
     panel.set_input_dir(str(input_dir))
     panel._evaluation_enabled.setChecked(True)
     panel._correction_enabled.setChecked(True)
-    panel.set_service(_GuardService())
+    panel.set_service(services_of(_GuardService()))
     assert panel.to_config().evaluation_enabled is True
     assert panel.lookup_config().evaluation_enabled is True
 
@@ -168,7 +168,7 @@ def test_the_guard_unticking_proofreading_disables_the_review(qtbot, monkeypatch
     qtbot.addWidget(panel)
     panel._evaluation_enabled.setChecked(True)
     panel._correction_enabled.setChecked(False)
-    panel.set_service(_GuardService())
+    panel.set_service(services_of(_GuardService()))
 
     panel._correction_enabled.setChecked(True)
     qtbot.waitUntil(lambda: not panel._correction_enabled.isChecked(), timeout=3000)
@@ -192,7 +192,7 @@ def test_ticking_proofreading_again_guards_the_ticked_review_too(qtbot, monkeypa
 
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_Service())
+    panel.set_service(services_of(_Service()))
     panel._evaluation_enabled.setChecked(True)
     qtbot.waitUntil(lambda: checked == ["evaluation"], timeout=3000)  # ticking the review
     panel._correction_enabled.setChecked(False)
@@ -217,7 +217,7 @@ def test_a_problem_shared_by_proofreading_and_review_is_explained_once(qtbot, mo
     qtbot.addWidget(panel)
     panel._evaluation_enabled.setChecked(True)  # before the service: nothing is checked yet
     panel._correction_enabled.setChecked(False)
-    panel.set_service(_GuardService())
+    panel.set_service(services_of(_GuardService()))
 
     panel._correction_enabled.setChecked(True)
     qtbot.waitUntil(lambda: not panel._correction_enabled.isChecked(), timeout=3000)
@@ -251,7 +251,7 @@ def test_a_late_review_answer_is_ignored_once_proofreading_is_off(qtbot, monkeyp
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel._correction_enabled.setChecked(False)
-    panel.set_service(_SlowService())
+    panel.set_service(services_of(_SlowService()))
     panel._evaluation_enabled.setChecked(True)  # starts the review's check, which waits
 
     release.set()
@@ -293,7 +293,7 @@ def test_the_lookup_config_is_recursive_like_the_run_config(qtbot, tmp_path) -> 
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel.set_input_dir(str(input_dir))
-    panel.set_service(_GuardService())
+    panel.set_service(services_of(_GuardService()))
 
     assert panel.lookup_config().recursive is True
     assert panel.to_config().recursive is True
@@ -345,7 +345,7 @@ def test_the_lookup_config_carries_the_results_step(qtbot) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_GuardService())
+    panel.set_service(services_of(_GuardService()))
     panel.update_settings({"hardware_profile": "16gb", "proofreading_context": "16384"})
     panel._docx_enabled.setChecked(False)
     panel._text_enabled.setChecked(True)
@@ -487,7 +487,7 @@ def test_guard_dialog_opens_addons_on_local_models_with_missing_model_ticked(
     )
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_GuardService())
+    panel.set_service(services_of(_GuardService()))
     panel.update_settings({"correction_provider": "ollama", "correction_model": "qwen3.5:9b"})
     requests: list[tuple[object, str, list[str]]] = []
     panel.open_settings_requested.connect(
@@ -522,7 +522,7 @@ def test_loading_saved_settings_does_not_run_the_requirement_guard(qtbot, monkey
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_Service())
+    panel.set_service(services_of(_Service()))
 
     panel.load_from_dict({"correction_enabled": True, "evaluation_enabled": True})
     qtbot.wait(100)  # a (wrongly) scheduled background check would have finished by now
@@ -556,7 +556,7 @@ def test_ticking_a_stage_checks_requirements_off_the_gui_thread(qtbot, monkeypat
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_SlowService())
+    panel.set_service(services_of(_SlowService()))
     panel._correction_enabled.setChecked(False)
 
     panel._correction_enabled.setChecked(True)
@@ -592,7 +592,7 @@ def test_outdated_guard_result_for_a_replaced_model_is_ignored(qtbot, monkeypatc
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_SlowService())
+    panel.set_service(services_of(_SlowService()))
     panel.update_settings({"correction_provider": "ollama", "correction_model": "model-x"})
     panel._correction_enabled.setChecked(False)
     panel._correction_enabled.setChecked(True)
@@ -635,7 +635,7 @@ def test_only_the_latest_guard_check_of_a_stage_counts(qtbot, monkeypatch) -> No
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_Service())
+    panel.set_service(services_of(_Service()))
     panel._correction_enabled.setChecked(False)
     panel._correction_enabled.setChecked(True)
     qtbot.waitUntil(lambda: calls["n"] == 1, timeout=3000)
@@ -770,7 +770,7 @@ def test_summary_follows_the_step_3_checkbox(qtbot) -> None:
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel._correction_enabled.setChecked(True)  # before the service: nothing is checked yet
-    panel.set_service(_FlowService())
+    panel.set_service(services_of(_FlowService()))
     assert "Remove personal info" in panel._data_flow_summary._body.text()
 
     panel._anonymization_enabled.setChecked(True)
@@ -850,7 +850,7 @@ def test_every_step_shows_what_it_uses(qtbot) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_StepsService())
+    panel.set_service(services_of(_StepsService()))
 
     panel.update_settings(_MISTRAL)
     panel._anonymization_enabled.setChecked(True)
@@ -871,7 +871,7 @@ def test_the_name_removal_line_is_hidden_while_it_is_off(qtbot) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_StepsService())
+    panel.set_service(services_of(_StepsService()))
 
     panel.update_settings(_MISTRAL)
 
@@ -888,7 +888,7 @@ def test_the_name_removal_line_names_the_languages(qtbot) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_TwoLanguageStepsService())
+    panel.set_service(services_of(_TwoLanguageStepsService()))
 
     panel.update_settings(_MISTRAL)
     panel._anonymization_enabled.setChecked(True)
@@ -908,7 +908,7 @@ def test_a_program_engine_is_named_by_the_engine_not_by_the_ollama_model(qtbot) 
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_StepsService())
+    panel.set_service(services_of(_StepsService()))
 
     panel.update_settings({**_MISTRAL, "ocr_engine": "ppocr"})
 
@@ -932,7 +932,7 @@ def test_a_replaced_engine_in_a_settings_dict_is_taken_over_quietly(
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_StepsService())
+    panel.set_service(services_of(_StepsService()))
 
     panel.load_from_dict({**_MISTRAL, "ocr_engine": engine})
 
@@ -948,7 +948,7 @@ def test_the_review_line_names_its_own_model_when_it_differs(qtbot) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_StepsService())
+    panel.set_service(services_of(_StepsService()))
 
     panel.update_settings({**_MISTRAL, "evaluate_model": "mistral-large-latest"})
 
@@ -965,7 +965,7 @@ def test_an_unticked_step_keeps_its_line_in_grey(qtbot) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_StepsService())
+    panel.set_service(services_of(_StepsService()))
     panel.update_settings(_MISTRAL)
     panel._evaluation_enabled.setChecked(True)
     assert "#888" not in panel._correction_uses.text()
@@ -1020,7 +1020,7 @@ def test_the_model_name_is_not_part_of_what_the_teacher_confirmed(qtbot) -> None
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_StepsService())
+    panel.set_service(services_of(_StepsService()))
     panel.update_settings(_MISTRAL)
     before = panel.data_flow().fingerprint
 
@@ -1061,7 +1061,7 @@ def test_summary_follows_a_stage_the_guard_unticked(qtbot, monkeypatch) -> None:
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel._correction_enabled.setChecked(True)  # before the service: nothing is checked yet
-    panel.set_service(_FlowServiceMissingPrivacy())
+    panel.set_service(services_of(_FlowServiceMissingPrivacy()))
 
     panel._anonymization_enabled.setChecked(True)
     qtbot.waitUntil(lambda: not panel._anonymization_enabled.isChecked(), timeout=3000)
@@ -1085,7 +1085,7 @@ def test_summary_refreshes_after_settings_dialog_changes(qtbot) -> None:
             calls.append(1)
             return super().describe_steps(config)
 
-    panel.set_service(_CountingService())
+    panel.set_service(services_of(_CountingService()))
     calls.clear()
 
     panel.update_settings({"correction_provider": "openai"})
@@ -1109,7 +1109,7 @@ def test_loading_settings_renders_the_summary_once(qtbot) -> None:
             calls.append(1)
             return super().describe_steps(config)
 
-    panel.set_service(_CountingService())
+    panel.set_service(services_of(_CountingService()))
     calls.clear()
 
     panel.load_from_dict(
@@ -1226,7 +1226,7 @@ def test_lookup_config_carries_the_anonymizer_rules_and_instructions(qtbot) -> N
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_GuardService())
+    panel.set_service(services_of(_GuardService()))
     panel.update_settings(
         {
             "anonymizer_primary_model": "de_core_news_sm",
@@ -1255,7 +1255,7 @@ def test_changing_the_document_language_refreshes_the_data_flow(qtbot) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_GuardService())
+    panel.set_service(services_of(_GuardService()))
     announced: list[object] = []
     panel.data_flow_changed.connect(announced.append)
 
@@ -1691,7 +1691,7 @@ def test_recognize_text_is_a_ticked_checkbox_that_every_config_reports(qtbot, tm
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel.set_input_dir(str(input_dir))
-    panel.set_service(_GuardService())
+    panel.set_service(services_of(_GuardService()))
     assert isinstance(panel._recognition_enabled, QCheckBox)
     assert panel._recognition_enabled.isChecked() is True
     assert panel.to_config().recognition_enabled is True
@@ -1733,7 +1733,7 @@ def test_switching_recognition_off_takes_it_out_of_the_data_flow_box(qtbot) -> N
 
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.set_service(_GuardService())
+    panel.set_service(services_of(_GuardService()))
     assert panel.data_flow() is not None
     assert panel.data_flow().stage(STAGE_OCR) is not None
 
@@ -1766,7 +1766,7 @@ def test_ticking_recognition_checks_the_engine_and_unticks_when_it_is_missing(
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel._recognition_enabled.setChecked(False)
-    panel.set_service(_Service())
+    panel.set_service(services_of(_Service()))
 
     panel._recognition_enabled.setChecked(True)
     qtbot.waitUntil(lambda: not panel._recognition_enabled.isChecked(), timeout=3000)

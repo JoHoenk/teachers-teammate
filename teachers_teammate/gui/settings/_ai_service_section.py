@@ -23,6 +23,7 @@ from typing import Any
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QWidget
 
+from ...application.composition import AppServices
 from ...config import DEFAULTS
 from ...domain.data_location import DataLocation, DataRegion
 from ...domain.model_listing import ListedModel, ModelListing
@@ -44,7 +45,6 @@ from .._model_fetch import (
     _listing_status,
     _ModelFetchThread,
     _retire_thread,
-    _SettingsAppService,
     _start_thread,
     _status_busy,
     _status_note,
@@ -98,20 +98,20 @@ MARK_NOT_INSTALLED = "not installed"
 MARK_KEY_NEEDED = "key needed"
 
 
-def missing_packages(app_service: _SettingsAppService) -> dict[str, str | None]:
+def missing_packages(app_service: AppServices) -> dict[str, str | None]:
     """Return ``{provider: pip name of its missing package, or None}`` for every service.
 
     Looking for a package refreshes the import caches and scans the import path, so this is
     asked when a package may have changed, not on every key that is typed.
     """
     return {
-        provider: app_service.missing_provider_package(provider)
-        for provider in app_service.list_providers()
+        provider: app_service.providers.missing_provider_package(provider)
+        for provider in app_service.providers.list_providers()
     }
 
 
 def service_groups(
-    app_service: _SettingsAppService,
+    app_service: AppServices,
     ollama_url: str,
     packages: Mapping[str, str | None] | None = None,
     *,
@@ -138,10 +138,10 @@ def service_groups(
     own: list[ModelItem] = []
     eu: list[ModelItem] = []
     other: list[ModelItem] = []
-    for provider in app_service.list_providers():
-        info = app_service.get_provider_info(provider)
+    for provider in app_service.providers.list_providers():
+        info = app_service.providers.get_provider_info(provider)
         name = str(info.get("display_name") or provider)
-        location = app_service.describe_llm_location(provider, "", ollama_url)
+        location = app_service.providers.describe_llm_location(provider, "", ollama_url)
         if info.get("self_hosted"):
             if not self_hosted:
                 continue
@@ -153,7 +153,7 @@ def service_groups(
         marks = [place]
         if packages.get(provider):
             marks.append(MARK_NOT_INSTALLED)
-        if app_service.provider_key_missing(provider):
+        if app_service.providers.provider_key_missing(provider):
             marks.append(MARK_KEY_NEEDED)
         bucket.append(ModelItem(text=name, label=" · ".join(marks), data=provider))
     return [sorted(group, key=lambda item: item.text.lower()) for group in (own, eu, other)]
@@ -176,7 +176,7 @@ class AiServiceSection(QWidget):
         self,
         spec: AiServiceSpec,
         *,
-        app_service: _SettingsAppService,
+        app_service: AppServices,
         hardware_profile: str = "auto",
         ollama_url: str = DEFAULTS["ollama_url"],
         open_downloads: OpenDownloads | None = None,
@@ -455,7 +455,7 @@ class AiServiceSection(QWidget):
         service is kept only if this one offers it: an Ollama tag in the Mistral field would be
         sent to Mistral as it stands.
         """
-        info = self._app_service.get_provider_info(provider)
+        info = self._app_service.providers.get_provider_info(provider)
         previous = self._model.currentText().strip()
         models = list(info.get("models", []))
         default = str(info.get("default_model", ""))
@@ -471,7 +471,7 @@ class AiServiceSection(QWidget):
             # The local list changes whenever a model is pulled or removed, and is cheap to
             # ask for.  An online service's list fetched a moment ago is still good (a failed
             # one is never cached), so it is kept; "Try again" drops it on request.
-            self._app_service.invalidate_model_cache(provider, self._ollama_url)
+            self._app_service.providers.invalidate_model_cache(provider, self._ollama_url)
         # Hint line and "Use best choice" button exist only for Ollama.
         self._guidance.setVisible(provider == "ollama")
         self._update_package_hint(provider)
@@ -480,17 +480,17 @@ class AiServiceSection(QWidget):
 
     def _will_be_asked(self, provider: str, info: dict) -> bool:
         """Return whether *provider* will be asked for its model list right now."""
-        return bool(info.get("can_list_models")) and not self._app_service.provider_key_missing(
-            provider
-        )
+        return bool(
+            info.get("can_list_models")
+        ) and not self._app_service.providers.provider_key_missing(provider)
 
     def _update_package_hint(self, provider: str) -> None:
         """Show the install hint when *provider*'s package is missing, else hide it."""
-        pip_name = self._app_service.missing_provider_package(provider)
+        pip_name = self._app_service.providers.missing_provider_package(provider)
         if not pip_name:
             self._package_hint.clear()
             return
-        name = self._app_service.get_provider_info(provider).get("display_name", provider)
+        name = self._app_service.providers.get_provider_info(provider).get("display_name", provider)
         self._package_hint.show_missing(provider, str(name), pip_name)
 
     def _update_key_row(self, provider: str) -> None:
@@ -516,7 +516,7 @@ class AiServiceSection(QWidget):
         Mistral EU share a key).
         """
         for provider in self._drafts.providers_of(env_key):
-            self._app_service.invalidate_model_cache(
+            self._app_service.providers.invalidate_model_cache(
                 provider, self._ollama_url if provider == "ollama" else ""
             )
         if env_key == self._key_row.env_key:
@@ -530,7 +530,7 @@ class AiServiceSection(QWidget):
 
     def _update_where_hint(self) -> None:
         """Say where the chosen AI service runs, so online use is never a surprise."""
-        location = self._app_service.describe_llm_location(
+        location = self._app_service.providers.describe_llm_location(
             self.provider(),
             self._model.currentText().strip(),
             self._ollama_url,
@@ -555,7 +555,7 @@ class AiServiceSection(QWidget):
     def _refetch_models(self) -> None:
         """Invalidate the model cache of the current service and fetch the list again."""
         provider = self.provider()
-        self._app_service.invalidate_model_cache(
+        self._app_service.providers.invalidate_model_cache(
             provider, self._ollama_url if provider == "ollama" else ""
         )
         self._auto_fetch()
@@ -574,7 +574,7 @@ class AiServiceSection(QWidget):
 
     def _service_name(self, provider: str) -> str:
         """Return the name of *provider* to show the user (never its key)."""
-        name = self._app_service.get_provider_info(provider).get("display_name", "")
+        name = self._app_service.providers.get_provider_info(provider).get("display_name", "")
         return str(name or provider)
 
     def _is_saved_model(self, model: str) -> bool:
@@ -590,7 +590,7 @@ class AiServiceSection(QWidget):
         _retire_thread(self._fetch_thread)
         provider = self.provider()
         service = self._service_name(provider)
-        if self._app_service.provider_key_missing(provider):
+        if self._app_service.providers.provider_key_missing(provider):
             self._set_busy(False)
             self._status_lbl.setText(_STATUS_KEY_MISSING)
             return
@@ -600,7 +600,7 @@ class AiServiceSection(QWidget):
         cached = (
             None
             if provider == "ollama"
-            else self._app_service.get_cached_listing(provider, base_url=url)
+            else self._app_service.providers.get_cached_listing(provider, base_url=url)
         )
         if cached is not None:
             self._show_listing(cached)
@@ -609,18 +609,20 @@ class AiServiceSection(QWidget):
         if provider == "ollama":
 
             def fetch(report: Callable[[str], None]) -> ModelListing:
-                tags = self._app_service.list_provider_models(provider, base_url=url)
+                tags = self._app_service.providers.list_provider_models(provider, base_url=url)
                 # Classify here so set_models() only needs cache lookups.  It costs one
                 # request per model, so say how many there are before it starts.
                 report(checking_models_text(len(tags)))
-                self._app_service.classify_ollama_models(tags, url)
+                self._app_service.recommendations.classify_ollama_models(tags, url)
                 return ModelListing(tags)
 
         else:
 
             def fetch(report: Callable[[str], None]) -> ModelListing:
                 _ = report  # a single request; nothing to report between start and answer
-                return self._app_service.list_provider_models_checked(provider, base_url=url)
+                return self._app_service.providers.list_provider_models_checked(
+                    provider, base_url=url
+                )
 
         self._fetch_thread = _ModelFetchThread(fetch, tag=provider)
         self._fetch_thread.listing_ready.connect(self._on_listing_ready)

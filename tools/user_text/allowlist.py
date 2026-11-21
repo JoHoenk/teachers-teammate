@@ -109,7 +109,7 @@ ALLOWED: dict[str, frozenset[str]] = {
             "f'<span style=\"color:#c0392b;\"><b>Error:</b> {msg}</span>'",
             "f'<span style=\"color:#c0392b;\"><b>Error:</b> {text}</span>'",
             "f'{done / 1000000:.1f} / {total / 1000000:.1f} MB'",
-            "f'{self._INTRO}<br><tt>{self._service.models_dir()}</tt>'",
+            "f'{self._INTRO}<br><tt>{self._service.reader.models_dir()}</tt>'",
             "f'{status} — {mb_done:.1f} / {mb_total:.1f} MB'",
         }
     ),
@@ -357,7 +357,7 @@ ALLOWED: dict[str, frozenset[str]] = {
             "f\"The built-in reader reads pages on this computer, without a server. {txt.OCR_ENGINE_HINTS['ppocr']} Its model files, and the page models of the automatic image preparation, come from PaddlePaddle (Apache-2.0).\"",
             "f'<b>{txt.ADDONS_OUTDATED_LINE}.</b> {txt.ADDONS_OUTDATED_NOTE}'",
             "f'Built-in reader (PP-OCR) — {READER_SIZE_LABEL}'",
-            "f'Saved in: {self._svc.models_dir()}'",
+            "f'Saved in: {self._svc.reader.models_dir()}'",
             "f'{base}  {_installed_mark(key, results)}'",
             "spaCy  (spacy)",
             "spaCy is the library that finds names and other personal information. Install it first, then download a name detection model below.",

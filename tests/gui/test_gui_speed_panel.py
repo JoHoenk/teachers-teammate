@@ -30,6 +30,7 @@ from teachers_teammate.gui._hardware_profile_selector import HardwareProfileSele
 from teachers_teammate.gui.settings._speed_panel import SpeedPanel
 from teachers_teammate.infrastructure.performance_probe import ProbeResult
 from teachers_teammate.texts.settings import WHERE_AI_MODELS
+from ._service_stubs import services_of
 
 _URL = "http://localhost:11434"
 
@@ -71,7 +72,7 @@ class _FakeService:
     ) -> None:
         self.result = result if result is not None else ProbeResult()
         self.summary = summary
-        self.choices = choices
+        self.reported = choices
         self.fail_with = fail_with
         self.settings: dict[str, object] = {}
         self.tested: list[SpeedChoices] = []
@@ -80,9 +81,9 @@ class _FakeService:
         self.started = threading.Event()
         self.release = threading.Event()
 
-    def speed_choices(self, settings: Mapping[str, object]) -> SpeedChoices:
+    def choices(self, settings: Mapping[str, object]) -> SpeedChoices:
         self.settings = dict(settings)
-        return self.choices
+        return self.reported
 
     def speed_summary(
         self,
@@ -94,7 +95,7 @@ class _FakeService:
         _ = (choices, hardware, cached_only)
         return self.summary
 
-    def refresh_speed_server_facts(self, ollama_url: str) -> None:
+    def refresh_server_facts(self, ollama_url: str) -> None:
         self.facts_urls.append(ollama_url)
 
     def test_speed(
@@ -170,7 +171,7 @@ def _panel(
     """Build the panel as the AI models page does, show it and draw it once."""
     selector = _FakeSelector(detection)
     panel = SpeedPanel(
-        app_service=service,
+        app_service=services_of(service),
         settings_provider=lambda: {"ollama_url": _URL},
         profile_selector=cast(HardwareProfileSelector, selector),
         ollama_url=_URL,
@@ -512,7 +513,7 @@ def test_the_button_starts_the_test_and_turns_into_stop(qtbot) -> None:
     assert panel.is_running()
     assert not panel._status.isHidden()
     assert not panel._busy_bar.isHidden()
-    assert service.tested == [service.choices]
+    assert service.tested == [service.reported]
 
     service.release.set()
     qtbot.waitUntil(lambda: panel._button.text() == txt.SPEED_TEST, timeout=5000)

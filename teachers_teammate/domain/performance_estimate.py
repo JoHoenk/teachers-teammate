@@ -24,12 +24,18 @@ Nothing here does I/O and nothing here formats a duration: the GUI turns seconds
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 import math
 from statistics import median
 
-from .model_catalog import OLLAMA_CATALOG, AnswerLength, ModelCategory, OllamaModelSpec
+from .model_catalog import (
+    OLLAMA_CATALOG,
+    AnswerLength,
+    ModelCategory,
+    OllamaModelSpec,
+    ServerFacts,
+)
 from .proofreading.result import DEFAULT_EXCHANGE_COST, ExchangeCost, StepName
 
 #: Words on a typical page of a student's essay.  Used where a page has to be turned into a
@@ -422,3 +428,36 @@ def expected_band(
     else:
         page = proofreading_time(speed, words, cost, steps)
     return band(page.typical_s)
+
+
+@dataclass(frozen=True)
+class StepResult:
+    """What one step of the test found."""
+
+    step: SpeedStep
+    model: str
+    outcome: StepOutcome
+    speed: ModelSpeed | None = None
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    """Everything one run of the test found."""
+
+    steps: tuple[StepResult, ...] = ()
+    facts: ServerFacts = field(default_factory=ServerFacts)
+    """The server's version, the model digests and what it held in memory afterwards."""
+    on_battery: bool | None = None
+    shared: bool = False
+    """Another model was loaded when the test started: the times may be too long."""
+    swaps: bool = False
+    """The proofreading model was evicted by the review model, so every file pays both loads."""
+    gpu_found: bool = False
+    """This computer has a graphics card, so a share of 0 means Ollama did not use it."""
+    error: str = ""
+    """One line when the server could not be reached at all."""
+
+    def step(self, step: SpeedStep) -> StepResult | None:
+        """Return the result of *step*, or ``None`` when it did not run."""
+        return next((item for item in self.steps if item.step is step), None)

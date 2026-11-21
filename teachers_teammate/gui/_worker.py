@@ -6,40 +6,17 @@ from collections.abc import Sequence
 from pathlib import Path
 import threading
 import time
-from typing import Any, Protocol
+from typing import Any
 
 from PySide6.QtCore import QThread, Signal
 
+from ..application.composition import AppServices
 from ..application.service import ProgressCallbacks
 from ..config import Config
-from ..domain.run_summary import FileOutcome, RunSummary
-from ..infrastructure.reporting import CallbackReporter, KeepAwakeState
+from ..domain.run_summary import FileOutcome, KeepAwakeState, RunSummary
+from ..interfaces import CallbackReporter
+from ..texts.run import BATTERY_WARNING
 from ._types import FileDoneEvent
-
-
-class _RunSelectedService(Protocol):
-    def run_selected(
-        self,
-        config: Config,
-        files: Sequence[Path],
-        /,
-        *,
-        stop_event: threading.Event | None = None,
-        stop_after_file_event: threading.Event | None = None,
-        reporter=None,
-        progress: ProgressCallbacks | None = None,
-    ) -> RunSummary: ...
-
-
-class _ConnectionService(Protocol):
-    def check_connection(
-        self,
-        *,
-        engine: str = "",
-        provider: str = "",
-        url: str = "http://127.0.0.1:11434",
-        model: str = "",
-    ) -> tuple[bool, bool, str]: ...
 
 
 class OCRWorker(QThread):
@@ -78,7 +55,7 @@ class OCRWorker(QThread):
         config: Config,
         files: Sequence[Path],
         *,
-        app_service: _RunSelectedService,
+        app_service: AppServices,
     ) -> None:
         super().__init__()
         self._config = config
@@ -150,6 +127,7 @@ class OCRWorker(QThread):
                 "stop_event": self.stop_event,
                 "stop_after_file_event": self.stop_after_file_event,
                 "reporter": reporter,
+                "battery_warning": BATTERY_WARNING,
                 "progress": ProgressCallbacks(
                     on_file_started=on_file_started,
                     on_stage_started=on_stage_started,
@@ -160,7 +138,9 @@ class OCRWorker(QThread):
                     on_first_token=on_first_token,
                 ),
             }
-            summary = self._app_service.run_selected(self._config, self._files, **pipeline_kwargs)
+            summary = self._app_service.processing.run_selected(
+                self._config, self._files, **pipeline_kwargs
+            )
         except (Exception, SystemExit) as exc:  # noqa: BLE001  # catch SystemExit to prevent the worker thread from killing the GUI process; also catches unexpected exceptions
             self.log_line.emit(f"FATAL ERROR: {exc}\n")
             summary = RunSummary(error=str(exc) or "unexpected error")
@@ -197,7 +177,7 @@ class _ConnectionCheckThread(QThread):
         provider: str = "",
         url: str = "http://127.0.0.1:11434",
         model: str = "",
-        app_service: _ConnectionService,
+        app_service: AppServices,
     ) -> None:
         super().__init__()
         self._engine = engine
@@ -207,7 +187,7 @@ class _ConnectionCheckThread(QThread):
         self._app_service = app_service
 
     def run(self) -> None:
-        connected, model_ok, msg = self._app_service.check_connection(
+        connected, model_ok, msg = self._app_service.processing.check_connection(
             engine=self._engine,
             provider=self._provider,
             url=self._url,

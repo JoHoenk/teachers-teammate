@@ -17,7 +17,7 @@ from teachers_teammate.infrastructure.spacy_models import (
     spacy_model_for,
 )
 from teachers_teammate.application.data_flow import llm_location
-from teachers_teammate.application.service import OllamaStatus
+from teachers_teammate.application.ollama_server import OllamaStatus
 from teachers_teammate.application.setup_plan import (
     LocalModelChoices,
     SetupAnswers,
@@ -27,7 +27,6 @@ from teachers_teammate.application.setup_plan import (
     build_setup_plan,
 )
 from teachers_teammate.domain.data_location import StageLocation
-from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     ModelCategory,
@@ -140,9 +139,23 @@ class DummyAppService(RecommendationServiceStub):
     def start_ollama(self) -> None:
         pass
 
-    def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
-        _ = text_format
-        return ""
+    def is_local(self, url: str, *, include_wsl_host: bool = False) -> bool:
+        """Answer as the real check does for the addresses the pages use."""
+        _ = include_wsl_host
+        return url.startswith("http://127.0.0.1") or url.startswith("http://localhost")
+
+    def normalize(self, url: str) -> str:
+        return url.rstrip("/")
+
+    def addon_license(self, package: str) -> str | None:
+        _ = package
+        return None
+
+    def system_language(self) -> str | None:
+        return None
+
+    def read_gpu_usage(self):
+        return None
 
 
 class CachingDummyAppService(DummyAppService):
@@ -285,7 +298,7 @@ class MeasuredCatalogAppService(CatalogAppService):
     measured_tag = "qwen3.5:9b"
     measured_page = TimeRange(25.0, 70.0)
 
-    def speed_page_times(
+    def page_times(
         self,
         tags: Sequence[str],
         category: ModelCategory,
@@ -376,6 +389,11 @@ class SetupAppService(DummyAppService):
         self.plan_calls: list[SetupAnswers] = []
         #: The pip package an online service still needs, by provider.
         self.missing: dict[str, str] = {}
+
+    @property
+    def setup(self) -> SetupAppService:
+        """Answer the assistant's plan questions itself (``services_of`` points here too)."""
+        return self
 
     def missing_provider_package(self, provider: str) -> str | None:
         """Answer with the package this stub was told is missing."""

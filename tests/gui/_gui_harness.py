@@ -25,9 +25,9 @@ from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import QWidget
 
 from teachers_teammate.application.composition import build_app_services
+from teachers_teammate.application.composition import AppServices
 from teachers_teammate.application.service import ProcessingApplicationService
 from teachers_teammate.domain.benchmark import PairComparison, compare_pair
-from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_catalog import (
     OLLAMA_CATALOG,
     DetectionReason,
@@ -43,7 +43,7 @@ from teachers_teammate.gui._update_check import UpdateCheckThread
 from teachers_teammate.gui._worker import _ConnectionCheckThread
 from teachers_teammate.gui.settings import SettingsContext, SettingsResult
 
-from ._service_stubs import LocalDataFlowStub, context_choice_from
+from ._service_stubs import LocalDataFlowStub, context_choice_from, services_of
 
 
 class FakeGuiService(LocalDataFlowStub):
@@ -100,10 +100,6 @@ class FakeGuiService(LocalDataFlowStub):
     def pending_addon_packages(self) -> tuple[str, ...]:
         """Nothing waits for a restart unless a test says so."""
         return ()
-
-    def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
-        _ = text_format
-        return ""
 
     def default_model_for_task(self, provider: str, task: str) -> str:
         return f"{provider}-{task}"
@@ -184,19 +180,8 @@ class FakeGuiService(LocalDataFlowStub):
     def addon_packages_dir(self) -> Path:
         return Path(tempfile.gettempdir()) / "teachers-teammate-addons"
 
-    def install_addon(self, addon: str, target: Path, progress_cb: Any) -> None:
-        _ = (addon, target, progress_cb)
-
-    def clear_stale_addon_modules(self, addon: str) -> None:
-        _ = addon
-
-    def download_spacy_model(self, model: str, target: Path, progress_cb: Any) -> None:
-        _ = (model, target, progress_cb)
-
-    def pull_ollama_model(
-        self, url: str, model_name: str, progress_cb: Any = None, abort_event: Any = None
-    ) -> None:
-        _ = (url, model_name, progress_cb, abort_event)
+    def inject_addon_packages_dir(self) -> None:
+        pass
 
     def first_run_model_settings(self, profile) -> dict[str, str]:
         _ = profile
@@ -292,11 +277,14 @@ class MemorySettings:
 
 
 def settings_context(service: Any = None, **overrides: Any) -> SettingsContext:
-    """Return a :class:`SettingsContext` for tests: fake service, in-memory acknowledgements."""
+    """Return a :class:`SettingsContext` for tests: fake service, in-memory acknowledgements.
+
+    A flat stub is handed on as the grouped services the pages ask for.
+    """
     store = MemorySettings()
     values: dict[str, Any] = {
         "settings": {},
-        "app_service": service if service is not None else FakeGuiService(),
+        "app_service": _as_services(service if service is not None else FakeGuiService()),
         "language": "English",
         "acknowledgements": FlowAcknowledgements(lambda: store),
     }
@@ -360,6 +348,11 @@ def install_scripted_settings_window(
     return scripted
 
 
-def real_service() -> ProcessingApplicationService:
-    """Return a fresh application service, for a test that needs the real one."""
-    return build_app_services().processing
+def _as_services(service: object) -> AppServices:
+    """Return *service* as the grouped services, wrapping a flat stub."""
+    return service if isinstance(service, AppServices) else services_of(service)
+
+
+def real_service() -> AppServices:
+    """Return the process's fresh services, for a test that needs the real ones."""
+    return build_app_services()

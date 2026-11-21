@@ -9,7 +9,6 @@ which server the person picked (:attr:`ServerSearchDialog.server_chosen`).
 from __future__ import annotations
 
 import threading
-from typing import Protocol
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -25,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...application.composition import AppServices
 from ...domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
 from ...texts import dialogs as dlg
 from .. import _dialogs
@@ -63,17 +63,6 @@ _NETWORK_TOOLTIP = (
 )
 
 
-class _DiscoveryService(Protocol):
-    def discover_ollama_servers(
-        self,
-        scope: DiscoveryScope = ...,
-        *,
-        stop_event: threading.Event | None = ...,
-        on_found=...,
-        on_progress=...,
-    ) -> list[DiscoveredServer]: ...
-
-
 class _SearchThread(QThread):
     """Runs one search off the GUI thread and reports hits as they come."""
 
@@ -81,7 +70,7 @@ class _SearchThread(QThread):
     progress = Signal(int, int)  # asked, total
     search_done = Signal(list)
 
-    def __init__(self, service: _DiscoveryService, scope: DiscoveryScope) -> None:
+    def __init__(self, service: AppServices, scope: DiscoveryScope) -> None:
         super().__init__()
         self._service = service
         self._scope = scope
@@ -89,7 +78,7 @@ class _SearchThread(QThread):
 
     def run(self) -> None:
         try:
-            servers = self._service.discover_ollama_servers(
+            servers = self._service.ollama.discover_ollama_servers(
                 self._scope,
                 stop_event=self.stop_event,
                 on_found=self.found.emit,
@@ -110,7 +99,7 @@ class ServerSearchDialog(QDialog):
 
     def __init__(
         self,
-        app_service: _DiscoveryService,
+        app_service: AppServices,
         parent: QWidget | None = None,
         *,
         start_search: bool = True,

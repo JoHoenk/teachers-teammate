@@ -25,11 +25,10 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+from ..domain.ollama_discovery import OLLAMA_DOWNLOAD_URL as OLLAMA_DOWNLOAD_URL  # noqa: PLC0414
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-#: Where Ollama is downloaded from.  The page picks the right installer for the computer.
-OLLAMA_DOWNLOAD_URL = "https://ollama.com/download"
 
 #: The folder Ollama keeps its models in when its own settings say nothing.
 _DEFAULT_MODELS_DIR = Path(".ollama") / "models"

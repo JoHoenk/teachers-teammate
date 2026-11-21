@@ -7,11 +7,10 @@ import pytest
 from PySide6.QtWidgets import QDialog
 
 from teachers_teammate.domain.correction_prompts import NOTES_LIMIT
-from teachers_teammate.domain.formatted_text import TextFormat
-from teachers_teammate.domain.notation import with_notation_hint
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._config_panel import ConfigPanel, _ProofreadingDialog, _PromptDialog
 
+from ._service_stubs import services_of
 from ._settings_stubs import DummyAppService
 
 _BUILTIN = "Review the content of the text."
@@ -264,16 +263,11 @@ def test_explanations_options_round_trip_in_the_dialog(qtbot) -> None:
 # ── the panel hands the dialog what the app always adds ────────────────────────
 
 
-class _NotationService(DummyAppService):
-    def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
-        return with_notation_hint("", text_format, task="evaluation").strip()
-
-
 def _capture_fixed_text(qtbot, monkeypatch, open_dialog) -> str:
     """Open a dialog from the panel; return what its "always added" box shows."""
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel._service = _NotationService()
+    panel._service = services_of(DummyAppService())
     shown: list[str] = []
 
     def fake_exec(dlg: _PromptDialog) -> QDialog.DialogCode:
@@ -302,13 +296,13 @@ def test_the_review_dialog_lists_the_notation_hint(qtbot, monkeypatch) -> None:
 
 
 @pytest.mark.gui
-def test_the_review_dialog_has_no_note_without_a_service(qtbot) -> None:
+def test_the_review_note_needs_no_service(qtbot) -> None:
     """
     Given  a panel without an application service
     When   the review note is asked for
-    Then   it is empty (nothing to claim)
+    Then   it still names the notation the review asks for (a fixed text, not a live query)
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
 
-    assert panel._evaluation_fixed_text() == ""
+    assert txt.FORMATTED_TEXT_NOTE in panel._evaluation_fixed_text()

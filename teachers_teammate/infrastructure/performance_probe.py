@@ -33,6 +33,8 @@ from ..domain.model_catalog import (
     review_temperature,
 )
 from ..domain.performance_estimate import ModelSpeed, SpeedStep, StepOutcome
+from ..domain.performance_estimate import ProbeResult as ProbeResult  # noqa: PLC0414
+from ..domain.performance_estimate import StepResult as StepResult  # noqa: PLC0414
 from ..exceptions import (
     OCRDeadlineError,
     OCRError,
@@ -76,39 +78,6 @@ _A4_MM = (210.0, 297.0)
 #: Words the test page carries.  Enough that the answer reaches the token cap, so the writing
 #: rate is measured on a full answer rather than on a short one.
 TEST_PAGE_WORDS = 350
-
-
-@dataclass(frozen=True)
-class StepResult:
-    """What one step of the test found."""
-
-    step: SpeedStep
-    model: str
-    outcome: StepOutcome
-    speed: ModelSpeed | None = None
-    message: str = ""
-
-
-@dataclass(frozen=True)
-class ProbeResult:
-    """Everything one run of the test found."""
-
-    steps: tuple[StepResult, ...] = ()
-    facts: ServerFacts = field(default_factory=ServerFacts)
-    """The server's version, the model digests and what it held in memory afterwards."""
-    on_battery: bool | None = None
-    shared: bool = False
-    """Another model was loaded when the test started: the times may be too long."""
-    swaps: bool = False
-    """The proofreading model was evicted by the review model, so every file pays both loads."""
-    gpu_found: bool = False
-    """This computer has a graphics card, so a share of 0 means Ollama did not use it."""
-    error: str = ""
-    """One line when the server could not be reached at all."""
-
-    def step(self, step: SpeedStep) -> StepResult | None:
-        """Return the result of *step*, or ``None`` when it did not run."""
-        return next((item for item in self.steps if item.step is step), None)
 
 
 @dataclass(frozen=True)

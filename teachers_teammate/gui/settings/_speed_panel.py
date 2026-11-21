@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import threading
-from typing import Protocol
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -40,6 +39,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...application.composition import AppServices
 from ...application.speed_estimates import (
     CLASS_SET_FILES,
     SpeedChoices,
@@ -48,9 +48,8 @@ from ...application.speed_estimates import (
     UnmeasuredStep,
 )
 from ...domain.model_catalog import HardwareDetection, find_spec, short_model_name
-from ...domain.performance_estimate import SpeedStep, StepOutcome
+from ...domain.performance_estimate import ProbeResult, SpeedStep, StepOutcome
 from ...exceptions import RunStoppedError
-from ...infrastructure.performance_probe import ProbeResult
 from .. import _user_text as txt
 from .._background import LatestTask
 from .._hardware_profile_selector import HardwareProfileSelector
@@ -63,31 +62,6 @@ _MODEL_WIDTH = 190
 _ELIDE = Qt.TextElideMode.ElideRight
 _HINT_STYLE = "color: #888; font-size: 11px;"
 _WARNING_STYLE = "color: #e67e22; font-size: 11px;"
-
-
-class _SpeedService(Protocol):
-    """What the panel asks the application service; the facade methods are the only ones."""
-
-    def speed_choices(self, settings: Mapping[str, object]) -> SpeedChoices: ...
-
-    def speed_summary(
-        self,
-        choices: SpeedChoices,
-        *,
-        hardware: HardwareDetection | None = None,
-        cached_only: bool = True,
-    ) -> SpeedSummary: ...
-
-    def test_speed(
-        self,
-        choices: SpeedChoices,
-        *,
-        hardware: HardwareDetection | None = None,
-        cancel_event: threading.Event | None = None,
-        on_progress: Callable[[SpeedStep, str, int, int], None] | None = None,
-    ) -> ProbeResult: ...
-
-    def refresh_speed_server_facts(self, ollama_url: str) -> None: ...
 
 
 class _StepRow:
@@ -137,7 +111,7 @@ class SpeedPanel(QWidget):
     def __init__(
         self,
         *,
-        app_service: _SpeedService,
+        app_service: AppServices,
         settings_provider: Callable[[], Mapping[str, object]],
         profile_selector: HardwareProfileSelector,
         ollama_url: str = "",
@@ -265,7 +239,7 @@ class SpeedPanel(QWidget):
         if not has_models:
             return
         self._fetch_facts()
-        self._draw(self._service.speed_summary(choices, hardware=self._hardware()))
+        self._draw(self._service.speeds.speed_summary(choices, hardware=self._hardware()))
 
     def stop(self) -> None:
         """Ask a running test to stop; nothing is stored.
@@ -311,7 +285,7 @@ class SpeedPanel(QWidget):
         hardware = self._hardware()
         self._set_running(True)
         self._test_task.submit(
-            lambda: self._service.test_speed(
+            lambda: self._service.speeds.test_speed(
                 choices,
                 hardware=hardware,
                 cancel_event=cancel,
@@ -364,7 +338,7 @@ class SpeedPanel(QWidget):
             return
         self._facts_url = url
         self._facts_task.submit(
-            lambda: self._service.refresh_speed_server_facts(url),
+            lambda: self._service.speeds.refresh_server_facts(url),
             lambda _result, _error: self.refresh(),
         )
 
@@ -461,7 +435,7 @@ class SpeedPanel(QWidget):
 
     def _choices(self) -> SpeedChoices:
         """Return the models the page shows now, as the test and the estimate need them."""
-        return self._service.speed_choices(self._settings_provider())
+        return self._service.speeds.choices(self._settings_provider())
 
     def _hardware(self) -> HardwareDetection | None:
         """Return this computer as the page resolved it, or ``None`` while it is unknown."""

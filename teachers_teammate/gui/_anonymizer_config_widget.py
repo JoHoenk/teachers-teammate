@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..application.service import ProcessingApplicationService
+from ..application.composition import AppServices
 from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from ..texts import dialogs as dlg
 from ..texts import privacy
@@ -43,13 +43,13 @@ class _SpacyModelFetchThread(QThread):
     models_ready = Signal(list)
     error = Signal(str)
 
-    def __init__(self, service: ProcessingApplicationService) -> None:
+    def __init__(self, service: AppServices) -> None:
         super().__init__()
         self._service = service
 
     def run(self) -> None:
         try:
-            self.models_ready.emit(self._service.list_installed_spacy_models())
+            self.models_ready.emit(self._service.anonymization.list_installed_spacy_models())
         except Exception as exc:  # noqa: BLE001
             # spaCy discovery may raise anything; report via signals and emit an empty list
             self.error.emit(str(exc))
@@ -87,7 +87,7 @@ class AnonymizerConfigWidget(QWidget):
         self,
         language: str,
         anonymizer_config: object,
-        app_service: ProcessingApplicationService,
+        app_service: AppServices,
         parent: QWidget | None = None,
         *,
         sample_text: str = "",
@@ -320,7 +320,7 @@ class AnonymizerConfigWidget(QWidget):
         """Populate the primary and secondary model combos after the background fetch."""
         # Derive the auto label for the primary combo
         try:
-            auto_model = self._app_service.spacy_model_for_language(self._language)
+            auto_model = self._app_service.anonymization.spacy_model_for_language(self._language)
         except Exception:  # noqa: BLE001
             # model lookup is best-effort; fall back to the generic auto label
             auto_model = ""
@@ -356,7 +356,7 @@ class AnonymizerConfigWidget(QWidget):
     def _system_spacy_model(self) -> str | None:
         """Return the spaCy model for the language this computer is set to (if it is known)."""
         try:
-            return self._app_service.system_spacy_model()
+            return self._app_service.anonymization.system_spacy_model()
         except Exception:  # noqa: BLE001  # a missing spaCy must not break the dialog
             return None
 
@@ -480,7 +480,7 @@ class AnonymizerConfigWidget(QWidget):
             return
 
         try:
-            anonymized, mapping = self._app_service.anonymize_preview(
+            anonymized, mapping = self._app_service.anonymization.anonymize_preview(
                 text, self._language, self.anonymizer_config
             )
         except ImportError as exc:
@@ -492,7 +492,7 @@ class AnonymizerConfigWidget(QWidget):
         except OSError:
             from ._addon_installer_dialog import SpacyModelDownloadDialog  # noqa: PLC0415
 
-            needed = self._app_service.spacy_model_for_language(self._language)
+            needed = self._app_service.anonymization.spacy_model_for_language(self._language)
             if SpacyModelDownloadDialog.is_available():
                 self._open_download_dialog(needed)
             else:
@@ -527,7 +527,7 @@ class AnonymizerConfigWidget(QWidget):
         from ..application.service import ADDON_PRIVACY  # noqa: PLC0415
         from ._addon_installer_dialog import SpacyModelDownloadDialog  # noqa: PLC0415
 
-        if not self._app_service.is_addon_available(ADDON_PRIVACY):
+        if not self._app_service.addons.is_addon_available(ADDON_PRIVACY):
             _dialogs.notify(self.window(), dlg.spacy_not_installed())
             return
 

@@ -14,15 +14,18 @@ from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import QApplication, QWidget
 
 from teachers_teammate.domain.setting_values import PreprocessMethod
+from teachers_teammate.application.ollama_server import OllamaServerService
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.speed_estimates import SpeedSummary
 from teachers_teammate.application.documents import WorkedOn
+from teachers_teammate.application.model_recommendations import ModelRecommendationService
 from teachers_teammate.application.service import (
     IssueKind,
     ProcessingApplicationService,
     RequirementIssue,
     RunPreflight,
 )
+from teachers_teammate.application.setup_plan import SetupService
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
     DEFAULT_WRITING_MODEL,
@@ -170,9 +173,7 @@ def _no_network_in_gui_tests(monkeypatch) -> None:
         ProcessingApplicationService, "check_run_preflight", lambda *_args, **_kw: RunPreflight()
     )
     # The silent server search must not probe the real computer or its network.
-    monkeypatch.setattr(
-        ProcessingApplicationService, "discover_ollama_servers", lambda *_a, **_kw: []
-    )
+    monkeypatch.setattr(OllamaServerService, "discover_ollama_servers", lambda *_a, **_kw: [])
     # The status row checks its services in the background; never probe a real server.
     monkeypatch.setattr(
         ProcessingApplicationService,
@@ -1531,7 +1532,7 @@ def test_ok_in_settings_persists_a_profile_change_to_ocr_toml(
     Then   the value is stored in the config panel and saved to ocr.toml
     """
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        SetupService,
         "default_config_path",
         lambda self: tmp_path / "ocr.toml",
     )
@@ -2385,7 +2386,9 @@ def test_the_copy_menu_follows_the_privacy_add_on_for_the_open_document(
     kind = CopyKind.RAW_ANONYMIZED
     assert main_window._check._copy_actions[kind].isEnabled() is False
 
-    main_window._app_service.anonymizer_available = lambda _language, _config=None: True
+    main_window._app_service.anonymization.anonymizer_available = lambda _language, _config=None: (
+        True
+    )
     main_window._refresh_privacy_availability()
 
     assert main_window._check._copy_actions[kind].isEnabled() is True
@@ -2537,7 +2540,7 @@ def test_copy_with_names_hidden_puts_the_anonymized_text_on_the_clipboard(
     main_window._open_check(a)
     main_window._privacy_available = True
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.processing,
         "text_for_copy",
         lambda view, **_kw: f"hidden:{view.raw_text}",
     )
@@ -2567,7 +2570,7 @@ def test_a_failing_anonymizer_leaves_the_clipboard_alone(main_window, monkeypatc
     def _fail(*_args, **_kwargs):
         raise RuntimeError("no model")
 
-    monkeypatch.setattr(main_window._app_service, "text_for_copy", _fail)
+    monkeypatch.setattr(main_window._app_service.processing, "text_for_copy", _fail)
     monkeypatch.setattr(
         "teachers_teammate.gui._main_window.run_in_background",
         lambda fn, on_done, **_kw: _call_and_report(fn, on_done),
@@ -2650,9 +2653,9 @@ class _FakeBenchmarkWindow(QWidget):
 
     created: ClassVar[list[_FakeBenchmarkWindow]] = []
 
-    def __init__(self, *, processing: object = None) -> None:
+    def __init__(self, *, app_services: object = None) -> None:
         super().__init__()
-        self.processing = processing
+        self.app_services = app_services
         self.closed = 0
         self.shown = 0
         self.reloaded = 0
@@ -2714,7 +2717,7 @@ def test_the_benchmark_window_shares_the_main_windows_service(
 
     window = fake_benchmark.created[0]
     qtbot.addWidget(window)
-    assert window.processing is main_window._app_service
+    assert window.app_services is main_window._app_service
 
 
 @pytest.mark.gui
@@ -2863,13 +2866,13 @@ def test_the_monitor_remembers_its_geometry(qtbot, main_window, monkeypatch) -> 
         "restoreGeometry",
         lambda self, data: restored.append(data) or True,
     )
-    monitor = _system_monitor.SystemMonitorWindow()
+    monitor = _system_monitor.SystemMonitorWindow(lambda: None)
     qtbot.addWidget(monitor)
     monitor.show()
     monitor.hide()
     assert _system_monitor.GEOMETRY_KEY in stored
 
-    other = _system_monitor.SystemMonitorWindow()
+    other = _system_monitor.SystemMonitorWindow(lambda: None)
     qtbot.addWidget(other)
 
     assert restored == [stored[_system_monitor.GEOMETRY_KEY]]
@@ -3051,7 +3054,7 @@ def test_main_window_load_toml_if_present_loads_values(qtbot, monkeypatch, tmp_p
 
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(
-        "teachers_teammate.application.service.ProcessingApplicationService.resolve_config_path",
+        "teachers_teammate.application.setup_plan.SetupService.resolve_config_path",
         lambda self, _: config_path,
     )
     monkeypatch.setattr(
@@ -3076,7 +3079,7 @@ def test_main_window_load_toml_if_present_no_path(qtbot, monkeypatch) -> None:
     qtbot.addWidget(win)
 
     monkeypatch.setattr(
-        "teachers_teammate.application.service.ProcessingApplicationService.resolve_config_path",
+        "teachers_teammate.application.setup_plan.SetupService.resolve_config_path",
         lambda self, _: None,
     )
     win._config_path = None
@@ -3100,7 +3103,7 @@ def test_main_window_load_toml_if_present_exception_logged(qtbot, monkeypatch, t
     qtbot.addWidget(win)
 
     monkeypatch.setattr(
-        "teachers_teammate.application.service.ProcessingApplicationService.resolve_config_path",
+        "teachers_teammate.application.setup_plan.SetupService.resolve_config_path",
         lambda self, _: config_path,
     )
 
@@ -3194,7 +3197,7 @@ def test_main_window_on_preprocess_preview_preprocess_error(
     img_file.write_bytes(b"fake")
     monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(tmp_path))
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.reader,
         "preprocess_preview",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad file")),
     )
@@ -3234,7 +3237,9 @@ def test_main_window_on_preprocess_preview_ignores_concurrent_click(
         time.sleep(0.3)
         raise ValueError("bad file")
 
-    monkeypatch.setattr(main_window._app_service, "preprocess_preview", _slow_failing_preview)
+    monkeypatch.setattr(
+        main_window._app_service.reader, "preprocess_preview", _slow_failing_preview
+    )
 
     shown = _record_notices(monkeypatch)
     main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method=PreprocessMethod.NONE))
@@ -3485,16 +3490,14 @@ def _make_first_start_window(qtbot, monkeypatch, tmp_path: Path, detection) -> M
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(SetupAssistant, "exec", lambda self: QDialog.DialogCode.Rejected)
+    monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, explicit: None)
     monkeypatch.setattr(
-        ProcessingApplicationService, "resolve_config_path", lambda self, explicit: None
-    )
-    monkeypatch.setattr(
-        ProcessingApplicationService,
+        SetupService,
         "default_config_path",
         lambda self: tmp_path / "ocr.toml",
     )
     monkeypatch.setattr(
-        ProcessingApplicationService, "detect_hardware", lambda self, url, **_kw: detection
+        ModelRecommendationService, "detect_hardware", lambda self, url, **_kw: detection
     )
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
@@ -3526,9 +3529,7 @@ def test_a_settings_file_from_the_installer_is_still_a_first_start(
         "exec",
         lambda self: opened.append(True) or QDialog.DialogCode.Rejected,
     )
-    monkeypatch.setattr(
-        ProcessingApplicationService, "resolve_config_path", lambda self, explicit: settings
-    )
+    monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, explicit: settings)
 
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
@@ -3586,11 +3587,9 @@ def test_existing_config_models_untouched(qtbot, monkeypatch, tmp_path: Path) ->
     detect_calls: list = []
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, explicit: config_path)
     monkeypatch.setattr(
-        ProcessingApplicationService, "resolve_config_path", lambda self, explicit: config_path
-    )
-    monkeypatch.setattr(
-        ProcessingApplicationService,
+        SetupService,
         "default_config_path",
         lambda self: config_path,
     )
@@ -3599,7 +3598,7 @@ def test_existing_config_models_untouched(qtbot, monkeypatch, tmp_path: Path) ->
         detect_calls.append(url)
         return detection
 
-    monkeypatch.setattr(ProcessingApplicationService, "detect_hardware", _spy_detect)
+    monkeypatch.setattr(ModelRecommendationService, "detect_hardware", _spy_detect)
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
@@ -3641,7 +3640,7 @@ def test_cancelling_the_assistant_on_a_first_start_keeps_todays_setup(
     Then   the system language and the best models for this computer are saved, so the app
            works without the assistant
     """
-    monkeypatch.setattr(main_window_module, "system_language", lambda: "German")
+    monkeypatch.setattr(ProcessingApplicationService, "system_language", lambda self: "German")
     detection = HardwareDetection(
         profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
     )
@@ -3814,7 +3813,7 @@ def test_finished_pull_evicts_cached_model_list(main_window, monkeypatch) -> Non
     """
     evicted: list[str] = []
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        ModelRecommendationService,
         "on_ollama_models_changed",
         lambda self, url: evicted.append(url),
     )
@@ -3906,9 +3905,7 @@ def test_close_waits_for_background_tasks(main_window, monkeypatch, tmp_path: Pa
     When   it is closed
     Then   running background tasks get a bounded moment to finish
     """
-    monkeypatch.setattr(
-        ProcessingApplicationService, "default_config_path", lambda self: tmp_path / "ocr.toml"
-    )
+    monkeypatch.setattr(SetupService, "default_config_path", lambda self: tmp_path / "ocr.toml")
     waited: list[bool] = []
     monkeypatch.setattr(
         main_window_module, "wait_for_background_tasks", lambda *a, **k: waited.append(True)
@@ -4454,7 +4451,7 @@ def test_taking_back_the_answer_in_privacy_settings_asks_again(
     monkeypatch.setattr(SettingsWindow, "exec", fake_exec)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     with patch(
-        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService",
+        "teachers_teammate.gui._anonymizer_config_widget.AppServices",
         MagicMock(),
     ) as service:
         service.return_value.list_installed_spacy_models.return_value = []
@@ -4512,9 +4509,7 @@ def test_online_ocr_engine_in_saved_settings_is_announced(
     config_path.write_text('ocr_engine = "openai"\nocr_model = "gpt-4o"\n', encoding="utf-8")
     shown = _record_notices(monkeypatch)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
-    monkeypatch.setattr(
-        ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
-    )
+    monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, _: config_path)
 
     win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
@@ -4539,9 +4534,7 @@ def test_a_removed_local_engine_in_saved_settings_is_announced(
     config_path.write_text(f'ocr_engine = "{old}"\n', encoding="utf-8")
     shown = _record_notices(monkeypatch)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
-    monkeypatch.setattr(
-        ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
-    )
+    monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, _: config_path)
 
     win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
@@ -4567,9 +4560,7 @@ def test_local_ocr_engine_in_saved_settings_is_not_announced(
     config_path.write_text('ocr_engine = "ppocr"\n', encoding="utf-8")
     shown = _record_notices(monkeypatch)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
-    monkeypatch.setattr(
-        ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
-    )
+    monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, _: config_path)
 
     qtbot.addWidget(MainWindow(app_service=real_service()))
 
@@ -4590,9 +4581,7 @@ def test_an_unusable_saved_value_is_logged_not_shown_as_a_dialog(
     config_path.write_text('language = "German"\ndebug = "false"\n', encoding="utf-8")
     shown = _record_notices(monkeypatch)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
-    monkeypatch.setattr(
-        ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
-    )
+    monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, _: config_path)
 
     win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
@@ -4981,10 +4970,14 @@ def test_export_skips_documents_that_would_share_an_output_file(
     written: list[Path] = []
     service = main_window._app_service
     monkeypatch.setattr(
-        service, "export_docx", lambda _config, _source, path, **_k: written.append(path)
+        service.processing,
+        "export_docx",
+        lambda _config, _source, path, **_k: written.append(path),
     )
     monkeypatch.setattr(
-        service, "export_text", lambda _config, _source, path, **_k: written.append(path)
+        service.processing,
+        "export_text",
+        lambda _config, _source, path, **_k: written.append(path),
     )
 
     main_window._on_export_requested(ids, kind)
@@ -5106,7 +5099,7 @@ def test_input_folder_warning_only_applies_to_folder_and_text_exports(
     monkeypatch.setattr(
         panel, "get_selected_files", lambda: None if folder_mode else [scans / "a.png"]
     )
-    monkeypatch.setattr(main_window._app_service, "export_docx", lambda *_a, **_k: None)
+    monkeypatch.setattr(main_window._app_service.processing, "export_docx", lambda *_a, **_k: None)
     asked = _answer_questions(monkeypatch, yes=False)
     kind = ExportKind.DOCX if folder_mode else ExportKind.TEXT
     _pick_file(monkeypatch, scans / ("a" + kind.file_suffix))
@@ -5168,7 +5161,7 @@ def test_exported_docx_labels_follow_the_explanation_language(
     _pick_file(monkeypatch, tmp_path / "out" / "a.docx")
     seen: list[str] = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.processing,
         "export_docx",
         lambda _config, _source, _path, options=None, **_k: seen.append(options.labels_language),
     )
@@ -5265,8 +5258,8 @@ def test_main_window_probes_this_computer_in_the_background_for_the_cache_keys(
         probed = True
         return _detection()
 
-    monkeypatch.setattr(service, "cached_hardware_profile", cached)
-    monkeypatch.setattr(service, "detect_hardware", detect)
+    monkeypatch.setattr(service.recommendations, "cached_hardware_profile", cached)
+    monkeypatch.setattr(service.recommendations, "detect_hardware", detect)
     before = len(loads)
 
     main_window._refresh_queue_from_inputs()
@@ -5293,8 +5286,8 @@ def test_main_window_does_not_probe_again_and_again_when_the_probe_fails(
         calls.append(1)
         raise RuntimeError("nvidia-smi crashed")
 
-    monkeypatch.setattr(service, "cached_hardware_profile", lambda *_a, **_k: None)
-    monkeypatch.setattr(service, "detect_hardware", failing)
+    monkeypatch.setattr(service.recommendations, "cached_hardware_profile", lambda *_a, **_k: None)
+    monkeypatch.setattr(service.recommendations, "detect_hardware", failing)
 
     main_window._refresh_queue_from_inputs()
     main_window._results_table.set_queue(
@@ -5606,7 +5599,7 @@ def test_start_ollama_starts_it_in_the_background_and_checks_again(
     """
     started: list[int] = []
     checks: list[dict] = []
-    monkeypatch.setattr(ready_window._app_service, "start_ollama", lambda: started.append(1))
+    monkeypatch.setattr(ready_window._app_service.ollama, "start_ollama", lambda: started.append(1))
     monkeypatch.setattr(
         main_window_module,
         "run_in_background",
@@ -5774,7 +5767,9 @@ def test_a_download_takes_over_the_line_and_a_new_check_follows(
     """
     checks: list[int] = []
     monkeypatch.setattr(ready_window, "_start_readiness_check", lambda **_kw: checks.append(1))
-    monkeypatch.setattr(ready_window._app_service, "on_ollama_models_changed", lambda _url: None)
+    monkeypatch.setattr(
+        ready_window._app_service.recommendations, "on_ollama_models_changed", lambda _url: None
+    )
 
     ready_window._on_pull_started("qwen3:8b")
     ready_window._on_pull_progress("pulling", 50, 200)
@@ -5916,7 +5911,7 @@ def test_an_unreachable_server_triggers_one_silent_search_and_offers_the_hit(
         searched.append(scope)
         return [hit]
 
-    monkeypatch.setattr(ProcessingApplicationService, "discover_ollama_servers", discover)
+    monkeypatch.setattr(OllamaServerService, "discover_ollama_servers", discover)
     _preflight_returns(monkeypatch, RunPreflight(ollama_unreachable="✗ Cannot connect"))
 
     ready_window._start_readiness_check()
@@ -5953,7 +5948,7 @@ def test_the_time_left_is_estimated_for_the_steps_the_run_really_runs(
     )
     asked: list[object] = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.speeds,
         "speed_summary",
         lambda choices, **_kw: asked.append(choices) or SpeedSummary(),
     )

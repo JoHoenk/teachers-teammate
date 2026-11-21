@@ -50,6 +50,8 @@ filegroup(
         "integration/test_pipeline_teacher_work.py",
         "integration/test_pipeline_txt.py",
         "unit/test_addon_manager.py",
+        "unit/test_addons_service.py",
+        "unit/test_anonymization_service.py",
         "unit/test_anonymizer.py",
         "unit/test_benchmark_domain.py",
         "unit/test_benchmark_run_store.py",
@@ -59,6 +61,7 @@ filegroup(
         "unit/test_cli.py",
         "unit/test_config.py",
         "unit/test_coordinator.py",
+        "unit/test_correction_options.py",
         "unit/test_docx_builder.py",
         "unit/test_docx_comments.py",
         "unit/test_file_discovery.py",
@@ -69,9 +72,12 @@ filegroup(
         "unit/test_ollama_discovery.py",
         "unit/test_ollama_utils.py",
         "unit/test_preprocessor.py",
+        "unit/test_provider_service.py",
+        "unit/test_recommendation_service.py",
         "unit/test_service.py",
         "unit/test_settings_schema.py",
         "unit/test_setup_plan.py",
+        "unit/test_setup_service.py",
         "unit/test_stage_builder.py",
         "unit/test_state_repository.py",
     ],
@@ -636,6 +642,15 @@ py_test(
 )
 
 py_test(
+    name = "test_ollama_server",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_ollama_server.py"],
+    args = ["unit/test_ollama_server.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _APPLICATION_LIB,
+)
+
+py_test(
     name = "test_ollama_discovery",
     size = "small",
     srcs = _COMMON_SRCS + [
@@ -686,6 +701,46 @@ py_test(
     args = ["unit/test_providers.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+# The engines of text recognition, their models, and the reader's model files.
+py_test(
+    name = "test_reader_service",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_reader_service.py"],
+    args = ["unit/test_reader_service.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
+)
+
+# Personal-info removal: the anonymizer cache, the anonymized texts and the spaCy models.
+py_test(
+    name = "test_anonymization_service",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_anonymization_service.py"],
+    args = ["unit/test_anonymization_service.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _APPLICATION_LIB,
+)
+
+# This computer's hardware, the model catalog, the classifications and the ratings.
+py_test(
+    name = "test_recommendation_service",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_recommendation_service.py"],
+    args = ["unit/test_recommendation_service.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _APPLICATION_LIB,
+)
+
+# What each provider is, needs and offers, cached per provider and address.
+py_test(
+    name = "test_provider_service",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_provider_service.py"],
+    args = ["unit/test_provider_service.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -1093,7 +1148,9 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_setup_plan.py"],
     args = ["unit/test_setup_plan.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _APPLICATION_LIB,
+    # ``application.setup_plan`` also holds ``SetupService``, which asks the reader service and
+    # so the pipeline (the docx builder included).
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -1103,6 +1160,37 @@ py_test(
     args = ["unit/test_addon_manager.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+# The proofreading options the GUI shows: the steps that run and the notation note.
+py_test(
+    name = "test_correction_options",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_correction_options.py"],
+    args = ["unit/test_correction_options.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
+)
+
+# The Setup Assistant's facts and plan: what it asks the computer, and which settings file a
+# first start reads.
+py_test(
+    name = "test_setup_service",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_setup_service.py"],
+    args = ["unit/test_setup_service.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
+)
+
+# The add-ons: what of them is installed, and the installs themselves.
+py_test(
+    name = "test_addons_service",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_addons_service.py"],
+    args = ["unit/test_addons_service.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -2612,7 +2700,9 @@ test_suite(
         ":test_addon_constraints",
         ":test_addon_lock",
         ":test_addon_manager",
+        ":test_addons_service",
         ":test_anonymization_mask",
+        ":test_anonymization_service",
         ":test_anonymizer",
         ":test_benchmark_domain",
         ":test_benchmark_run_store",
@@ -2634,6 +2724,7 @@ test_suite(
         ":test_config",
         ":test_context_budget",
         ":test_coordinator",
+        ":test_correction_options",
         ":test_correction_prompts_steps",
         ":test_data_location",
         ":test_diagnostics",
@@ -2714,10 +2805,13 @@ test_suite(
         ":test_preprocessing_auto_golden",
         ":test_preprocessor",
         ":test_preview_image_store",
+        ":test_provider_service",
         ":test_providers",
         ":test_providers_mistral_curation",
         ":test_python_version",
         ":test_quotes",
+        ":test_reader_service",
+        ":test_recommendation_service",
         ":test_release_stamp_versions",
         ":test_release_tag",
         ":test_request_profile",
@@ -2730,6 +2824,7 @@ test_suite(
         ":test_service",
         ":test_service_construction",
         ":test_setup_plan",
+        ":test_setup_service",
         ":test_spacy_models",
         ":test_speed_estimates",
         ":test_speed_store",

@@ -328,6 +328,9 @@ class LoadedSettings:
 
     values: dict[str, Any]
     notices: tuple[SettingNotice, ...] = ()
+    keys: frozenset[str] = frozenset()
+    """The keys the file held, before any value was dropped: a file whose only key is
+    unusable is still a saved setup, not a first start."""
 
 
 def _engine_replaced(value: object, replacement: str) -> SettingNotice | None:
@@ -377,4 +380,4 @@ def normalize_settings(values: Mapping[str, object]) -> LoadedSettings:
             continue
         if setting.key == "correction_notes" and len(str(raw or "").strip()) > NOTES_LIMIT:
             notices.append(SettingNotice(SettingNoticeKind.NOTES_CUT, setting.key))
-    return LoadedSettings(result, tuple(notices))
+    return LoadedSettings(result, tuple(notices), frozenset(values))

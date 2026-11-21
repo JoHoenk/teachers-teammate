@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 import sys
 import threading
-from typing import Protocol
+from typing import Any
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -22,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..application.composition import inject_addon_packages_dir
+from ..application.composition import AppServices, inject_addon_packages_dir
 from ..application.service import ADDON_PRIVACY
 from ..domain.local_models import HUGGING_FACE_HOST, PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
 from ..exceptions import ModelDownloadCancelledError
@@ -31,73 +30,10 @@ from . import _user_text as txt
 from ._constants import _SPACY_MODEL_CHOICES
 
 
-class _InstallerService(Protocol):
-    """What the add-on installer dialog and its thread ask of the application service."""
-
-    def addon_packages_dir(self) -> Path: ...
-
-    def install_addon(
-        self, addon: str, target: Path, progress_cb: Callable[[str], None]
-    ) -> None: ...
-
-    def clear_stale_addon_modules(self, addon: str) -> None: ...
-
-
-class _SpacyDownloadService(Protocol):
-    """What the spaCy model download thread asks of the application service."""
-
-    def addon_packages_dir(self) -> Path: ...
-
-    def download_spacy_model(
-        self, model: str, target: Path, progress_cb: Callable[[str], None]
-    ) -> None: ...
-
-
-class _SpacyService(_SpacyDownloadService, Protocol):
-    """What the spaCy model download dialog asks: the download and the system's language."""
-
-    def system_spacy_model(self) -> str | None: ...
-
-    def spacy_model_for_language(self, language: str) -> str: ...
-
-
-class _ModelFilesService(Protocol):
-    """The two downloads a model-file thread can run; ``method`` names one of them."""
-
-    def download_reader(
-        self,
-        on_progress: Callable[[int, int], None] | None = None,
-        cancel: threading.Event | None = None,
-    ) -> None: ...
-
-    def download_page_models(
-        self,
-        on_progress: Callable[[int, int], None] | None = None,
-        cancel: threading.Event | None = None,
-    ) -> None: ...
-
-
-class _ReaderService(_ModelFilesService, Protocol):
-    """What the model-file dialog asks: the downloads and where the files go."""
-
-    def models_dir(self) -> Path: ...
-
-
-class _PullService(Protocol):
-    """What an Ollama model pull asks of the application service."""
-
-    def pull_ollama_model(
-        self,
-        url: str,
-        model_name: str,
-        progress_cb: Callable[[str, float, float], None] | None = None,
-        abort_event: threading.Event | None = None,
-    ) -> None: ...
-
-
-def _model_for_system_language(service: _SpacyService) -> str:
+def _model_for_system_language(service: AppServices) -> str:
     """Return the spaCy model of the system language, or the multilingual fallback."""
-    return service.system_spacy_model() or service.spacy_model_for_language("")
+    app = service.anonymization
+    return app.system_spacy_model() or app.spacy_model_for_language("")
 
 
 _ADDON_META: dict[str, dict] = {
@@ -113,22 +49,12 @@ _ADDON_META: dict[str, dict] = {
 }
 
 
-def _join(thread: QThread | None) -> None:
-    """Wait until ``thread`` has left ``run()``.
-
-    A result signal is emitted from inside ``run()``; a dialog destroyed right after it
-    would destroy a thread that is still running, which Qt answers with an abort.
-    """
-    if thread is not None:
-        thread.wait()
-
-
 class _InstallThread(QThread):
     log_line = Signal(str)
     finished_ok = Signal()
     finished_err = Signal(str)
 
-    def __init__(self, service: _InstallerService, addon: str, target: Path) -> None:
+    def __init__(self, service: Any, addon: str, target: Path) -> None:
         super().__init__()
         self._service = service
         self._addon = addon
@@ -136,7 +62,7 @@ class _InstallThread(QThread):
 
     def run(self) -> None:
         try:
-            self._service.install_addon(self._addon, self._target, self.log_line.emit)
+            self._service.addons.install_addon(self._addon, self._target, self.log_line.emit)
             self.finished_ok.emit()
         except Exception as exc:  # noqa: BLE001  # surface any pip/subprocess failure to the UI via the error signal
             self.finished_err.emit(txt.addon_error_text(exc))
@@ -150,9 +76,7 @@ class AddonInstallerDialog(QDialog):
 
     installed = Signal(str)
 
-    def __init__(
-        self, addon: str, parent: QWidget | None = None, *, service: _InstallerService
-    ) -> None:
+    def __init__(self, addon: str, parent: QWidget | None = None, *, service: Any) -> None:
         super().__init__(parent)
         meta = _ADDON_META.get(addon, _ADDON_META[ADDON_PRIVACY])
         self._service = service
@@ -201,7 +125,7 @@ class AddonInstallerDialog(QDialog):
         self._install_btn.setText("Installing…")
         self._log.clear()
 
-        target = self._service.addon_packages_dir()
+        target = self._service.addons.addon_packages_dir()
         self._thread = _InstallThread(self._service, self._addon, target)
         self._thread.log_line.connect(self._append_log)
         self._thread.finished_ok.connect(self._on_install_ok)
@@ -214,8 +138,7 @@ class AddonInstallerDialog(QDialog):
         sb.setValue(sb.maximum())
 
     def _on_install_ok(self) -> None:
-        _join(self._thread)
-        self._service.clear_stale_addon_modules(self._addon)
+        self._service.addons.clear_stale_addon_modules(self._addon)
         inject_addon_packages_dir()
         self._append_log("\n✓ Installation complete.")
         self._install_btn.setText("Installed ✓")
@@ -223,7 +146,6 @@ class AddonInstallerDialog(QDialog):
         self.installed.emit(self._addon)
 
     def _on_install_err(self, msg: str) -> None:
-        _join(self._thread)
         self._log.appendHtml(f'<span style="color:#c0392b;"><b>Error:</b> {msg}</span>')
         sb = self._log.verticalScrollBar()
         sb.setValue(sb.maximum())
@@ -268,7 +190,7 @@ class AddonInstallerDialog(QDialog):
 class _ReaderDownloadThread(QThread):
     """Downloads a set of model files in a background thread.
 
-    The built-in reader's by default; ``method`` names another download of the service
+    The built-in reader's by default; ``method`` names another download of the reader
     (``"download_page_models"``).
     """
 
@@ -276,7 +198,7 @@ class _ReaderDownloadThread(QThread):
     finished_ok = Signal()
     finished_err = Signal(str)
 
-    def __init__(self, service: _ModelFilesService, method: str = "download_reader") -> None:
+    def __init__(self, service: AppServices, method: str = "download_reader") -> None:
         super().__init__()
         self._service = service
         self._method = method
@@ -288,7 +210,7 @@ class _ReaderDownloadThread(QThread):
 
     def run(self) -> None:
         try:
-            getattr(self._service, self._method)(self.progress.emit, self._cancel)
+            getattr(self._service.reader, self._method)(self.progress.emit, self._cancel)
             self.finished_ok.emit()
         except ModelDownloadCancelledError:
             self.finished_err.emit("aborted")
@@ -313,7 +235,7 @@ class ReaderDownloadDialog(QDialog):
     )
     _METHOD = "download_reader"
 
-    def __init__(self, service: _ReaderService, parent: QWidget | None = None) -> None:
+    def __init__(self, service: AppServices, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._service = service
         self._thread: _ReaderDownloadThread | None = None
@@ -322,7 +244,7 @@ class ReaderDownloadDialog(QDialog):
         self.setMinimumWidth(480)
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
-        desc = QLabel(f"{self._INTRO}<br><tt>{self._service.models_dir()}</tt>")
+        desc = QLabel(f"{self._INTRO}<br><tt>{self._service.reader.models_dir()}</tt>")
         desc.setWordWrap(True)
         desc.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(desc)
@@ -368,7 +290,6 @@ class ReaderDownloadDialog(QDialog):
             self._status.setText(f"{done / 1_000_000:.1f} / {total / 1_000_000:.1f} MB")
 
     def _on_ok(self) -> None:
-        _join(self._thread)
         self._bar.setValue(100)
         self._status.setText(f'<span style="color:#27ae60;">{txt.READER_DOWNLOADED}</span>')
         self._start_btn.setText("Done ✓")
@@ -377,7 +298,6 @@ class ReaderDownloadDialog(QDialog):
         self.downloaded.emit()
 
     def _on_err(self, message: str) -> None:
-        _join(self._thread)
         text = "The download was cancelled." if message == "aborted" else message
         self._status.setText(f'<span style="color:#c0392b;"><b>Error:</b> {text}</span>')
         self._start_btn.setEnabled(True)
@@ -420,7 +340,7 @@ class _ModelDownloadThread(QThread):
     finished_ok = Signal()
     finished_err = Signal(str)
 
-    def __init__(self, service: _SpacyDownloadService, model: str, target: Path) -> None:
+    def __init__(self, service: Any, model: str, target: Path) -> None:
         super().__init__()
         self._service = service
         self._model = model
@@ -428,7 +348,9 @@ class _ModelDownloadThread(QThread):
 
     def run(self) -> None:
         try:
-            self._service.download_spacy_model(self._model, self._target, self.log_line.emit)
+            self._service.anonymization.download_spacy_model(
+                self._model, self._target, self.log_line.emit
+            )
             self.finished_ok.emit()
         except Exception as exc:  # noqa: BLE001  # surface any download/subprocess failure to the UI via the error signal
             self.finished_err.emit(txt.addon_error_text(exc))
@@ -448,7 +370,7 @@ class SpacyModelDownloadDialog(QDialog):
         default_model: str = "",
         parent: QWidget | None = None,
         *,
-        service: _SpacyService,
+        service: Any,
     ) -> None:
         super().__init__(parent)
         self._service = service
@@ -508,7 +430,7 @@ class SpacyModelDownloadDialog(QDialog):
         self._model_combo.setEnabled(False)
 
         model = self._model_combo.currentData()
-        target = self._service.addon_packages_dir()
+        target = self._service.addons.addon_packages_dir()
         self._thread = _ModelDownloadThread(self._service, model, target)
         self._thread.log_line.connect(self._append_log)
         self._thread.finished_ok.connect(self._on_download_ok)
@@ -521,7 +443,6 @@ class SpacyModelDownloadDialog(QDialog):
         sb.setValue(sb.maximum())
 
     def _on_download_ok(self) -> None:
-        _join(self._thread)
         inject_addon_packages_dir()
         model = self._model_combo.currentData()
         self._append_log("\n✓ Model downloaded.")
@@ -530,7 +451,6 @@ class SpacyModelDownloadDialog(QDialog):
         self.model_downloaded.emit(model)
 
     def _on_download_err(self, msg: str) -> None:
-        _join(self._thread)
         self._log.appendHtml(f'<span style="color:#c0392b;"><b>Error:</b> {msg}</span>')
         sb = self._log.verticalScrollBar()
         sb.setValue(sb.maximum())
@@ -581,7 +501,7 @@ class _OllamaPullThread(QThread):
     finished_ok = Signal(str)  # model_name
     finished_err = Signal(str)  # error message
 
-    def __init__(self, service: _PullService, url: str, model_name: str) -> None:
+    def __init__(self, service: Any, url: str, model_name: str) -> None:
         super().__init__()
         self._service = service
         self._url = url
@@ -593,7 +513,7 @@ class _OllamaPullThread(QThread):
 
     def run(self) -> None:
         try:
-            self._service.pull_ollama_model(
+            self._service.ollama.pull_ollama_model(
                 self._url, self._model_name, self.progress.emit, self._abort_event
             )
             if self._abort_event.is_set():
@@ -618,7 +538,7 @@ class OllamaModelPullDialog(QDialog):
         model_name: str = "",
         parent: QWidget | None = None,
         *,
-        service: _PullService,
+        service: Any,
     ) -> None:
         super().__init__(parent)
         self._service = service
@@ -695,7 +615,6 @@ class OllamaModelPullDialog(QDialog):
             self._status_lbl.setText(status)
 
     def _on_pull_ok(self, model_name: str) -> None:
-        _join(self._thread)
         self._progress_bar.setValue(100)
         self._status_lbl.setText(
             '<span style="color:#27ae60;">✓ Model downloaded successfully.</span>'
@@ -705,7 +624,6 @@ class OllamaModelPullDialog(QDialog):
         self.model_pulled.emit(model_name)
 
     def _on_pull_err(self, msg: str) -> None:
-        _join(self._thread)
         self._status_lbl.setText(f'<span style="color:#c0392b;"><b>Error:</b> {msg}</span>')
         self._pull_btn.setEnabled(True)
         self._pull_btn.setText("Retry")

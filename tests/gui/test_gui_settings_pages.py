@@ -50,6 +50,7 @@ from teachers_teammate.gui.settings._ai_setup_page import AiSetupPage
 from teachers_teammate.gui.settings._online_services_page import OnlineServicesPage
 
 from ._gui_harness import settings_context
+from ._service_stubs import services_of
 from ._settings_stubs import (
     CachingDummyAppService,
     CatalogAppService,
@@ -80,7 +81,7 @@ def _section(
     values = values or {}
     section = AiServiceSection(
         spec,
-        app_service=service,
+        app_service=services_of(service),
         hardware_profile=hardware_profile,
         ollama_url=str(values.get("ollama_url", DEFAULTS["ollama_url"])),
         open_downloads=open_downloads,
@@ -416,7 +417,7 @@ def test_ocr_selector_temperature_is_collapsed_but_still_saved(qtbot) -> None:
     When   a temperature is set while the section is collapsed
     Then   it is returned by get_ocr_config()
     """
-    selector = OcrConfigSelector(app_service=DummyAppService())
+    selector = OcrConfigSelector(app_service=services_of(DummyAppService()))
     qtbot.addWidget(selector)
     assert not selector._scan._expert_section.expanded
     selector._scan._ocr_temperature.setValue(0.4)
@@ -430,7 +431,7 @@ def test_benchmark_selector_shows_the_temperature_without_expanding(qtbot) -> No
     When   it is created
     Then   "Expert settings" is open, so a benchmark run can set the temperature directly
     """
-    selector = OcrConfigSelector(app_service=DummyAppService(), expert_collapsed=False)
+    selector = OcrConfigSelector(app_service=services_of(DummyAppService()), expert_collapsed=False)
     qtbot.addWidget(selector)
     assert selector._scan._expert_section.expanded
 
@@ -686,7 +687,7 @@ class _FoundServerService(DummyAppService):
         self.asked: list[str] = []
 
     def ollama_status(self, url: str):
-        from teachers_teammate.application.service import OllamaStatus  # noqa: PLC0415
+        from teachers_teammate.application.ollama_server import OllamaStatus  # noqa: PLC0415
         from teachers_teammate.domain.ollama_discovery import OllamaState  # noqa: PLC0415
 
         self.asked.append(url)
@@ -1276,7 +1277,7 @@ def test_shutdown_stops_the_speed_test_and_the_server_check(qtbot) -> None:
 def _credentials(qtbot, monkeypatch, service=None) -> CredentialsGroup:
     for name in ("OPENAI_API_KEY", "MISTRAL_API_KEY"):
         monkeypatch.delenv(name, raising=False)
-    group = CredentialsGroup(service or ProviderAppService())
+    group = CredentialsGroup(services_of(service or ProviderAppService()))
     qtbot.addWidget(group)
     group.resize(520, 700)
     group.show()
@@ -1297,7 +1298,7 @@ def test_credentials_group_has_a_row_for_a_key_that_is_already_set(qtbot, monkey
     Then   an input field exists for that key
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-pre-existing")
-    group = CredentialsGroup(DummyAppService())
+    group = CredentialsGroup(services_of(DummyAppService()))
     qtbot.addWidget(group)
 
     assert group.field("OPENAI_API_KEY") is not None
@@ -1313,7 +1314,7 @@ def test_applying_saves_the_key_to_environment_and_store(
     Then   os.environ is updated with the key and the store holds it
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-old")
-    group = CredentialsGroup(DummyAppService())
+    group = CredentialsGroup(services_of(DummyAppService()))
     qtbot.addWidget(group)
     group.field("OPENAI_API_KEY").setText("sk-test-key")
 
@@ -1332,7 +1333,7 @@ def test_applying_leaves_a_key_nobody_touched_alone(qtbot, monkeypatch, credenti
            stays in the environment
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-session-only")
-    group = CredentialsGroup(DummyAppService())
+    group = CredentialsGroup(services_of(DummyAppService()))
     qtbot.addWidget(group)
 
     _apply(group)
@@ -1352,7 +1353,7 @@ def test_applying_keeps_a_stored_key_that_was_not_edited(
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     credential_file["credentials/OPENAI_API_KEY"] = "sk-stored"
-    group = CredentialsGroup(DummyAppService())
+    group = CredentialsGroup(services_of(DummyAppService()))
     qtbot.addWidget(group)
     assert group.field("OPENAI_API_KEY").text() == "sk-stored"
 
@@ -1370,7 +1371,7 @@ def test_applying_an_emptied_key_removes_it(qtbot, monkeypatch, credential_file)
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-old")
     credential_file["credentials/OPENAI_API_KEY"] = "sk-old"
-    group = CredentialsGroup(DummyAppService())
+    group = CredentialsGroup(services_of(DummyAppService()))
     qtbot.addWidget(group)
     group.field("OPENAI_API_KEY").setText("")
 
@@ -1390,13 +1391,13 @@ def test_the_note_says_where_the_keys_are_kept(qtbot, monkeypatch) -> None:
     """
     from teachers_teammate.gui import _credential_store  # noqa: PLC0415
 
-    plain = CredentialsGroup(DummyAppService())
+    plain = CredentialsGroup(services_of(DummyAppService()))
     qtbot.addWidget(plain)
     plain_text = " ".join(label.text() for label in plain.findChildren(QLabel))
     assert "not encrypted" in plain_text
 
     monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring())
-    safe = CredentialsGroup(DummyAppService())
+    safe = CredentialsGroup(services_of(DummyAppService()))
     qtbot.addWidget(safe)
     safe_text = " ".join(label.text() for label in safe.findChildren(QLabel))
     assert "keychain" in safe_text
@@ -1515,7 +1516,7 @@ def test_on_provider_changed_seeds_the_model(qtbot, monkeypatch) -> None:
     """
     section = _proofreading(qtbot, values={"correction_provider": "ollama"})
     monkeypatch.setattr(
-        section._app_service,
+        section._app_service.processing,
         "get_provider_info",
         lambda p: {
             "models": [f"{p}-model-1", f"{p}-model-2"],
@@ -1639,7 +1640,7 @@ def test_changing_the_provider_preselects_its_default_model(qtbot, monkeypatch) 
     """
     section = _proofreading(qtbot, values={"correction_provider": "ollama"})
     monkeypatch.setattr(
-        section._app_service,
+        section._app_service.processing,
         "get_provider_info",
         lambda p: {
             "models": [f"{p}-model-1", f"{p}-model-2"],
@@ -2606,7 +2607,7 @@ def _drafts(monkeypatch) -> ApiKeyDrafts:
         # and the drafts write straight into os.environ.
         monkeypatch.setenv(name, "")
         monkeypatch.delenv(name)
-    return ApiKeyDrafts(ProviderAppService())
+    return ApiKeyDrafts(services_of(ProviderAppService()))
 
 
 @pytest.mark.gui
@@ -2725,7 +2726,7 @@ def test_a_key_only_the_environment_had_leaves_the_session_when_removed(
     assert "OPENAI_API_KEY" not in os.environ
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
-    again = ApiKeyDrafts(ProviderAppService())
+    again = ApiKeyDrafts(services_of(ProviderAppService()))
     again.remove("OPENAI_API_KEY")
     again.discard()
     assert os.environ["OPENAI_API_KEY"] == "sk-env"
@@ -2760,7 +2761,7 @@ def test_a_key_the_keychain_refuses_is_reported_as_kept_in_the_file(
 
     monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring(refuses_writes=True))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    drafts = ApiKeyDrafts(ProviderAppService())
+    drafts = ApiKeyDrafts(services_of(ProviderAppService()))
 
     drafts.set("OPENAI_API_KEY", "sk-typed")
 
@@ -2792,7 +2793,7 @@ def test_the_service_list_shows_every_service_grouped_by_where_it_runs(no_keys) 
            inside a group, "outside the EU" also for the service that declares no region, and
            the services that need a key say so
     """
-    groups = service_groups(ProviderAppService(), DEFAULTS["ollama_url"])
+    groups = service_groups(services_of(ProviderAppService()), DEFAULTS["ollama_url"])
 
     assert _service_texts(groups) == [
         [("Ollama", "this computer")],
@@ -2822,7 +2823,7 @@ def test_the_service_list_marks_a_missing_package_before_a_missing_key(no_keys) 
     service.missing = {"mistral": "langchain-mistralai"}
     os.environ["OPENAI_API_KEY"] = "sk-x"
 
-    groups = service_groups(service, "http://192.168.1.50:11434")
+    groups = service_groups(services_of(service), "http://192.168.1.50:11434")
 
     texts = dict(item for group in _service_texts(groups) for item in group)
     assert texts["Mistral"] == "outside the EU · not installed · key needed"
@@ -2837,7 +2838,9 @@ def test_a_section_that_offers_online_services_only_leaves_the_local_one_out(no_
     When   the grouped list is built for a place that cannot download a local model
     Then   Ollama is not offered, and the online services keep their groups and marks
     """
-    groups = service_groups(ProviderAppService(), DEFAULTS["ollama_url"], self_hosted=False)
+    groups = service_groups(
+        services_of(ProviderAppService()), DEFAULTS["ollama_url"], self_hosted=False
+    )
 
     assert _service_texts(groups) == [
         [],
@@ -3035,7 +3038,7 @@ def test_a_key_has_one_draft_shown_on_both_pages(qtbot, no_keys) -> None:
            key change was announced once per edit
     """
     service = ProviderAppService()
-    drafts = ApiKeyDrafts(service)
+    drafts = ApiKeyDrafts(services_of(service))
     announced: list[str] = []
     drafts.changed.connect(announced.append)
     models = AiModelsPage(settings_context(service, key_drafts=drafts))
@@ -3706,8 +3709,8 @@ def test_a_section_that_was_never_loaded_asks_no_service_for_a_key(qtbot, no_key
     Then   it starts no fetch
     """
     service = ProviderAppService()
-    drafts = ApiKeyDrafts(service)
-    section = AiServiceSection(PROOFREADING, app_service=service, key_drafts=drafts)
+    drafts = ApiKeyDrafts(services_of(service))
+    section = AiServiceSection(PROOFREADING, app_service=services_of(service), key_drafts=drafts)
     qtbot.addWidget(section)
 
     drafts.set("MISTRAL_API_KEY", "k-elsewhere")
@@ -3749,7 +3752,7 @@ def test_the_search_dialog_lists_a_hit_and_reports_the_chosen_address(qtbot) -> 
     from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
 
     service = _SearchService([_windows_server()])
-    dialog = ServerSearchDialog(service)
+    dialog = ServerSearchDialog(services_of(service))
     qtbot.addWidget(dialog)
     qtbot.waitUntil(lambda: dialog.list.count() == 1 and not dialog.searching, timeout=3000)
 
@@ -3773,7 +3776,7 @@ def test_a_card_in_the_search_dialog_has_the_height_its_text_needs(qtbot) -> Non
     """
     from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
 
-    dialog = ServerSearchDialog(_SearchService([_windows_server()]))
+    dialog = ServerSearchDialog(services_of(_SearchService([_windows_server()])))
     qtbot.addWidget(dialog)
     dialog.show()
     qtbot.waitUntil(lambda: dialog.list.count() == 1 and not dialog.searching, timeout=3000)
@@ -3799,7 +3802,7 @@ def test_the_use_it_button_of_a_card_chooses_that_server(qtbot) -> None:
     """
     from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
 
-    dialog = ServerSearchDialog(_SearchService([_windows_server()]))
+    dialog = ServerSearchDialog(services_of(_SearchService([_windows_server()])))
     qtbot.addWidget(dialog)
     qtbot.waitUntil(lambda: dialog.list.count() == 1 and not dialog.searching, timeout=3000)
 
@@ -3830,7 +3833,7 @@ def test_the_search_dialog_explains_an_empty_result_and_never_scans_without_cons
 
     monkeypatch.setattr(_dialogs, "ask", lambda *_a, **_k: False)
     service = _SearchService()
-    dialog = ServerSearchDialog(service)
+    dialog = ServerSearchDialog(services_of(service))
     qtbot.addWidget(dialog)
     _wait_search_finished(qtbot, dialog)
 
@@ -3858,7 +3861,7 @@ def test_the_network_search_starts_only_after_the_question_is_answered_yes(
     monkeypatch.setattr(_dialogs, "ask", lambda *_a, **_k: True)
     school = DiscoveredServer("http://192.168.1.20:11434", ServerKind.NETWORK, "0.12.3", 2)
     service = _SearchService([school])
-    dialog = ServerSearchDialog(service)
+    dialog = ServerSearchDialog(services_of(service))
     qtbot.addWidget(dialog)
     _wait_search_finished(qtbot, dialog)
 

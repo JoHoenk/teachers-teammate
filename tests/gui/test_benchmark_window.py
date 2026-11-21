@@ -13,7 +13,7 @@ from teachers_teammate.domain.benchmark import compare_pair
 from teachers_teammate.gui.benchmark.composition import build_benchmark_window
 from teachers_teammate.infrastructure.benchmark.run_store import StoredRun
 
-from ._service_stubs import RecommendationServiceStub
+from ._service_stubs import RecommendationServiceStub, services_of
 
 
 def _run(run_id: str, text: str) -> StoredRun:
@@ -42,6 +42,7 @@ class _FakeService(RecommendationServiceStub):
         self.deleted: list[str] = []
         self.cleared = False
         self.saved_settings = saved_settings or {}
+        self.services = services_of(self)  # what the OCR picker asks
 
     # selector queries
     def list_providers(self) -> list[str]:

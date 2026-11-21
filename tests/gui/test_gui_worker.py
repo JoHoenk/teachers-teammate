@@ -16,6 +16,7 @@ from teachers_teammate.infrastructure.reporting import KeepAwakeState
 from tests.conftest import make_config
 
 from ._gui_harness import real_service
+from ._service_stubs import services_of
 
 
 class _DummyAppService:
@@ -28,10 +29,12 @@ class _DummyAppService:
         stop_after_file_event=None,
         reporter=None,
         progress=None,
+        battery_warning="",
     ) -> RunSummary:
         _ = stop_event
         _ = stop_after_file_event
         _ = reporter
+        _ = battery_warning
         source_id = "/tmp/a.png"
         if progress is not None:
             if progress.on_keep_awake:
@@ -80,7 +83,7 @@ def test_ocr_worker_emits_lifecycle_signals(qtbot, tmp_path: Path) -> None:
     Then   file_started, ocr_done, file_done, keep_awake_changed and run_finished are emitted
     """
     cfg = make_config(tmp_path)
-    worker = OCRWorker(cfg, [Path("/tmp/a.png")], app_service=_DummyAppService())
+    worker = OCRWorker(cfg, [Path("/tmp/a.png")], app_service=services_of(_DummyAppService()))
 
     seen: dict[str, int] = {"started": 0, "ocr": 0, "done": 0, "awake": 0, "finished": 0}
     worker.file_started.connect(lambda *_: seen.__setitem__("started", seen["started"] + 1))
@@ -103,7 +106,7 @@ def test_ocr_worker_emits_stage_started_with_file_position(qtbot, tmp_path: Path
     Then   stage_started is emitted for each stage with the file name and its idx/total
     """
     cfg = make_config(tmp_path)
-    worker = OCRWorker(cfg, [Path("/tmp/a.png")], app_service=_DummyAppService())
+    worker = OCRWorker(cfg, [Path("/tmp/a.png")], app_service=services_of(_DummyAppService()))
     stages: list[tuple] = []
     worker.stage_started.connect(lambda *args: stages.append(args))
 
@@ -135,7 +138,7 @@ def test_ocr_worker_passes_its_files(qtbot, tmp_path: Path) -> None:
     worker = OCRWorker(
         cfg,
         [Path("/tmp/a.png"), Path("/tmp/b.png")],
-        app_service=_CaptureAppService(),
+        app_service=services_of(_CaptureAppService()),
     )
 
     worker.run()
@@ -157,7 +160,7 @@ def test_ocr_worker_emits_fatal_error_on_pipeline_exception(qtbot, tmp_path: Pat
             raise RuntimeError("boom")
 
     cfg = make_config(tmp_path)
-    worker = OCRWorker(cfg, [Path("/tmp/a.png")], app_service=_RaiseAppService())
+    worker = OCRWorker(cfg, [Path("/tmp/a.png")], app_service=services_of(_RaiseAppService()))
 
     logs: list[str] = []
     summaries: list[RunSummary] = []
@@ -197,7 +200,9 @@ def test_ocr_worker_file_done_event_carries_the_outcome(qtbot, tmp_path: Path) -
     When   run() is invoked
     Then   the file_done event carries the run's outcome, not a copy of it
     """
-    worker = OCRWorker(make_config(tmp_path), [Path("/tmp/a.png")], app_service=_DummyAppService())
+    worker = OCRWorker(
+        make_config(tmp_path), [Path("/tmp/a.png")], app_service=services_of(_DummyAppService())
+    )
     events: list = []
     worker.file_done.connect(events.append)
 
@@ -215,7 +220,9 @@ def test_ocr_worker_request_stop_sets_the_right_events(tmp_path: Path) -> None:
     When   request_stop(now=False) and then request_stop(now=True) are called
     Then   the first sets only the stop-after-file event, the second also "Stop now"
     """
-    worker = OCRWorker(make_config(tmp_path), [Path("/tmp/a.png")], app_service=_DummyAppService())
+    worker = OCRWorker(
+        make_config(tmp_path), [Path("/tmp/a.png")], app_service=services_of(_DummyAppService())
+    )
 
     worker.request_stop(now=False)
     assert worker.stop_after_file_event.is_set() is True
@@ -239,7 +246,9 @@ def test_ocr_worker_passes_both_stop_events_to_the_service(qtbot, tmp_path: Path
             seen.update(kwargs)
             return RunSummary()
 
-    worker = OCRWorker(make_config(tmp_path), [Path("/tmp/a.png")], app_service=_Capture())
+    worker = OCRWorker(
+        make_config(tmp_path), [Path("/tmp/a.png")], app_service=services_of(_Capture())
+    )
 
     worker.run()
     qtbot.wait(10)
@@ -270,7 +279,9 @@ def test_ocr_worker_file_done_event_carries_the_stopped_flag(qtbot, tmp_path: Pa
             )
             return RunSummary(stopped=("a.png",))
 
-    worker = OCRWorker(make_config(tmp_path), [Path("/tmp/a.png")], app_service=_Stopped())
+    worker = OCRWorker(
+        make_config(tmp_path), [Path("/tmp/a.png")], app_service=services_of(_Stopped())
+    )
     events: list = []
     worker.file_done.connect(events.append)
 

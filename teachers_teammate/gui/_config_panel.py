@@ -31,6 +31,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..application.composition import AppServices
+from ..application.correction_options import (
+    evaluation_fixed_instructions,
+    proofreading_prompts,
+)
 from ..application.data_flow import ticked_steps
 from ..application.service import RequirementIssue
 from ..config import DEFAULTS, Config
@@ -276,7 +281,7 @@ class ConfigPanel(QScrollArea):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._service: object | None = None  # ProcessingApplicationService, set via set_service()
+        self._service: AppServices | None = None
         # One per stage: ticking a box must only make *its own* earlier check stale.
         self._guard_tasks: dict[str, LatestTask] = {}
         # True while load_from_dict applies saved state: stage requirement guards only
@@ -781,20 +786,12 @@ class ConfigPanel(QScrollArea):
     # ── prompt dialogs ────────────────────────────────────────────────────────────
 
     def _proofreading_prompts(self, corrections_only: bool) -> tuple[tuple[str, str], ...]:
-        """Return the prompts the AI is asked for, for the dialog's read-only section.
-
-        Empty without a service: the panel alone cannot say what the exchange sends.
-        """
-        if self._service is None:
-            return ()
-        from ..application.service import ProcessingApplicationService  # noqa: PLC0415
-
-        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
+        """Return the prompts the AI is asked for, for the dialog's read-only section."""
         config = dataclasses.replace(
             self.lookup_config(),
             correction_output="text" if corrections_only else "review",
         )
-        return service.proofreading_prompts(config)
+        return proofreading_prompts(config)
 
     def _on_configure_correction_prompt(self) -> None:
         settings = self._settings_dict
@@ -815,12 +812,7 @@ class ConfigPanel(QScrollArea):
 
     def _evaluation_fixed_text(self) -> str:
         """Return the read-only note the app always adds to the review instructions."""
-        if self._service is None:
-            return ""
-        from ..application.service import ProcessingApplicationService  # noqa: PLC0415
-
-        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
-        return txt.formatted_text_note(str(service.evaluation_fixed_instructions("markdown")))
+        return txt.formatted_text_note(evaluation_fixed_instructions("markdown"))
 
     def _on_configure_evaluation_prompt(self) -> None:
         dialog = _PromptDialog(
@@ -855,13 +847,10 @@ class ConfigPanel(QScrollArea):
         """
         if self._service is None or self._loading:
             return
-        from ..application.service import ProcessingApplicationService  # noqa: PLC0415
-
-        # _service is injected as object; narrowed to the concrete service type
-        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
+        service = self._service
         config = self.lookup_config()
         # Ask once: the box shows the ticked steps, the lines under the steps show every step.
-        steps = service.describe_steps(config)
+        steps = service.data_flow.describe_steps(config)
         self._data_flow = ticked_steps(
             steps,
             correction_enabled=config.correction_enabled,
@@ -1244,7 +1233,7 @@ class ConfigPanel(QScrollArea):
                 continue
             self._settings_dict[key] = value
 
-    def set_service(self, service: object) -> None:
+    def set_service(self, service: AppServices) -> None:
         """Inject the application service so the panel can run requirement checks."""
         self._service = service
         self.refresh_data_flow()
@@ -1270,14 +1259,11 @@ class ConfigPanel(QScrollArea):
         checkbox = self._stage_checkbox(stage)
         if self._loading or not checkbox.isChecked() or self._service is None:
             return
-        from ..application.service import ProcessingApplicationService  # noqa: PLC0415
-
-        # _service is injected as object; narrowed to the concrete service type
-        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
+        service = self._service
         config = self.lookup_config()
         task = self._guard_tasks.setdefault(stage, LatestTask(self))
         task.submit(
-            lambda: service.check_stage_requirements(config, stage),
+            lambda: service.processing.check_stage_requirements(config, stage),
             lambda result, error: self._on_stage_guard_result(config, stage, result, error),
         )
 
@@ -1332,15 +1318,18 @@ class ConfigPanel(QScrollArea):
         self._sync_review_enabled()
         self.refresh_data_flow()  # signals were blocked: the box must be told itself
 
-        from ..application.service import ProcessingApplicationService  # noqa: PLC0415
         from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
 
         title = txt.GUARD_TITLE.format(step=_STAGE_STEP_TITLES.get(stage, stage))
-        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
+        service = self._service
+        if service is None:
+            return  # no service, no check that could have failed
         fix = fix_for(
             stage,
             issues[0],
-            lambda provider: str(service.get_provider_info(provider).get("display_name", provider)),
+            lambda provider: str(
+                service.providers.get_provider_info(provider).get("display_name", provider)
+            ),
             language=self._language.currentText().strip(),
         )
         dialog = DependencyGuardDialog(title, issues, fix.actions, self)

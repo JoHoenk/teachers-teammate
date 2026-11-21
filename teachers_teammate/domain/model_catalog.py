@@ -20,7 +20,7 @@ widgets only render the results.
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
@@ -1317,3 +1317,70 @@ def choose_profile(
     return HardwareDetection(
         profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=system_memory_gb
     )
+
+
+@dataclass
+class GpuUsage:
+    """How busy one graphics card is right now, and how much of its memory it uses."""
+
+    #: Share of the card's computing units in use, 0 to 100.
+    busy_percent: int
+    #: Dedicated graphics memory in use, in MB, or None when it could not be read.
+    vram_used_mb: int | None = None
+    #: Dedicated graphics memory in total, in MB, or None when it could not be read.
+    vram_total_mb: int | None = None
+
+
+@dataclass(frozen=True)
+class LoadedModel:
+    """A model the server holds in memory, with how much of it sits on the graphics card."""
+
+    name: str
+    size_bytes: int
+    """Memory the model takes in total, on the card and in main memory together."""
+    size_vram_bytes: int
+    """The part of it on the graphics card."""
+    context_length: int = 0
+    expires_at: str = ""
+    """When the server will unload it; it moves on every poll while the model is generating."""
+
+    @property
+    def on_card_share(self) -> float:
+        """Return the share (0 to 1) of the model that sits on the card."""
+        return self.size_vram_bytes / self.size_bytes if self.size_bytes else 0.0
+
+
+@dataclass(frozen=True)
+class ServerFacts:
+    """What the server says about itself: its version, the model digests, what is loaded.
+
+    The version and the digests are what makes a stored measurement go out of date: a tag is a
+    name that can be re-pointed, and Ollama counts tokens differently between versions.
+    """
+
+    version: str = ""
+    """The server's version; ``""`` when it did not say."""
+    digests: Mapping[str, str] = field(default_factory=dict)
+    """``{tag: digest}`` of the installed models."""
+    loaded: tuple[LoadedModel, ...] = ()
+    """The models the server held in memory when it was asked."""
+
+    def digest_of(self, tag: str) -> str:
+        """Return the digest of *tag*, or ``""`` when the server did not report one."""
+        wanted = normalize_tag(tag)
+        for name, digest in self.digests.items():
+            if normalize_tag(name) == wanted:
+                return digest
+        return ""
+
+    def loaded_names(self) -> tuple[str, ...]:
+        """Return the names of the models the server held in memory."""
+        return tuple(model.name for model in self.loaded)
+
+    def loaded_model(self, tag: str) -> LoadedModel | None:
+        """Return the loaded model named *tag*, or ``None`` when it is not loaded."""
+        wanted = normalize_tag(tag)
+        for model in self.loaded:
+            if normalize_tag(model.name) == wanted:
+                return model
+        return None

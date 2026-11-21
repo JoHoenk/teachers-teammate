@@ -38,6 +38,12 @@ gui/ / cli.py    — adapters; no discovery or availability logic
 texts/           — every sentence a teacher reads; Qt-free, imports only domain
 ```
 
+`gui/` and `cli.py` import `pkg`, `core`, `domain`, `application` and `texts` only — never
+`infrastructure`. The modules that wire concrete classes are the exception and the only
+exception: `gui/composition.py`, `gui/_app_bootstrap.py`, `gui/__main__.py`,
+`gui/benchmark/composition.py`, `gui/benchmark/__main__.py`, `cli_composition.py`,
+`__main__.py` and `frozen_modes.py`.
+
 Pipeline stages, each an ABC in `interfaces.py`: InputProvider → ImagePreprocessor →
 OCRProcessor (TXT files skip it) → OcrOutputPostprocessor → Anonymizer (optional) →
 Corrector (`proofreading/`, optional) → Evaluator (optional) → DocumentCreator. The stage

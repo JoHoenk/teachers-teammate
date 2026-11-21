@@ -21,11 +21,9 @@ from collections.abc import Callable, Sequence
 import logging
 from pathlib import Path
 import sys
-import threading
-from typing import Protocol
 
 from ._model_defaults import default_model_for_task
-from .application.composition import inject_addon_packages_dir
+from .application.composition import AppServices, inject_addon_packages_dir
 from .config import Config, load_config_file
 from .domain.correction_prompts import NOTES_LIMIT
 from .domain.data_location import LOCAL_OCR_ENGINES, DataFlow, PrivacyLevel
@@ -36,49 +34,10 @@ from .domain.local_models import (
 )
 from .domain.output_files import folder_problem
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
-from .domain.run_summary import RunSummary
 from .exceptions import ConfigFileNotFoundError, ConfigFileParseError, ModelDownloadError
 from .settings_schema import CONTEXT_SETTINGS, DEFAULTS, PREPROCESS_METHODS, LoadedSettings
 from .texts import dialogs as dlg
-
-
-class _CliAppService(Protocol):
-    def list_providers(self) -> list[str]: ...
-
-    def resolve_config_path(self, explicit: str | None) -> Path | None: ...
-
-    def collect_input_files(self, config: Config, /) -> list[Path]: ...
-
-    def run_selected(
-        self, config: Config, files: Sequence[Path], /, *, config_file: Path | None = None
-    ) -> RunSummary: ...
-
-    def describe_data_flow(self, config: Config, /) -> DataFlow: ...
-
-    def ocr_refusal_for_run(self, config: Config, /) -> str: ...
-
-    def output_refusal_for_run(self, config: Config, /) -> str: ...
-
-    def memory_warning_for_run(self, config: Config, /) -> str: ...
-
-    def run_preview_only(self, config: Config, files: Sequence[Path], /) -> RunSummary: ...
-
-    def reader_refusal_for_run(self, config: Config, files: Sequence[Path], /) -> str: ...
-
-    def page_models_notice_for_run(self, config: Config, /) -> str: ...
-
-    def download_page_models(
-        self,
-        on_progress: Callable[[int, int], None] | None = None,
-        cancel: threading.Event | None = None,
-    ) -> None: ...
-
-    def download_reader(
-        self,
-        on_progress: Callable[[int, int], None] | None = None,
-        cancel: threading.Event | None = None,
-    ) -> None: ...
-
+from .texts.run import BATTERY_WARNING
 
 _PDF_DPI_MIN = 72
 _PDF_DPI_MAX = 600
@@ -587,21 +546,21 @@ def _download_models(
     return 0
 
 
-def _download_reader(service: _CliAppService) -> int:
+def _download_reader(service: AppServices) -> int:
     """Download the built-in reader with a progress line on stderr; return the exit code."""
     return _download_models(
-        service.download_reader, "the built-in reader", "The built-in reader is ready."
+        service.reader.download_reader, "the built-in reader", "The built-in reader is ready."
     )
 
 
-def _download_page_models(service: _CliAppService) -> int:
+def _download_page_models(service: AppServices) -> int:
     """Download the page models with a progress line on stderr; return the exit code."""
     return _download_models(
-        service.download_page_models, "the page models", "The page models are ready."
+        service.reader.download_page_models, "the page models", "The page models are ready."
     )
 
 
-def _download_only(args: argparse.Namespace, service: _CliAppService) -> int | None:
+def _download_only(args: argparse.Namespace, service: AppServices) -> int | None:
     """Run the download the flags ask for and return its exit code; ``None`` if none was asked."""
     if args.download_reader:
         return _download_reader(service)
@@ -613,14 +572,14 @@ def _download_only(args: argparse.Namespace, service: _CliAppService) -> int | N
 def run_cli(
     argv: Sequence[str] | None = None,
     *,
-    app_service: _CliAppService,
+    app_service: AppServices,
 ) -> int:
     """Parse args and execute the CLI flow, returning process exit code."""
     logging.basicConfig(
         level=logging.WARNING, stream=sys.stderr, format="%(levelname)s: %(message)s"
     )
     service = app_service
-    providers = service.list_providers()
+    providers = service.providers.list_providers()
 
     # ── First pass: extract --config before the full parse ─────────────────
     pre = argparse.ArgumentParser(add_help=False)
@@ -628,7 +587,7 @@ def run_cli(
     pre_args, _ = pre.parse_known_args(list(argv) if argv is not None else None)
 
     try:
-        config_path = service.resolve_config_path(pre_args.config)
+        config_path = service.setup.resolve_config_path(pre_args.config)
         loaded = load_config_file(config_path) if config_path else LoadedSettings({})
     except (ConfigFileNotFoundError, ConfigFileParseError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -673,33 +632,35 @@ def run_cli(
         recursive=args.recursive,
     )
 
-    files = service.collect_input_files(config)
+    files = service.processing.collect_input_files(config)
     if args.preview_only:
-        return service.run_preview_only(config, files).exit_code
+        return service.processing.run_preview_only(config, files).exit_code
     refusal = (
-        service.ocr_refusal_for_run(config)
-        or service.reader_refusal_for_run(config, files)
-        or service.output_refusal_for_run(config)
+        service.processing.ocr_refusal_for_run(config)
+        or service.processing.reader_refusal_for_run(config, files)
+        or service.processing.output_refusal_for_run(config)
     )
     if refusal:
         print(f"ERROR: {refusal}", file=sys.stderr)
         return 1
-    warning = service.memory_warning_for_run(config)
+    warning = service.processing.memory_warning_for_run(config)
     if warning:
         if not args.ignore_memory_check:
             print(f"ERROR: {warning}", file=sys.stderr)
             print("Use --ignore-memory-check to run anyway.", file=sys.stderr)
             return 1
         print(f"WARNING: {warning}", file=sys.stderr)
-    notice = service.page_models_notice_for_run(config)
+    notice = service.processing.page_models_notice_for_run(config)
     if notice:
         print(notice, file=sys.stderr)
-    _print_data_flow(service.describe_data_flow(config))
-    return service.run_selected(config, files, config_file=config_path).exit_code
+    _print_data_flow(service.data_flow.describe_data_flow(config))
+    return service.processing.run_selected(
+        config, files, config_file=config_path, battery_warning=BATTERY_WARNING
+    ).exit_code
 
 
 def main(
-    app_service: _CliAppService | None = None,
+    app_service: AppServices | None = None,
     *,
     argv: Sequence[str] | None = None,
     exit_fn: Callable[[int], None] = sys.exit,

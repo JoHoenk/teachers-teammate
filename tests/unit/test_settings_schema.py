@@ -20,6 +20,8 @@ from teachers_teammate.domain.settings_notice import SettingNoticeKind
 from teachers_teammate.gui._types import SettingsDict
 from teachers_teammate.settings_schema import DEFAULTS, SETTINGS, SettingScope, normalize_settings
 
+from ..gui._service_stubs import services_of
+
 _SCHEMA_KEYS = frozenset(setting.key for setting in SETTINGS)
 _FILE_KEYS = frozenset(setting.key for setting in SETTINGS if setting.scope is SettingScope.FILE)
 _RUN_KEYS = frozenset(setting.key for setting in SETTINGS if setting.scope is SettingScope.RUN)
@@ -268,7 +270,7 @@ def test_the_window_and_the_command_line_read_one_file_the_same(
     panel.load_from_dict(values)
 
     service = _RecordingService()
-    exit_code = run_cli(argv=["--config", str(path)], app_service=service)
+    exit_code = run_cli(argv=["--config", str(path)], app_service=services_of(service))
 
     assert exit_code == 0, capsys.readouterr().err
     assert len(service.configs) == 1

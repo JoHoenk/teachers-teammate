@@ -105,10 +105,16 @@ bazel run //:requirements_test.update
 
 The codebase is split into four layers. Each layer may only depend on layers below it:
 
-- **Presentation** (`gui/`, `cli.py`) — translates user interactions into application calls and renders results. Contains no business logic.
+- **Presentation** (`gui/`, `cli.py`) — translates user interactions into application calls and renders results. Contains no business logic, and imports `pkg`, `core`, `domain`, `application` and `texts` only.
 - **Application** (`application/service.py`, `application/commands.py`) — coordinates use cases; the only entry point for the GUI and CLI.
 - **Domain** (`domain/`) — pure business concepts (stage names, freshness policy); no I/O.
 - **Infrastructure** (`infrastructure/`) — concrete implementations: OCR engines, LLM providers, file I/O, DOCX builder, and the pipeline orchestration in `infrastructure/workflow/`.
+
+The presentation layer never imports `infrastructure`. The modules that wire concrete classes
+are the exception, and the only one: `gui/composition.py`, `gui/_app_bootstrap.py`,
+`gui/__main__.py`, `gui/benchmark/composition.py`, `gui/benchmark/__main__.py`,
+`cli_composition.py`, `__main__.py` and `frozen_modes.py`. `tests/unit/test_layer_imports.py`
+holds both rules.
 
 ```{uml} assets/component_diagram.puml
 :align: center
@@ -595,7 +601,7 @@ computer, but they come from one card and one processor.
 `check_run_preflight()` (GUI) and the command line before a run: for an Ollama on this computer,
 the part of every catalogued model that does not fit the card (all of it on Apple Silicon) has to
 fit the main memory that is free *right now*, minus `RUN_MEMORY_MARGIN_GB` (2 GB).  It reads
-`gpu_detector.detect_available_memory_gb()` (`psutil`'s `available`, never swap).  It is a
+`ModelRecommendationService.available_memory_gb()` (`psutil`'s `available`, never swap).  It is a
 **warning**, not a refusal: free memory changes from run to run, so the GUI offers "Run anyway" and
 the command line needs `--ignore-memory-check`.  `check_run_preflight()` therefore runs the memory
 check last, after the stage requirements (reading, anonymizing, correcting, evaluating), and reports
@@ -642,7 +648,7 @@ The panel owns no setting, so it adds no key to any page's `owned_keys`.
 
 `SpeedChoices` has two entry points.  `from_settings` (the Settings window) includes every step
 whose provider is Ollama, ticked or not, because the test measures models, not the next run.
-`from_config` (the time left of a run, `ProcessingApplicationService.speed_choices_for_run`) leaves
+`from_config` (the time left of a run, `SpeedEstimateService.choices_for_config`) leaves
 out the steps the run switches off, so a re-run of text recognition alone is not charged for
 proofreading.  An empty `review_model` means the content review does not run on Ollama; it never
 means "same as proofreading" (a review on the proofreading model names it).
@@ -784,7 +790,7 @@ the reference machine.  `tools/ocr_page_tokens.py` measures them, and
 | Piece | Where | Rule |
 |---|---|---|
 | Decisions (best model, suitability, hardware profile, `rate_model`) | `domain/model_catalog.py` | Pure functions, no I/O — table-test them. |
-| Caches (local hardware probe, model classification) | `application/model_recommendations.py` | One owner. Call `on_ollama_models_changed(url)` after every pull; it evicts the model list *and* the classifications. Only definite classifications are cached. |
+| Caches (local hardware probe, model classification) | `application/model_recommendations.py` | One owner. Call `on_ollama_models_changed(url)` after every pull; it evicts the model list, the classifications and the server's speed facts. Only definite classifications are cached. The memory and GPU readers and the context choice live here too (`available_memory_gb`, `read_gpu_usage`, `context_choice`). |
 | Texts a teacher reads | `gui/_model_wording.py` (model wording), `teachers_teammate/texts/` (everything else) | Qt-free; widgets never build these sentences themselves. See "Where text lives" above. |
 | Widgets | `gui/_hardware_profile_selector.py`, `gui/_model_guidance.py`, `gui/settings/_addons_page.py` | Presentation only. They rate models through `rate_ollama_models(..., cached_only=True)` — never contacting Ollama on the GUI thread. |
 
@@ -810,9 +816,10 @@ the step.  What it relies on:
 
 - **Each provider module declares its package** in `PROVIDER_INFO["package"]`
   (`{"module": "langchain_mistralai", "pip": "langchain-mistralai"}`); Ollama's connector is
-  `package_optional` because the app talks to Ollama directly.  The service answers
-  `missing_provider_package()` and `list_provider_packages()` (providers sharing a package
-  appear once), so the pages, Add-ons and the run preflight need no list of their own.
+  `package_optional` because the app talks to Ollama directly.  `ProviderService`
+  (`application/providers.py`) answers `missing_provider_package()` and
+  `list_provider_packages()` (providers sharing a package appear once), so the pages,
+  Add-ons and the run preflight need no list of their own.
   A missing package is a `RequirementIssue(provider=...)`; the app then opens Settings →
   Add-ons on the online-services tab with `provider:<name>` in `preselect`.
 - **A model list says where it came from** (`domain/model_listing.py:ModelListing`):
@@ -1917,7 +1924,8 @@ SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
   read.  A bundled model counts as installed: nothing is downloaded and nothing is written next
   to the program files.  The smoke test's `models` check (frozen only) proves the files are
   complete, and the Add-ons rows say *included* rather than *downloaded*
-  (`get_installation_status()` reports `bundled:reader:ppocr` / `bundled:page_models:all`).
+  (`AddonService.get_installation_status()` reports `bundled:reader:ppocr` /
+  `bundled:page_models:all`).
 - **A download happens only when the teacher asks**, and only for what the app does not carry:
   the reader's Download button, Add-ons → Reading models, the Setup Assistant's *Set up*, or
   `--download-reader`.  Never at start-up, never silently, and nothing about the user is sent
@@ -2176,8 +2184,7 @@ write), `tests/unit/test_domain_policy.py` (the freshness flags),
 
 ### Shared anonymization cache
 
-`ProcessingApplicationService` keeps two caches under one `RLock`
-(`application/service.py`):
+`AnonymizationService` (`application/anonymization.py`) keeps two caches under one `RLock`:
 
 - `_anonymizer_cache` — one `SpacyAnonymizer` per `(language, resolved settings)`;
   building one loads the spaCy models.
@@ -2187,7 +2194,7 @@ write), `tests/unit/test_domain_policy.py` (the freshness flags),
 
 A pipeline run gets its anonymizer from the service: `run_selected()` hands the
 `PipelineDependencies` a `PipelineComponentFactory` whose `build_anonymizer` is
-`ProcessingApplicationService.build_cached_anonymizer`.  That returns a
+`AnonymizationService.build_cached_anonymizer`.  That returns a
 `CachedAnonymizer` over the same two caches, so a run, `anonymize_preview()` and
 `export_text(anonymize=True)` analyse a given text once per session and settings —
 whichever came first fills the cache for the others.  `FileProcessor` anonymizes the extracted text once, right after recognition, and hands
@@ -2240,7 +2247,7 @@ words.
 
 The page asks for the stand-ins with `Masking.needs_request(raw_text)` — once per text — and the
 window answers through a background task (`_anonymize_task`), which calls
-`ProcessingApplicationService.anonymize_preview()` off the GUI thread and therefore reuses the
+`AnonymizationService.anonymize_preview()` off the GUI thread and therefore reuses the
 shared cache above (a run then needs no second spaCy pass, and vice versa).  A result that
 belongs to a text the page no longer shows is dropped (`set_anonymization(..., raw_text=…)`),
 and a failure keeps the names hidden behind the strip that says so.  Changing the
@@ -2254,7 +2261,7 @@ which stores `privacy/display_anonymized` (`gui/_privacy_settings.py`,
 `CheckPage.set_display_anonymized()`.  It defaults to **on** (`DISPLAY_ANONYMIZED_DEFAULT`):
 only a stored answer shows the names, and without the add-on the checkbox is greyed out and the
 setting takes effect once it is installed.  The checkbox is enabled only while
-`ProcessingApplicationService.anonymizer_available(language)` holds — spaCy importable and the
+`AnonymizationService.anonymizer_available(language)` holds — spaCy importable and the
 model of the document language installed — so a missing add-on greys it out with a tooltip
 pointing at Settings → Add-ons instead of failing later.  The answer is cached per document
 language and refreshed on `data_flow_changed` (the language may have changed) and after the
@@ -2357,9 +2364,9 @@ result.
 **Steps.**  `ConfigPanel` has four steps: Documents, Language (with the Level), What should
 happen, Results.  Under recognition, personal-info removal, proofreading and review sits a
 `UsesLine` (`_data_flow_summary.py`) with the model and the place of the step.  The text comes
-from `ProcessingApplicationService.describe_steps(config)` -- every step as if it were ticked,
-so an unticked step keeps its (grey) line -- and `short_place` / `uses_line`, which share their
-words with the service list on AI models (`PLACE_*`).  The model is not part of
+from `DataFlowService.describe_steps(config)` (`application/data_flow.py`) -- every step as if it
+were ticked, so an unticked step keeps its (grey) line -- and `short_place` / `uses_line`, which
+share their words with the service list on AI models (`PLACE_*`).  The model is not part of
 `DataFlow`, and so not part of its fingerprint: a remembered "don't ask again" must survive a
 change of model.  The data-flow box (`DataFlowSummary`) keeps only the verdict and the advice;
 it shows the ticked part of the same answer (`application/data_flow.py:ticked_steps`), so the
@@ -2377,9 +2384,10 @@ never only a sentence; `check_run_preflight(config, memory=..., recognition=...,
 (`needs_text_recognition(files, recognised=...)`: only text files, or text already stored; a PDF
 counts as reading, because its text layer is only known by opening it); `fresh=True` asks Ollama
 for its models again instead of using the cached list ("Check again", a returning window).
-The engine probes (`is_module_importable`, `reader_installed`) are shared with the connection
-check, so a package or the reader's models installed from Add-ons are seen without a restart
-(`IssueKind.READER_MODEL_MISSING`, fix: the **Reading models** tab of Add-ons with `reader:ppocr` ticked).  A new requirement is therefore: an
+The engine probes (`AddonService.is_module_importable`, `ReaderService.reader_installed`) are
+shared with the connection check, so a package or the reader's models installed from Add-ons are
+seen without a restart (`IssueKind.READER_MODEL_MISSING`, fix: the **Reading models** tab of
+Add-ons with `reader:ppocr` ticked).  A new requirement is therefore: an
 `IssueKind`, its check, and **one row in `gui/_fix_targets.py:fix_for`** -- the line for the
 readiness line and the buttons (`FixAction`: a Settings page + focus + preselect, or a
 `command` such as `retry` / `choose_folder`).  `DependencyGuardDialog(title, issues, actions)`
@@ -2716,7 +2724,7 @@ page's model list comes from `plan_with_model_choices()` with the suggestion; an
 (the Privacy page's extra language) becomes `anonymizer_secondary_model` and joins the downloads.
 
 **The plan is a pure function** (`application/setup_plan.py`).  `SetupAnswers` is what the pages
-collected, `SetupFacts` is what `ProcessingApplicationService.setup_facts()` measured (profile,
+collected, `SetupFacts` is what `SetupService.setup_facts()` measured (profile,
 memory, card, whether Ollama answers, installed tags, free disk, whether removal and name
 detection are on, the missing package), and `build_setup_plan(answers, current, facts, rate=,
 best=, default_model=)` returns a `SetupPlan`: the Settings-window keys, the main-window keys,
@@ -2785,7 +2793,7 @@ Set up, Cancel, closing), `tests/gui/test_gui_window_geometry.py` (a small scree
 is tested in `tests/gui/test_gui_main_window.py`.
 
 **The walkthrough** (`tests/gui/test_gui_setup_walkthrough.py`) is the one test that runs the whole
-thing: the real `SetupAssistant` and every page, the real `ProcessingApplicationService`
+thing: the real `SetupAssistant` and every page, the real `SetupService`
 (`setup_facts`, `plan_setup`, the model listing and rating), the `LatestTask` pool, `InstallRound`,
 `OllamaDownloadManager`, the `ollama` client over loopback HTTP, the real `MainWindow` and
 `ocr.toml` on disk.  Replaced, each at the narrowest seam: Ollama by
@@ -3527,7 +3535,7 @@ OpenCV) is deleted by its `RECORD` files only; numpy is left alone.  It is then 
   usable in the same session without a restart.
 
 The function is idempotent — safe to call multiple times.  Every entry point calls it first
-(`inject_addon_packages_dir()` in `application/composition.py`): `run_gui.py` and `__main__.py`,
+(`application/composition.inject_addon_packages_dir()`): `run_gui.py` and `__main__.py`,
 and `main_gui()`, `main_benchmark()` and `cli.main()` for a wheel install, so a spaCy model
 downloaded in one session is found after a restart however the app was started.
 
@@ -3551,7 +3559,7 @@ only part of a package, so putting the folder last is wrong too).  Two things pr
   `outdated_shared_packages(pkg_dir, constraints)` compares the folder names
   (`<name>-<version>.dist-info`) with the constraints at every start; when something differs
   `inject_packages_dir()` leaves the folder **off** `sys.path` and the app runs on its own bundle.
-  `ProcessingApplicationService.addons_outdated()` tells the GUI: the requirement checks for a
+  `AddonService.addons_outdated()` tells the GUI: the requirement checks for a
   step that needs an add-on in the folder (spaCy, a LangChain package) return
   `IssueKind.ADDONS_OUTDATED` (`fix_for` → *Update add-ons…*), and Settings → Add-ons shows a
   banner with **Update add-ons**.  Nothing downloads before that click.  `update_addons()` →

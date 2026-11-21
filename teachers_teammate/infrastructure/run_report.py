@@ -13,7 +13,7 @@ from ..config import Config
 from ..domain.data_location import ENGINE_PPOCR, OCR_ENGINE_NAMES
 from ..domain.local_models import READER_MODEL_NAME
 from ..domain.run_summary import RunSummary
-from .reporting import BATTERY_WARNING, KeepAwakeState, Reporter
+from .reporting import KeepAwakeState, Reporter
 
 LINE = "=" * 64
 
@@ -24,6 +24,7 @@ def banner(
     *,
     config_file: Path | None = None,
     keep_awake: KeepAwakeState | None = None,
+    battery_warning: str = "",
 ) -> None:
     """Write the block a run starts with: what it will do, and with which settings."""
     cfg = config
@@ -82,7 +83,7 @@ def banner(
         if enabled
     ]
     reporter.status(f"  Text files    : {', '.join(text_files) or 'disabled'}")
-    _keep_awake_line(reporter, keep_awake)
+    _keep_awake_line(reporter, keep_awake, battery_warning)
 
 
 def summary(run: RunSummary, reporter: Reporter) -> None:
@@ -115,6 +116,17 @@ def summary(run: RunSummary, reporter: Reporter) -> None:
     reporter.status(LINE)
 
 
+def preview_banner(config: Config, reporter: Reporter, preview_dir: Path) -> None:
+    """Write the opening block of a preview run (image preparation only)."""
+    reporter.status(LINE)
+    reporter.status("Teacher's Teammate — Preview (preprocess only)")
+    reporter.status(LINE)
+    reporter.status(f"  Preprocess    : {config.ocr.preprocess_method}")
+    reporter.status(f"  Input         : {config.input_dir.resolve()}")
+    reporter.status(f"  Preview dir   : {preview_dir.resolve()}")
+    reporter.status(LINE)
+
+
 def preview_summary(run: RunSummary, reporter: Reporter, preview_dir: Path) -> None:
     """Write the closing block of a preview run: what was prepared, and where it went."""
     reporter.status("")
@@ -128,7 +140,9 @@ def preview_summary(run: RunSummary, reporter: Reporter, preview_dir: Path) -> N
     reporter.status(LINE)
 
 
-def _keep_awake_line(reporter: Reporter, awake: KeepAwakeState | None) -> None:
+def _keep_awake_line(
+    reporter: Reporter, awake: KeepAwakeState | None, battery_warning: str
+) -> None:
     """Close the banner with whether the computer is kept awake (and a battery warning)."""
     if awake is not None:
         if not awake.enabled:
@@ -140,5 +154,5 @@ def _keep_awake_line(reporter: Reporter, awake: KeepAwakeState | None) -> None:
         else:
             reporter.status("  Keep awake    : no (the system did not allow it)")
     reporter.status(LINE)
-    if awake is not None and awake.enabled and awake.on_battery:
-        reporter.warn(BATTERY_WARNING)
+    if awake is not None and awake.enabled and awake.on_battery and battery_warning:
+        reporter.warn(battery_warning)

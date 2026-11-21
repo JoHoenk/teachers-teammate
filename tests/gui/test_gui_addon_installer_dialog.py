@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from ._service_stubs import services_of
+
 from teachers_teammate.application.service import ADDON_PRIVACY
 from teachers_teammate.exceptions import ModelDownloadCancelledError, ModelDownloadError
 from teachers_teammate.gui import _addon_installer_dialog as mod
@@ -160,7 +162,7 @@ def _all_label_texts(dlg) -> list[str]:
 def test_install_thread_run_emits_finished_ok() -> None:
     """Given a successful install / When _InstallThread.run executes / Then finished_ok is emitted."""
     service = MagicMock()
-    thread = mod._InstallThread(service, ADDON_PRIVACY, Path("/tmp/pkg"))
+    thread = mod._InstallThread(services_of(service), ADDON_PRIVACY, Path("/tmp/pkg"))
     ok = MagicMock()
     thread.finished_ok.connect(ok)
 
@@ -175,7 +177,7 @@ def test_install_thread_run_emits_finished_err_on_failure() -> None:
     """Given install raises / When _InstallThread.run executes / Then finished_err carries the message."""
     service = MagicMock()
     service.install_addon.side_effect = RuntimeError("pip failed")
-    thread = mod._InstallThread(service, ADDON_PRIVACY, Path("/tmp/pkg"))
+    thread = mod._InstallThread(services_of(service), ADDON_PRIVACY, Path("/tmp/pkg"))
     err: list[str] = []
     thread.finished_err.connect(err.append)
 
@@ -189,7 +191,7 @@ def test_install_thread_run_emits_finished_err_on_failure() -> None:
 def test_model_download_thread_run_emits_finished_ok() -> None:
     """Given a successful download / When _ModelDownloadThread.run executes / Then finished_ok is emitted."""
     service = MagicMock()
-    thread = mod._ModelDownloadThread(service, "en_core_web_sm", Path("/tmp/pkg"))
+    thread = mod._ModelDownloadThread(services_of(service), "en_core_web_sm", Path("/tmp/pkg"))
     ok = MagicMock()
     thread.finished_ok.connect(ok)
 
@@ -251,7 +253,7 @@ def test_reader_dialog_downloads_and_reports_progress_in_mb(qtbot) -> None:
     Then   the bar fills, the status shows MB, and "downloaded" is emitted
     """
     service = _FakeReaderService()
-    dlg = ReaderDownloadDialog(service)
+    dlg = ReaderDownloadDialog(services_of(service))
     qtbot.addWidget(dlg)
 
     with qtbot.waitSignal(dlg.downloaded, timeout=5000):
@@ -271,7 +273,7 @@ def test_reader_dialog_shows_the_error_sentence_and_offers_retry(qtbot) -> None:
     Then   the sentence is shown and the button becomes Retry
     """
     service = _FakeReaderService(error=ModelDownloadError("Could not reach huggingface.co."))
-    dlg = ReaderDownloadDialog(service)
+    dlg = ReaderDownloadDialog(services_of(service))
     qtbot.addWidget(dlg)
 
     dlg._start_btn.click()
@@ -289,7 +291,7 @@ def test_reader_dialog_cancel_stops_the_thread_and_installs_nothing(qtbot) -> No
     Then   the thread is told to stop, nothing is installed and the dialog says so
     """
     service = _FakeReaderService(wait_for_cancel=True)
-    dlg = ReaderDownloadDialog(service)
+    dlg = ReaderDownloadDialog(services_of(service))
     qtbot.addWidget(dlg)
     dlg._start_btn.click()
     qtbot.waitUntil(service.started.is_set, timeout=5000)
@@ -310,7 +312,7 @@ def test_page_models_dialog_downloads_the_page_models_and_names_them(qtbot) -> N
            the models do and where they are kept, and "downloaded" is emitted
     """
     service = _FakeReaderService()
-    dlg = PageModelsDownloadDialog(service)
+    dlg = PageModelsDownloadDialog(services_of(service))
     qtbot.addWidget(dlg)
     text = dlg.findChildren(mod.QLabel)[0].text()
 

@@ -58,7 +58,6 @@ from ...domain.data_location import (
 from ...domain.language import LANGUAGES
 from ...domain.local_models import PAGE_MODELS_ADDON_ID
 from ...domain.model_catalog import DiskVerdict, Suitability, short_model_name
-from ...infrastructure.ollama_utils import is_local_ollama_url
 from ...texts.setup import (
     CLASSES_HANDWRITTEN,
     CLASSES_HANDWRITTEN_NOTE,
@@ -386,7 +385,7 @@ class LocalAiPage(SetupPage):
         layout.addWidget(self._status_holder)
 
         saved = str(context.settings.get("ollama_url") or DEFAULTS["ollama_url"])
-        local = is_local_ollama_url(saved, include_wsl_host=True)
+        local = self._context.app_service.ollama.is_local(saved, include_wsl_host=True)
         self._here = QRadioButton(LOCAL_AI_HERE)
         self._server = QRadioButton(LOCAL_AI_SERVER)
         self._here.setChecked(local)
@@ -430,7 +429,9 @@ class LocalAiPage(SetupPage):
     def ollama_url(self) -> str:
         """Return the address Ollama runs at, as the page shows it."""
         text = self._url.text().strip()
-        if self._here.isChecked() and not is_local_ollama_url(text, include_wsl_host=True):
+        if self._here.isChecked() and not self._context.app_service.ollama.is_local(
+            text, include_wsl_host=True
+        ):
             return DEFAULTS["ollama_url"]
         return text or DEFAULTS["ollama_url"]
 
@@ -473,7 +474,7 @@ class LocalAiPage(SetupPage):
         on_server = self._server.isChecked()
         self._url.setEnabled(on_server)
         self._find.setEnabled(on_server)
-        if not on_server and not is_local_ollama_url(
+        if not on_server and not self._context.app_service.ollama.is_local(
             self._url.text().strip(), include_wsl_host=True
         ):
             self._url.setText(DEFAULTS["ollama_url"])
@@ -484,7 +485,7 @@ class LocalAiPage(SetupPage):
 
     def _on_use_server(self, url: str) -> None:
         """Take the server the status line found, because the teacher pressed "Use it"."""
-        if is_local_ollama_url(url, include_wsl_host=True):
+        if self._context.app_service.ollama.is_local(url, include_wsl_host=True):
             self._here.setChecked(True)
         else:
             self._server.setChecked(True)
@@ -502,7 +503,9 @@ class LocalAiPage(SetupPage):
 
     def _refresh_computer_text(self) -> None:
         """Say whose computer the suggestions are for: this one, or the one Ollama runs on."""
-        other = not is_local_ollama_url(self.ollama_url(), include_wsl_host=True)
+        other = not self._context.app_service.ollama.is_local(
+            self.ollama_url(), include_wsl_host=True
+        )
         self._computer_heading.setText(
             LOCAL_AI_OTHER_PC_HEADING if other else LOCAL_AI_THIS_PC_HEADING
         )
@@ -623,7 +626,7 @@ class ProofreadingPage(SetupPage):
     def _review_kept(self) -> bool:
         """Return whether the saved content review has its own model, which Set up leaves alone."""
         return review_has_own_model(
-            self._context.settings, self._context.app_service.effective_model
+            self._context.settings, self._context.app_service.providers.effective_model
         )
 
     def shutdown(self) -> None:
@@ -669,12 +672,15 @@ class ProofreadingPage(SetupPage):
 
     def _install_package(self, preselect: list[str], _parent: QWidget | None) -> None:
         """Install the service's package right here, then ask it for its models."""
-        service = self._context.app_service
         packages = [
             pip_name
             for entry in preselect
             if entry.startswith(PROVIDER_PREFIX)
-            for pip_name in [service.missing_provider_package(entry[len(PROVIDER_PREFIX) :])]
+            for pip_name in [
+                self._context.app_service.providers.missing_provider_package(
+                    entry[len(PROVIDER_PREFIX) :]
+                )
+            ]
             if pip_name
         ]
         if packages:
@@ -682,7 +688,7 @@ class ProofreadingPage(SetupPage):
 
     def _ask_for_suggestion(self) -> None:
         """Ask the setup plan which local model this computer would get, and show how it fits."""
-        service = self._context.app_service
+        setup = self._context.app_service.setup
         answers = self.assistant().answers()
         local = SetupAnswers(
             language=answers.language,
@@ -695,7 +701,7 @@ class ProofreadingPage(SetupPage):
         current = dict(self._context.settings)
         self._suggestion.setText(SUGGESTION_CHECKING)
         self._task.submit(
-            lambda: service.plan_with_model_choices(local, current), self._on_plan_and_choices
+            lambda: setup.plan_with_model_choices(local, current), self._on_plan_and_choices
         )
 
     def _on_plan_and_choices(self, result: object, error: BaseException | None) -> None:
@@ -766,25 +772,12 @@ class PrivacyPage(SetupPage):
 
     page_id = SetupPageId.PRIVACY
 
-    def __init__(self, context: SetupContext, assistant: SetupAssistant) -> None:
+    def __init__(self, context: SetupContext, assistant: SetupAssistant) -> None:  # noqa: PLR0915
         super().__init__(context, assistant)
         self.setTitle(PRIVACY_TITLE)
         self._case: PrivacyCase | None = None
         layout = self._content()
 
-        self._build_sending()
-        layout.addWidget(self._sending)
-        self._build_stays()
-        layout.addWidget(self._stays)
-        self._build_extra()
-        layout.addWidget(self._extra_holder)
-        layout.addStretch(1)
-        self._extra.toggled.connect(self._sync_extra)
-        self._remove.toggled.connect(self._sync_extra)
-        self._hide.toggled.connect(self._sync_extra)
-
-    def _build_sending(self) -> None:
-        """Build the part for text that leaves this computer."""
         # Text that leaves this computer — to an online service or to another PC in the network:
         # what is sent, and whether the names are replaced first.
         self._sending = QWidget()
@@ -805,9 +798,8 @@ class PrivacyPage(SetupPage):
         sending.addSpacing(8)
         self._school = _note(PRIVACY_SCHOOL_NOTE)
         sending.addWidget(self._school)
+        layout.addWidget(self._sending)
 
-    def _build_stays(self) -> None:
-        """Build the part for everything that stays on this computer."""
         # Everything on this computer: nothing is sent, so there is nothing to remove; the names
         # can still be hidden in the texts this app shows.
         self._stays = QWidget()
@@ -826,9 +818,8 @@ class PrivacyPage(SetupPage):
         self._hide_already = _note(PRIVACY_ALREADY_ON)
         self._hide_already.setVisible(False)
         stays.addWidget(_indent(self._hide_already))
+        layout.addWidget(self._stays)
 
-    def _build_extra(self) -> None:
-        """Build the choice of one more language to find names in."""
         # One more language to find names in, below whichever of the two the teacher sees.
         self._extra_holder = QWidget()
         extra = QVBoxLayout(self._extra_holder)
@@ -838,6 +829,11 @@ class PrivacyPage(SetupPage):
         self._extra_model = QComboBox()
         extra.addWidget(_indent(self._extra_model))
         extra.addWidget(_indent(_note(PRIVACY_EXTRA_NOTE)))
+        layout.addWidget(self._extra_holder)
+        layout.addStretch(1)
+        self._extra.toggled.connect(self._sync_extra)
+        self._remove.toggled.connect(self._sync_extra)
+        self._hide.toggled.connect(self._sync_extra)
 
     def extra_names_model(self) -> str:
         """Return the spaCy model of the extra language, or ``""`` when none is ticked."""
@@ -856,7 +852,7 @@ class PrivacyPage(SetupPage):
 
     def _fill_extra(self, language: str) -> None:
         """List the languages that can come next to *language*, with the saved one selected."""
-        service = self._context.app_service
+        service = self._context.app_service.anonymization
         installed = set(service.list_installed_spacy_models())
         saved = str(self._context.settings.get("anonymizer_secondary_model") or "")
         system = service.system_spacy_model()
@@ -886,7 +882,7 @@ class PrivacyPage(SetupPage):
     def initializePage(self) -> None:  # Qt override
         """Say where the text goes, and offer what fits: removal when it leaves, hiding when not."""
         answers = self.assistant().answers()
-        service = self._context.app_service
+        service = self._context.app_service.anonymization
         case = answers.privacy_case
         self._case = case
         leaves = case is not PrivacyCase.THIS_COMPUTER
@@ -904,7 +900,9 @@ class PrivacyPage(SetupPage):
 
         if leaves:
             if case is PrivacyCase.ONLINE:
-                info = service.get_provider_info(answers.online_choice[0])
+                info = self._context.app_service.providers.get_provider_info(
+                    answers.online_choice[0]
+                )
                 name = str(info.get("display_name") or answers.online_choice[0])
                 self._sent.setText(PRIVACY_SENT.format(service=name))
                 self._school.setText(PRIVACY_SCHOOL_NOTE)
@@ -981,10 +979,10 @@ class SummaryPage(SetupPage):
         self._stopped.setVisible(False)
         self._later.setVisible(False)
         self.completeChanged.emit()
-        service = self._context.app_service
+        setup = self._context.app_service.setup
         answers = self.assistant().answers()
         current = dict(self._context.settings)
-        self._task.submit(lambda: service.plan_setup(answers, current), self._on_plan)
+        self._task.submit(lambda: setup.plan_setup(answers, current), self._on_plan)
 
     def isComplete(self) -> bool:  # Qt override
         """Return whether the setup was worked out and no install runs, so Set up can be pressed.
@@ -1040,29 +1038,29 @@ class SummaryPage(SetupPage):
             url = self.assistant().answers().ollama_url
             location = (
                 DataLocation.THIS_COMPUTER
-                if is_local_ollama_url(url)
+                if self._context.app_service.ollama.is_local(url)
                 else DataLocation.OTHER_COMPUTER
             )
             return short_place(StageLocation(location=location, service="Ollama"))
-        service = self._context.app_service
-        info = service.get_provider_info(provider)
+        info = self._context.app_service.providers.get_provider_info(provider)
         return short_place(
             StageLocation(
                 location=DataLocation.ONLINE,
                 service=str(info.get("display_name") or provider),
-                region=DataRegion(service.get_provider_data_region(provider)),
+                region=DataRegion(
+                    self._context.app_service.providers.get_provider_data_region(provider)
+                ),
             )
         )
 
     def _key_missing(self, plan: SetupPlan) -> set[str]:
         """Return the online providers the setup plan uses that have no key yet."""
-        service = self._context.app_service
         return {
             step.provider
             for step in plan.steps
             if step.provider
             and step.provider != "ollama"
-            and service.provider_key_missing(step.provider)
+            and self._context.app_service.providers.provider_key_missing(step.provider)
         }
 
 

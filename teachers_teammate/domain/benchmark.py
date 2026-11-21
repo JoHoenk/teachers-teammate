@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import difflib
 import re
+from typing import Protocol, runtime_checkable
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -79,3 +80,30 @@ def compare_pair(a: str, b: str) -> PairComparison:
         stats_a=text_stats(a),
         stats_b=text_stats(b),
     )
+
+
+@runtime_checkable
+class StoredRunView(Protocol):
+    """What the benchmark window reads from a stored run.
+
+    The record itself lives with the store (it carries an ``OcrConfig``, which is core), so the
+    window names the shape it renders instead of importing the store.
+    """
+
+    @property
+    def run_id(self) -> str: ...
+
+    @property
+    def timestamp(self) -> str: ...
+
+    @property
+    def raw_text(self) -> str: ...
+
+    @property
+    def raw_text_format(self) -> str: ...
+
+    @property
+    def preview_img(self) -> str: ...
+
+    def config_summary(self) -> str:
+        """Return a short human-readable label of the OCR configuration."""

@@ -30,3 +30,8 @@ WHERE_STEPS = "What should happen, in the main window"
 WHERE_SETUP = "Tools → Setup Assistant…"
 
 OPEN_ADDONS = "Open Add-ons…"
+
+
+def license_tooltip(license_text: str | None) -> str:
+    """Return the tooltip of an add-on's row: its license, or nothing when it is unknown."""
+    return f"License: {license_text}" if license_text else ""

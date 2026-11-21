@@ -10,15 +10,13 @@ importable before anything uses it); the pulls are handed to the main window's
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from pathlib import Path
-import threading
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from ..application.composition import inject_addon_packages_dir
-from ..application.service import PAGE_MODELS_STATUS_KEY, READER_STATUS_KEY
+from ..application.addons import PAGE_MODELS_STATUS_KEY, READER_STATUS_KEY
+from ..application.composition import AppServices, inject_addon_packages_dir
 from . import _user_text as txt
 from ._model_fetch import _start_thread
 from ._model_guidance import SPACY_PREFIX
@@ -44,42 +42,6 @@ UPDATE_ADDONS_ITEM = "update:addons"
 _ABORTABLE_PHASES = ("reader", "page_models", "pull")
 
 
-class _InstallService(Protocol):
-    """What the round asks the application service; the facade methods are the only ones."""
-
-    def install_packages(self, packages: list[str], progress_cb: Callable[[str], None]) -> None: ...
-
-    def update_addons(self, progress_cb: Callable[[str], None]) -> None: ...
-
-    def addon_packages_dir(self) -> Path: ...
-
-    def download_spacy_model(
-        self, model: str, target: Path, progress_cb: Callable[[str], None]
-    ) -> None: ...
-
-    def pull_ollama_model(
-        self,
-        url: str,
-        model_name: str,
-        progress_cb: Callable[[str, float, float], None] | None = None,
-        abort_event: threading.Event | None = None,
-    ) -> None: ...
-
-    def on_ollama_models_changed(self, ollama_url: str) -> None: ...
-
-    def download_reader(
-        self,
-        on_progress: Callable[[int, int], None] | None = None,
-        cancel: threading.Event | None = None,
-    ) -> None: ...
-
-    def download_page_models(
-        self,
-        on_progress: Callable[[int, int], None] | None = None,
-        cancel: threading.Event | None = None,
-    ) -> None: ...
-
-
 class _PullManager(Protocol):
     """What the round asks of the main window's download manager."""
 
@@ -102,14 +64,14 @@ class _PipInstallThread(QThread):
     finished_ok = Signal(list)  # installed packages
     finished_err = Signal(str)
 
-    def __init__(self, app_service: _InstallService, packages: list[str]) -> None:
+    def __init__(self, app_service: AppServices, packages: list[str]) -> None:
         super().__init__()
         self._svc = app_service
         self._packages = packages
 
     def run(self) -> None:
         try:
-            self._svc.install_packages(self._packages, self.log_line.emit)
+            self._svc.addons.install_packages(self._packages, self.log_line.emit)
             self.finished_ok.emit(self._packages)
         except Exception as exc:  # noqa: BLE001  # surface any pip/subprocess failure to the UI via the error signal
             self.finished_err.emit(txt.addon_error_text(exc))
@@ -122,13 +84,13 @@ class _AddonUpdateThread(QThread):
     finished_ok = Signal()
     finished_err = Signal(str)
 
-    def __init__(self, app_service: _InstallService) -> None:
+    def __init__(self, app_service: AppServices) -> None:
         super().__init__()
         self._svc = app_service
 
     def run(self) -> None:
         try:
-            self._svc.update_addons(self.log_line.emit)
+            self._svc.addons.update_addons(self.log_line.emit)
             self.finished_ok.emit()
         except Exception as exc:  # noqa: BLE001  # surface any pip/subprocess failure to the UI via the error signal
             self.finished_err.emit(txt.addon_error_text(exc))
@@ -151,7 +113,7 @@ class InstallRound(QObject):
 
     def __init__(
         self,
-        app_service: _InstallService,
+        app_service: AppServices,
         pull_manager: _PullManager | None = None,
         parent: QObject | None = None,
     ) -> None:
@@ -348,7 +310,7 @@ class InstallRound(QObject):
         self.log_line.emit(f"Downloading spaCy model: {model}")
         self._phase = "spacy"
         self._begin(f"{SPACY_PREFIX}{model}")
-        thread = _ModelDownloadThread(self._svc, model, self._svc.addon_packages_dir())
+        thread = _ModelDownloadThread(self._svc, model, self._svc.addons.addon_packages_dir())
         thread.log_line.connect(self.log_line)
         thread.finished_ok.connect(self._on_spacy_done)
         thread.finished_err.connect(self._on_error)
@@ -496,7 +458,7 @@ class InstallRound(QObject):
         self.item_done.emit(model)
         self._installed_any = True
         # The installed-model list and the classifications are stale from now on.
-        self._svc.on_ollama_models_changed(self._ollama_url)
+        self._svc.recommendations.on_ollama_models_changed(self._ollama_url)
 
     # ── the end of the round ─────────────────────────────────────────────────────
 

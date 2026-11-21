@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QWidget
@@ -29,6 +29,9 @@ from ...texts.settings import (
     PAGE_PRIVACY,
     PAGE_SCAN_QUALITY,
 )
+
+if TYPE_CHECKING:
+    from ...application.composition import AppServices
 
 
 class SettingsPage(StrEnum):
@@ -79,7 +82,7 @@ class SettingsContext:
     """
 
     settings: Mapping[str, Any]
-    app_service: Any
+    app_service: AppServices
     language: str = ""
     anonymizer_config: object | None = None
     acknowledgements: Any = None

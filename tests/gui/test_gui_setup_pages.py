@@ -70,6 +70,7 @@ from teachers_teammate.gui.setup._summary import (
     summary_rows,
 )
 
+from ._service_stubs import services_of
 from ._settings_stubs import SetupAppService
 
 
@@ -89,7 +90,7 @@ def _context(
     values.update(settings)
     return SetupContext(
         settings=values,
-        app_service=service,
+        app_service=services_of(service),
         language=start_language,
         first_start=first_start,
     )
@@ -115,7 +116,7 @@ def _summary(qtbot, service: SetupAppService):
 
 def _show_plan(page, assistant: SetupAssistant) -> SetupPlan:
     """Work the setup plan out for the assistant's answers and put it on *page*."""
-    plan = assistant._context.app_service.plan_setup(
+    plan = assistant._context.app_service.setup.plan_setup(
         assistant.answers(), dict(assistant._context.settings)
     )
     page._on_plan(plan, None)
@@ -621,7 +622,7 @@ def test_the_answers_are_a_mapping_of_the_settings(qtbot) -> None:
     """
     values: Mapping[str, Any] = dict(DEFAULTS)
     before = dict(values)
-    context = SetupContext(settings=values, app_service=SetupAppService())
+    context = SetupContext(settings=values, app_service=services_of(SetupAppService()))
     _assistant(qtbot, context)
     assert dict(values) == before
 
@@ -1033,7 +1034,9 @@ def _done(qtbot, service: SetupAppService, manager: _FakePullManager | None = No
     """Return the assistant, its summary page and its done page over *service*."""
     values: dict[str, Any] = dict(DEFAULTS)
     context = SetupContext(
-        settings=values, app_service=service, pull_manager=manager or _FakePullManager()
+        settings=values,
+        app_service=services_of(service),
+        pull_manager=manager or _FakePullManager(),
     )
     assistant = _assistant(qtbot, context)
     return (

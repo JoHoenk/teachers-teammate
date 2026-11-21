@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from ..gui._service_stubs import services_of
 from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.domain.data_location import DataFlow
 from teachers_teammate.domain.run_summary import RunSummary
@@ -196,7 +197,7 @@ def test_main_exits_when_no_input_given(tmp_path: Path, monkeypatch) -> None:
     original_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)  # ensure no ocr.toml in CWD either
-        rc = run_cli(argv=["-o", str(tmp_path)], app_service=build_app_services().processing)
+        rc = run_cli(argv=["-o", str(tmp_path)], app_service=build_app_services())
     finally:
         os.chdir(original_cwd)
     assert rc == 1
@@ -221,7 +222,9 @@ def test_main_exits_when_no_output_and_docx_enabled(tmp_path: Path, monkeypatch)
     original_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)  # ensure no ocr.toml in CWD either
-        rc = run_cli(argv=["-i", str(tmp_path), "--docx"], app_service=_FakeAppService())
+        rc = run_cli(
+            argv=["-i", str(tmp_path), "--docx"], app_service=services_of(_FakeAppService())
+        )
     finally:
         os.chdir(original_cwd)
     assert rc == 1
@@ -250,7 +253,9 @@ def test_main_allows_missing_output_when_no_docx(tmp_path: Path, monkeypatch) ->
     original_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
-        rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=_FakeAppService())
+        rc = run_cli(
+            argv=["-i", str(tmp_path), "--no-docx"], app_service=services_of(_FakeAppService())
+        )
     finally:
         os.chdir(original_cwd)
 
@@ -290,7 +295,7 @@ def test_the_proofreading_context_flag_reaches_the_config(tmp_path: Path, monkey
                 "--proofreading-context",
                 "16384",
             ],
-            app_service=_FakeAppService(),
+            app_service=services_of(_FakeAppService()),
         )
     finally:
         os.chdir(original_cwd)
@@ -325,7 +330,7 @@ def test_main_exits_when_input_dir_does_not_exist(tmp_path: Path) -> None:
     assert (
         run_cli(
             argv=["-i", str(non_existent), "-o", str(tmp_path)],
-            app_service=build_app_services().processing,
+            app_service=build_app_services(),
         )
         == 1
     )
@@ -358,7 +363,7 @@ def test_main_loads_config_file_defaults(tmp_path: Path) -> None:
 
     rc = run_cli(
         argv=["--config", str(cfg_file), "-i", str(in_dir), "-o", str(out_dir)],
-        app_service=_FakeAppService(),
+        app_service=services_of(_FakeAppService()),
     )
 
     assert rc == 0
@@ -382,7 +387,7 @@ def test_main_uses_exit_fn_with_run_cli_result(tmp_path: Path) -> None:
             return RunSummary(failed=("a.png",))
 
     main(
-        app_service=_FakeAppService(),
+        app_service=services_of(_FakeAppService()),
         argv=["-i", str(tmp_path), "-o", str(out_dir)],
         exit_fn=lambda code: captured_codes.append(code),
     )
@@ -405,7 +410,7 @@ def test_main_exits_1_when_config_file_missing(tmp_path: Path) -> None:
 
     rc = run_cli(
         argv=["--config", non_existent, "-i", str(input_dir)],
-        app_service=build_app_services().processing,
+        app_service=build_app_services(),
     )
     assert rc == 1
 
@@ -576,7 +581,7 @@ def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch)
                 "--pdf-render-dpi",
                 "150",
             ],
-            app_service=_FakeAppService(),
+            app_service=services_of(_FakeAppService()),
         )
     finally:
         os.chdir(original_cwd)
@@ -673,7 +678,9 @@ def test_run_cli_tells_where_documents_are_processed(tmp_path: Path, capsys) -> 
             calls.append("run")
             return RunSummary()
 
-    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=_FakeAppService())
+    rc = run_cli(
+        argv=["-i", str(tmp_path), "--no-docx"], app_service=services_of(_FakeAppService())
+    )
 
     err = capsys.readouterr().err
     assert rc == 0
@@ -707,7 +714,7 @@ def test_run_cli_refuses_online_text_recognition_before_anything_starts(
 
     rc = run_cli(
         argv=["-i", str(tmp_path), "--no-docx", "--ocr-model", "gpt-oss:120b-cloud"],
-        app_service=_FakeAppService(),
+        app_service=services_of(_FakeAppService()),
     )
 
     assert rc == 1
@@ -732,7 +739,7 @@ def test_run_cli_refuses_the_reader_when_it_is_not_downloaded(tmp_path: Path, ca
 
     rc = run_cli(
         argv=["-i", str(tmp_path), "--no-docx", "--ocr-engine", "ppocr"],
-        app_service=_FakeAppService(),
+        app_service=services_of(_FakeAppService()),
     )
 
     assert rc == 1
@@ -756,7 +763,7 @@ def test_download_reader_flag_downloads_and_exits_without_input(capsys) -> None:
             assert on_progress is not None
             on_progress(5_000_000, 31_000_000)
 
-    rc = run_cli(argv=["--download-reader"], app_service=_FakeAppService())
+    rc = run_cli(argv=["--download-reader"], app_service=services_of(_FakeAppService()))
 
     err = capsys.readouterr().err
     assert rc == 0
@@ -778,7 +785,7 @@ def test_download_reader_flag_reports_the_error_sentence(capsys) -> None:
         def download_reader(self, on_progress=None, cancel=None) -> None:
             raise ModelDownloadError("Could not reach huggingface.co.")
 
-    rc = run_cli(argv=["--download-reader"], app_service=_FakeAppService())
+    rc = run_cli(argv=["--download-reader"], app_service=services_of(_FakeAppService()))
 
     assert rc == 1
     assert "ERROR: Could not reach huggingface.co." in capsys.readouterr().err
@@ -801,7 +808,7 @@ def test_download_page_models_flag_downloads_and_exits_without_input(capsys) -> 
             assert on_progress is not None
             on_progress(5_000_000, 38_000_000)
 
-    rc = run_cli(argv=["--download-page-models"], app_service=_FakeAppService())
+    rc = run_cli(argv=["--download-page-models"], app_service=services_of(_FakeAppService()))
 
     err = capsys.readouterr().err
     assert rc == 0
@@ -824,7 +831,7 @@ def test_download_page_models_flag_reports_the_error_sentence(capsys) -> None:
         def download_page_models(self, on_progress=None, cancel=None) -> None:
             raise ModelDownloadError("Could not reach huggingface.co.")
 
-    rc = run_cli(argv=["--download-page-models"], app_service=_FakeAppService())
+    rc = run_cli(argv=["--download-page-models"], app_service=services_of(_FakeAppService()))
 
     assert rc == 1
     assert "ERROR: Could not reach huggingface.co." in capsys.readouterr().err
@@ -852,7 +859,9 @@ def test_a_run_with_missing_page_models_prints_one_line_and_still_runs(
             started.append(True)
             return RunSummary()
 
-    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=_FakeAppService())
+    rc = run_cli(
+        argv=["-i", str(tmp_path), "--no-docx"], app_service=services_of(_FakeAppService())
+    )
 
     assert rc == 0
     assert started == [True]
@@ -918,7 +927,7 @@ def test_run_cli_passes_text_file_flags_to_config(tmp_path: Path) -> None:
             "--text",
             "--text-anonymized",
         ],
-        app_service=service,
+        app_service=services_of(service),
     )
 
     assert rc == 0
@@ -948,7 +957,7 @@ def test_run_cli_text_files_need_an_output_folder(
     monkeypatch.chdir(tmp_path)
     service = _TextFlagsAppService()
 
-    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx", flag], app_service=service)
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx", flag], app_service=services_of(service))
 
     assert rc == 1
     assert "No output folder specified. Use -o/--output" in capsys.readouterr().err
@@ -971,7 +980,7 @@ def test_run_cli_without_an_input_folder_says_how_to_give_one(
     monkeypatch.chdir(tmp_path)
     service = _TextFlagsAppService()
 
-    rc = run_cli(argv=[], app_service=service)
+    rc = run_cli(argv=[], app_service=services_of(service))
 
     assert rc == 1
     assert (
@@ -997,7 +1006,7 @@ def test_run_cli_with_a_missing_input_folder_names_it(
     monkeypatch.chdir(tmp_path)
     missing = tmp_path / "nowhere"
 
-    rc = run_cli(argv=["-i", str(missing)], app_service=_TextFlagsAppService())
+    rc = run_cli(argv=["-i", str(missing)], app_service=services_of(_TextFlagsAppService()))
 
     assert rc == 1
     assert f"ERROR: Input folder does not exist: {missing}" in capsys.readouterr().err
@@ -1016,7 +1025,7 @@ def test_run_cli_refuses_an_output_folder_the_service_rejects(tmp_path: Path, ca
 
     rc = run_cli(
         argv=["-i", str(tmp_path), "-o", str(tmp_path), "--no-docx", "--text"],
-        app_service=service,
+        app_service=services_of(service),
     )
 
     assert rc == 1
@@ -1035,7 +1044,8 @@ def test_run_cli_refuses_a_run_that_would_make_the_computer_swap(tmp_path: Path,
     service = _TextFlagsAppService(memory_warning="qwen3.5:9b needs about 7 GB of free memory.")
 
     rc = run_cli(
-        argv=["-i", str(tmp_path), "-o", str(tmp_path), "--no-docx", "--text"], app_service=service
+        argv=["-i", str(tmp_path), "-o", str(tmp_path), "--no-docx", "--text"],
+        app_service=services_of(service),
     )
 
     err = capsys.readouterr().err
@@ -1065,7 +1075,7 @@ def test_run_cli_runs_anyway_when_the_memory_check_is_ignored(tmp_path: Path, ca
             "--text",
             "--ignore-memory-check",
         ],
-        app_service=service,
+        app_service=services_of(service),
     )
 
     err = capsys.readouterr().err
@@ -1123,7 +1133,7 @@ def test_run_cli_passes_anonymizer_settings_from_the_config_file(tmp_path: Path)
 
     rc = run_cli(
         argv=["--config", str(cfg_file), "-o", str(tmp_path / "out")],
-        app_service=_FakeAppService(),
+        app_service=services_of(_FakeAppService()),
     )
 
     assert rc == 0
@@ -1145,7 +1155,9 @@ def test_a_stopped_run_exits_with_zero(tmp_path: Path) -> None:
         def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             return RunSummary(stopped=("a.png",), not_started=("b.png",))
 
-    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=_FakeAppService())
+    rc = run_cli(
+        argv=["-i", str(tmp_path), "--no-docx"], app_service=services_of(_FakeAppService())
+    )
 
     assert rc == 0
 
@@ -1170,7 +1182,9 @@ def test_the_keep_awake_flags_reach_the_config(tmp_path: Path, flags, expected) 
             captured.append(config)
             return RunSummary()
 
-    run_cli(argv=["-i", str(tmp_path), "--no-docx", *flags], app_service=_FakeAppService())
+    run_cli(
+        argv=["-i", str(tmp_path), "--no-docx", *flags], app_service=services_of(_FakeAppService())
+    )
 
     assert captured[0].keep_awake is expected
 

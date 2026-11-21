@@ -4,6 +4,8 @@ Both the main window (:func:`teachers_teammate.gui._main_window.main_gui`) and t
 benchmark window (:func:`teachers_teammate.gui.benchmark.main_benchmark`) need the
 same QApplication setup: application name/icon, the Linux desktop-file hint, and
 the qdarkstyle theme.  Centralising it keeps the two entry points consistent.
+
+The opt-in diagnostics are started through :mod:`teachers_teammate.application.composition`.
 """
 
 from __future__ import annotations

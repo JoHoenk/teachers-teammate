@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from teachers_teammate.application.service import OllamaStatus
+from teachers_teammate.application.ollama_server import OllamaStatus
 from teachers_teammate.domain.ollama_discovery import (
     DiscoveredServer,
     DiscoveryScope,
@@ -13,6 +13,7 @@ from teachers_teammate.domain.ollama_discovery import (
 )
 from teachers_teammate.gui import _ollama_status_line as line_module
 from teachers_teammate.gui._ollama_status_line import OllamaStatusLine
+from ._service_stubs import services_of
 
 LOCAL = "http://127.0.0.1:11434"
 REMOTE = "http://192.168.1.20:11434"
@@ -39,9 +40,14 @@ class _StatusService:
     def start_ollama(self) -> None:
         self.started += 1
 
+    def is_local(self, url: str, *, include_wsl_host: bool = False) -> bool:
+        return url.startswith("http://127.0.0.1") or (
+            include_wsl_host and url.startswith("http://172.")
+        )
+
 
 def _line(qtbot, service: _StatusService, url: str = LOCAL) -> OllamaStatusLine:
-    widget = OllamaStatusLine(app_service=service, url=url)
+    widget = OllamaStatusLine(app_service=services_of(service), url=url)
     qtbot.addWidget(widget)
     return widget
 

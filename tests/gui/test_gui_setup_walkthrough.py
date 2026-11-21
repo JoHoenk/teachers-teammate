@@ -39,7 +39,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QWizard
 import pytest
 
+from teachers_teammate.application import providers as providers_module
 from teachers_teammate.application import service as service_module
+from teachers_teammate.application.anonymization import AnonymizationService
+from teachers_teammate.application.composition import build_app_services
+from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.application.service import ProcessingApplicationService
 from teachers_teammate.application.setup_plan import (
     DownloadKind,
@@ -53,7 +57,6 @@ from teachers_teammate.domain.model_catalog import HardwareProfile, ModelCategor
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui._background import wait_for_background_tasks
-from teachers_teammate.gui import _main_window as main_window
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._ollama_status_line import CHECKING
 from teachers_teammate.gui.setup import SetupAssistant
@@ -387,17 +390,22 @@ class Walkthrough:
         monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
         monkeypatch.setattr(gpu_detector, "detect_gpus", lambda: ())
 
-        self.service = ProcessingApplicationService(
+        self.services = build_app_services(
             model_store=ModelStore(tmp_path / "models", bundled_root=tmp_path / "no-bundle")
         )
-        monkeypatch.setattr(self.service, "install_packages", self.downloads.install_packages)
+        self.service = self.services.processing
         monkeypatch.setattr(
-            self.service, "download_page_models", self.downloads.download_page_models
+            self.services.addons, "install_packages", self.downloads.install_packages
         )
-        monkeypatch.setattr(self.service, "download_reader", self.downloads.download_reader)
+        monkeypatch.setattr(
+            self.services.reader,
+            "download_page_models",
+            self.downloads.download_page_models,
+        )
+        monkeypatch.setattr(self.services.reader, "download_reader", self.downloads.download_reader)
         # The round's spaCy thread builds a service of its own, so the stub goes on the class.
         monkeypatch.setattr(
-            ProcessingApplicationService,
+            AnonymizationService,
             "download_spacy_model",
             lambda _service, model, target, progress_cb: self.downloads.download_spacy_model(
                 model, target, progress_cb
@@ -415,7 +423,7 @@ class Walkthrough:
         monkeypatch.setattr(
             SetupAssistant, "exec", lambda assistant: self._scripted_exec(assistant)
         )
-        self.win = MainWindow(app_service=self.service)
+        self.win = MainWindow(app_service=self.services)
         qtbot.addWidget(self.win)
 
     # ── the settings file ─────────────────────────────────────────────────────
@@ -828,11 +836,11 @@ def test_s5_a_failed_pull_drops_the_queue_and_leaves_the_window_usable(
 # ── S8: changing one's mind ───────────────────────────────────────────────────
 
 
-def key_environment(service: ProcessingApplicationService) -> dict[str, str]:
+def key_environment(providers: ProviderService) -> dict[str, str]:
     """Return the environment variables the providers read their keys from."""
     keys = {
-        str(service.get_provider_info(provider).get("env_key", ""))
-        for provider in service.list_providers()
+        str(providers.get_provider_info(provider).get("env_key", ""))
+        for provider in providers.list_providers()
     }
     return {key: os.environ[key] for key in keys if key and key in os.environ}
 
@@ -845,7 +853,7 @@ def test_s8_cancel_on_the_summary_changes_nothing(walkthrough) -> None:
     """
     walk = walkthrough()
     before = walk.config_path.read_text(encoding="utf-8")
-    environment = key_environment(walk.service)
+    environment = key_environment(walk.services.providers)
 
     def script(driver: Driver) -> None:
         driver.next()  # Welcome → Your classes
@@ -865,7 +873,7 @@ def test_s8_cancel_on_the_summary_changes_nothing(walkthrough) -> None:
     assert walk.config_path.read_text(encoding="utf-8") == before
     assert walk.fake.pulled == []
     assert walk.downloads.page_models == 0
-    assert key_environment(walk.service) == environment
+    assert key_environment(walk.services.providers) == environment
 
 
 def test_s8_cancel_on_a_first_start_leaves_a_working_setup(walkthrough, monkeypatch) -> None:
@@ -874,9 +882,9 @@ def test_s8_cancel_on_a_first_start_leaves_a_working_setup(walkthrough, monkeypa
     When   the teacher cancels the assistant the first-start timer opened
     Then   the settings file holds the system language and the best models for this computer
     """
-    monkeypatch.setattr(main_window, "system_language", lambda: LANGUAGE)
+    monkeypatch.setattr(ProcessingApplicationService, "system_language", lambda self: LANGUAGE)
     walk = walkthrough(first_start=True)
-    profile = walk.service.resolve_hardware_profile("auto", walk.fake.url).profile
+    profile = walk.services.recommendations.resolve_hardware_profile("auto", walk.fake.url).profile
 
     def script(driver: Driver) -> None:
         driver.next()  # Welcome → Your classes
@@ -910,17 +918,17 @@ def test_s7_an_online_service_installs_its_package_and_keeps_the_key(
     """
     walk = walkthrough()
     monkeypatch.setattr(
-        walk.service,
+        walk.services.providers,
         "missing_provider_package",
         lambda provider: "langchain-mistralai" if provider == "mistral" else None,
     )
     monkeypatch.setattr(
-        walk.service,
+        walk.services.anonymization,
         "anonymizer_available",
         lambda _language, _config=None: True,  # name detection is there: no spaCy download
     )
     monkeypatch.setattr(
-        service_module,
+        providers_module,
         "list_provider_models_checked",
         lambda _provider, **_kwargs: ModelListing(models=[MODEL]),
     )

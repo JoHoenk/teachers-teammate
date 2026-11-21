@@ -24,6 +24,7 @@ from teachers_teammate.gui.setup._flow import ORDER, SetupPageId
 from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts._types import Notice
 
+from ._service_stubs import services_of
 from ._settings_stubs import FakeKeyring, SetupAppService
 
 
@@ -51,7 +52,7 @@ def _context(service: SetupAppService, **settings: Any) -> SetupContext:
     """Return a context over *service* with the given settings keys overridden."""
     values: dict[str, Any] = dict(DEFAULTS)
     values.update(settings)
-    return SetupContext(settings=values, app_service=service)
+    return SetupContext(settings=values, app_service=services_of(service))
 
 
 def _assistant(qtbot, context: SetupContext) -> SetupAssistant:
@@ -81,7 +82,7 @@ def test_the_round_of_installs_belongs_to_the_window_not_the_assistant(
 def _plan(assistant: SetupAssistant, service: SetupAppService) -> SetupPlan:
     """Work the setup plan out for the assistant's answers and put it on the summary page."""
     answers = assistant.answers()
-    plan = service.plan_setup(answers, dict(assistant._context.settings))
+    plan = service.setup.plan_setup(answers, dict(assistant._context.settings))
     assistant._pages[SetupPageId.SUMMARY]._on_plan(plan, None)
     return plan
 

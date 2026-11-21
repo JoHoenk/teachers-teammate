@@ -28,6 +28,9 @@ DEFAULT_SERVER_URL = f"http://127.0.0.1:{OLLAMA_PORT}"
 #: with a ``/16``) is cut down to the ``/24`` around the computer's own address.
 SCAN_PREFIX = 24
 
+#: Where a teacher downloads Ollama from, when the app offers to open the page.
+OLLAMA_DOWNLOAD_URL = "https://ollama.com/download"
+
 
 class ServerKind(StrEnum):
     """Whose computer a found server runs on."""
@@ -236,3 +239,31 @@ def scan_targets(address: str, prefix: int = SCAN_PREFIX) -> list[str]:
         return []
     network = ipaddress.ip_network(f"{address}/{max(prefix, SCAN_PREFIX)}", strict=False)
     return [str(host) for host in network.hosts() if host != own]
+
+
+class WaitKind(StrEnum):
+    """Why a request to Ollama has no answer yet."""
+
+    NONE = ""
+    """It has one, or the model is in memory and reading the text."""
+    BUSY = "busy"
+    """Another model is still generating, so this request is queued behind it."""
+    LOADING = "loading"
+    """The model asked for is not in memory yet."""
+    QUEUED = "queued"
+    """Another model is in the way before the run even starts."""
+
+
+@dataclass(frozen=True)
+class WaitDetail:
+    """What to tell the teacher about a request that has no answer yet."""
+
+    kind: WaitKind = WaitKind.NONE
+    model: str = ""
+    """The model the request is for."""
+    other: str = ""
+    """The model in the way: generating, or loaded while this one is not."""
+
+    def __bool__(self) -> bool:
+        """Whether there is anything to say."""
+        return self.kind is not WaitKind.NONE

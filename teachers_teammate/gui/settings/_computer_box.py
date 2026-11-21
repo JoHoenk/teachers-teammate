@@ -9,17 +9,16 @@ single "change…" link.  The Add-ons page shows the profile row alone (:class:`
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Protocol
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from ...application.speed_estimates import CLASS_SET_FILES, SpeedChoices, SpeedSummary
+from ...application.composition import AppServices
+from ...application.speed_estimates import CLASS_SET_FILES
 from ...config import DEFAULTS
-from ...domain.model_catalog import HardwareDetection
 from ...texts.settings import PAGE_AI_SETUP
 from .. import _user_text as txt
-from .._hardware_profile_selector import HardwareProfileSelector, _ProfileService
+from .._hardware_profile_selector import HardwareProfileSelector
 
 CHANGE_PROFILE_LINK = '<a href="change">change…</a>'
 BOX_TITLE = f"<b>{PAGE_AI_SETUP}</b>"
@@ -36,7 +35,7 @@ class ProfileLine(QWidget):
     def __init__(
         self,
         *,
-        app_service: _ProfileService,
+        app_service: AppServices,
         setting: str = DEFAULTS["hardware_profile"],
         ollama_url: str = DEFAULTS["ollama_url"],
         with_link: bool = True,
@@ -67,24 +66,6 @@ class ProfileLine(QWidget):
         self.selector.set_ollama_url(url)
 
 
-class _SpeedService(Protocol):
-    """What the class-set row asks the application service."""
-
-    def speed_choices(self, settings: Mapping[str, object]) -> SpeedChoices: ...
-
-    def speed_summary(
-        self,
-        choices: SpeedChoices,
-        *,
-        hardware: HardwareDetection | None = None,
-        cached_only: bool = True,
-    ) -> SpeedSummary: ...
-
-
-class _BoxService(_ProfileService, _SpeedService, Protocol):
-    """What the box asks the application service: the profile and the class-set time."""
-
-
 class SpeedLine(QWidget):
     """One read-only line: how long a class set takes with the models chosen on *AI models*.
 
@@ -97,7 +78,7 @@ class SpeedLine(QWidget):
     def __init__(
         self,
         *,
-        app_service: _SpeedService,
+        app_service: AppServices,
         settings_provider: Callable[[], Mapping[str, object]],
         profile_selector: HardwareProfileSelector,
         parent: QWidget | None = None,
@@ -118,11 +99,11 @@ class SpeedLine(QWidget):
         Call it once the row sits in its page: showing a widget that has no parent yet would
         open it as a window of its own.
         """
-        choices = self._service.speed_choices(self._settings_provider())
+        choices = self._service.speeds.choices(self._settings_provider())
         self.setVisible(bool(choices.models()))
         if not choices.models():
             return
-        summary = self._service.speed_summary(choices, hardware=self._selector.resolved())
+        summary = self._service.speeds.speed_summary(choices, hardware=self._selector.resolved())
         self._label.setText(
             txt.speed_class_set_time(
                 CLASS_SET_FILES, summary.class_set.low_s, summary.class_set.high_s
@@ -141,7 +122,7 @@ class ComputerBox(QFrame):
     def __init__(
         self,
         *,
-        app_service: _BoxService,
+        app_service: AppServices,
         settings_provider: Callable[[], Mapping[str, object]],
         setting: str = DEFAULTS["hardware_profile"],
         ollama_url: str = DEFAULTS["ollama_url"],

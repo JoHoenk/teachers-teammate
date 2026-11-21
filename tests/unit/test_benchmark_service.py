@@ -15,10 +15,12 @@ from teachers_teammate.config import OcrConfig
 from teachers_teammate.infrastructure.benchmark.run_store import BenchmarkRunStore
 from teachers_teammate.infrastructure.benchmark.runner import OcrRunResult
 
+from ..gui._service_stubs import services_of
+
 
 def _service(tmp_path: Path, runner) -> BenchmarkApplicationService:
     return BenchmarkApplicationService(
-        processing_service=build_app_services().processing,
+        app_services=build_app_services(),
         run_store=BenchmarkRunStore(tmp_path),
         runner=runner,
     )
@@ -163,25 +165,3 @@ def test_compare_ignores_formatting_marks(tmp_path: Path) -> None:
 
     assert comparison.similarity == 1.0
     assert comparison.stats_b.words == 3
-
-
-def test_the_reader_questions_are_answered_by_the_processing_service(tmp_path: Path) -> None:
-    """
-    Given  a benchmark service over a processing service that knows the reader
-    When   the benchmark's engine picker asks whether it is downloaded, where it is kept and
-           to download it
-    Then   every question reaches the processing service
-    """
-    from unittest.mock import MagicMock  # noqa: PLC0415
-
-    processing = MagicMock()
-    processing.reader_installed.return_value = False
-    processing.models_dir.return_value = tmp_path
-    service = BenchmarkApplicationService(
-        processing_service=processing, run_store=BenchmarkRunStore(tmp_path / "runs")
-    )
-
-    assert service.reader_installed() is False
-    assert service.models_dir() == tmp_path
-    service.download_reader(None, None)
-    processing.download_reader.assert_called_once_with(None, None)

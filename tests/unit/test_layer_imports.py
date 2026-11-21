@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 
 #: Layer -> the layers it may import (``teachers_teammate/BUILD`` lists the same as ``deps``).
+#: An adapter reaches the concrete classes only through ``application``; the modules that wire
+#: them (``_COMPOSITION_MODULES``) are the exception, because wiring is their whole job.
 ALLOWED: dict[str, frozenset[str]] = {
     "pkg": frozenset(),
     "domain": frozenset({"pkg"}),
@@ -14,9 +16,23 @@ ALLOWED: dict[str, frozenset[str]] = {
     "texts": frozenset({"pkg", "domain"}),
     "infrastructure": frozenset({"pkg", "domain", "core"}),
     "application": frozenset({"pkg", "domain", "core", "infrastructure"}),
-    "cli": frozenset({"pkg", "domain", "core", "infrastructure", "application", "texts"}),
-    "gui": frozenset({"pkg", "domain", "core", "infrastructure", "application", "texts"}),
+    "cli": frozenset({"pkg", "domain", "core", "application", "texts"}),
+    "gui": frozenset({"pkg", "domain", "core", "application", "texts"}),
 }
+
+#: The modules that build the concrete classes and hand them to the adapters.  They may import
+#: ``infrastructure``; every other adapter module may not.
+_COMPOSITION_MODULES: frozenset[str] = frozenset(
+    {
+        "__main__.py",
+        "cli_composition.py",
+        "frozen_modes.py",
+        "gui/__main__.py",
+        "gui/benchmark/__main__.py",
+        "gui/benchmark/composition.py",
+        "gui/composition.py",
+    }
+)
 
 _PACKAGE = "teachers_teammate"
 _CORE_MODULES = {"config", "interfaces", "settings_schema", "_model_defaults"}
@@ -88,8 +104,11 @@ def test_every_import_points_down_the_layers() -> None:
             else list(relative.with_suffix("").parts)
         )
         layer = _layer_of(own, package)
+        allowed = ALLOWED[layer]
+        if relative.as_posix() in _COMPOSITION_MODULES:
+            allowed = allowed | {"infrastructure"}
         for target in _imported_modules(path, list(relative.parts[:-1])):
             other = _layer_of(target, package)
-            if other != layer and other not in ALLOWED[layer]:
+            if other != layer and other not in allowed:
                 violations.append(f"{relative} ({layer}) imports {'.'.join(target)} ({other})")
     assert not violations, "\n".join(violations)

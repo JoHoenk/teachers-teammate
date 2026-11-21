@@ -77,3 +77,18 @@ class RunSummary:
     def exit_code(self) -> int:
         """``1`` only when something failed; a stopped run is not an error."""
         return 1 if self.status is RunStatus.FAILED else 0
+
+
+@dataclass(frozen=True)
+class KeepAwakeState:
+    """Whether the computer is kept from sleeping during a run, and what the GUI should say."""
+
+    enabled: bool
+    """The teacher asked for it (``Config.keep_awake``)."""
+    held: bool = False
+    """The system agreed; ``False`` with ``enabled`` means the computer may sleep anyway."""
+    available: bool = True
+    """This computer has a way to ask for it; ``False``: nothing was requested (WSL, a platform
+    without a tool), so the system did not refuse either."""
+    on_battery: bool | None = None
+    """Running on battery power; ``None`` when there is no battery or it cannot be read."""

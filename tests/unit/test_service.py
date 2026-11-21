@@ -17,22 +17,30 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.domain.setting_values import PreprocessMethod
+from teachers_teammate.application import providers as providers_module
 from teachers_teammate.application import service as service_module
 from teachers_teammate.config import Config
-from teachers_teammate.application.composition import inject_addon_packages_dir
+from teachers_teammate.application.composition import (
+    build_app_services,
+    inject_addon_packages_dir,
+)
 from teachers_teammate.application.commands import DocumentCommands, WorkNotSavedError
+from teachers_teammate.application.correction_options import proofreading_prompts
+from teachers_teammate.application.documents import DocumentQueries
+from teachers_teammate.application.model_recommendations import ModelRecommendationService
+from teachers_teammate.application.providers import ProviderService
+from teachers_teammate.application.reader import ReaderService
 from teachers_teammate.application.queue import StageState
+from teachers_teammate.application.ollama_server import OllamaStatus
 from teachers_teammate.application.service import (
     AnonymizerConfig,
     DocxExport,
     IssueKind,
-    OllamaStatus,
     ProcessingApplicationService,
     RequirementIssue,
     RunPreflight,
 )
 from teachers_teammate.domain.data_location import STAGE_CORRECTION
-from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.ollama_discovery import OllamaState
 from teachers_teammate.domain.run_summary import RunSummary
 from teachers_teammate.domain.teacher_work import (
@@ -82,11 +90,6 @@ def _discovery_of(*names: str) -> MagicMock:
     return MagicMock(collect_input_files=MagicMock(return_value=[Path(n) for n in names]))
 
 
-def _as_listing(fake):
-    """Wrap a fake that returns model names as the checked listing the service asks for."""
-    return lambda provider, **kwargs: ModelListing(list(fake(provider, **kwargs)))
-
-
 #: The reader's model files as the tests find them: in place, unless a test passes its own store.
 _DEFAULT_STORE: ModelStore | None = None
 
@@ -99,6 +102,11 @@ def _reader_models_in_place(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     )
 
 
+def _build_processing(**overrides) -> ProcessingApplicationService:
+    """Return the processing service of services built the way the entry points build them."""
+    return build_app_services(**overrides).processing
+
+
 def _make_svc(
     *,
     pipeline_factory=None,
@@ -109,12 +117,27 @@ def _make_svc(
     mock_pipeline_factory = pipeline_factory or MagicMock(return_value=MagicMock(run=lambda: 0))
     mock_state_factory = state_repository_factory or MagicMock(return_value=MagicMock())
     mock_discovery = discovery or MagicMock()
-    return ProcessingApplicationService(
+    return _build_processing(
         discovery=mock_discovery,
         pipeline_factory=mock_pipeline_factory,
         state_repository_factory=mock_state_factory,
         model_store=model_store or _DEFAULT_STORE,
     )
+
+
+def _providers_of(svc: ProcessingApplicationService) -> ProviderService:
+    """Return the provider service *svc* built for itself (its caches are the ones under test)."""
+    return svc._providers
+
+
+def _reader_of(svc: ProcessingApplicationService) -> ReaderService:
+    """Return the reader service *svc* built for itself (its model files are under test)."""
+    return svc._reader
+
+
+def _recommendations_of(svc: ProcessingApplicationService) -> ModelRecommendationService:
+    """Return the recommendation service *svc* was built with (its probe is the one under test)."""
+    return svc._recommendations
 
 
 def _minimal_state(tmp_path: Path, source: Path) -> DocumentState:
@@ -237,7 +260,7 @@ def test_run_selected_holds_the_computer_awake_around_the_whole_run(tmp_path: Pa
     pipeline = MagicMock()
     pipeline.run.side_effect = lambda: order.append("run") or RunSummary()
     factory = MagicMock(return_value=pipeline)
-    svc = ProcessingApplicationService(pipeline_factory=factory, sleep_blocker=blocker)
+    svc = _build_processing(pipeline_factory=factory, sleep_blocker=blocker)
 
     svc.run_selected(make_config(tmp_path), [])
 
@@ -260,7 +283,7 @@ def test_run_selected_reports_that_nothing_could_be_requested_without_a_blocker(
     pipeline = MagicMock()
     pipeline.run.return_value = RunSummary()
     factory = MagicMock(return_value=pipeline)
-    svc = ProcessingApplicationService(pipeline_factory=factory, sleep_blocker=NullSleepBlocker())
+    svc = _build_processing(pipeline_factory=factory, sleep_blocker=NullSleepBlocker())
 
     svc.run_selected(make_config(tmp_path), [])
 
@@ -278,9 +301,7 @@ def test_run_selected_reports_a_refusal_when_a_blocker_exists(tmp_path: Path) ->
     pipeline = MagicMock()
     pipeline.run.return_value = RunSummary()
     factory = MagicMock(return_value=pipeline)
-    svc = ProcessingApplicationService(
-        pipeline_factory=factory, sleep_blocker=_RecordingBlocker(grants=False)
-    )
+    svc = _build_processing(pipeline_factory=factory, sleep_blocker=_RecordingBlocker(grants=False))
 
     svc.run_selected(make_config(tmp_path), [])
 
@@ -298,7 +319,7 @@ def test_run_selected_releases_the_computer_when_the_pipeline_raises(tmp_path: P
     blocker = _RecordingBlocker()
     pipeline = MagicMock()
     pipeline.run.side_effect = RuntimeError("boom")
-    svc = ProcessingApplicationService(
+    svc = _build_processing(
         pipeline_factory=MagicMock(return_value=pipeline), sleep_blocker=blocker
     )
 
@@ -317,7 +338,7 @@ def test_run_selected_does_not_hold_when_keep_awake_is_off(tmp_path: Path) -> No
     """
     blocker = _RecordingBlocker()
     factory = MagicMock(return_value=MagicMock(run=lambda: RunSummary()))
-    svc = ProcessingApplicationService(pipeline_factory=factory, sleep_blocker=blocker)
+    svc = _build_processing(pipeline_factory=factory, sleep_blocker=blocker)
 
     svc.run_selected(make_config(tmp_path, keep_awake=False), [])
 
@@ -335,9 +356,7 @@ def test_run_selected_reports_the_keep_awake_state_and_a_refusal(tmp_path: Path)
     """
     seen: list = []
     factory = MagicMock(return_value=MagicMock(run=lambda: RunSummary()))
-    svc = ProcessingApplicationService(
-        pipeline_factory=factory, sleep_blocker=_RecordingBlocker(grants=False)
-    )
+    svc = _build_processing(pipeline_factory=factory, sleep_blocker=_RecordingBlocker(grants=False))
 
     svc.run_selected(
         make_config(tmp_path),
@@ -383,47 +402,6 @@ def test_run_preview_only_delegates_to_pipeline_factory(tmp_path: Path) -> None:
     factory.assert_called_once_with(cfg, [])
     mock_pipeline.run_preview_only.assert_called_once()
     assert result == 0
-
-
-# ── preprocess_preview ─────────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-@pytest.mark.use_case("Preview_Preprocessing")
-def test_preprocess_preview_uses_injected_component_factory(
-    tmp_path: Path, sample_png: Path
-) -> None:
-    """
-    Given  a ProcessingApplicationService constructed with a custom component_factory
-    When   preprocess_preview() is called
-    Then   the factory's build_preprocessor is used instead of the module default
-
-    Regression guard: preprocess_preview() used to call
-    stage_builder.default_build_preprocessor directly, so the preview silently
-    diverged from a pipeline configured with a non-default factory.
-    """
-    from teachers_teammate.config import OcrConfig  # noqa: PLC0415
-    from teachers_teammate.infrastructure.stage_builder import (  # noqa: PLC0415
-        PipelineComponentFactory,
-    )
-
-    class _StubPreprocessor:
-        def preprocess(self, image_path):
-            return image_path, ["stub_step"]
-
-    build_preprocessor = MagicMock(return_value=_StubPreprocessor())
-    factory = PipelineComponentFactory(build_preprocessor=build_preprocessor)
-    svc = ProcessingApplicationService(
-        pipeline_factory=MagicMock(),
-        state_repository_factory=MagicMock(),
-        component_factory=factory,
-    )
-    ocr = OcrConfig(preprocess_method=PreprocessMethod.AUTO)
-
-    _original, _processed, steps = svc.preprocess_preview(sample_png, ocr, tmp_path)
-
-    assert steps == ["stub_step"]
-    build_preprocessor.assert_called_once_with(tmp_path, False, ocr, svc.model_store)
 
 
 # ── check_connection — engine checks ──────────────────────────────────────
@@ -557,20 +535,7 @@ def test_check_connection_no_engine_no_provider_returns_false() -> None:
     assert len(msg) > 0
 
 
-# ── list_ocr_engines / list_supported_suffixes
-
-
-@pytest.mark.unit
-def test_list_ocr_engines_returns_known_engines() -> None:
-    """
-    Given  a ProcessingApplicationService
-    When   list_ocr_engines() is called
-    Then   the returned list includes 'ollama' and 'ppocr'
-    """
-    svc = _make_svc()
-    engines = svc.list_ocr_engines()
-    assert "ollama" in engines
-    assert "ppocr" in engines
+# ── list_supported_suffixes
 
 
 @pytest.mark.unit
@@ -599,7 +564,7 @@ def test_page_models_notice_names_the_flag_only_when_the_automatic_preparation_l
     """
     from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
-    svc = ProcessingApplicationService(
+    svc = _build_processing(
         pipeline_factory=MagicMock(),
         state_repository_factory=MagicMock(),
         model_store=ModelStore(tmp_path / "models"),
@@ -614,50 +579,6 @@ def test_page_models_notice_names_the_flag_only_when_the_automatic_preparation_l
     assert "--download-page-models" in svc.page_models_notice_for_run(auto)
     assert svc.page_models_notice_for_run(original) == ""
     assert svc.page_models_notice_for_run(off) == ""
-
-
-@pytest.mark.unit
-def test_the_page_models_are_installed_when_the_store_has_them(tmp_path: Path) -> None:
-    """
-    Given  a model store without the page models, and one that holds them
-    When   page_models_installed() is asked
-    Then   it is False for the first and True for the second, and the notice goes away
-    """
-    from teachers_teammate.config import OcrConfig  # noqa: PLC0415
-
-    config = make_config(tmp_path, ocr=OcrConfig(preprocess_method=PreprocessMethod.AUTO))
-
-    def service(store) -> ProcessingApplicationService:
-        return ProcessingApplicationService(
-            pipeline_factory=MagicMock(), state_repository_factory=MagicMock(), model_store=store
-        )
-
-    empty = service(fake_page_models_store(tmp_path / "a", installed=False))
-    full = service(fake_page_models_store(tmp_path / "b"))
-
-    assert not empty.page_models_installed()
-    assert full.page_models_installed()
-    assert full.page_models_notice_for_run(config) == ""
-
-
-@pytest.mark.unit
-def test_download_page_models_downloads_the_page_model_sets(tmp_path: Path) -> None:
-    """
-    Given  a service with a model store
-    When   download_page_models() is called
-    Then   the store is asked to download exactly the two page models, with the callbacks
-    """
-    from teachers_teammate.domain.local_models import PAGE_MODELS  # noqa: PLC0415
-
-    store = MagicMock()
-    svc = ProcessingApplicationService(
-        pipeline_factory=MagicMock(), state_repository_factory=MagicMock(), model_store=store
-    )
-    progress = MagicMock()
-
-    svc.download_page_models(progress, None)
-
-    store.download.assert_called_once_with(PAGE_MODELS, on_progress=progress, cancel=None)
 
 
 # ── _invalidate_from_stage (static helper) ────────────────────────────────
@@ -1213,160 +1134,6 @@ def test_invalidate_from_stage_static_invalid_stage_propagates_value_error(tmp_p
         )
 
 
-# ── clear_anonymizer_cache ────────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-def test_clear_anonymizer_cache_empties_dict(tmp_path: Path) -> None:
-    """
-    Given  a service with cached anonymizer entries
-    When   clear_anonymizer_cache() is called
-    Then   the internal cache is empty
-    """
-    svc = _make_svc()
-    svc._anonymizer_cache[("English", object())] = MagicMock()
-    assert len(svc._anonymizer_cache) == 1
-
-    svc.clear_anonymizer_cache()
-
-    assert len(svc._anonymizer_cache) == 0
-
-
-# ── New service passthroughs ──────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-def test_detect_gpus_delegates_to_infrastructure(tmp_path: Path) -> None:
-    """
-    Given  a ProcessingApplicationService
-    When   detect_gpus() is called
-    Then   it delegates to gpu_detector.detect_gpus and returns the result
-    """
-    from teachers_teammate.infrastructure.gpu_detector import GpuInfo  # noqa: PLC0415
-
-    fake_gpus = [GpuInfo("nvidia", "Test GPU")]
-    svc = _make_svc()
-
-    with patch("teachers_teammate.infrastructure.gpu_detector.detect_gpus", return_value=fake_gpus):
-        result = svc.detect_gpus()
-
-    assert result == fake_gpus
-
-
-@pytest.mark.unit
-def test_resolve_config_path_delegates(tmp_path: Path) -> None:
-    """
-    Given  a config file exists at a known path
-    When   resolve_config_path() is called with that explicit path as a string
-    Then   it returns the resolved Path without error
-    """
-    cfg = tmp_path / "ocr.toml"
-    cfg.write_text("[settings]\n", encoding="utf-8")
-    svc = _make_svc()
-
-    result = svc.resolve_config_path(str(cfg))
-
-    assert result == cfg
-
-
-@pytest.mark.unit
-def test_first_start_settings_tells_a_first_start_from_a_saved_setup(tmp_path: Path) -> None:
-    """
-    Given  no settings file, one with only what the installer writes, one a teacher saved, and
-           one that cannot be read
-    When   first_start_settings() is asked about each
-    Then   the first two are a first start (carrying the installer's choice), the others are not
-    """
-    svc = _make_svc()
-    installer = tmp_path / "installer.toml"
-    installer.write_text("check_for_updates = false\n", encoding="utf-8")
-    saved = tmp_path / "saved.toml"
-    saved.write_text('check_for_updates = false\nlanguage = "German"\n', encoding="utf-8")
-    broken = tmp_path / "broken.toml"
-    broken.write_text("this is = = not toml", encoding="utf-8")
-
-    assert svc.first_start_settings(None) == {}
-    assert svc.first_start_settings(tmp_path / "missing.toml") == {}
-    assert svc.first_start_settings(installer) == {"check_for_updates": False}
-    assert svc.first_start_settings(saved) is None
-    assert svc.first_start_settings(broken) is None
-
-
-@pytest.mark.unit
-def test_default_config_path_delegates(tmp_path: Path) -> None:
-    """
-    Given  a ProcessingApplicationService and a patched storage root
-    When   default_config_path() is called
-    Then   it delegates to storage_root.default_config_path and returns a Path
-    """
-    expected = tmp_path / "ocr.toml"
-    svc = _make_svc()
-
-    with patch(
-        "teachers_teammate.application.service._infra_default_config_path",
-        return_value=expected,
-    ):
-        result = svc.default_config_path()
-
-    assert result == expected
-
-
-@pytest.mark.unit
-def test_addon_packages_dir_delegates(tmp_path: Path) -> None:
-    """
-    Given  a ProcessingApplicationService
-    When   addon_packages_dir() is called
-    Then   it delegates to addon_manager.get_packages_dir and returns a Path
-    """
-    svc = _make_svc()
-
-    with patch(
-        "teachers_teammate.infrastructure.addon_manager.get_packages_dir",
-        return_value=tmp_path,
-    ):
-        result = svc.addon_packages_dir()
-
-    assert result == tmp_path
-
-
-@pytest.mark.unit
-def test_get_installation_status_reports_the_built_in_reader(tmp_path: Path) -> None:
-    """
-    Given  one service with the reader's model files and one without
-    When   get_installation_status() is called
-    Then   'reader:ppocr' is True for the first and False for the second
-    """
-    with_models = _make_svc(model_store=fake_reader_store(tmp_path / "a"))
-    without = _make_svc(model_store=fake_reader_store(tmp_path / "b", installed=False))
-
-    assert with_models.get_installation_status()["reader:ppocr"] is True
-    assert without.get_installation_status()["reader:ppocr"] is False
-
-
-@pytest.mark.unit
-def test_get_installation_status_says_which_models_the_app_carries_itself(
-    tmp_path: Path,
-) -> None:
-    """
-    Given  a store whose bundle holds the reader and the page models, and one whose bundle is empty
-    When   get_installation_status() is called
-    Then   the bundled flags say so, and a bundled model counts as installed without a download
-    """
-    from teachers_teammate.domain.local_models import PAGE_MODELS, READER_MODELS  # noqa: PLC0415
-
-    bundle = fake_bundle(tmp_path / "bundle", (*READER_MODELS, *PAGE_MODELS))
-    carried = _make_svc(model_store=ModelStore(tmp_path / "downloads", bundled_root=bundle))
-    plain = _make_svc(model_store=ModelStore(tmp_path / "downloads"))
-
-    status = carried.get_installation_status()
-
-    assert status["bundled:reader:ppocr"] is True
-    assert status["bundled:page_models:all"] is True
-    assert status["reader:ppocr"] is True
-    assert status["page_models:all"] is True
-    assert plain.get_installation_status()["bundled:reader:ppocr"] is False
-
-
 @pytest.mark.unit
 def test_check_connection_reader_reports_whether_it_is_downloaded(tmp_path: Path) -> None:
     """
@@ -1383,27 +1150,6 @@ def test_check_connection_reader_reports_whether_it_is_downloaded(tmp_path: Path
 
     assert ok is True and "built-in reader ready" in msg
     assert missing is False and "not downloaded" in missing_msg and "31 MB" in missing_msg
-
-
-@pytest.mark.unit
-def test_reader_downloads_through_the_store(tmp_path: Path) -> None:
-    """
-    Given  a service whose store is empty and a fake download
-    When   download_reader() is called with progress and cancel
-    Then   the store is asked to download the reader's two model sets
-    """
-    store = MagicMock()
-    store.missing.return_value = [1]
-    store.root = tmp_path
-    svc = _make_svc(model_store=store)
-    cancel = threading.Event()
-
-    svc.download_reader(None, cancel)
-
-    assert store.download.call_args.kwargs == {"on_progress": None, "cancel": cancel}
-    assert len(list(store.download.call_args.args[0])) == 2
-    assert svc.reader_installed() is False
-    assert svc.models_dir() == tmp_path
 
 
 @pytest.mark.unit
@@ -1465,493 +1211,7 @@ def _reader_service(tmp_path: Path) -> ProcessingApplicationService:
     )
 
 
-@pytest.mark.unit
-def test_is_module_importable_returns_true_when_spec_found(monkeypatch) -> None:
-    """
-    Given  importlib.util.find_spec returns a non-None spec for a module name
-    When   is_module_importable() is called with that module name
-    Then   True is returned
-    """
-    import importlib.util  # noqa: PLC0415
-
-    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: object())
-    svc = _make_svc()
-    assert svc.is_module_importable("some_package") is True
-
-
-@pytest.mark.unit
-def test_is_module_importable_returns_false_when_spec_missing(monkeypatch) -> None:
-    """
-    Given  importlib.util.find_spec returns None (module not installed)
-    When   is_module_importable() is called
-    Then   False is returned
-    """
-    import importlib.util  # noqa: PLC0415
-
-    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: None)
-    svc = _make_svc()
-    assert svc.is_module_importable("missing_package") is False
-
-
-@pytest.mark.unit
-def test_get_installation_status_includes_langchain_packages(monkeypatch) -> None:
-    """
-    Given  get_installation_status() is called with a langchain_packages dict
-    When   importlib.util.find_spec returns a spec for one module and None for another
-    Then   the result contains 'langchain:{key}' entries matching the spec outcomes
-    """
-    import importlib.util  # noqa: PLC0415
-
-    present_modules = {"langchain_core"}
-    monkeypatch.setattr(
-        importlib.util,
-        "find_spec",
-        lambda name: object() if name in present_modules else None,
-    )
-    svc = _make_svc()
-    status = svc.get_installation_status(
-        langchain_packages={"core": "langchain_core", "openai": "langchain_openai"},
-    )
-    assert status["langchain:core"] is True
-    assert status["langchain:openai"] is False
-
-
-@pytest.mark.unit
-def test_list_provider_models_uses_ttl_cache() -> None:
-    """
-    Given  a ProcessingApplicationService whose list_provider_models is called once
-    When   list_provider_models() is called a second time within the TTL window
-    Then   the underlying infrastructure function is called only once (cache hit)
-    """
-    svc = _make_svc()
-    call_count = 0
-
-    def _fake_list(provider, **_kwargs):
-        nonlocal call_count
-        call_count += 1
-        return ["model-a", "model-b"]
-
-    with patch(
-        "teachers_teammate.application.service.list_provider_models_checked",
-        side_effect=_as_listing(_fake_list),
-    ):
-        first = svc.list_provider_models("openai")
-        second = svc.list_provider_models("openai")
-
-    assert first == ["model-a", "model-b"]
-    assert second == ["model-a", "model-b"]
-    assert call_count == 1
-
-
-@pytest.mark.unit
-def test_invalidate_model_cache_forces_refetch() -> None:
-    """
-    Given  a ProcessingApplicationService with a cached model list for 'openai'
-    When   invalidate_model_cache('openai') is called and then list_provider_models again
-    Then   the underlying infrastructure function is called a second time
-    """
-    svc = _make_svc()
-    call_count = 0
-
-    def _fake_list(provider, **_kwargs):
-        nonlocal call_count
-        call_count += 1
-        return ["model-a"]
-
-    with patch(
-        "teachers_teammate.application.service.list_provider_models_checked",
-        side_effect=_as_listing(_fake_list),
-    ):
-        svc.list_provider_models("openai")
-        svc.invalidate_model_cache("openai")
-        svc.list_provider_models("openai")
-
-    assert call_count == 2
-
-
-# ── hardware profiles & model recommendations ───────────────────────────────
-
-
-@pytest.mark.use_case("Hardware_Profile_Override")
-def test_resolve_hardware_profile_manual_setting_skips_detection(monkeypatch) -> None:
-    """
-    Given  a concrete hardware_profile setting ("16gb")
-    When   resolve_hardware_profile is called
-    Then   a MANUAL detection is returned and no detection runs
-    """
-    svc = _make_svc()
-    calls = []
-    monkeypatch.setattr(
-        service_module.ProcessingApplicationService,
-        "detect_hardware",
-        lambda self, url, **kw: calls.append(url),  # pylint: disable=unnecessary-lambda
-    )
-    detection = svc.resolve_hardware_profile("16gb", "http://127.0.0.1:11434")
-    assert detection.profile == "16gb"
-    from teachers_teammate.domain.model_catalog import DetectionReason  # noqa: PLC0415
-
-    assert detection.reason is DetectionReason.MANUAL
-    assert calls == []
-
-
-@pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_detect_hardware_probes_this_computer_once(monkeypatch) -> None:
-    """
-    Given  a service with patched GPU detection
-    When   detect_hardware is called repeatedly, also with differently written URLs
-    Then   the detector runs once (process-lifetime probe); refresh re-runs it
-    """
-    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
-    from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection  # noqa: PLC0415
-
-    calls = []
-
-    def fake_detect_gpus():
-        calls.append("gpu")
-        return [gpu_detector.GpuInfo("nvidia", "RTX 4060", 8188)]
-
-    monkeypatch.setattr(gpu_detector, "detect_gpus", fake_detect_gpus)
-    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
-
-    svc = _make_svc()
-    first = svc.detect_hardware("http://127.0.0.1:11434")
-    second = svc.detect_hardware("http://127.0.0.1:11434")
-    # Editing the URL (trailing slash, host spelling) must not probe again.
-    third = svc.detect_hardware("http://localhost:11434/")
-    assert first.profile == "8gb"
-    assert first.reason is DetectionReason.GPU_DETECTED
-    assert second == first
-    assert third == first
-    assert calls == ["gpu"]
-
-    refreshed = svc.detect_hardware("http://127.0.0.1:11434", refresh=True)
-    assert isinstance(refreshed, HardwareDetection)
-    assert calls == ["gpu", "gpu"]
-
-
-@pytest.mark.use_case("Hardware_Profile_Override")
-def test_detect_hardware_remote_url_skips_local_gpus(monkeypatch) -> None:
-    """
-    Given  an Ollama URL pointing at another computer
-    When   detect_hardware is called
-    Then   the REMOTE profile is returned without consulting local GPUs
-    """
-    from teachers_teammate.domain.model_catalog import DetectionReason  # noqa: PLC0415
-
-    def exploding_detect_gpus():
-        raise AssertionError("local GPU detection must not run for remote URLs")
-
-    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
-
-    monkeypatch.setattr(gpu_detector, "detect_gpus", exploding_detect_gpus)
-    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", exploding_detect_gpus)
-
-    svc = _make_svc()
-    detection = svc.detect_hardware("http://192.168.1.50:11434")
-    assert detection.profile == "8gb"
-    assert detection.reason is DetectionReason.REMOTE_SERVER
-    assert detection.host == "192.168.1.50"
-    assert detection.gpu_name is None
-
-
-@pytest.mark.use_case("Hardware_Profile_Override")
-def test_resolve_hardware_profile_unknown_setting_treated_as_auto(monkeypatch) -> None:
-    """
-    Given  an invalid hardware_profile setting value
-    When   resolve_hardware_profile is called
-    Then   the value is treated as "auto" and detection runs
-    """
-    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
-    from teachers_teammate.domain.model_catalog import DetectionReason  # noqa: PLC0415
-
-    monkeypatch.setattr(
-        gpu_detector, "detect_gpus", lambda: [gpu_detector.GpuInfo("nvidia", "RTX 4060", 8188)]
-    )
-    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
-
-    svc = _make_svc()
-    detection = svc.resolve_hardware_profile("bogus", "http://127.0.0.1:11434")
-    assert detection.profile == "8gb"
-    assert detection.reason is DetectionReason.GPU_DETECTED
-
-
-@pytest.mark.use_case("Model_Category_Guidance")
-def test_classify_ollama_models_uses_catalog_and_caches_capabilities(monkeypatch) -> None:
-    """
-    Given  a mix of catalogued and custom model tags
-    When   classify_ollama_models is called twice
-    Then   catalogued tags resolve from the catalog, unknown tags via
-           model_capabilities, and the result is cached (no second server call)
-    """
-    svc = _make_svc()
-    caps_calls = []
-
-    class _FakeClient:
-        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
-            _ = url, timeout
-
-        def model_capabilities(self, tag: str):
-            caps_calls.append(tag)
-            return frozenset({"vision"}) if "vl" in tag else frozenset({"completion"})
-
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
-
-    monkeypatch.setattr(ollama_utils, "OllamaClient", _FakeClient)
-
-    tags = ["qwen3-vl:8b", "my-custom-vl:latest", "my-custom-text:latest"]
-    result = svc.classify_ollama_models(tags, "http://127.0.0.1:11434")
-    assert result["qwen3-vl:8b"] == frozenset({"ocr"})
-    # A model that can read images may be used for reading AND writing.
-    assert result["my-custom-vl:latest"] == frozenset({"ocr", "general"})
-    assert result["my-custom-text:latest"] == frozenset({"general"})
-    assert sorted(caps_calls) == ["my-custom-text:latest", "my-custom-vl:latest"]
-
-    # Second call is fully cached — the server is not asked again.
-    svc.classify_ollama_models(tags, "http://127.0.0.1:11434")
-    assert len(caps_calls) == 2
-
-    # invalidate_model_cache clears the classification cache.
-    svc.invalidate_model_cache("ollama", "http://127.0.0.1:11434")
-    svc.classify_ollama_models(tags, "http://127.0.0.1:11434")
-    assert len(caps_calls) == 4
-
-    # ... also when the URL is written differently (trailing slash).
-    svc.on_ollama_models_changed("http://127.0.0.1:11434/")
-    svc.classify_ollama_models(tags, "http://127.0.0.1:11434")
-    assert len(caps_calls) == 6
-
-
-@pytest.mark.use_case("Recommended_Models_On_First_Start")
-@pytest.mark.parametrize(
-    "profile",
-    ["cpu", "8gb", "16gb"],
-)
-def test_first_run_model_settings_return_best_models(profile: str) -> None:
-    """
-    Given  a hardware profile
-    When   first_run_model_settings is called
-    Then   ocr_model is the BEST reading model and correction/evaluate are the
-           BEST writing model for that profile
-    """
-    from teachers_teammate.domain.model_catalog import best_model  # noqa: PLC0415
-
-    from typing import cast  # noqa: PLC0415
-
-    from teachers_teammate.domain.model_catalog import HardwareProfile  # noqa: PLC0415
-
-    svc = _make_svc()
-    settings = svc.first_run_model_settings(cast(HardwareProfile, profile))
-    assert settings["ocr_model"] == best_model("ocr", cast(HardwareProfile, profile))
-    assert settings["correction_model"] == best_model("general", cast(HardwareProfile, profile))
-    assert settings["evaluate_model"] == best_model("general", cast(HardwareProfile, profile))
-
-
-@pytest.mark.use_case("Model_Category_Guidance")
-def test_unknown_classification_is_not_cached(monkeypatch) -> None:
-    """
-    Given  a custom model whose capabilities could not be read (None)
-    When   it is classified twice
-    Then   the server is asked both times — "unknown" is never cached, so a
-           model that was not pulled yet is recognised as soon as it is
-    """
-    svc = _make_svc()
-    answers = iter([None, frozenset({"vision"})])
-    asked: list[str] = []
-
-    class _FakeClient:
-        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
-            _ = url, timeout
-
-        def model_capabilities(self, tag: str):
-            asked.append(tag)
-            return next(answers)
-
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
-
-    monkeypatch.setattr(ollama_utils, "OllamaClient", _FakeClient)
-    url = "http://127.0.0.1:11434"
-    assert svc.classify_ollama_models(["my-model:latest"], url) == {"my-model:latest": None}
-    assert svc.classify_ollama_models(["my-model:latest"], url) == {
-        "my-model:latest": frozenset({"ocr", "general"})
-    }
-    assert asked == ["my-model:latest", "my-model:latest"]
-
-
-@pytest.mark.use_case("Model_Category_Guidance")
-def test_unreachable_server_is_asked_once_not_per_model(monkeypatch) -> None:
-    """
-    Given  several custom models and a server that cannot be reached
-    When   they are classified
-    Then   the server is contacted only for the first model (one timeout, not one per
-           model), every model maps to None, and a later call asks again
-    """
-    from teachers_teammate.exceptions import OllamaConnectionError  # noqa: PLC0415
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
-
-    asked: list[str] = []
-    timeouts: list[float] = []
-
-    class _DownClient:
-        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
-            _ = url
-            timeouts.append(timeout)
-
-        def model_capabilities(self, tag: str):
-            asked.append(tag)
-            raise OllamaConnectionError("down")
-
-    monkeypatch.setattr(ollama_utils, "OllamaClient", _DownClient)
-    svc = _make_svc()
-    tags = ["a:latest", "b:latest", "c:latest"]
-    assert svc.classify_ollama_models(tags, "http://127.0.0.1:11434") == dict.fromkeys(tags)
-    assert asked == ["a:latest"]
-    assert timeouts and all(0 < t <= 5 for t in timeouts)  # a short, bounded wait
-
-    svc.classify_ollama_models(tags, "http://127.0.0.1:11434")
-    assert asked == ["a:latest", "a:latest"]  # nothing was cached
-
-
-@pytest.mark.use_case("Model_Category_Guidance")
-def test_cached_only_classification_never_contacts_the_server(monkeypatch) -> None:
-    """
-    Given  a custom model that is not classified yet
-    When   classify_ollama_models is called with cached_only=True
-    Then   the server is not contacted and the model maps to None
-    """
-    svc = _make_svc()
-
-    def exploding_client(url, **_kw):
-        raise AssertionError("cached_only must not contact the server")
-
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
-
-    monkeypatch.setattr(ollama_utils, "OllamaClient", exploding_client)
-    result = svc.classify_ollama_models(
-        ["qwen3-vl:8b", "custom:latest"], "http://x:1", cached_only=True
-    )
-    assert result == {"qwen3-vl:8b": frozenset({"ocr"}), "custom:latest": None}
-
-
-@pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_rate_ollama_models_rates_catalog_and_custom_models(monkeypatch) -> None:
-    """
-    Given  a catalogued model and a custom vision model on the server
-    When   rate_ollama_models is called for the reading task on 8 GB
-    Then   the catalog model is BEST with its memory/note and the custom one is
-           a WORKS model for reading (the single rating path of the widgets)
-    """
-    from teachers_teammate.domain.model_catalog import Suitability  # noqa: PLC0415
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
-
-    class _FakeClient:
-        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
-            _ = url, timeout
-
-        def model_capabilities(self, tag: str):
-            _ = tag
-            return frozenset({"vision"})
-
-    monkeypatch.setattr(ollama_utils, "OllamaClient", _FakeClient)
-    svc = _make_svc()
-    ratings = svc.rate_ollama_models(
-        ["qwen3-vl:8b", "my-vision:latest"], "ocr", "8gb", "http://127.0.0.1:11434"
-    )
-    best, custom = ratings
-    assert best.suitability is Suitability.GOOD  # BEST on 8 GB is the default reading model
-    assert best.memory_gb == 7.0
-    assert best.note
-    assert custom.suitability is Suitability.WORKS
-    assert custom.model_uses == frozenset({"ocr", "general"})
-    assert custom.memory_gb is None
-
-
-@pytest.mark.use_case("Model_Category_Guidance")
-def test_ollama_model_cache_key_ignores_url_spelling(monkeypatch) -> None:
-    """
-    Given  the model list cached under "http://host:11434/"
-    When   it is invalidated through "http://host:11434"
-    Then   the entry is gone (both spellings share one cache entry)
-    """
-    calls: list[str] = []
-
-    def fake_list(provider: str, **_kw) -> list[str]:
-        calls.append(provider)
-        return ["a:latest"]
-
-    monkeypatch.setattr(service_module, "list_provider_models_checked", _as_listing(fake_list))
-    svc = _make_svc()
-    svc.list_provider_models("ollama", base_url="http://host:11434/")
-    svc.list_provider_models("ollama", base_url="http://host:11434")
-    assert len(calls) == 1  # second call was a cache hit
-    svc.invalidate_model_cache("ollama", "http://host:11434")
-    svc.list_provider_models("ollama", base_url="http://host:11434/")
-    assert len(calls) == 2
-
-
-@pytest.mark.use_case("Model_Category_Guidance")
-def test_on_ollama_models_changed_evicts_list_and_classification(monkeypatch) -> None:
-    """
-    Given  a cached model list and cached classifications
-    When   on_ollama_models_changed is called (a pull finished)
-    Then   the next lookup asks the server again
-    """
-    installed = ["a:latest"]
-    monkeypatch.setattr(
-        service_module,
-        "list_provider_models_checked",
-        _as_listing(lambda p, **kw: list(installed)),
-    )
-    svc = _make_svc()
-    url = "http://127.0.0.1:11434"
-    assert svc.list_provider_models("ollama", base_url=url) == ["a:latest"]
-    installed.append("b:latest")  # a pull finished
-    assert svc.list_provider_models("ollama", base_url=url) == ["a:latest"]  # stale cache
-    svc.on_ollama_models_changed(url)
-    assert svc.list_provider_models("ollama", base_url=url) == ["a:latest", "b:latest"]
-
-
-@pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_installation_status_compares_normalised_tags(monkeypatch) -> None:
-    """
-    Given  an installed model "llama3.2:latest"
-    When   the installation status asks for "llama3.2" (no suffix)
-    Then   it counts as installed
-    """
-    monkeypatch.setattr(
-        service_module,
-        "list_provider_models_checked",
-        _as_listing(lambda p, **kw: ["llama3.2:latest"]),
-    )
-    svc = _make_svc()
-    status = svc.get_installation_status(
-        ollama_models=["llama3.2", "other:1b"], ollama_url="http://127.0.0.1:11434"
-    )
-    assert status["ollama:llama3.2"] is True
-    assert status["ollama:other:1b"] is False
-
-
-@pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_detect_gpus_is_served_from_the_shared_probe(monkeypatch) -> None:
-    """
-    Given  hardware detection that already probed this computer
-    When   detect_gpus() is called afterwards (the "Detect GPU" button)
-    Then   the machine is not probed a second time
-    """
-    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
-
-    calls: list[str] = []
-
-    def fake_detect_gpus():
-        calls.append("gpu")
-        return [gpu_detector.GpuInfo("nvidia", "RTX 4060", 8188)]
-
-    monkeypatch.setattr(gpu_detector, "detect_gpus", fake_detect_gpus)
-    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
-    svc = _make_svc()
-    svc.detect_hardware("http://127.0.0.1:11434")
-    gpus = svc.detect_gpus()
-    assert [g.name for g in gpus] == ["RTX 4060"]
-    assert calls == ["gpu"]
+# ── what the recommendation service is asked for ────────────────────────────
 
 
 @pytest.mark.unit
@@ -2170,7 +1430,9 @@ def _computer(svc, monkeypatch, *, profile, free_gb, card_gb=None, reason=None) 
         memory_gb=card_gb,
         system_memory_gb=64.0,
     )
-    monkeypatch.setattr(svc, "resolve_hardware_profile", lambda _setting, _url: detection)
+    monkeypatch.setattr(
+        _recommendations_of(svc), "resolve_hardware_profile", lambda _setting, _url: detection
+    )
 
 
 @pytest.mark.unit
@@ -2194,7 +1456,7 @@ def test_expected_cache_keys_never_probe_this_computer(tmp_path: Path, monkeypat
 
     assert probes == []
     assert (windows.proofreading, windows.evaluation) == (BASE_NUM_CTX, BASE_NUM_CTX)
-    assert svc.cached_hardware_profile("auto", cfg.ollama_url) is None
+    assert _recommendations_of(svc).cached_hardware_profile("auto", cfg.ollama_url) is None
 
 
 @pytest.mark.unit
@@ -2311,8 +1573,8 @@ def test_the_preflight_says_when_another_model_is_in_the_way(tmp_path: Path, mon
     cfg = _ollama_config(tmp_path, ocr_engine="ppocr")
     other = LoadedModel("ministral-3:8b", 1, 1)
     monkeypatch.setattr(
-        svc,
-        "ollama_activity",
+        svc._ollama,
+        "activity",
         lambda _url, _model="": ServerActivity(loaded=(other,), busy=("ministral-3:8b",)),
     )
 
@@ -2323,7 +1585,7 @@ def test_the_preflight_says_when_another_model_is_in_the_way(tmp_path: Path, mon
 
     mine = LoadedModel("qwen3.5:9b", 1, 1)
     monkeypatch.setattr(
-        svc, "ollama_activity", lambda _url, _model="": ServerActivity(loaded=(mine,))
+        svc._ollama, "activity", lambda _url, _model="": ServerActivity(loaded=(mine,))
     )
     assert not svc.ollama_wait_for_run(cfg)
 
@@ -2363,7 +1625,9 @@ def test_a_stage_issue_wins_over_the_memory_warning(tmp_path: Path, monkeypatch)
     svc = _make_svc()
     cfg = _ollama_config(tmp_path, correction_provider="mistral")
     _computer(svc, monkeypatch, profile="cpu", free_gb=6.0)
-    monkeypatch.setattr(svc, "missing_provider_package", lambda _provider: "langchain-mistralai")
+    monkeypatch.setattr(
+        _providers_of(svc), "missing_provider_package", lambda _provider: "langchain-mistralai"
+    )
 
     with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]):
         result = svc.check_run_preflight(cfg)
@@ -2371,27 +1635,6 @@ def test_a_stage_issue_wins_over_the_memory_warning(tmp_path: Path, monkeypatch)
     assert result.blocked is True
     assert result.stage == "correction"
     assert result.memory_warning == ""
-
-
-@pytest.mark.unit
-def test_empty_model_list_is_not_cached(tmp_path: Path) -> None:
-    """
-    Given  an Ollama server that is unreachable (empty model list) at first
-    When   it is started and the list is requested again
-    Then   the second call asks the server again instead of serving the cached failure
-    """
-    svc = _make_svc()
-    answers = [[], ["qwen3-vl:8b"]]
-
-    with patch(
-        "teachers_teammate.application.service.list_provider_models_checked",
-        side_effect=_as_listing(lambda *_a, **_k: answers.pop(0)),
-    ):
-        first = svc.list_provider_models("ollama", base_url="http://127.0.0.1:11434")
-        second = svc.list_provider_models("ollama", base_url="http://127.0.0.1:11434")
-
-    assert first == []
-    assert second == ["qwen3-vl:8b"]
 
 
 @pytest.mark.unit
@@ -2457,38 +1700,6 @@ def test_ocr_refusal_for_run_is_empty_for_a_local_model(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_list_ocr_models_leaves_out_ollama_cloud_models() -> None:
-    """
-    Given  an Ollama server with a downloaded model and a cloud model
-    When   the models usable for text recognition are listed
-    Then   only the downloaded model is offered, since the cloud model would receive the pages
-    """
-    svc = _make_svc()
-
-    with patch.object(
-        ProcessingApplicationService,
-        "list_provider_models",
-        return_value=["qwen3-vl:8b", "qwen3-vl:235b-cloud"],
-    ):
-        assert svc.list_ocr_models("http://127.0.0.1:11434") == ["qwen3-vl:8b"]
-
-
-@pytest.mark.unit
-def test_describe_ocr_refusal_names_the_reason_for_cloud_models_only() -> None:
-    """
-    Given  a cloud model and a downloaded model on the local Ollama server
-    When   the refusal for each is asked for
-    Then   only the cloud model has a reason, which says it runs on Ollama's servers
-    """
-    svc = _make_svc()
-    url = "http://127.0.0.1:11434"
-
-    assert "Ollama's servers" in svc.describe_ocr_refusal("ollama", "qwen3-vl:235b-cloud", url)
-    assert svc.describe_ocr_refusal("ollama", "qwen3-vl:8b", url) == ""
-    assert svc.describe_ocr_refusal("ppocr", "", url) == ""
-
-
-@pytest.mark.unit
 def test_describe_data_flow_uses_provider_metadata(tmp_path: Path) -> None:
     """
     Given  local text recognition and OpenAI proofreading
@@ -2502,7 +1713,7 @@ def test_describe_data_flow_uses_provider_metadata(tmp_path: Path) -> None:
         correction_provider="openai",
     )
 
-    flow = _make_svc().describe_data_flow(cfg)
+    flow = _make_svc().data_flow.describe_data_flow(cfg)
 
     assert [s.stage for s in flow.outbound] == ["correction"]
     assert flow.outbound[0].location.service == "OpenAI (ChatGPT)"
@@ -2524,7 +1735,7 @@ def test_describe_data_flow_reports_the_provider_region(tmp_path: Path) -> None:
         evaluate_provider="openai",
     )
 
-    flow = _make_svc().describe_data_flow(cfg)
+    flow = _make_svc().data_flow.describe_data_flow(cfg)
 
     assert flow.stage("correction").location.data_region.value == "eu"
     assert flow.stage("evaluation").location.data_region.value == "non_eu"
@@ -2548,8 +1759,8 @@ def test_describe_steps_lists_every_step_although_none_is_ticked(tmp_path: Path)
     )
     svc = _make_svc()
 
-    assert svc.describe_data_flow(cfg).stage("correction") is None
-    steps = svc.describe_steps(cfg)
+    assert svc.data_flow.describe_data_flow(cfg).stage("correction") is None
+    steps = svc.data_flow.describe_steps(cfg)
 
     assert steps.stage("correction").location.data_region.value == "eu"
     assert steps.stage("evaluation").location.data_region.value == "non_eu"
@@ -2582,49 +1793,15 @@ def test_ticked_steps_of_all_steps_equal_the_flow_of_the_ticked_config(
     svc = _make_svc()
 
     narrowed = ticked_steps(
-        svc.describe_steps(cfg), correction_enabled=correction, evaluation_enabled=evaluation
+        svc.data_flow.describe_steps(cfg),
+        correction_enabled=correction,
+        evaluation_enabled=evaluation,
     )
 
-    assert narrowed == svc.describe_data_flow(cfg)
+    assert narrowed == svc.data_flow.describe_data_flow(cfg)
 
 
 @pytest.mark.unit
-def test_describe_anonymizer_models_is_empty_without_personal_info_removal(
-    tmp_path: Path,
-) -> None:
-    """
-    Given  a config with personal-info removal off
-    When   the anonymizer models of the status box are asked for
-    Then   there are none, so no model is loaded just to draw the box
-    """
-    assert _make_svc().describe_anonymizer_models(make_config(tmp_path)) == []
-
-
-@pytest.mark.unit
-def test_describe_anonymizer_models_names_the_resolved_models(
-    tmp_path: Path, monkeypatch, mocker
-) -> None:
-    """
-    Given  personal-info removal on, a German document and a system language of English
-    When   the anonymizer models of the status box are asked for
-    Then   the document model and the system model are named, as a run would load them
-    """
-    mocker.patch(
-        "teachers_teammate.infrastructure.spacy_models.installed_spacy_models",
-        return_value=["de_core_news_sm", "en_core_web_sm"],
-    )
-    mocker.patch(
-        "teachers_teammate.infrastructure.system_locale.system_language",
-        return_value="English",
-    )
-    cfg = make_config(tmp_path, language="German", anonymization_enabled=True)
-
-    assert _make_svc().describe_anonymizer_models(cfg) == [
-        "de_core_news_sm",
-        "en_core_web_sm",
-    ]
-
-
 @pytest.mark.unit
 def test_preflight_reports_unreachable_ollama(tmp_path: Path) -> None:
     """
@@ -2714,229 +1891,6 @@ def test_an_address_on_another_computer_is_only_unreachable(tmp_path: Path) -> N
 
 
 @pytest.mark.unit
-def test_ollama_status_reports_the_version_and_the_models_it_has() -> None:
-    """
-    Given  a server that answers with a version and two models
-    When   ollama_status is asked
-    Then   it says running, with the version and the count, and offers no button
-    """
-    from teachers_teammate.infrastructure.ollama_discovery import ServerInfo  # noqa: PLC0415
-
-    svc = _make_svc()
-    info = ServerInfo(version="0.12.3", model_count=2)
-
-    with patch("teachers_teammate.infrastructure.ollama_discovery.probe_server", return_value=info):
-        status = svc.ollama_status("http://127.0.0.1:11434")
-
-    assert status.state is OllamaState.RUNNING
-    assert (status.version, status.model_count, status.can_start) == ("0.12.3", 2, False)
-
-
-@pytest.mark.unit
-def test_ollama_status_looks_for_the_program_only_when_nothing_answered() -> None:
-    """
-    Given  a local address that does not answer, and an installed program
-    When   ollama_status is asked
-    Then   it says not running and offers to start it, and the version stays empty
-    """
-    svc = _make_svc()
-
-    with (
-        patch("teachers_teammate.infrastructure.ollama_discovery.probe_server", return_value=None),
-        patch(f"{_INSTALL}.find_ollama_program", return_value=Path("/usr/bin/ollama")),
-        patch(f"{_INSTALL}.can_start_ollama", return_value=True),
-    ):
-        status = svc.ollama_status("http://127.0.0.1:11434")
-
-    assert status.state is OllamaState.NOT_RUNNING
-    assert (status.version, status.model_count, status.can_start) == ("", None, True)
-
-
-@pytest.mark.unit
-def test_start_ollama_does_nothing_without_a_program() -> None:
-    """
-    Given  a computer where no Ollama program was found
-    When   start_ollama is called
-    Then   nothing is started, so no error is raised for a teacher who has none
-    """
-    svc = _make_svc()
-
-    with (
-        patch(f"{_INSTALL}.find_ollama_program", return_value=None),
-        patch(f"{_INSTALL}.start_ollama") as start,
-    ):
-        svc.start_ollama()
-
-    start.assert_not_called()
-
-
-@pytest.mark.unit
-def test_start_ollama_starts_the_program_where_the_platform_allows_it() -> None:
-    """
-    Given  an installed Ollama program on a platform where the app may start it
-    When   start_ollama is called
-    Then   the program is started
-    """
-    svc = _make_svc()
-    program = Path("/Applications/Ollama.app")
-
-    with (
-        patch(f"{_INSTALL}.find_ollama_program", return_value=program),
-        patch(f"{_INSTALL}.can_start_ollama", return_value=True),
-        patch(f"{_INSTALL}.start_ollama") as start,
-    ):
-        svc.start_ollama()
-
-    start.assert_called_once_with(program)
-
-
-@pytest.mark.unit
-def test_the_setup_plan_comes_from_the_facts_and_the_ratings() -> None:
-    """
-    Given  a computer with a running Ollama, no models and 100 GB of free disk space
-    When   plan_setup is asked for handwritten pages and local proofreading
-    Then   the facts are gathered once and the setup plan names the recommended models
-    """
-    from teachers_teammate.application.setup_plan import (  # noqa: PLC0415
-        HandIn,
-        ProofreadingPlace,
-        SetupAnswers,
-    )
-    from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
-    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
-        DetectionReason,
-        HardwareDetection,
-        ModelRating,
-        Suitability,
-    )
-
-    svc = _make_svc()
-    answers = SetupAnswers(
-        language="German",
-        hand_in=HandIn.HANDWRITTEN,
-        proofreading=ProofreadingPlace.LOCAL,
-        ollama_url="http://127.0.0.1:11434",
-        hardware_profile="auto",
-        local_ai_shown=True,
-    )
-    hardware = HardwareDetection(profile="8gb", reason=DetectionReason.MANUAL)
-    recommended = {"ocr": "qwen2.5vl:7b", "general": "gemma4:e4b"}
-    asked_cached_only: list[bool] = []
-
-    def rate(tags, task, profile, url, **kwargs):
-        asked_cached_only.append(kwargs["cached_only"])
-        return [
-            ModelRating(
-                tag=tag,
-                task=task,
-                model_uses=None,
-                suitability=Suitability.BEST,
-                memory_gb=None,
-                note="",
-            )
-            for tag in tags
-        ]
-
-    with (
-        patch.object(svc, "ollama_status", return_value=OllamaStatus(OllamaState.RUNNING)),
-        patch.object(svc, "list_provider_models", return_value=[]),
-        patch.object(svc, "resolve_hardware_profile", return_value=hardware),
-        patch.object(svc, "anonymizer_available", return_value=False),
-        patch.object(svc, "is_module_importable", return_value=True),
-        patch.object(svc, "spacy_model_for_language", return_value="de_core_news_sm"),
-        patch.object(svc, "missing_provider_package", return_value=None),
-        patch.object(svc, "page_models_installed", return_value=False),
-        patch.object(svc, "rate_ollama_models", side_effect=rate),
-        patch.object(
-            svc,
-            "best_ollama_model",
-            side_effect=lambda task, profile, **kwargs: recommended[task],
-        ),
-        patch(f"{_INSTALL}.free_disk_gb", return_value=100.0),
-    ):
-        plan = svc.plan_setup(answers, dict(DEFAULTS))
-
-    assert plan.settings["ocr_model"] == "qwen2.5vl:7b"
-    assert plan.settings["correction_model"] == "gemma4:e4b"
-    assert plan.panel["recognition_enabled"] is True
-    assert [download.name for download in plan.downloads] == [
-        "page_models",
-        "qwen2.5vl:7b",
-        "gemma4:e4b",
-    ]
-    # Background thread: an installed model outside the catalog is classified by the server.
-    assert asked_cached_only
-    assert not any(asked_cached_only)
-
-
-@pytest.mark.unit
-def test_the_plan_and_the_model_choices_are_made_from_one_set_of_facts() -> None:
-    """
-    Given  a computer with a running Ollama that holds one model
-    When   plan_with_model_choices is asked for local proofreading
-    Then   the facts are gathered once, the setup plan is the one plan_setup gives, and the
-           choices carry its proofreading model as the suggestion and list the installed one
-    """
-    from teachers_teammate.application.setup_plan import (  # noqa: PLC0415
-        HandIn,
-        ProofreadingPlace,
-        SetupAnswers,
-    )
-    from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
-    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
-        DetectionReason,
-        HardwareDetection,
-        ModelRating,
-        Suitability,
-    )
-
-    svc = _make_svc()
-    answers = SetupAnswers(
-        language="German",
-        hand_in=HandIn.TYPED,
-        proofreading=ProofreadingPlace.LOCAL,
-        ollama_url="http://127.0.0.1:11434",
-        hardware_profile="auto",
-        local_ai_shown=True,
-    )
-    hardware = HardwareDetection(profile="8gb", reason=DetectionReason.MANUAL)
-
-    def rate(tags, task, profile, url, **kwargs):
-        return [
-            ModelRating(
-                tag=tag,
-                task=task,
-                model_uses=None,
-                suitability=Suitability.BEST,
-                memory_gb=None,
-                note="",
-            )
-            for tag in tags
-        ]
-
-    with (
-        patch.object(svc, "ollama_status", return_value=OllamaStatus(OllamaState.RUNNING)),
-        patch.object(svc, "list_provider_models", return_value=["mymodel:7b"]) as listing,
-        patch.object(svc, "resolve_hardware_profile", return_value=hardware),
-        patch.object(svc, "anonymizer_available", return_value=False),
-        patch.object(svc, "is_module_importable", return_value=True),
-        patch.object(svc, "spacy_model_for_language", return_value="de_core_news_sm"),
-        patch.object(svc, "missing_provider_package", return_value=None),
-        patch.object(svc, "page_models_installed", return_value=False),
-        patch.object(svc, "rate_ollama_models", side_effect=rate),
-        patch.object(svc, "best_ollama_model", return_value="gemma4:e4b"),
-        patch(f"{_INSTALL}.free_disk_gb", return_value=100.0),
-    ):
-        plan, choices = svc.plan_with_model_choices(answers, dict(DEFAULTS))
-        again = svc.plan_setup(answers, dict(DEFAULTS))
-
-    assert plan == again
-    assert choices.suggested == plan.settings["correction_model"] == "gemma4:e4b"
-    assert "mymodel:7b" in {choice.tag for choice in choices.choices}
-    assert listing.call_count == 2  # once for the combined call, once for plan_setup
-
-
-@pytest.mark.unit
 def test_preflight_lists_missing_models(tmp_path: Path) -> None:
     """
     Given  a reachable server that only has the reading model downloaded
@@ -2998,7 +1952,7 @@ def test_preflight_needs_no_ollama_for_other_engines(tmp_path: Path) -> None:
 
     with (
         patch(
-            "teachers_teammate.application.service.list_provider_models_checked",
+            "teachers_teammate.application.providers.list_provider_models_checked",
             side_effect=AssertionError("Ollama must not be contacted"),
         ),
     ):
@@ -3246,47 +2200,6 @@ def test_text_for_copy_is_what_export_text_writes(
 
 
 @pytest.mark.unit
-def test_anonymizer_is_never_used_by_two_threads_at_once() -> None:
-    """
-    Given  a shared anonymizer and several threads anonymizing through the service
-    When   the threads run at the same time
-    Then   the anonymizer is never entered by more than one thread at a time
-    """
-    import time  # noqa: PLC0415
-
-    lock = threading.Lock()
-    state = {"inside": 0, "max": 0}
-
-    def _slow_anonymize(text: str):
-        with lock:
-            state["inside"] += 1
-            state["max"] = max(state["max"], state["inside"])
-        time.sleep(0.02)
-        with lock:
-            state["inside"] -= 1
-        return text, {}
-
-    anonymizer = MagicMock()
-    anonymizer.anonymize.side_effect = _slow_anonymize
-    svc = _make_svc()
-
-    with patch(
-        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
-    ) as ctor:
-        threads = [
-            threading.Thread(target=svc.anonymize_preview, args=("text", "English"))
-            for _ in range(6)
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-    assert state["max"] == 1
-    ctor.assert_called_once()
-
-
-@pytest.mark.unit
 def test_export_text_reports_a_missing_spacy_model(tmp_path: Path) -> None:
     """
     Given  a spaCy model that is not downloaded
@@ -3306,26 +2219,6 @@ def test_export_text_reports_a_missing_spacy_model(tmp_path: Path) -> None:
         svc.export_text(make_config(tmp_path), source, out, anonymize=True)
 
     assert not out.exists()
-
-
-@pytest.mark.unit
-def test_warm_up_anonymizer_builds_it_once_for_later_exports(tmp_path: Path) -> None:
-    """
-    Given  a service whose anonymizer was warmed up
-    When   anonymize_preview() is called with the same language and config
-    Then   the cached anonymizer is reused instead of being built again
-    """
-    anonymizer = MagicMock()
-    anonymizer.anonymize.return_value = ("x", {})
-    svc = _make_svc()
-
-    with patch(
-        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
-    ) as ctor:
-        svc.warm_up_anonymizer("English")
-        svc.anonymize_preview("text", "English")
-
-    ctor.assert_called_once()
 
 
 @pytest.mark.unit
@@ -3396,81 +2289,13 @@ def test_preflight_checks_anonymizer_for_anonymized_text_files(tmp_path: Path) -
     cfg = make_config(tmp_path, ocr_engine="ppocr", text_anonymized_enabled=True)
     svc = _make_svc()
 
-    with patch.object(svc, "list_installed_spacy_models", return_value=[]):
+    with patch.object(svc.anonymization, "list_installed_spacy_models", return_value=[]):
         result = svc.check_run_preflight(cfg)
 
     assert result.stage == "anonymizer"
 
 
 # ── provider packages and model-list source ───────────────────────────────
-
-
-@pytest.mark.unit
-def test_failed_listing_is_asked_again_while_a_live_one_is_remembered() -> None:
-    """
-    Given  a provider whose first answer is a failed listing (no key) and then a live one
-    When   the models are listed three times
-    Then   the failed answer is not remembered (the second call asks again, and so notices a
-           key entered meanwhile), the live one is, and the cache reports its source
-    """
-    svc = _make_svc()
-    answers = [
-        ModelListing(["built-in"], "failed", "no Mistral key is set"),
-        ModelListing(["glm-live"], "live"),
-    ]
-    calls = 0
-
-    def fake(_provider: str, **_kw: str) -> ModelListing:
-        nonlocal calls
-        calls += 1
-        return answers.pop(0)
-
-    with patch("teachers_teammate.application.service.list_provider_models_checked", fake):
-        first = svc.list_provider_models_checked("mistral")
-        second = svc.list_provider_models_checked("mistral")
-        third = svc.list_provider_models_checked("mistral")
-
-    assert (first.source, second.source, third.source) == ("failed", "live", "live")
-    assert calls == 2
-    cached = svc.get_cached_listing("mistral")
-    assert cached is not None and cached.models == ["glm-live"]
-
-
-@pytest.mark.unit
-def test_missing_provider_package_names_the_pip_package_only_when_absent() -> None:
-    """
-    Given  a service where langchain_mistralai is absent but langchain_openai is installed
-    When   missing_provider_package() is asked for each, and for Ollama
-    Then   Mistral (global and EU) names its pip package, the installed one and Ollama (whose
-           connector is optional) name none
-    """
-    svc = _make_svc()
-    absent = {"langchain_mistralai"}
-
-    with patch.object(
-        ProcessingApplicationService,
-        "is_module_importable",
-        lambda _self, module: module not in absent,
-    ):
-        assert svc.missing_provider_package("mistral") == "langchain-mistralai"
-        assert svc.missing_provider_package("mistral_eu") == "langchain-mistralai"
-        assert svc.missing_provider_package("openai") is None
-        assert svc.missing_provider_package("ollama") is None
-
-
-@pytest.mark.unit
-def test_provider_packages_list_a_shared_package_once() -> None:
-    """
-    Given  Mistral global and EU, which use one package
-    When   list_provider_packages() is read
-    Then   the package appears once, and every other provider has its own entry
-    """
-    packages = _make_svc().list_provider_packages()
-
-    pip_names = [pip for _module, pip in packages.values()]
-    assert pip_names.count("langchain-mistralai") == 1
-    assert len(pip_names) == len(set(pip_names))
-    assert {"openai", "anthropic", "google", "cohere", "ollama"} <= set(packages)
 
 
 @pytest.mark.unit
@@ -3488,7 +2313,7 @@ def test_stage_requirements_report_a_missing_provider_package_before_asking_the_
         _ollama_config(tmp_path), correction_provider="mistral", correction_model="m"
     )
 
-    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: False):
+    with patch.object(svc.addons, "is_module_importable", lambda *_a: False):
         issues = svc.check_stage_requirements(cfg, "correction")
 
     assert [(i.message, i.kind, i.provider) for i in issues] == [
@@ -3512,16 +2337,16 @@ def test_stage_requirements_report_a_missing_api_key_after_the_package_check(
     )
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
 
-    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: True):
+    with patch.object(_providers_of(svc), "_importable", lambda *_a: True):
         issues = svc.check_stage_requirements(cfg, "correction")
-    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: False):
+    with patch.object(_providers_of(svc), "_importable", lambda *_a: False):
         package_first = svc.check_stage_requirements(cfg, "correction")
 
     assert [(i.kind, i.provider) for i in issues] == [(IssueKind.KEY_MISSING, "mistral_eu")]
     assert "Mistral" in issues[0].message
     assert [i.kind for i in package_first] == [IssueKind.PACKAGE_MISSING]
     monkeypatch.setenv("MISTRAL_API_KEY", "k")
-    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: True):
+    with patch.object(_providers_of(svc), "_importable", lambda *_a: True):
         assert svc.check_stage_requirements(cfg, "correction") == []
 
 
@@ -3544,7 +2369,7 @@ def test_stage_requirements_ask_for_the_add_on_update_after_an_app_update(
         _ollama_config(tmp_path), correction_provider="mistral", correction_model="m"
     )
 
-    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: False):
+    with patch.object(svc.addons, "is_module_importable", lambda *_a: False):
         correction = svc.check_stage_requirements(cfg, "correction")
     anonymizer = svc.check_stage_requirements(cfg, "anonymizer")
 
@@ -3587,32 +2412,15 @@ def test_an_outdated_folder_without_the_needed_add_on_changes_nothing(
 
     monkeypatch.setattr(addon_manager, "addons_outdated", lambda: True)
     monkeypatch.setattr(addon_manager, "addon_in_folder", lambda _name: False)
+    svc = _make_svc()
     cfg = dataclasses.replace(
         _ollama_config(tmp_path), correction_provider="mistral", correction_model="m"
     )
 
-    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: False):
-        issues = _make_svc().check_stage_requirements(cfg, "correction")
+    with patch.object(svc.addons, "is_module_importable", lambda *_a: False):
+        issues = svc.check_stage_requirements(cfg, "correction")
 
     assert [i.kind for i in issues] == [IssueKind.PACKAGE_MISSING]
-
-
-@pytest.mark.unit
-def test_update_addons_hands_the_log_to_the_add_on_manager(monkeypatch) -> None:
-    """
-    Given  the application service
-    When   the add-ons are updated
-    Then   the add-on manager does it, with the caller's log callback
-    """
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
-
-    seen: list[object] = []
-    monkeypatch.setattr(addon_manager, "update_installed_addons", seen.append)
-    log = lambda _line: None  # noqa: E731
-
-    _make_svc().update_addons(log)
-
-    assert seen == [log]
 
 
 @pytest.mark.unit
@@ -3636,7 +2444,6 @@ def test_the_ocr_stage_reports_a_missing_reader(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.unit
 def test_the_ocr_stage_asks_nothing_for_ollama(tmp_path: Path) -> None:
     """
     Given  Ollama as the text-recognition engine
@@ -3646,7 +2453,7 @@ def test_the_ocr_stage_asks_nothing_for_ollama(tmp_path: Path) -> None:
     svc = _make_svc()
 
     with patch(
-        "teachers_teammate.application.service.list_provider_models_checked",
+        "teachers_teammate.application.providers.list_provider_models_checked",
         side_effect=AssertionError("Ollama must not be contacted"),
     ):
         assert svc.check_stage_requirements(_ollama_config(tmp_path), "ocr") == []
@@ -3794,7 +2601,9 @@ def test_stage_requirements_carry_the_models_to_download(tmp_path: Path) -> None
 
     with _server_answers(["other:1"]):
         model_issue = svc.check_stage_requirements(cfg, "correction")[0]
-    with patch.object(svc, "list_installed_spacy_models", return_value=["en_core_web_sm"]):
+    with patch.object(
+        svc.anonymization, "list_installed_spacy_models", return_value=["en_core_web_sm"]
+    ):
         name_issue = svc.check_stage_requirements(
             dataclasses.replace(cfg, language="German"), "anonymizer"
         )[0]
@@ -3802,7 +2611,7 @@ def test_stage_requirements_carry_the_models_to_download(tmp_path: Path) -> None
     assert model_issue.kind is IssueKind.MODEL_MISSING
     assert model_issue.models == (cfg.effective_correction_model,)
     assert name_issue.kind is IssueKind.NAME_DETECTION_MISSING
-    assert name_issue.models == (svc.spacy_model_for_language("German"),)
+    assert name_issue.models == (svc.anonymization.spacy_model_for_language("German"),)
 
 
 @pytest.mark.unit
@@ -3817,304 +2626,26 @@ def test_a_missing_spacy_is_told_apart_from_a_missing_model(tmp_path: Path) -> N
     cfg = dataclasses.replace(_ollama_config(tmp_path), language="german")
 
     with (
-        patch.object(svc, "list_installed_spacy_models", return_value=[]),
-        patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: True),
+        patch.object(svc.anonymization, "list_installed_spacy_models", return_value=[]),
+        patch.object(svc.addons, "is_module_importable", lambda *_a: True),
     ):
         model_missing = svc.check_stage_requirements(cfg, "anonymizer")
     with (
-        patch.object(svc, "list_installed_spacy_models", return_value=[]),
-        patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: False),
+        patch.object(svc.anonymization, "list_installed_spacy_models", return_value=[]),
+        patch.object(svc.addons, "is_module_importable", lambda *_a: False),
     ):
         spacy_missing = svc.check_stage_requirements(cfg, "anonymizer")
 
     assert [i.kind for i in model_missing] == [IssueKind.NAME_DETECTION_MISSING]
     assert [i.kind for i in spacy_missing] == [IssueKind.PRIVACY_ADDON_MISSING]
-    assert spacy_missing[0].models == (svc.spacy_model_for_language("german"),)
-
-
-@pytest.mark.unit
-def test_is_module_importable_refreshes_the_import_caches() -> None:
-    """
-    Given  a package installed while the app is running
-    When   is_module_importable() is asked
-    Then   the import caches are invalidated first, so the new package is found at once
-    """
-    with patch("teachers_teammate.application.service.importlib.invalidate_caches") as refresh:
-        _make_svc().is_module_importable("json")
-
-    refresh.assert_called_once()
-
-
-# ── this computer's memory in hardware detection and ratings ──────────────
-
-
-@pytest.mark.unit
-def test_detect_hardware_reports_the_computers_memory_from_the_probe(monkeypatch) -> None:
-    """
-    Given  a computer with a 16 GB card and 32 GB of memory
-    When   detect_hardware is called for the local server
-    Then   the detection carries both, and a model too big for the card is rated slow with it
-    """
-    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
-
-    monkeypatch.setattr(
-        gpu_detector, "detect_gpus", lambda: [gpu_detector.GpuInfo("nvidia", "RTX 3080", 16384)]
-    )
-    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
-    monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 32.0)
-    svc = _make_svc()
-
-    detection = svc.detect_hardware("http://127.0.0.1:11434")
-
-    assert (detection.profile, detection.memory_gb, detection.system_memory_gb) == (
-        "16gb",
-        16.0,
-        32.0,
-    )
-    rating = svc.rate_ollama_models(
-        ["gpt-oss:20b"], "general", "8gb", "http://127.0.0.1:11434", system_memory_gb=32.0
-    )[0]
-    assert rating.suitability.value == "slow"
-
-
-@pytest.mark.unit
-def test_a_chosen_profile_carries_the_memory_only_for_a_local_server(monkeypatch) -> None:
-    """
-    Given  a chosen profile ("8gb") and a computer with 32 GB of memory
-    When   it is resolved for the local server and for a server on another computer
-    Then   the local one reports the memory without probing the graphics card; the remote one
-           reports none (that memory belongs to another computer)
-    """
-    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
-
-    def no_graphics_probe(*_a, **_k):
-        raise AssertionError("a chosen profile must not probe the graphics card")
-
-    monkeypatch.setattr(gpu_detector, "detect_gpus", no_graphics_probe)
-    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
-    monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 32.0)
-    svc = _make_svc()
-
-    local = svc.resolve_hardware_profile("8gb", "http://127.0.0.1:11434")
-    remote = svc.resolve_hardware_profile("8gb", "http://192.168.1.50:11434")
-
-    assert local.system_memory_gb == 32.0
-    assert remote.system_memory_gb is None
-
-
-@pytest.mark.unit
-def test_a_chosen_profile_on_apple_silicon_carries_no_separate_memory(monkeypatch) -> None:
-    """
-    Given  an Apple Silicon computer (its graphics share is part of the shared memory)
-    When   a profile is chosen by hand for the local server
-    Then   no separate memory figure is reported, so a model is not offloaded into memory
-           the profile already counts
-    """
-    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
-
-    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: 16.0)
-    monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 16.0)
-
-    detection = _make_svc().resolve_hardware_profile("8gb", "http://127.0.0.1:11434")
-
-    assert detection.system_memory_gb is None
-
-
-@pytest.mark.unit
-def test_hardware_detection_is_logged(monkeypatch, caplog) -> None:
-    """
-    Given  a probe of this computer
-    When   detect_hardware is called
-    Then   the probe and the resulting profile are logged, so a wrong suggestion can be traced
-    """
-    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
-
-    monkeypatch.setattr(
-        gpu_detector, "detect_gpus", lambda: [gpu_detector.GpuInfo("nvidia", "RTX 3080", None)]
-    )
-    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
-    monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 16.0)
-
-    with caplog.at_level(logging.INFO):
-        _make_svc().detect_hardware("http://127.0.0.1:11434")
-
-    text = caplog.text
-    assert "Probed this computer" in text and "RTX 3080" in text
-    assert "Hardware profile" in text and "gpu_memory_unknown" in text
-
-
-def test_proofreading_prompts_lists_the_steps_that_run(tmp_path: Path) -> None:
-    """
-    Given  a config whose model runs all three steps
-    When   proofreading_prompts() is called
-    Then   it returns one titled prompt per step, in step order
-    """
-    svc = _make_svc()
-    config = dataclasses.replace(make_config(tmp_path), correction_enabled=True)
-
-    prompts = svc.proofreading_prompts(config)
-
-    assert [title for title, _prompt in prompts] == [
-        "Correct the text",
-        "Explain the corrections",
-        "List unclear expressions",
-    ]
-    assert all(prompt.strip() for _title, prompt in prompts)
-
-
-def test_proofreading_prompts_with_corrections_only_lists_step_one(tmp_path: Path) -> None:
-    """
-    Given  a config that asks for corrections only
-    When   proofreading_prompts() is called
-    Then   only step ① is listed, because the other two requests are not sent
-    """
-    svc = _make_svc()
-    config = dataclasses.replace(
-        make_config(tmp_path), correction_enabled=True, correction_output="text"
-    )
-
-    prompts = svc.proofreading_prompts(config)
-
-    assert [title for title, _prompt in prompts] == ["Correct the text"]
-
-
-def test_proofreading_prompts_leaves_out_the_unclear_step_of_a_model_without_it(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """
-    Given  a model whose request profile turns the unclear check off
-    When   proofreading_prompts() is called
-    Then   step ③ is not listed, because that request is not sent
-    """
-    from teachers_teammate import config as config_module  # noqa: PLC0415
-
-    original = config_module.request_profile
-    monkeypatch.setattr(
-        config_module,
-        "request_profile",
-        lambda model, provider: dataclasses.replace(original(model, provider), unclear_check=False),
-    )
-    svc = _make_svc()
-    config = dataclasses.replace(make_config(tmp_path), correction_enabled=True)
-
-    prompts = svc.proofreading_prompts(config)
-
-    assert [title for title, _prompt in prompts] == [
-        "Correct the text",
-        "Explain the corrections",
-    ]
+    assert spacy_missing[0].models == (svc.anonymization.spacy_model_for_language("german"),)
 
 
 # ── Shared anonymization cache (Phase 3) ─────────────────────────────────────
 
 
 @pytest.mark.unit
-def test_build_cached_anonymizer_shares_one_result_between_run_and_preview() -> None:
-    """
-    Given  a service whose anonymizer is built once
-    When   the cached anonymizer and anonymize_preview() are asked about the same text
-    Then   spaCy runs once, so a run and the "What is sent" view agree
-    """
-    anonymizer = MagicMock()
-    anonymizer.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
-    svc = _make_svc()
-
-    with patch(
-        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
-    ):
-        from_run = svc.build_cached_anonymizer("English", service_module.AnonymizerConfig())
-        from_run.anonymize("Anna wrote")
-        from_view = svc.anonymize_preview("Anna wrote", "English")
-
-    anonymizer.anonymize.assert_called_once_with("Anna wrote")
-    assert from_view == ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
-
-
 @pytest.mark.unit
-def test_run_then_view_analyses_the_text_once() -> None:
-    """
-    Given  a pipeline run that anonymized a text through the service cache
-    When   the privacy preview asks for the same text afterwards
-    Then   only one spaCy pass happened
-    """
-    anonymizer = MagicMock()
-    anonymizer.anonymize.return_value = ("hidden", {})
-    svc = _make_svc()
-
-    with patch(
-        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
-    ):
-        svc.build_cached_anonymizer("English", service_module.AnonymizerConfig()).anonymize("text")
-        svc.anonymize_preview("text", "English")
-
-    assert anonymizer.anonymize.call_count == 1
-
-
-@pytest.mark.unit
-def test_changed_anonymizer_settings_analyse_the_text_again() -> None:
-    """
-    Given  a text already anonymized with one set of patterns
-    When   the preview asks for it with different patterns
-    Then   the text is analysed again, because the sent text would differ
-    """
-    anonymizer = MagicMock()
-    anonymizer.anonymize.return_value = ("hidden", {})
-    svc = _make_svc()
-
-    with patch(
-        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
-    ):
-        svc.anonymize_preview("text", "English", service_module.AnonymizerConfig(patterns=()))
-        svc.anonymize_preview(
-            "text", "English", service_module.AnonymizerConfig(patterns=(("ID", r"\d+"),))
-        )
-
-    assert anonymizer.anonymize.call_count == 2
-
-
-@pytest.mark.unit
-def test_changed_language_analyses_the_text_again(tmp_path: Path) -> None:
-    """
-    Given  a text already anonymized for English
-    When   the same text is asked for in German
-    Then   the text is analysed again with the German model
-    """
-    anonymizer = MagicMock()
-    anonymizer.anonymize.return_value = ("hidden", {})
-    svc = _make_svc()
-
-    with patch(
-        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
-    ) as ctor:
-        svc.anonymize_preview("text", "English")
-        svc.anonymize_preview("text", "German")
-
-    assert ctor.call_count == 2
-    assert anonymizer.anonymize.call_count == 2
-
-
-@pytest.mark.unit
-def test_clear_anonymizer_cache_forgets_the_anonymized_texts() -> None:
-    """
-    Given  a service with a cached anonymized text
-    When   clear_anonymizer_cache() is called
-    Then   the result cache is empty as well, so no hidden text outlives the reset
-    """
-    anonymizer = MagicMock()
-    anonymizer.anonymize.return_value = ("hidden", {})
-    svc = _make_svc()
-
-    with patch(
-        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
-    ):
-        svc.anonymize_preview("text", "English")
-        assert len(svc._anonymization_cache) == 1
-
-        svc.clear_anonymizer_cache()
-
-    assert len(svc._anonymization_cache) == 0
-
-
 @pytest.mark.unit
 def test_run_selected_passes_a_component_factory_with_the_shared_anonymizer(tmp_path: Path) -> None:
     """
@@ -4141,7 +2672,7 @@ def test_run_selected_passes_a_component_factory_with_the_shared_anonymizer(tmp_
         )
         built.anonymize("Anna wrote")
 
-    assert len(svc._anonymization_cache) == 1
+    assert len(svc.anonymization._anonymization_cache) == 1
 
 
 # ── What is sent for this file (Phase 4) ─────────────────────────────────────
@@ -4167,7 +2698,7 @@ def test_describe_sent_texts_shows_the_cached_text_that_a_run_sends(tmp_path: Pa
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ):
-        svc.build_cached_anonymizer("English", anon_config).anonymize("Anna wrote")
+        svc.anonymization.build_cached_anonymizer("English", anon_config).anonymize("Anna wrote")
         view = svc.documents.load_view(config, source)
         assert view is not None
         report = svc.describe_sent_texts(config, view)
@@ -4219,7 +2750,7 @@ def test_describe_sent_texts_carries_the_prompts_the_steps_send(tmp_path: Path) 
     report = svc.describe_sent_texts(config, view)
 
     sent = next(s for s in report.sections if s.stage.stage == "correction")
-    for title, prompt in svc.proofreading_prompts(config):
+    for title, prompt in proofreading_prompts(config):
         assert title in sent.prompt
         assert prompt in sent.prompt
 
@@ -4247,38 +2778,6 @@ def test_describe_sent_texts_adds_the_notes_for_the_ai(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_installed_models_are_listed_once_until_forgotten(caplog: pytest.LogCaptureFixture) -> None:
-    """
-    Given  a service that resolves anonymizer settings on every preview
-    When   the settings are resolved several times, then models are forgotten
-    Then   spaCy is asked for its models once per remembered state, and the missing-model
-           warning is logged once
-    """
-    svc = ProcessingApplicationService()
-    config = AnonymizerConfig(secondary_model="auto:system")
-    with (
-        patch.object(svc, "list_installed_spacy_models", return_value=[]) as listing,
-        patch(
-            "teachers_teammate.infrastructure.system_locale.system_language",
-            return_value="German",
-        ),
-        caplog.at_level(logging.WARNING),
-    ):
-        for _ in range(3):
-            svc.resolve_anonymizer_config("English", config)
-        assert listing.call_count == 1
-        assert caplog.text
-        first = len(caplog.records)
-
-        svc.resolve_anonymizer_config("English", config)
-        assert len(caplog.records) == first  # same warning is not repeated
-
-        svc.forget_installed_models()
-        svc.resolve_anonymizer_config("English", config)
-
-        assert listing.call_count == 2
-
-
 def test_a_spacy_model_downloaded_while_the_app_runs_is_found_at_once(tmp_path: Path) -> None:
     """
     Given  an app that is running with spaCy in its add-on folder and no German model, so name
@@ -4298,91 +2797,20 @@ def test_a_spacy_model_downloaded_while_the_app_runs_is_found_at_once(tmp_path: 
             return_value=packages,
         ):
             inject_addon_packages_dir()
-            assert not svc.anonymizer_available("German")
+            assert not svc.anonymization.anonymizer_available("German")
             assert [issue.kind for issue in svc._name_detection_issues("German")] == [
                 IssueKind.NAME_DETECTION_MISSING
             ]
 
             (packages / "de_core_news_sm").mkdir()
             inject_addon_packages_dir()
-            svc.forget_installed_models()  # what the install round does after a download
+            # What the install round does after a download.
+            svc.anonymization.forget_installed_models()
 
-            assert svc.anonymizer_available("German")
+            assert svc.anonymization.anonymizer_available("German")
             assert svc._name_detection_issues("German") == []
     finally:
         sys.path[:] = original
-
-
-@pytest.mark.unit
-def test_rereading_the_installed_models_keeps_what_was_warned(monkeypatch) -> None:
-    """
-    Given  a service that printed a warning once and remembers the installed models
-    When   it rereads the installed models, and later forgets them after an install
-    Then   the reread asks spaCy again but keeps the warning quiet; only the install lets it
-           be printed again
-    """
-    svc = _make_svc()
-    asked: list[int] = []
-    monkeypatch.setattr(
-        svc, "list_installed_spacy_models", lambda: asked.append(1) or ["de_core_news_sm"]
-    )
-    svc._remembered_installed_models()
-    svc._warned.add("a warning")
-
-    svc.reread_installed_models()
-    svc._remembered_installed_models()
-
-    assert asked == [1, 1]
-    assert svc._warned == {"a warning"}
-
-    svc.forget_installed_models()
-
-    assert svc._warned == set()
-
-
-@pytest.mark.unit
-def test_a_chosen_primary_model_counts_for_name_detection(monkeypatch) -> None:
-    """
-    Given  a chosen primary model that is installed while the model of the document language
-           is not
-    When   the service is asked whether names can be hidden
-    Then   it says yes, because that is the model a run would load
-    """
-    svc = _make_svc()
-    monkeypatch.setattr(svc, "list_installed_spacy_models", lambda: ["de_core_news_sm"])
-    svc.forget_installed_models()
-
-    # spaCy itself is not installed under Bazel; only its presence is asked for here.
-    monkeypatch.setattr(
-        "importlib.util.find_spec", lambda name: object() if name == "spacy" else None
-    )
-    assert not svc.anonymizer_available("English")
-    assert svc.anonymizer_available("English", AnonymizerConfig(primary_model="de_core_news_sm"))
-
-
-@pytest.mark.parametrize(
-    ("info", "key_set", "missing"),
-    [
-        ({"needs_api_key": True, "env_key": "TT_TEST_KEY"}, False, True),
-        ({"needs_api_key": True, "env_key": "TT_TEST_KEY"}, True, False),
-        ({"needs_api_key": False, "env_key": ""}, False, False),
-        ({}, False, False),
-    ],
-)
-def test_provider_key_missing_follows_the_provider_info_and_environment(
-    monkeypatch, info: dict, key_set: bool, missing: bool
-) -> None:
-    """
-    Given  a provider that does or does not need an API key, with the key set or not
-    When   the service is asked whether the key is missing
-    Then   it is missing only for a provider that needs a key while none is set
-    """
-    monkeypatch.delenv("TT_TEST_KEY", raising=False)
-    if key_set:
-        monkeypatch.setenv("TT_TEST_KEY", "k")
-    monkeypatch.setattr(service_module, "get_provider_info", lambda _provider: info)
-
-    assert _make_svc().provider_key_missing("any") is missing
 
 
 # ── Text recognition switched off ────────────────────────────────────────────
@@ -4526,25 +2954,8 @@ def test_the_data_flow_has_no_recognition_step_while_it_is_off_but_the_steps_vie
     svc = _make_svc()
     cfg = _ollama_config(tmp_path, recognition_enabled=False, correction_enabled=False)
 
-    assert svc.describe_data_flow(cfg).stage(STAGE_OCR) is None
-    assert svc.describe_steps(cfg).stage(STAGE_OCR) is not None
-
-
-@pytest.mark.use_case("Recommended_Models_On_First_Start")
-def test_first_run_model_settings_respect_the_main_memory() -> None:
-    """
-    Given  a computer without a graphics card and 12 GB of main memory
-    When   first_run_model_settings is called with those figures
-    Then   the writing steps get gemma4:e4b, the only writing model the app offers without a
-           card: the smaller one it used to offer (qwen3:4b) fails gate 1
-    """
-    svc = _make_svc()
-    settings = svc.first_run_model_settings("cpu", system_memory_gb=12.0)
-    assert settings["correction_model"] == "gemma4:e4b"
-    assert settings["evaluate_model"] == "gemma4:e4b"
-
-
-# ── What the teacher worked on, before a run starts ────────────────────────
+    assert svc.data_flow.describe_data_flow(cfg).stage(STAGE_OCR) is None
+    assert svc.data_flow.describe_steps(cfg).stage(STAGE_OCR) is not None
 
 
 def _proofread(

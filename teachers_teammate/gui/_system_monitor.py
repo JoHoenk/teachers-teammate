@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QHideEvent
 from PySide6.QtWidgets import QSplitter, QVBoxLayout, QWidget
 
+from ..domain.model_catalog import GpuUsage
 from ._chart_widget import ChartWidget
 from ._stats_widget import SystemStatsWidget
 
@@ -27,11 +30,13 @@ class SystemMonitorWindow(QWidget):
     quits, like the Benchmark window.
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, read_gpu_usage: Callable[[], GpuUsage | None], parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle("System Monitor")
         self.chart = ChartWidget()
-        self.stats = SystemStatsWidget()
+        self.stats = SystemStatsWidget(read_gpu_usage)
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self.chart)
         splitter.addWidget(self.stats)

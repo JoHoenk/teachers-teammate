@@ -13,7 +13,7 @@ from teachers_teammate.gui import _addon_installer_dialog, _install_round, _mode
 from teachers_teammate.gui._install_round import InstallRound
 
 from ._gui_harness import real_service
-from ._service_stubs import FinishedThreadStub, RecommendationServiceStub
+from ._service_stubs import FinishedThreadStub, RecommendationServiceStub, services_of
 
 
 class _Script:
@@ -165,7 +165,7 @@ class _FakeUpdateThread(FinishedThreadStub, QObject):
         if _fails("update"):
             self.finished_err.emit(_Script.fail_with)
             return
-        self._service.update_addons(self.log_line.emit)
+        self._service.addons.update_addons(self.log_line.emit)
         self.finished_ok.emit()
 
 
@@ -202,7 +202,7 @@ def fake_threads(monkeypatch) -> type[_Script]:
 def _round(manager: Any = None) -> tuple[InstallRound, _Service]:
     """Build a round on a stub service, with the manager if the test wants one."""
     service = _Service()
-    return InstallRound(service, manager), service
+    return InstallRound(services_of(service), manager), service
 
 
 def _record(round_: InstallRound) -> dict[str, list[Any]]:
@@ -449,7 +449,13 @@ def test_the_packages_dir_is_injected_after_pip_and_after_spacy(
     """
     round_, _service = _round()
     injected: list[bool] = []
-    monkeypatch.setattr(_install_round, "inject_addon_packages_dir", lambda: injected.append(True))
+    original = _install_round.inject_addon_packages_dir
+
+    def _count() -> None:
+        injected.append(True)
+        original()
+
+    monkeypatch.setattr(_install_round, "inject_addon_packages_dir", _count)
 
     round_.start(packages=["spacy"], spacy_models=["en_core_web_sm"])
 
@@ -849,7 +855,7 @@ def test_a_round_with_two_spacy_models_downloads_both_with_the_real_thread(
         downloaded.append(model)
         log(f"Successfully installed {model}")
 
-    monkeypatch.setattr(service, "download_spacy_model", _download)
+    service.download_spacy_model = _download  # pylint: disable=attribute-defined-outside-init
     seen = _record(round_)
 
     with qtbot.waitSignal(round_.finished, timeout=5000):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..domain.language import LANGUAGES
-from ..infrastructure.spacy_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
+from ..domain.name_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
 
 _COLOUR_ERROR = "#c0392b"
 _COLOUR_WARNING = "#e67e22"

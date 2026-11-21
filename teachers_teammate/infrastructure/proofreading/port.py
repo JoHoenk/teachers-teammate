@@ -193,18 +193,17 @@ class LangChainPort:
 
     def ask_text(self, req: StepRequest) -> PortAnswer:
         """Send *req* as a plain chat request."""
-        text, warning = invoke_langchain_chain(
+        answer = invoke_langchain_chain(
             self._llm,
             system=escape_braces(req.system),
             human=_TEXT_VARIABLE,
             variables={"text": req.user},
             fallback="",
             failure_prefix="Correction failed",
-            failure_suffix="; keeping original text.",
         )
-        if warning is not None:
-            return PortAnswer(failure="transport", error=warning)
-        return PortAnswer(raw=text)
+        if answer.warning is not None:
+            return PortAnswer(failure="transport", error=answer.warning)
+        return PortAnswer(raw=answer.text)
 
     def ask_structured(self, req: StepRequest) -> PortAnswer:
         """Send *req* constrained to its schema, through the provider's own mechanism."""

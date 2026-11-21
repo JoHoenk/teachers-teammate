@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from teachers_teammate.exceptions import OCRError, RunStoppedError
+from teachers_teammate.exceptions import OCRError, RunStoppedError, StageError, StageErrorKind
 from teachers_teammate.infrastructure.workflow.ocr_service import OCRStageService
 
 
@@ -37,13 +37,12 @@ def test_run_pages_empty_input_returns_empty(tmp_path: Path) -> None:
     """
     Given  an empty list of OCR inputs
     When   run_pages is called
-    Then   result is ([], None) and processor is not called
+    Then   the result is an empty list and processor is not called
     """
     svc, processor = _make_svc()
-    texts, err = svc.run_pages([], "English")
+    texts = svc.run_pages([], "English")
 
     assert texts == []
-    assert err is None
     processor.process_image.assert_not_called()
 
 
@@ -78,10 +77,9 @@ def test_run_pages_single_page_calls_processor_once(tmp_path: Path) -> None:
     img = tmp_path / "page.png"
     svc, processor = _make_svc(process_return="hello world")
 
-    texts, err = svc.run_pages([img], "English")
+    texts = svc.run_pages([img], "English")
 
     assert texts == ["hello world"]
-    assert err is None
     processor.process_image.assert_called_once_with(img, language="English")
 
 
@@ -99,10 +97,9 @@ def test_run_pages_cleans_processor_output(tmp_path: Path) -> None:
         process_return="<think>reading…</think><\uff5cAssistant\uff5c>Hello world<|im_end|>"
     )
 
-    texts, err = svc.run_pages([img], "English")
+    texts = svc.run_pages([img], "English")
 
     assert texts == ["Hello world"]
-    assert err is None
 
 
 # ── Multi-page ─────────────────────────────────────────────────────────────
@@ -120,10 +117,9 @@ def test_run_pages_two_pages_calls_processor_in_order(tmp_path: Path) -> None:
     processor.process_image.side_effect = ["page one", "page two"]
     svc = OCRStageService(processor=processor, stop_event=None)
 
-    texts, err = svc.run_pages([p1, p2], "German")
+    texts = svc.run_pages([p1, p2], "German")
 
     assert texts == ["page one", "page two"]
-    assert err is None
     assert processor.process_image.call_count == 2
 
 
@@ -134,24 +130,25 @@ def test_run_pages_ocr_error_single_page_returns_image_label(tmp_path: Path) -> 
     """
     Given  process_image raises OCRError on the only page
     When   run_pages is called
-    Then   result is ([], 'OCR failed (image): ...') with 'image' label
+    Then   a StageError of the reader says 'OCR failed (image): ...' and no page text comes back
     """
     img = tmp_path / "doc.png"
     svc, _ = _make_svc(process_side_effect=OCRError("timeout"))
 
-    texts, err = svc.run_pages([img], "English")
+    with pytest.raises(StageError) as raised:
+        svc.run_pages([img], "English")
 
-    assert texts == []
-    assert err is not None
-    assert "OCR failed (image)" in err
-    assert "timeout" in err
+    assert raised.value.kind is StageErrorKind.ENGINE
+    assert raised.value.stage == "ocr"
+    assert "OCR failed (image)" in str(raised.value)
+    assert "timeout" in str(raised.value)
 
 
 def test_run_pages_ocr_error_multi_page_returns_page_label(tmp_path: Path) -> None:
     """
     Given  two pages and process_image raises OCRError on the second page
     When   run_pages is called
-    Then   result contains 'page 2' in the error label
+    Then   the StageError carries 'page 2' in its label
     """
     p1 = tmp_path / "p1.png"
     p2 = tmp_path / "p2.png"
@@ -159,11 +156,10 @@ def test_run_pages_ocr_error_multi_page_returns_page_label(tmp_path: Path) -> No
     processor.process_image.side_effect = ["first ok", OCRError("read error")]
     svc = OCRStageService(processor=processor, stop_event=None)
 
-    texts, err = svc.run_pages([p1, p2], "English")
+    with pytest.raises(StageError) as raised:
+        svc.run_pages([p1, p2], "English")
 
-    assert texts == []
-    assert err is not None
-    assert "page 2" in err
+    assert "page 2" in str(raised.value)
 
 
 # ── Stop event ─────────────────────────────────────────────────────────────

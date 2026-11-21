@@ -77,9 +77,7 @@ def run_ocr(
             return OcrRunResult(prepared.raw_text_hint, None, time.monotonic() - start, None)
 
         ocr_stage = OCRStageService(processor=ocr, stop_event=stop_event)
-        page_texts, error = ocr_stage.run_pages(ocr_inputs, config.language)
-        if error is not None:
-            return OcrRunResult("", None, time.monotonic() - start, error)
+        page_texts = ocr_stage.run_pages(ocr_inputs, config.language)
 
         processed = builder.build_ocr_postprocessor().process_pages(page_texts, label_pages=False)
         preview = source_image or (ocr_inputs[0] if ocr_inputs else None)

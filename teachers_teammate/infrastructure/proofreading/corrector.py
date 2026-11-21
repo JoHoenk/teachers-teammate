@@ -24,6 +24,7 @@ from ...domain.correction_policy import DEFAULT_LEVEL
 from ...domain.correction_prompts import PROMPT_VERSION
 from ...domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
 from ...domain.proofreading.result import CorrectionOutcome, ExchangeKind, StepName
+from ...exceptions import StageError, StageErrorKind
 from ...interfaces import Corrector
 from .exchanges import Exchange, ExchangeCost, ProofreadContext, build_exchange
 from .exchanges.t import EXPLAIN_FAILED, UNCLEAR_FAILED
@@ -34,7 +35,10 @@ if TYPE_CHECKING:
     from ..ollama_utils import OllamaClient
 
 _FAILED = "Proofreading failed; keeping the original text."
-"""Shown when an exchange failed the file without saying why."""
+"""Shown when an exchange failed without saying why."""
+
+_NO_ANSWER = "Proofreading failed; the model did not answer."
+"""Shown when a request never reached the model and the transport said nothing more."""
 
 _PARTIAL_WARNINGS: frozenset[str] = frozenset({EXPLAIN_FAILED, UNCLEAR_FAILED})
 """The warnings of the steps whose failure costs part of the answer instead of the file."""
@@ -90,11 +94,20 @@ class ExchangeCorrector(Corrector):
     ) -> CorrectionOutcome:
         """Return the proofread text, its review and what the teacher should know.
 
-        A failed file keeps *raw_text* and says why; nothing half-corrected is returned.
+        An answer that cannot be used (the model added or dropped text, or answered twice with a
+        remark around it) is an outcome with ``failed`` set: the source text and the reason.
+
+        Raises:
+            :exc:`~teachers_teammate.exceptions.StageError`: when a request never reached the
+                model, so there was no answer to judge.
         """
         result = self._exchange.proofread(raw_text, self._context(language, text_format))
         warning = "\n".join(result.warnings) or None
         if result.failed:
+            if any(report.failure == "transport" for report in result.reports):
+                raise StageError(
+                    warning or _NO_ANSWER, kind=StageErrorKind.PROVIDER, stage="correction"
+                )
             return CorrectionOutcome(
                 text=raw_text, review=None, warning=warning or _FAILED, failed=True
             )

@@ -14,6 +14,7 @@ from teachers_teammate.domain.proofreading.review import (
     fits,
 )
 from teachers_teammate.domain.text_chunks import split_for_budget
+from teachers_teammate.exceptions import StageError, StageErrorKind
 from teachers_teammate.infrastructure.proofreading.chunking import (
     CHUNK_FAILURE,
     MISSING_REVIEW_WARNING,
@@ -102,7 +103,7 @@ class _RecordingCorrector(Corrector):
         index = len(self.calls)
         self.calls.append(raw_text)
         if index in self._failing:
-            return CorrectionOutcome(text=raw_text, warning="server unreachable", failed=True)
+            raise StageError("server unreachable", kind=StageErrorKind.PROVIDER, stage="correction")
         if index in self._without_review:
             return CorrectionOutcome(
                 text=raw_text.upper(),
@@ -247,30 +248,85 @@ def test_a_piece_whose_review_does_not_fit_loses_it_and_warns() -> None:
 
 
 @pytest.mark.use_case("Chunking_Corrector")
-def test_one_failed_piece_fails_the_whole_file_with_the_original_text() -> None:
+def test_one_failed_piece_fails_the_whole_file() -> None:
     """
     Given  a long text whose second piece fails
     When   it is proofread through the chunking corrector
-    Then   the outcome is failed and carries the untouched source text
+    Then   the failure of that piece ends the stage, so no half-corrected text is returned
     """
     text = _german_text()
-    corrector = ChunkingCorrector(_RecordingCorrector(failing=frozenset({1})))
+    inner = _RecordingCorrector(failing=frozenset({1}))
+    corrector = ChunkingCorrector(inner)
 
-    outcome = corrector.correct(text, "German")
+    with pytest.raises(StageError) as raised:
+        corrector.correct(text, "German")
+
+    assert raised.value.kind == StageErrorKind.PROVIDER
+    assert raised.value.stage == "correction"
+    assert "server unreachable" in str(raised.value)
+    assert len(inner.calls) == 2  # the piece after the failed one was not sent
+
+
+class _Unusable(Corrector):
+    """A corrector whose second piece comes back as an unusable answer, not as an error."""
+
+    def __init__(self, warning: str | None) -> None:
+        self.calls: list[str] = []
+        self._warning = warning
+
+    def max_text_chars(self, language: str, *, text_format: TextFormat = "plain") -> int | None:
+        """Return the budget the text is split by."""
+        return 60
+
+    def correct(
+        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> CorrectionOutcome:
+        """Answer the first piece, and return the source with ``failed`` for the second."""
+        self.calls.append(raw_text)
+        if len(self.calls) == 2:
+            return CorrectionOutcome(text=raw_text, warning=self._warning, failed=True)
+        return CorrectionOutcome(text=raw_text.upper())
+
+
+@pytest.mark.use_case("Chunking_Corrector")
+def test_a_piece_with_an_unusable_answer_fails_the_whole_text_with_the_original() -> None:
+    """
+    Given  a long text whose second piece comes back as a failed outcome
+    When   it is proofread through the chunking corrector
+    Then   the outcome is failed, carries the untouched source text and the reason of the piece,
+           and the pieces after the failed one are not sent
+    """
+    text = _german_text()
+    inner = _Unusable("The model added text of its own; keeping original text.")
+
+    outcome = ChunkingCorrector(inner).correct(text, "German")
 
     assert outcome.failed is True
     assert outcome.text == text
     assert outcome.review is None
-    assert outcome.warning is not None
-    assert "server unreachable" in outcome.warning
+    assert outcome.warning == "The model added text of its own; keeping original text."
+    assert len(inner.calls) == 2
 
 
 @pytest.mark.use_case("Chunking_Corrector")
-def test_a_failed_piece_without_a_message_still_says_the_file_failed() -> None:
+def test_an_unusable_piece_without_a_reason_says_the_file_failed() -> None:
     """
-    Given  a long text whose one piece fails without a message of its own
+    Given  a long text whose second piece fails without a reason of its own
     When   it is proofread through the chunking corrector
-    Then   the warning is the chunking failure message, so the user is not left without one
+    Then   the warning is the chunking failure message, so the teacher is not left without one
+    """
+    outcome = ChunkingCorrector(_Unusable(None)).correct(_german_text(), "German")
+
+    assert outcome.failed is True
+    assert outcome.warning == CHUNK_FAILURE
+
+
+@pytest.mark.use_case("Chunking_Corrector")
+def test_a_failure_without_a_message_reaches_the_caller_unchanged() -> None:
+    """
+    Given  a long text whose piece fails without a sentence of its own
+    When   it is proofread through the chunking corrector
+    Then   the failure arrives as it was raised: the wrapped corrector owns its wording
     """
     text = _german_text()
 
@@ -279,11 +335,10 @@ def test_a_failed_piece_without_a_message_still_says_the_file_failed() -> None:
             self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
         ) -> CorrectionOutcome:
             self.calls.append(raw_text)
-            return CorrectionOutcome(text=raw_text, failed=True)
+            raise StageError("", kind=StageErrorKind.PROVIDER, stage="correction")
 
-    outcome = ChunkingCorrector(_Silent()).correct(text, "German")
-
-    assert outcome.warning == CHUNK_FAILURE
+    with pytest.raises(StageError):
+        ChunkingCorrector(_Silent()).correct(text, "German")
 
 
 @pytest.mark.use_case("Chunking_Corrector")
@@ -382,9 +437,9 @@ def test_the_pieces_after_a_failed_one_are_not_sent() -> None:
     text = _german_text()
     inner = _RecordingCorrector(failing=frozenset({0}))
 
-    outcome = ChunkingCorrector(inner).correct(text, "German")
+    with pytest.raises(StageError):
+        ChunkingCorrector(inner).correct(text, "German")
 
-    assert outcome.failed is True
     assert len(inner.calls) == 1
 
 

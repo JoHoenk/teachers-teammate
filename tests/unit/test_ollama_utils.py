@@ -1792,6 +1792,7 @@ def test_the_ollama_wrappers_let_a_stop_through_instead_of_degrading_to_a_warnin
     Then   RunStoppedError propagates (any other error still becomes a warning)
     """
     from teachers_teammate.infrastructure._llm_invoke import (  # noqa: PLC0415
+        InvokeAnswer,
         invoke_ollama_chat,
         invoke_ollama_structured,
     )
@@ -1799,7 +1800,7 @@ def test_the_ollama_wrappers_let_a_stop_through_instead_of_degrading_to_a_warnin
     client = MagicMock()
     client.chat.side_effect = RunStoppedError
 
-    def chat() -> tuple[str, str | None]:
+    def chat() -> InvokeAnswer:
         return invoke_ollama_chat(
             client,
             model="m",
@@ -1827,7 +1828,7 @@ def test_the_ollama_wrappers_let_a_stop_through_instead_of_degrading_to_a_warnin
         structured()
 
     client.chat.side_effect = RuntimeError("boom")
-    assert chat() == ("raw", "failed (boom)")
+    assert chat() == InvokeAnswer("raw", "failed (boom)")
 
 
 def test_stop_requested_reads_an_optional_event() -> None:

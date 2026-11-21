@@ -9,6 +9,7 @@ import threading
 
 from ...domain.proofreading.review import align, review_summary
 from ...domain.run_summary import FileOutcome, FileStatus, RunSummary
+from ...exceptions import UNEXPECTED_ERROR_MESSAGE
 from ...interfaces import OnFileDoneFn, OnFileStartedFn, Reporter
 from ..reporting import StdoutReporter
 from .file_processor import ProcessingResult
@@ -17,9 +18,6 @@ _logger = logging.getLogger(__name__)
 
 ProcessFileFn = Callable[[Path], ProcessingResult]
 CleanupFn = Callable[[], None]
-
-UNEXPECTED_ERROR_MESSAGE = "An unexpected error occurred; the file was not processed."
-"""What a file says that ended on an error no stage expected; the traceback goes to the log."""
 
 
 def run_files(
@@ -82,7 +80,6 @@ def run_files(
                     _logger.warning("%s", warning)
                 succeeded.append(file.name)
             else:
-                _logger.error("%s", result.message)
                 failed.append(file.name)
     finally:
         cleanup_tmp()
@@ -106,7 +103,7 @@ def _process_one(process_file: ProcessFileFn, file: Path) -> ProcessingResult:
         return process_file(file)
     except Exception:
         _logger.exception("Unexpected error while processing %s", file.name)
-        return ProcessingResult(False, UNEXPECTED_ERROR_MESSAGE, "", "", "", "")
+        return ProcessingResult(False, UNEXPECTED_ERROR_MESSAGE)
 
 
 def _outcome(source_id: str, name: str, result: ProcessingResult) -> FileOutcome:

@@ -1,10 +1,11 @@
 """Shared LLM-invocation helpers for the correction and evaluation stages.
 
 Both stages build a ``(system, human)`` chat prompt and invoke either a
-LangChain chain or a native Ollama chat call, returning ``(result, None)`` on
-success or ``(fallback, warning)`` on any error.  These two helpers capture that
-shared shape so the ``Corrector`` / ``Evaluator`` implementations do not repeat
-the prompt-build and error-handling boilerplate.
+LangChain chain or a native Ollama chat call.  Each returns an :class:`InvokeAnswer`: the
+answer, and how the request ended when it did not come back whole — the caller decides whether
+that is a failure of its stage.  These two helpers capture that shared shape so the
+``Corrector`` / ``Evaluator`` implementations do not repeat the prompt-build and error-handling
+boilerplate.
 """
 
 from __future__ import annotations
@@ -24,7 +25,16 @@ if TYPE_CHECKING:
     from .ollama_utils import OllamaClient
 
 #: Warning used when a correction call fails at the transport level.
-_CORRECTION_FAILURE = "Correction failed ({exc}); keeping original text."
+_CORRECTION_FAILURE = "Correction failed ({exc})."
+
+
+@dataclass(frozen=True)
+class InvokeAnswer:
+    """What one request to a model returned: the text, and how it ended."""
+
+    text: str = ""
+    warning: str | None = None
+    """Why the request did not answer as asked; ``None`` when it did."""
 
 
 def invoke_langchain_chain(
@@ -35,11 +45,11 @@ def invoke_langchain_chain(
     variables: dict[str, str],
     fallback: str,
     failure_prefix: str,
-    failure_suffix: str = ".",
-) -> tuple[str, str | None]:
-    """Build a ``(system, human)`` chain, invoke it, and return ``(text, warning)``.
+) -> InvokeAnswer:
+    """Build a ``(system, human)`` chain and invoke it.
 
-    On any provider error, returns ``(fallback, "<failure_prefix> (<exc>)<failure_suffix>")``.
+    On any provider error, returns *fallback* with the warning
+    ``"<failure_prefix> (<exc>)."``.
     """
     from langchain_core.output_parsers import StrOutputParser  # noqa: PLC0415
     from langchain_core.prompts import ChatPromptTemplate  # noqa: PLC0415
@@ -47,9 +57,9 @@ def invoke_langchain_chain(
     template = ChatPromptTemplate.from_messages([("system", system), ("human", human)])
     chain = template | llm | StrOutputParser()
     try:
-        return chain.invoke(variables), None
+        return InvokeAnswer(chain.invoke(variables))
     except Exception as exc:  # noqa: BLE001  # LangChain raises provider-specific errors; degrade with a warning
-        return fallback, f"{failure_prefix} ({exc}){failure_suffix}"
+        return InvokeAnswer(fallback, f"{failure_prefix} ({exc}).")
 
 
 def _failure_warning(template: str, exc: Exception) -> str:
@@ -72,14 +82,14 @@ def invoke_ollama_chat(  # noqa: PLR0913  # one keyword-only call shape shared b
     num_ctx: int = PROOFREADING_NUM_CTX,
     answer_tokens: int | None = None,
     truncated_warning: str = TRUNCATED_MESSAGE,
-) -> tuple[str, str | None]:
-    """Invoke a native Ollama chat completion and return ``(text, warning)``.
+) -> InvokeAnswer:
+    """Invoke a native Ollama chat completion.
 
-    On any transport error, returns ``(fallback, failure)`` with the ``{exc}`` placeholder in
-    *failure* replaced by the exception.  *system* is sent as a system message; *format* passes
-    a JSON schema to Ollama, which then constrains the answer to it.  An answer the context
-    window cut off returns ``(fallback, truncated_warning)``: its end is missing, so it must not
-    replace the text it was asked about.
+    On any transport error, returns *fallback* with *failure*, its ``{exc}`` placeholder replaced
+    by the exception.  *system* is sent as a system message; *format* passes a JSON schema to
+    Ollama, which then constrains the answer to it.  An answer the context window cut off returns
+    *fallback* with *truncated_warning*: its end is missing, so it must not replace the text it
+    was asked about.
 
     Args:
         num_ctx: The context window this request asks Ollama for (resolved once per run).
@@ -91,7 +101,7 @@ def invoke_ollama_chat(  # noqa: PLR0913  # one keyword-only call shape shared b
     from .ollama_utils import proofreading_options  # noqa: PLC0415
 
     try:
-        return (
+        return InvokeAnswer(
             client.chat(
                 model,
                 prompt,
@@ -101,27 +111,24 @@ def invoke_ollama_chat(  # noqa: PLR0913  # one keyword-only call shape shared b
                 format=format,
                 system=system,
                 answer_tokens=answer_tokens,
-            ),
-            None,
+            )
         )
     except ResponseTruncatedError:
-        return fallback, truncated_warning
+        return InvokeAnswer(fallback, truncated_warning)
     except RunStoppedError:
         raise  # a stop is not a failed request: the caller leaves the stage
     except Exception as exc:  # noqa: BLE001  # client may raise any transport error; degrade with a warning
-        return fallback, _failure_warning(failure, exc)
+        return InvokeAnswer(fallback, _failure_warning(failure, exc))
 
 
-def tidy_answer(
-    result: tuple[str, str | None], postprocess: Callable[[str], str]
-) -> tuple[str, str | None]:
-    """Apply *postprocess* to the text of a successful ``(text, warning)`` result.
+def tidy_answer(answer: InvokeAnswer, postprocess: Callable[[str], str]) -> InvokeAnswer:
+    """Apply *postprocess* to the text of an answer that came back whole.
 
-    A failed call returns its fallback with a warning; that fallback is the caller's own
-    text and stays exactly as it was.
+    An answer with a warning is the caller's own fallback text and stays exactly as it was.
     """
-    text, warning = result
-    return (text, warning) if warning is not None else (postprocess(text), None)
+    if answer.warning is not None:
+        return answer
+    return InvokeAnswer(postprocess(answer.text))
 
 
 FailureKind = Literal["", "transport", "unsupported", "invalid", "truncated"]

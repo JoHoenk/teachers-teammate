@@ -39,10 +39,11 @@ class ChunkingCorrector(Corrector):
     Splitting costs the context across a boundary: a change that depends on a sentence before
     the cut cannot be made.  Cutting at paragraph and sentence ends keeps that rare.
 
-    Failure is all-or-nothing: one failed piece fails the file and keeps the original text,
-    because a half-corrected text must never be stored.  The pieces after a failed one are not
-    sent: their answers would be thrown away, and with an unreachable server each would wait
-    out the timeout.  A piece whose explanation step failed only costs the explanations of that
+    Failure is all-or-nothing: one piece that failed — a ``failed`` outcome, or a
+    :exc:`~teachers_teammate.exceptions.StageError` that goes up as it is — fails the whole text,
+    because a half-corrected text must never be stored; a ``failed`` outcome keeps the original
+    text.  The pieces after a failed one are not sent: their answers would be thrown away, and
+    with an unreachable server each would wait out the timeout.  A piece whose explanation step failed only costs the explanations of that
     piece; the file is not failed and says so in the warning.
     """
 

@@ -6,7 +6,62 @@ from enum import StrEnum
 import threading
 
 
-class OCRError(Exception):
+class PipelineError(Exception):
+    """A failure that ends one file, not the run: the file is ``FAILED``, the next one runs.
+
+    Every failure a pipeline stage can report derives from this class, so
+    :meth:`~teachers_teammate.infrastructure.workflow.file_processor.FileProcessor.process` needs
+    one ``except`` and the coordinator around it one safety net.  A stop
+    (:exc:`RunStoppedError`) and a file that is left out (:exc:`FileSkipped`) are no failures.
+    """
+
+
+class StageErrorKind(StrEnum):
+    """What kind of failure ended a stage; it goes to the log next to the stage."""
+
+    ENGINE = "engine"
+    """The reader (text recognition) failed."""
+    PROVIDER = "provider"
+    """The model did not answer a proofreading request."""
+    ANONYMIZER = "anonymizer"
+    """Hiding or restoring personal data failed (spaCy, a name model, a text over its limit)."""
+    PREPROCESSING = "preprocessing"
+    """The pages of the document could not be prepared."""
+    STORAGE = "storage"
+    """What the app stores about the document could not be read or written."""
+    OUTPUT = "output"
+    """The output files could not be written."""
+
+
+class StageError(PipelineError):
+    """A stage could not do its work, so the file ends before its outputs are written.
+
+    ``str(exc)`` is the sentence a teacher reads: the row of the file and the dialog show it.
+    :attr:`kind` says what failed, :attr:`stage` where.
+    """
+
+    def __init__(self, message: str = "", *, kind: StageErrorKind, stage: str = "") -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.stage = stage
+        """``"ocr"``, ``"correction"`` or ``"evaluation"`` (the last for hiding the personal data
+        of the review); empty when the failure happened outside those three (preparing the
+        pages, reading or writing a file)."""
+
+    def __str__(self) -> str:
+        """Return the sentence a teacher reads."""
+        return str(self.args[0]) if self.args else ""
+
+
+class FileSkipped(PipelineError):
+    """The file is left out on purpose — text recognition is off, or the file is gone.
+
+    Deliberately not a :exc:`StageError`: nothing failed, so the file is *skipped* and its row
+    says why.  ``str(exc)`` is the sentence the row shows.
+    """
+
+
+class OCRError(StageError):
     """Raised by :class:`~teachers_teammate.interfaces.OCRProcessor` implementations
     when text extraction fails.
 
@@ -16,9 +71,16 @@ class OCRError(Exception):
     an error (``None`` for connection failures, timeouts and empty responses).
     """
 
-    def __init__(self, *args: object, status_code: int | None = None) -> None:
-        super().__init__(*args)
+    def __init__(self, message: str = "", *, status_code: int | None = None) -> None:
+        super().__init__(message, kind=StageErrorKind.ENGINE, stage="ocr")
         self.status_code = status_code
+
+
+class AnonymizerError(StageError):
+    """Hiding or restoring personal data failed (spaCy, a name model, a text over its limit)."""
+
+    def __init__(self, message: str = "", *, stage: str = "") -> None:
+        super().__init__(message, kind=StageErrorKind.ANONYMIZER, stage=stage)
 
 
 def stop_requested(event: threading.Event | None) -> bool:
@@ -156,6 +218,9 @@ RECOGNITION_OFF_MESSAGE = "Needs text recognition, which is switched off."
 
 #: What a file says that was queued and is gone when its turn comes.
 FILE_GONE_MESSAGE = "The file is no longer there."
+
+#: What a file says that ended on an error no stage expected; the traceback goes to the log.
+UNEXPECTED_ERROR_MESSAGE = "An unexpected error occurred; the file was not processed."
 
 
 class RecognitionSwitchedOffError(PipelineInputError):

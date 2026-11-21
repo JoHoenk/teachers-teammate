@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 import threading
 
-from ...exceptions import OCRError, RunStoppedError, stop_requested
+from ...exceptions import OCRError, RunStoppedError, StageError, stop_requested
 from ...interfaces import OCRProcessor
 from ..ocr_text_cleaner import clean_ocr_text
 
@@ -29,17 +29,19 @@ class OCRStageService:
         language: str,
         on_page: Callable[[int, int], None] | None = None,
         on_page_done: Callable[[str], None] | None = None,
-    ) -> tuple[list[str], str | None]:
-        """Run OCR on each input path; return ``(page_texts, error_message | None)``.
+    ) -> list[str]:
+        """Run OCR on each input path and return the text of every page.
 
         *on_page* is called as ``on_page(page_number, total_pages)`` (1-based) right
         before each page is sent to the OCR engine, *on_page_done* with the page's text right
         after it was read.
 
         Raises:
+            :exc:`~teachers_teammate.exceptions.StageError`: when the engine could not read a
+                page.  The message names the page; no page text is returned, because a document
+                read only in part is not a transcription.
             :exc:`~teachers_teammate.exceptions.RunStoppedError`: when the run is stopped
-                before or while a page is read.  Not an error of the engine, so it is not
-                returned as a message.
+                before or while a page is read.  Not an error of the engine.
         """
         page_texts: list[str] = []
         for i, ocr_path in enumerate(ocr_inputs):
@@ -55,9 +57,11 @@ class OCRStageService:
                     # engine's fault.
                     raise RunStoppedError from exc
                 label = f"page {i + 1}" if len(ocr_inputs) > 1 else "image"
-                return [], f"OCR failed ({label}): {exc}"
+                raise StageError(
+                    f"OCR failed ({label}): {exc}", kind=exc.kind, stage="ocr"
+                ) from exc
             page_text = clean_ocr_text(result)
             page_texts.append(page_text)
             if on_page_done is not None:
                 on_page_done(page_text)
-        return page_texts, None
+        return page_texts

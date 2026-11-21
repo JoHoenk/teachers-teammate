@@ -10,9 +10,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from teachers_teammate.domain.model_catalog import GpuInfo
 from teachers_teammate.infrastructure import gpu_detector
 from teachers_teammate.infrastructure.gpu_detector import (
-    GpuInfo,
     GpuUsage,
     _parse_amd_smi,
     _parse_amd_smi_vram,

@@ -353,7 +353,7 @@ def test_the_tooltip_says_how_the_stored_result_was_sent(qtbot) -> None:
     Given  a proofread file whose result went to an online service with two names hidden,
            made with other privacy settings than today's
     When   the row is shown and the stage tooltip is set
-    Then   the cell shows the stage line, how the result was sent and what to do about it
+    Then   the cell shows how the result was sent and what to do about it, not the setting too
     """
     table = ResultsTable()
     qtbot.addWidget(table)
@@ -363,9 +363,7 @@ def test_the_tooltip_says_how_the_stored_result_was_sent(qtbot) -> None:
     correction = table.item(0, ResultsTable._COL_CORRECTION)
     assert correction is not None
     assert correction.toolTip() == (
-        "Sent to Mistral (EU), names hidden\n"
-        "\n"
-        "Sent to Mistral (EU) with 2 names hidden\n"
+        "Mistral (EU), 2 names hidden\n"
         "made with other privacy settings — proofread again to send with the current ones"
     )
 
@@ -375,7 +373,7 @@ def test_the_tooltip_of_a_result_made_here_says_so(qtbot) -> None:
     """
     Given  a proofread file whose result was made on this computer
     When   the row is shown
-    Then   the cell says it was made here, and nothing about sending
+    Then   the cell has no tooltip
     """
     table = ResultsTable()
     qtbot.addWidget(table)
@@ -383,7 +381,7 @@ def test_the_tooltip_of_a_result_made_here_says_so(qtbot) -> None:
 
     correction = table.item(0, ResultsTable._COL_CORRECTION)
     assert correction is not None
-    assert correction.toolTip() == "Made on this computer (Ollama)"
+    assert correction.toolTip() == ""
 
 
 @pytest.mark.gui
@@ -391,7 +389,7 @@ def test_a_stage_without_a_record_loses_its_sent_line(qtbot) -> None:
     """
     Given  a cell that shows how its result was sent
     When   the store reports no record for that stage any more (a re-run or an edit)
-    Then   the line is gone and the stage line stays
+    Then   the line is gone and the stage line takes its place
     """
     table = ResultsTable()
     qtbot.addWidget(table)
@@ -426,8 +424,8 @@ def test_the_tooltip_tells_hiding_that_found_nothing_from_hiding_that_was_off(qt
     second = table.item(1, ResultsTable._COL_CORRECTION)
     assert first is not None
     assert second is not None
-    assert first.toolTip() == "Sent to Mistral (EU) with no names found to hide"
-    assert second.toolTip() == "Sent to Mistral (EU) with names as written"
+    assert first.toolTip() == "Mistral (EU), no names found to hide"
+    assert second.toolTip() == "Mistral (EU), names as written"
 
 
 @pytest.mark.gui

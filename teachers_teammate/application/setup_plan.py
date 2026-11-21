@@ -322,12 +322,16 @@ def _propose(
         rating = rate(current, category)
         if rating.suitability in _USABLE:
             return current, rating, True
-    for spec in OLLAMA_CATALOG:
-        if category not in catalog_uses(spec) or not _installed(spec.tag, facts):
-            continue
-        rating = rate(spec.tag, category)
-        if rating.suitability in _FITS:
-            return spec.tag, rating, True
+    installed = [
+        spec.tag
+        for spec in OLLAMA_CATALOG
+        if category in catalog_uses(spec) and _installed(spec.tag, facts)
+    ]
+    rated = [(tag, rate(tag, category)) for tag in installed]
+    for suitability in _FITS:
+        for tag, rating in rated:
+            if rating.suitability is suitability:
+                return tag, rating, True
     tag = best(category)
     return tag, rate(tag, category), _installed(tag, facts)
 

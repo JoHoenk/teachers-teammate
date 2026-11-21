@@ -185,6 +185,15 @@ def stage_tooltip(stage: DataFlowStage) -> str:
     return f"Sent to {location.service}, outside the EU, {names}"
 
 
+def stage_tooltips(flow: DataFlow) -> dict[str, str]:
+    """Return the tooltip of each stage cell that sends text away from this computer."""
+    return {
+        stage.stage: stage_tooltip(stage)
+        for stage in flow.stages
+        if not stage.detail and stage.location.location is not DataLocation.THIS_COMPUTER
+    }
+
+
 def uses_tooltip(stage: DataFlowStage) -> str:
     """Tooltip of a "uses" line: where its text goes, whether names are hidden, the details."""
     return f"{stage_tooltip(stage)}\n{stage.location.details}"

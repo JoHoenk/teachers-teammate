@@ -59,7 +59,7 @@ from .docx_builder import DocxDocumentCreator
 from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
 from .llm_factory import build_llm, get_provider_info
 from .ocr_processor import OllamaOCRProcessor
-from .ollama_utils import OllamaClient, is_local_ollama_url, ollama_host
+from .ollama_utils import OllamaClient, ollama_server
 from .onnx.store import ModelStore
 from .ppocr.engine import PpOcrProcessor
 from .preprocessing.recipes import steps_for
@@ -314,7 +314,14 @@ class StageBuilder:
         cfg = self.config
         ocr = cfg.ocr
         factory = self.factory
-        reason = online_ocr_reason(ocr.engine, ocr.model, ollama_host(cfg.ollama_url))
+        server = ollama_server(cfg.ollama_url)
+        reason = online_ocr_reason(
+            ocr.engine,
+            ocr.model,
+            server.host,
+            url_is_local=server.is_this_computer,
+            host_is_private=server.is_private,
+        )
         # With recognition off no page is read, so a model that would read pages online is moot.
         if reason and cfg.recognition_enabled:
             raise OnlineOcrNotAllowedError(reason)
@@ -399,17 +406,20 @@ class StageBuilder:
         )
 
     def _correction_is_online(self) -> bool:
-        """Return whether proofreading is processed by an online service (and billed by it).
+        """Return whether proofreading is processed by an online service.
 
         The same rule the privacy badge uses (:func:`llm_stage_location`), so a self-hosted
-        provider is shown as local and also gets the local number of tries.
+        provider is shown as local and also gets the local number of tries.  An Ollama server on
+        the internet is online: it is not one of the teacher's own computers.
         """
         cfg = self.config
+        server = ollama_server(cfg.ollama_url)
         where = llm_stage_location(
             self_hosted=bool(get_provider_info(cfg.correction_provider).get("self_hosted")),
             model=cfg.effective_correction_model,
-            url_is_local=is_local_ollama_url(cfg.ollama_url),
-            host=ollama_host(cfg.ollama_url),
+            url_is_local=server.is_this_computer,
+            host=server.host,
+            host_is_private=server.is_private,
         )
         return where is DataLocation.ONLINE
 

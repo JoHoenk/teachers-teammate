@@ -95,6 +95,29 @@ def _proofreading(qtbot, service=None, values=None, **kwargs) -> AiServiceSectio
     return _section(qtbot, PROOFREADING, service or DummyAppService(), values, **kwargs)
 
 
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://127.0.0.1:11434", "text never leaves it"),
+        ("http://school-server:11434", "unencrypted (http://)"),
+        ("https://school-server:11434", "text is sent there"),
+        ("http://203.0.113.7:11434", "unencrypted (http://)"),
+        ("https://203.0.113.7:11434", "text is sent over the internet"),
+    ],
+)
+def test_the_service_hint_warns_about_an_unencrypted_server(qtbot, url: str, expected: str) -> None:
+    """
+    Given  a proofreading section whose Ollama server is on this computer, on the school's
+           network or on the internet, reached over http:// or https://
+    When   the hint under the service is rendered
+    Then   it says what the place means for the text, and says so when the connection to a
+           server of the teacher's choosing is not encrypted
+    """
+    section = _proofreading(qtbot, values={"correction_provider": "ollama", "ollama_url": url})
+
+    assert expected in section._where_hint.text()
+
+
 def _items(section: AiServiceSection) -> list[str]:
     return [section._model.itemText(i) for i in range(section._model.count())]
 

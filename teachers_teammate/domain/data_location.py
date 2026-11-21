@@ -165,7 +165,8 @@ class StageLocation:
     location: DataLocation
     #: Display name of the engine or provider ("Ollama", "Built-in reader", "OpenAI").
     service: str
-    #: Host name of the other computer (OTHER_COMPUTER only).
+    #: Host name of the Ollama server (another computer, or one on the internet); empty for a
+    #: vendor, whose address is not the teacher's to choose.
     host: str = ""
     #: Where the data is processed (ONLINE only).  ``None`` means "not declared", which is
     #: shown like :attr:`DataRegion.UNKNOWN`.
@@ -191,6 +192,8 @@ class StageLocation:
     def details(self) -> str:
         """The tooltip: where the data is processed, and where the vendor is at home."""
         parts = [self.label]
+        if self.location is DataLocation.ONLINE and self.host:
+            parts.append(f"Server: {self.host}")
         if self.location is DataLocation.ONLINE and self.vendor_country:
             parts.append(f"Vendor based in {self.vendor_country}")
         return "\n".join(parts)
@@ -217,18 +220,26 @@ def anonymization_badge(models: Iterable[str]) -> str:
 
 
 def classify_ollama(
-    model: str, *, url_is_local: bool, host: str, service: str = "Ollama"
+    model: str, *, url_is_local: bool, host: str, host_is_private: bool, service: str = "Ollama"
 ) -> StageLocation:
-    """Classify a step served by an Ollama server at *host* running *model*."""
+    """Classify a step served by an Ollama server at *host* running *model*.
+
+    A server that is neither this computer nor on a local network is an online service: the
+    data crosses the internet to reach it, so it is shown and confirmed like a vendor.  A
+    private address (``192.168.1.5``, ``nas.local``) stays another computer the teacher
+    controls.
+    """
     if is_ollama_cloud_model(model) or is_ollama_cloud_host(host):
         return StageLocation(DataLocation.ONLINE, "Ollama cloud")
     if url_is_local:
         return StageLocation(DataLocation.THIS_COMPUTER, service)
+    if not host_is_private:
+        return StageLocation(DataLocation.ONLINE, service, host)
     return StageLocation(DataLocation.OTHER_COMPUTER, service, host)
 
 
 def llm_stage_location(
-    *, self_hosted: bool, model: str, url_is_local: bool, host: str
+    *, self_hosted: bool, model: str, url_is_local: bool, host: str, host_is_private: bool
 ) -> DataLocation:
     """Return where a step that runs on an LLM provider processes its data.
 
@@ -239,16 +250,21 @@ def llm_stage_location(
     a new provider.
     """
     if self_hosted:
-        return classify_ollama(model, url_is_local=url_is_local, host=host).location
+        return classify_ollama(
+            model, url_is_local=url_is_local, host=host, host_is_private=host_is_private
+        ).location
     return DataLocation.ONLINE
 
 
-def online_ocr_reason(engine: str, model: str, host: str) -> str:
+def online_ocr_reason(
+    engine: str, model: str, host: str, *, url_is_local: bool, host_is_private: bool
+) -> str:
     """Return why OCR with these settings is not allowed, or ``""`` when it is.
 
     OCR must stay on a computer the user controls: a page cannot be anonymised before
-    it is read.  That rules out every engine outside :data:`LOCAL_OCR_ENGINES` and
-    Ollama cloud models / Ollama's hosted API.
+    it is read.  That rules out every engine outside :data:`LOCAL_OCR_ENGINES`, Ollama cloud
+    models / Ollama's hosted API, and a server that is neither this computer nor on a local
+    network — page images would cross the internet.
     """
     if engine not in LOCAL_OCR_ENGINES:
         return (
@@ -256,10 +272,18 @@ def online_ocr_reason(engine: str, model: str, host: str) -> str:
             "receive the whole page, including names and grades. Use "
             f"{' or '.join(OCR_ENGINE_NAMES.values())} instead."
         )
-    if engine == ENGINE_OLLAMA and (is_ollama_cloud_model(model) or is_ollama_cloud_host(host)):
+    if engine != ENGINE_OLLAMA:
+        return ""
+    if is_ollama_cloud_model(model) or is_ollama_cloud_host(host):
         return (
             f"The Ollama model '{model}' runs on Ollama's servers, not on your computer. "
             "Choose a model that is downloaded to your own Ollama."
+        )
+    if not url_is_local and not host_is_private:
+        return (
+            f"The Ollama server at '{host}' is not on your computer or your local network, "
+            "so the page images would be sent over the internet. Choose a server on this "
+            "computer or on your own network."
         )
     return ""
 

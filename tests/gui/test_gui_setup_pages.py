@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, QPoint, Signal
 from PySide6.QtWidgets import QDialog, QLabel, QLayout, QScrollArea, QWidget
 import pytest
 
+from teachers_teammate.application.data_flow import llm_location
 from teachers_teammate.application.setup_plan import (
     DownloadKind,
     HandIn,
@@ -27,7 +28,7 @@ from teachers_teammate.domain.model_catalog import (
     Suitability,
 )
 from teachers_teammate.gui import _user_text as txt
-from teachers_teammate.gui._data_flow_summary import PLACE_THIS_COMPUTER
+from teachers_teammate.gui._data_flow_summary import PLACE_OWN_SERVER, PLACE_THIS_COMPUTER
 from teachers_teammate.gui.setup import SetupAssistant, SetupContext
 from teachers_teammate.gui.setup._flow import ORDER, SetupPageId
 from teachers_teammate.gui.setup._pages import _fit_words
@@ -994,6 +995,36 @@ def test_the_summary_says_where_ollama_runs(qtbot) -> None:
     """
     assistant, page = _summary(qtbot, SetupAppService())
     assert page._place_of("ollama") == PLACE_THIS_COMPUTER
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://school-server:11434", PLACE_OWN_SERVER),
+        ("http://203.0.113.7:11434", f"Ollama · {DataRegion.UNKNOWN.label}"),
+    ],
+)
+def test_the_summary_says_where_a_remote_ollama_runs(qtbot, url: str, expected: str) -> None:
+    """
+    Given  an Ollama address on the school's network, or one on the internet
+    When   the summary names that place
+    Then   the first is "own server" and the other an online service, as Settings and the
+           confirmation before a run say, not "own server" for every address but this computer
+    """
+
+    class _RealRule(SetupAppService):
+        def describe_llm_location(self, provider, model, ollama_url):
+            return llm_location(
+                provider,
+                model,
+                ollama_url,
+                lambda _p: {"display_name": "Ollama", "self_hosted": True},
+            )
+
+    assistant = _assistant(qtbot, _context(_RealRule(), ollama_url=url))
+    page = _page(assistant, SetupPageId.SUMMARY)
+
+    assert page._place_of("ollama") == expected
 
 
 # ── All set ───────────────────────────────────────────────────────────────────

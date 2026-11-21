@@ -24,6 +24,7 @@ from ..domain.data_location import (
 )
 from ..domain.language import language_name
 from ..domain.model_catalog import short_model_name
+from ..texts import privacy
 from . import _user_text as txt
 
 #: One colour per level: green keeps everything here, yellow sends anonymized text into the
@@ -196,6 +197,21 @@ def text_note(location: StageLocation) -> str:
     if location.location is DataLocation.OTHER_COMPUTER:
         return "text is sent there"
     return "text is sent over the internet"
+
+
+def plain_http_note(location: StageLocation, url: str) -> str:
+    """Return the note for a step on an Ollama server of the teacher's choosing over ``http://``.
+
+    That is another computer, or a server on the internet; both have a host.  Empty for this
+    computer and for a vendor's service (no host): a vendor's address is not the teacher's to
+    change, and the badge already says that the data leaves.  A note, not a refusal — a school
+    server often has no certificate.
+    """
+    if location.location is DataLocation.THIS_COMPUTER or not location.host:
+        return ""
+    if url.strip().lower().startswith("https://"):
+        return ""
+    return privacy.unencrypted_note(location.host)
 
 
 class LocationHint(QLabel):

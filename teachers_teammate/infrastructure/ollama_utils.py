@@ -27,6 +27,7 @@ from ..domain.model_catalog import ServerFacts as ServerFacts  # noqa: PLC0414
 from ..domain.model_catalog import normalize_tag
 from ..domain.ollama_discovery import WaitDetail as WaitDetail  # noqa: PLC0414
 from ..domain.ollama_discovery import WaitKind as WaitKind  # noqa: PLC0414
+from ..domain.ollama_discovery import is_private_host
 from ..exceptions import OllamaConnectionError, RunStoppedError, stop_requested
 from .reporting import Reporter, StdoutReporter
 from .wsl import windows_host_addresses
@@ -177,6 +178,31 @@ def is_local_ollama_url(url: str, *, include_wsl_host: bool = False) -> bool:
     if host in _own_host_names():
         return True
     return include_wsl_host and host in windows_host_addresses()
+
+
+@dataclass(frozen=True)
+class OllamaServer:
+    """What the privacy rules need to know about the server at an Ollama URL."""
+
+    host: str
+    #: The server runs on this computer (or the Windows computer behind a WSL session).
+    is_this_computer: bool
+    #: The host is on a local network, so it is a computer the teacher controls.
+    is_private: bool
+
+
+def ollama_server(url: str) -> OllamaServer:
+    """Return where the Ollama server at *url* is: the one place that reads the address.
+
+    Every classification of a step on Ollama (the badge, the refusal of online text
+    recognition, the number of tries) starts here, so they cannot disagree about a URL.
+    """
+    host = ollama_host(url)
+    return OllamaServer(
+        host=host,
+        is_this_computer=is_local_ollama_url(url, include_wsl_host=True),
+        is_private=is_private_host(host),
+    )
 
 
 def models_include(model_name: str, available: list[str]) -> bool:

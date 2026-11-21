@@ -11,6 +11,7 @@ from teachers_teammate.application.data_flow import (
     llm_location,
     llm_steps,
     ocr_location,
+    ocr_refusal,
     sent_location,
     text_goes_online,
 )
@@ -99,7 +100,7 @@ def test_classify_ollama_on_this_computer() -> None:
     When   classify_ollama() runs
     Then   the step is on this computer
     """
-    loc = classify_ollama("qwen3.5:9b", url_is_local=True, host="localhost")
+    loc = classify_ollama("qwen3.5:9b", url_is_local=True, host="localhost", host_is_private=True)
     assert loc.location is DataLocation.THIS_COMPUTER
     assert loc.label == "On this computer"
 
@@ -110,26 +111,60 @@ def test_classify_ollama_on_another_computer_names_the_host() -> None:
     When   classify_ollama() runs
     Then   the step is on another computer and the label names it
     """
-    loc = classify_ollama("qwen3.5:9b", url_is_local=False, host="school-server")
+    loc = classify_ollama(
+        "qwen3.5:9b", url_is_local=False, host="school-server", host_is_private=True
+    )
     assert loc.location is DataLocation.OTHER_COMPUTER
     assert loc.label == "On another computer (school-server)"
 
 
 @pytest.mark.parametrize(
-    ("model", "url_is_local", "host"),
-    [("gpt-oss:120b-cloud", True, "localhost"), ("qwen3.5:9b", False, "ollama.com")],
+    ("model", "url_is_local", "host", "host_is_private"),
+    [
+        ("gpt-oss:120b-cloud", True, "localhost", True),
+        ("qwen3.5:9b", False, "ollama.com", False),
+    ],
 )
 def test_classify_ollama_cloud_is_online_even_via_local_server(
-    model: str, url_is_local: bool, host: str
+    model: str, url_is_local: bool, host: str, host_is_private: bool
 ) -> None:
     """
     Given  an Ollama cloud model (through the local server) or Ollama's hosted API
     When   classify_ollama() runs
     Then   the step is an online service
     """
-    loc = classify_ollama(model, url_is_local=url_is_local, host=host)
+    loc = classify_ollama(
+        model, url_is_local=url_is_local, host=host, host_is_private=host_is_private
+    )
     assert loc.location is DataLocation.ONLINE
     assert loc.label == "Online service (Ollama cloud) · outside the EU"
+
+
+@pytest.mark.parametrize(
+    "host", ["192.168.1.5", "10.0.0.2", "fd00::1", "nas.local", "nas", "172.20.0.1"]
+)
+def test_classify_ollama_on_a_private_address_is_another_computer(host: str) -> None:
+    """
+    Given  an Ollama server that is told to be on a private address or a local name
+    When   classify_ollama() runs
+    Then   the step is on another computer the teacher controls, never online
+    """
+    loc = classify_ollama("qwen3.5:9b", url_is_local=False, host=host, host_is_private=True)
+    assert loc.location is DataLocation.OTHER_COMPUTER
+    assert loc.host == host
+
+
+@pytest.mark.parametrize("host", ["203.0.113.7", "ollama.example.com"])
+def test_classify_ollama_on_a_public_address_is_online(host: str) -> None:
+    """
+    Given  an Ollama server at an address on the internet
+    When   classify_ollama() runs
+    Then   the step is an online service, because the data crosses the internet to reach it
+    """
+    loc = classify_ollama("qwen3.5:9b", url_is_local=False, host=host, host_is_private=False)
+    assert loc.location is DataLocation.ONLINE
+    assert loc.label == "Online service (Ollama) · outside the EU"
+    assert loc.host == host
 
 
 # ── online_ocr_reason ──────────────────────────────────────────────────────
@@ -142,7 +177,9 @@ def test_online_ocr_engines_are_refused(engine: str) -> None:
     When   online_ocr_reason() is asked
     Then   a reason mentioning the whole page is returned
     """
-    assert "whole page" in online_ocr_reason(engine, "gpt-4o", "localhost")
+    assert "whole page" in online_ocr_reason(
+        engine, "gpt-4o", "localhost", url_is_local=True, host_is_private=True
+    )
 
 
 @pytest.mark.parametrize(
@@ -160,7 +197,7 @@ def test_local_ocr_is_allowed(engine: str, model: str, host: str) -> None:
     When   online_ocr_reason() is asked
     Then   there is no reason to refuse
     """
-    assert online_ocr_reason(engine, model, host) == ""
+    assert online_ocr_reason(engine, model, host, url_is_local=False, host_is_private=True) == ""
 
 
 @pytest.mark.parametrize(
@@ -172,7 +209,22 @@ def test_ollama_cloud_ocr_is_refused(model: str, host: str) -> None:
     When   online_ocr_reason() is asked
     Then   the reason says it runs on Ollama's servers
     """
-    assert "Ollama's servers" in online_ocr_reason("ollama", model, host)
+    assert "Ollama's servers" in online_ocr_reason(
+        "ollama", model, host, url_is_local=False, host_is_private=False
+    )
+
+
+@pytest.mark.parametrize("host", ["203.0.113.7", "ollama.example.com"])
+def test_ocr_on_a_public_address_is_refused(host: str) -> None:
+    """
+    Given  Ollama text recognition pointed at an address on the internet
+    When   online_ocr_reason() is asked
+    Then   the reason says the page images would be sent over the internet
+    """
+    reason = online_ocr_reason(
+        "ollama", "deepseek-ocr:latest", host, url_is_local=False, host_is_private=False
+    )
+    assert "over the internet" in reason
 
 
 # ── DataFlow ───────────────────────────────────────────────────────────────
@@ -417,6 +469,90 @@ def test_describe_data_flow_remote_ollama_for_ocr(tmp_path: Path) -> None:
     assert ocr.location.location is DataLocation.OTHER_COMPUTER
     assert ocr.receives == "page images"
     assert Advice.PAGES_TO_OTHER_COMPUTER in flow.advice
+
+
+def _correction_stage(tmp_path: Path, url: str) -> tuple[DataFlow, DataFlowStage]:
+    """Return the data flow and the proofreading step of a run on the Ollama server at *url*."""
+    cfg = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        correction_model="qwen3.5:9b",
+        ollama_url=url,
+    )
+    flow = describe_data_flow(cfg, _info)
+    correction = flow.stage(STAGE_CORRECTION)
+    assert correction is not None
+    return flow, correction
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://127.0.0.1:11434", DataLocation.THIS_COMPUTER),
+        ("http://192.168.1.5:11434", DataLocation.OTHER_COMPUTER),
+        ("http://172.20.0.1:11434", DataLocation.OTHER_COMPUTER),
+        ("http://[fd00::1]:11434", DataLocation.OTHER_COMPUTER),
+        ("http://nas.local:11434", DataLocation.OTHER_COMPUTER),
+        ("http://nas.fritz.box:11434", DataLocation.OTHER_COMPUTER),
+        ("http://school-server:11434", DataLocation.OTHER_COMPUTER),
+        ("http://100.101.1.2:11434", DataLocation.OTHER_COMPUTER),
+        ("http://203.0.113.7:11434", DataLocation.ONLINE),
+        ("https://ollama.example.com", DataLocation.ONLINE),
+    ],
+)
+def test_describe_data_flow_places_ollama_by_its_address(
+    tmp_path: Path, url: str, expected: DataLocation
+) -> None:
+    """
+    Given  proofreading on an Ollama server at an address of each kind
+    When   describe_data_flow() runs
+    Then   a private address or local name is another computer of the teacher's, and anything
+           else is an online service, so the run asks before the text is sent
+    """
+    flow, correction = _correction_stage(tmp_path, url)
+    assert correction.location.location is expected
+    assert flow.leaves_computer is (expected is not DataLocation.THIS_COMPUTER)
+
+
+def test_describe_data_flow_names_the_public_ollama_server(tmp_path: Path) -> None:
+    """
+    Given  proofreading on an Ollama server on the internet
+    When   describe_data_flow() runs
+    Then   the step is online outside the EU and its tooltip names the server
+    """
+    _flow, correction = _correction_stage(tmp_path, "http://203.0.113.7:11434")
+    assert correction.location.host == "203.0.113.7"
+    assert correction.location.data_region is DataRegion.UNKNOWN
+    assert "Server: 203.0.113.7" in correction.location.details
+
+
+def test_a_different_public_ollama_server_is_a_different_fingerprint(tmp_path: Path) -> None:
+    """
+    Given  "don't ask again" answered for proofreading on one public Ollama server
+    When   the run is set up for another public server, and again for the first
+    Then   the other server has another fingerprint, so the question comes back, and the
+           first one keeps its own
+    """
+    first, _ = _correction_stage(tmp_path, "http://203.0.113.7:11434")
+    again, _ = _correction_stage(tmp_path, "http://203.0.113.7:11434")
+    other, _ = _correction_stage(tmp_path, "https://ollama.example.com")
+    assert first.fingerprint
+    assert first.fingerprint == again.fingerprint
+    assert other.fingerprint != first.fingerprint
+
+
+def test_describe_data_flow_public_ollama_ocr_is_refused_and_shown_online(tmp_path: Path) -> None:
+    """
+    Given  Ollama text recognition on a server on the internet
+    When   the refusal and the location are asked
+    Then   the refusal names the internet and the location is online, so a display of the
+           refused setting shows the worst case
+    """
+    url = "http://203.0.113.7:11434"
+    assert "over the internet" in ocr_refusal("ollama", "deepseek-ocr:latest", url)
+    assert ocr_location("ollama", "deepseek-ocr:latest", url).location is DataLocation.ONLINE
+    assert ocr_refusal("ollama", "deepseek-ocr:latest", "http://nas.fritz.box:11434") == ""
 
 
 # ── Data region ────────────────────────────────────────────────────────────

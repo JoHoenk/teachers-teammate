@@ -174,23 +174,87 @@ def test_build_ocr_refuses_ollama_cloud(tmp_path: Path, model: str, url: str) ->
     build_ollama_ocr.assert_not_called()
 
 
-def test_build_ocr_allows_downloaded_ollama_model_on_another_computer(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "url", ["http://203.0.113.7:11434", "https://ollama.example.com", "ollama.example.com:11434"]
+)
+def test_build_ocr_refuses_ollama_on_the_internet(tmp_path: Path, url: str) -> None:
     """
-    Given  Ollama OCR with a downloaded model on a school server
+    Given  Ollama OCR with a downloaded model, pointed at a server on the internet
+    When   StageBuilder.build_ocr() is called
+    Then   it raises OnlineOcrNotAllowedError naming the internet and builds no OCR processor
+    """
+    build_ollama_ocr = MagicMock()
+    factory = PipelineComponentFactory(build_ollama_ocr=build_ollama_ocr)
+    config = make_config(
+        tmp_path, ocr=OcrConfig(engine="ollama", model="deepseek-ocr:latest"), ollama_url=url
+    )
+
+    with pytest.raises(OnlineOcrNotAllowedError, match="over the internet"):
+        StageBuilder(config=config, factory=factory).build_ocr(MagicMock())
+
+    build_ollama_ocr.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://school-server:11434",
+        "http://nas.fritz.box:11434",
+        "http://192.168.1.5:11434",
+        "http://[fd00::1]:11434",
+    ],
+)
+def test_build_ocr_allows_downloaded_ollama_model_on_another_computer(
+    tmp_path: Path, url: str
+) -> None:
+    """
+    Given  Ollama OCR with a downloaded model on a server in the school's own network
     When   StageBuilder.build_ocr() is called
     Then   the Ollama OCR processor is built (a server you run is allowed)
     """
     build_ollama_ocr = MagicMock()
     factory = PipelineComponentFactory(build_ollama_ocr=build_ollama_ocr)
     config = make_config(
-        tmp_path,
-        ocr=OcrConfig(engine="ollama", model="deepseek-ocr:latest"),
-        ollama_url="http://school-server:11434",
+        tmp_path, ocr=OcrConfig(engine="ollama", model="deepseek-ocr:latest"), ollama_url=url
     )
 
     StageBuilder(config=config, factory=factory).build_ocr(MagicMock())
 
     build_ollama_ocr.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("provider", "url", "online"),
+    [
+        ("ollama", "http://127.0.0.1:11434", False),
+        ("ollama", "http://192.168.1.5:11434", False),
+        ("ollama", "http://nas.fritz.box:11434", False),
+        ("ollama", "http://203.0.113.7:11434", True),
+        ("ollama", "https://ollama.example.com", True),
+        ("openai", "http://127.0.0.1:11434", True),
+    ],
+)
+def test_proofreading_is_online_by_where_its_server_is(
+    tmp_path: Path, provider: str, url: str, online: bool
+) -> None:
+    """
+    Given  proofreading with a provider and an Ollama address
+    When   the builder asks whether proofreading is online (it decides the tries of a cut-off
+           answer)
+    Then   an Ollama server on this computer or the school's network is not, one on the
+           internet is, and a vendor's service always is, as the privacy badge says
+    """
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider=provider,
+        correction_model="m",
+        ollama_url=url,
+    )
+
+    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+
+    assert builder._correction_is_online() is online
 
 
 def test_build_ocr_builds_the_built_in_reader_with_the_stop_event(tmp_path: Path) -> None:

@@ -2644,7 +2644,7 @@ enabled).  The arrows in the header step through `checkable_source_ids()` and se
 they land on.
 
 **Copy.**  `Copy ▾` takes the text from the table row, not from the view, through
-`ProcessingApplicationService.text_for_copy()` -- the same function *Export text* uses, so a
+`ExportService.text_for_copy()` -- the same function *Export text* uses, so a
 copy and an export never disagree.  `flush_pending_edit()` runs first, so a half-typed edit is
 saved before it is copied.  The menu's "names hidden" entries follow
 `_refresh_privacy_availability()` (`_refresh_copy_state()`), so installing the Privacy add-on or

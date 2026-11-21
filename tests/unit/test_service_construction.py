@@ -30,6 +30,7 @@ CONSTRUCTED = {
     "AnonymizationService",
     "AppServices",
     "DataFlowService",
+    "ExportService",
     "ModelRecommendationService",
     "OllamaServerService",
     "ProcessingApplicationService",

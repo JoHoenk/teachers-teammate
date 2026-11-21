@@ -52,13 +52,12 @@ from ..application.composition import (
     start_diagnostics,
 )
 from ..application.documents import WorkedOn
+from ..application.export import NO_TEXT_MESSAGE, DocxExport
 from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
 from ..application.sent_text import SentTexts
 from ..application.service import (
     ADDON_PRIVACY,
-    NO_TEXT_MESSAGE,
-    DocxExport,
     IssueKind,
     RequirementIssue,
     RunPreflight,
@@ -1889,7 +1888,7 @@ class MainWindow(QMainWindow):
         return [
             (
                 sid,
-                self._app_service.processing.export_target(
+                self._app_service.export.export_target(
                     Path(sid),
                     Path(input_dir) if input_dir else None,
                     Path(folder),
@@ -1942,7 +1941,7 @@ class MainWindow(QMainWindow):
             return True
         # Folder mode always scans subfolders (see ConfigPanel.to_config).
         if not any(
-            self._app_service.processing.is_in_input_folder(
+            self._app_service.export.is_in_input_folder(
                 out.parent, Path(input_dir), recursive=True
             )
             for _sid, out in targets
@@ -1967,7 +1966,7 @@ class MainWindow(QMainWindow):
             try:
                 # The texts, their notation and the review come from the stored document, so the
                 # file carries what the Check tab shows.
-                self._app_service.processing.export_docx(
+                self._app_service.export.export_docx(
                     config,
                     Path(source_id),
                     out_path,
@@ -2021,7 +2020,7 @@ class MainWindow(QMainWindow):
             failed = list(preflight_errors)
             for source, out_path in jobs:
                 try:
-                    service.processing.export_text(
+                    service.export.export_text(
                         config,
                         source,
                         out_path,
@@ -2940,7 +2939,7 @@ class MainWindow(QMainWindow):
             return
         if not kind.is_anonymized:
             QApplication.clipboard().setText(
-                service.processing.text_for_copy(view, corrected=kind.is_corrected)
+                service.export.text_for_copy(view, corrected=kind.is_corrected)
             )
             self._check.show_copied()
             return
@@ -2948,7 +2947,7 @@ class MainWindow(QMainWindow):
         anon_config = self._config_panel.build_anonymizer_config()
 
         def _copy() -> object:
-            return service.processing.text_for_copy(
+            return service.export.text_for_copy(
                 view,
                 corrected=kind.is_corrected,
                 anonymize=True,

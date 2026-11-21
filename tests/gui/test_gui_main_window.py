@@ -2540,7 +2540,7 @@ def test_copy_with_names_hidden_puts_the_anonymized_text_on_the_clipboard(
     main_window._open_check(a)
     main_window._privacy_available = True
     monkeypatch.setattr(
-        main_window._app_service.processing,
+        main_window._app_service.export,
         "text_for_copy",
         lambda view, **_kw: f"hidden:{view.raw_text}",
     )
@@ -2570,7 +2570,7 @@ def test_a_failing_anonymizer_leaves_the_clipboard_alone(main_window, monkeypatc
     def _fail(*_args, **_kwargs):
         raise RuntimeError("no model")
 
-    monkeypatch.setattr(main_window._app_service.processing, "text_for_copy", _fail)
+    monkeypatch.setattr(main_window._app_service.export, "text_for_copy", _fail)
     monkeypatch.setattr(
         "teachers_teammate.gui._main_window.run_in_background",
         lambda fn, on_done, **_kw: _call_and_report(fn, on_done),
@@ -4970,12 +4970,12 @@ def test_export_skips_documents_that_would_share_an_output_file(
     written: list[Path] = []
     service = main_window._app_service
     monkeypatch.setattr(
-        service.processing,
+        service.export,
         "export_docx",
         lambda _config, _source, path, **_k: written.append(path),
     )
     monkeypatch.setattr(
-        service.processing,
+        service.export,
         "export_text",
         lambda _config, _source, path, **_k: written.append(path),
     )
@@ -5099,7 +5099,7 @@ def test_input_folder_warning_only_applies_to_folder_and_text_exports(
     monkeypatch.setattr(
         panel, "get_selected_files", lambda: None if folder_mode else [scans / "a.png"]
     )
-    monkeypatch.setattr(main_window._app_service.processing, "export_docx", lambda *_a, **_k: None)
+    monkeypatch.setattr(main_window._app_service.export, "export_docx", lambda *_a, **_k: None)
     asked = _answer_questions(monkeypatch, yes=False)
     kind = ExportKind.DOCX if folder_mode else ExportKind.TEXT
     _pick_file(monkeypatch, scans / ("a" + kind.file_suffix))
@@ -5161,7 +5161,7 @@ def test_exported_docx_labels_follow_the_explanation_language(
     _pick_file(monkeypatch, tmp_path / "out" / "a.docx")
     seen: list[str] = []
     monkeypatch.setattr(
-        main_window._app_service.processing,
+        main_window._app_service.export,
         "export_docx",
         lambda _config, _source, _path, options=None, **_k: seen.append(options.labels_language),
     )

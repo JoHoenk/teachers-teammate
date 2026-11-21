@@ -64,6 +64,7 @@ filegroup(
         "unit/test_correction_options.py",
         "unit/test_docx_builder.py",
         "unit/test_docx_comments.py",
+        "unit/test_export_service.py",
         "unit/test_file_discovery.py",
         "unit/test_file_processor.py",
         "unit/test_gpu_detector.py",
@@ -1131,6 +1132,15 @@ py_test(
     args = ["unit/test_state_repository.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _FORMAT_DEPS + _APPLICATION_LIB,
+)
+
+py_test(
+    name = "test_export_service",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_export_service.py"],
+    args = ["unit/test_export_service.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -2730,6 +2740,7 @@ test_suite(
         ":test_diagnostics",
         ":test_docx_builder",
         ":test_docx_comments",
+        ":test_export_service",
         ":test_domain_policy",
         ":test_edits",
         ":test_evaluation",

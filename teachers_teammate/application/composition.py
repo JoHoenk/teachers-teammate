@@ -30,6 +30,7 @@ from .anonymization import AnonymizationService
 from .commands import DocumentCommands
 from .data_flow import DataFlowService
 from .documents import DocumentQueries
+from .export import ExportService
 from .model_recommendations import ModelRecommendationService
 from .ollama_server import OllamaServerService
 from .providers import ProviderService
@@ -73,6 +74,8 @@ class AppServices:
     """What the Setup Assistant asks the computer, and the settings file of a first start."""
     documents: DocumentQueries
     """What the store says about a document."""
+    export: ExportService
+    """The Word file, the text file and the text for the clipboard."""
     commands: DocumentCommands
     """The writes: the teacher's texts and decisions."""
     work_store: TeacherWorkStore
@@ -145,6 +148,7 @@ def build_app_services(
         model_store=model_store,
         work_store=work_store,
     )
+    export = ExportService(documents=processing.documents, anonymization=anonymization)
     return AppServices(
         processing=processing,
         ollama=ollama,
@@ -157,6 +161,7 @@ def build_app_services(
         data_flow=data_flow,
         setup=setup,
         documents=processing.documents,
+        export=export,
         commands=processing.commands,
         work_store=work_store,
         model_store=model_store,

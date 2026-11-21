@@ -36,6 +36,7 @@ from teachers_teammate.domain.teacher_work import WorkTooNewError
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _export_controller as export_controller_module
 from teachers_teammate.gui import _main_window as main_window_module
+from teachers_teammate.gui import _menu_bar as menu_bar_module
 from teachers_teammate.gui import _preprocess_preview as preprocess_module
 from teachers_teammate.gui import _readiness_controller as readiness_controller_module
 from teachers_teammate.gui import _run_controller as run_controller_module
@@ -1395,9 +1396,7 @@ def test_restore_all_also_forgets_the_remembered_answers_and_the_hide_choice(
     assert acknowledgements.fingerprints() == {"abc123"}
     monkeypatch.setattr(main_window, "_acknowledgements", lambda: acknowledgements)
     shown: list[bool] = []
-    monkeypatch.setattr(
-        main_window._privacy_controller, "apply_display_anonymized", shown.append
-    )
+    monkeypatch.setattr(main_window._privacy_controller, "apply_display_anonymized", shown.append)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     install_scripted_settings_window(
         monkeypatch, accepted=False, result=SettingsResult(settings={}, restore_all=True)
@@ -1870,8 +1869,8 @@ def test_tools_benchmark_opens_one_window_and_a_second_click_reuses_it(
     When   Tools > Benchmark… is chosen twice
     Then   one parentless Benchmark window exists and was shown both times
     """
-    main_window._benchmark_action.trigger()
-    main_window._benchmark_action.trigger()
+    main_window._menu_bar.benchmark_action.trigger()
+    main_window._menu_bar.benchmark_action.trigger()
 
     assert len(fake_benchmark.created) == 1
     window = fake_benchmark.created[0]
@@ -1891,7 +1890,7 @@ def test_the_benchmark_window_shares_the_main_windows_service(
     Then   it is built with the main window's own application service, so both share one set of
            caches
     """
-    main_window._benchmark_action.trigger()
+    main_window._menu_bar.benchmark_action.trigger()
 
     window = fake_benchmark.created[0]
     qtbot.addWidget(window)
@@ -1907,12 +1906,12 @@ def test_reopening_a_closed_benchmark_window_follows_the_settings_again(
     When   Tools > Benchmark… is chosen again
     Then   the same window is shown again after it reloaded the saved server and profile
     """
-    main_window._benchmark_action.trigger()
+    main_window._menu_bar.benchmark_action.trigger()
     window = fake_benchmark.created[0]
     qtbot.addWidget(window)
     window.hide()  # closed by the teacher
 
-    main_window._benchmark_action.trigger()
+    main_window._menu_bar.benchmark_action.trigger()
 
     assert len(fake_benchmark.created) == 1
     assert window.reloaded == 1
@@ -1928,7 +1927,7 @@ def test_closing_the_main_window_closes_the_benchmark_window(
     When   the main window is closed
     Then   the Benchmark window's close() ran, so its worker is stopped
     """
-    main_window._benchmark_action.trigger()
+    main_window._menu_bar.benchmark_action.trigger()
     window = fake_benchmark.created[0]
     qtbot.addWidget(window)
 
@@ -1948,7 +1947,7 @@ def test_the_system_monitor_is_hidden_until_the_menu_entry_shows_it(qtbot, main_
     monitor = main_window._monitor
     assert not monitor.isVisible()
 
-    main_window._monitor_action.trigger()
+    main_window._menu_bar.monitor_action.trigger()
 
     assert monitor.isVisible()
     assert monitor.isWindow()
@@ -1962,7 +1961,7 @@ def test_closing_the_main_window_closes_an_open_system_monitor(qtbot, main_windo
     When   the main window is closed
     Then   the monitor is closed with it, so no window keeps the app alive
     """
-    main_window._monitor_action.trigger()
+    main_window._menu_bar.monitor_action.trigger()
     assert main_window._monitor.isVisible()
 
     main_window.close()
@@ -1977,9 +1976,9 @@ def test_the_system_monitor_stays_open_while_the_main_window_is_used(qtbot, main
     When   the main window is activated and the menu entry is chosen a second time
     Then   the monitor stays open (it can run in parallel) and is raised, not duplicated
     """
-    main_window._monitor_action.trigger()
+    main_window._menu_bar.monitor_action.trigger()
     main_window.activateWindow()
-    main_window._monitor_action.trigger()
+    main_window._menu_bar.monitor_action.trigger()
 
     assert main_window._monitor.isVisible()
 
@@ -2090,7 +2089,7 @@ def test_each_settings_menu_entry_opens_its_page(main_window, monkeypatch, page)
     """
     scripted = install_scripted_settings_window(monkeypatch, accepted=False)
 
-    main_window._settings_actions[page].trigger()
+    main_window._menu_bar.settings_actions[page].trigger()
 
     assert [w.page for w in scripted.instances] == [page]
 
@@ -2103,9 +2102,9 @@ def test_all_settings_opens_the_page_used_last(main_window, monkeypatch) -> None
     Then   the Settings window opens on Privacy
     """
     scripted = install_scripted_settings_window(monkeypatch, accepted=False)
-    monkeypatch.setattr(main_window_module, "last_page", lambda: SettingsPage.PRIVACY)
+    monkeypatch.setattr(menu_bar_module, "last_page", lambda: SettingsPage.PRIVACY)
 
-    main_window._all_settings_action.trigger()
+    main_window._menu_bar.all_settings_action.trigger()
 
     assert [w.page for w in scripted.instances] == [SettingsPage.PRIVACY]
 
@@ -2927,7 +2926,7 @@ def test_the_tools_menu_opens_the_assistant_on_the_current_settings(
     monkeypatch.setattr(SetupAssistant, "exec", _record)
     main_window._config_panel.update_settings({"correction_model": "my-writer:latest"})
 
-    main_window._setup_action.trigger()
+    main_window._menu_bar.setup_action.trigger()
 
     assert len(opened) == 1
     context = opened[0]._context

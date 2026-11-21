@@ -204,14 +204,12 @@ ALLOWED: dict[str, frozenset[str]] = {
             "f'<p>Version <b>{ver}</b></p><p>Batch OCR pipeline for scanned documents and handwritten notes.<br>Extracts text from PDFs and images, optionally produces<br>proofread DOCX reports via a local language model.</p>'",
         }
     ),
-    "teachers_teammate/gui/_main_window.py": frozenset(
+    "teachers_teammate/gui/_menu_bar.py": frozenset(
         {
             "About Teacher\u2019s Teammate…",
             "All settings…",
             "Answer a few questions to set up the AI for this computer.",
             "Benchmark…",
-            "Check",
-            "Documents",
             "File",
             "Help",
             "How busy this computer is, and how long each document took.",
@@ -221,13 +219,19 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Settings",
             "Setup Assistant…",
             "System Monitor",
-            "Teacher's Teammate",
             "Third-Party Licenses…",
             "Tools",
             "Try a document with different text-recognition settings and compare the results.",
             "User Guide…",
-            'f\'Version <b>{version}</b> is available — <a href="{url}" style="color:#ffd966;">Download</a> · turn this check off under {WHERE_GENERAL}\'',
             "f'{PAGE_TITLES[page]}…'",
+        }
+    ),
+    "teachers_teammate/gui/_main_window.py": frozenset(
+        {
+            "Check",
+            "Documents",
+            "Teacher's Teammate",
+            'f\'Version <b>{version}</b> is available — <a href="{url}" style="color:#ffd966;">Download</a> · turn this check off under {WHERE_GENERAL}\'',
             "✕",
         }
     ),

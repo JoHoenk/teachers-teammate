@@ -11,11 +11,9 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import (
-    QAction,
     QDragEnterEvent,
     QDropEvent,
     QIcon,
-    QKeySequence,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -65,16 +63,12 @@ from ._config_panel import ConfigPanel
 from ._credential_store import CredentialStore
 from ._data_flow_summary import advice_text, level_text, stage_tooltips
 from ._export_controller import ExportController
-from ._export_menu import build_export_menu
-from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
+from ._menu_bar import MenuBar, MenuHooks
 from ._model_wording import profile_text
 from ._preprocess_preview import PreprocessPreview
-from ._privacy_settings import (
-    DISPLAY_ANONYMIZED_DEFAULT,
-    FlowAcknowledgements,
-)
+from ._privacy_settings import DISPLAY_ANONYMIZED_DEFAULT, FlowAcknowledgements
 from ._privacy_view_controller import PrivacyViewController
 from ._pull_manager import PullManager
 from ._readiness_controller import ReadinessController, ReadinessHooks
@@ -86,16 +80,8 @@ from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
 from ._update_check import UpdateCheckThread
 from ._window_geometry import maximize_without_saved_geometry, restore_geometry
-from .settings import (
-    PAGE_TITLES,
-    SettingsContext,
-    SettingsPage,
-    SettingsResult,
-    SettingsWindow,
-    last_page,
-)
+from .settings import SettingsContext, SettingsPage, SettingsResult, SettingsWindow
 from .settings._page import FOCUS_DETECTION
-from .settings._window import SUB_PAGES
 
 if TYPE_CHECKING:
     from .benchmark._benchmark_window import BenchmarkWindow
@@ -194,12 +180,9 @@ class MainWindow(QMainWindow):
         self._load_toml_if_present()
 
     def _init_menu_state(self) -> None:
-        """Declare what the menu bar fills in and the tools open later."""
-        self._settings_actions: dict[SettingsPage, QAction] = {}
-        self._all_settings_action: QAction
-        self._benchmark_action: QAction
-        self._monitor_action: QAction
-        self._setup_action: QAction
+        """Declare the menu bar and what its tools open later."""
+        #: Built in ``_build_ui``; the window lays nothing out on it.
+        self._menu_bar: MenuBar
         #: The Benchmark window once opened (parentless, see ``_open_benchmark``).
         self._benchmark_window: BenchmarkWindow | None = None
         #: Whether the Setup Assistant is open, so a second click cannot open a second one.
@@ -293,7 +276,12 @@ class MainWindow(QMainWindow):
         self._build_widgets()
         self._init_controllers()
         root.addWidget(self._build_tabs(), 1)
-        self._build_menu_bar()
+        self._menu_bar = MenuBar(
+            self,
+            panel=self._config_panel,
+            export=self._export_controller,
+            hooks=self._menu_hooks(),
+        )
         self._connect_pages()
 
         # No parent: the thread outlives the window if it is closed during the request.
@@ -364,6 +352,16 @@ class MainWindow(QMainWindow):
             open_settings=lambda page, focus: self.open_settings(page, focus=focus),
             privacy_available=lambda: self._privacy_controller.privacy_available,
             export=lambda ids, kind: self._export_controller.on_requested(ids, kind),  # noqa: PLW0108
+        )
+
+    def _menu_hooks(self) -> MenuHooks:
+        """What the menu bar asks of the window."""
+        return MenuHooks(
+            quit_requested=self._on_quit_requested,
+            open_settings=self.open_settings,
+            open_benchmark=self._open_benchmark,
+            open_monitor=self._open_system_monitor,
+            open_setup_assistant=self._open_setup_assistant,
         )
 
     def _init_controllers(self) -> None:
@@ -467,119 +465,6 @@ class MainWindow(QMainWindow):
         self._tabs.currentChanged.connect(self._check_controller.on_tab_changed)
         return self._tabs
 
-    def _build_menu_bar(self) -> None:
-        bar = self.menuBar()
-        assert bar is not None
-        self._build_file_menu(bar)
-        self._build_settings_menu(bar)
-        self._build_tools_menu(bar)
-
-        help_menu = bar.addMenu("Help")
-        assert help_menu is not None
-        guide_act = QAction("User Guide\u2026", self)
-        guide_act.triggered.connect(self._open_help_dialog)
-        help_menu.addAction(guide_act)
-        help_menu.addSeparator()
-        licenses_act = QAction("Third-Party Licenses\u2026", self)
-        licenses_act.triggered.connect(self._open_licenses_dialog)
-        help_menu.addAction(licenses_act)
-        help_menu.addSeparator()
-        about_act = QAction("About Teacher\u2019s Teammate\u2026", self)
-        about_act.triggered.connect(self._open_about_dialog)
-        help_menu.addAction(about_act)
-
-    def _build_file_menu(self, bar: Any) -> None:
-        """File: open documents, export results, quit."""
-        file_menu = bar.addMenu("File")
-        assert file_menu is not None
-        open_folder_act = QAction("Open Folder\u2026", self)
-        # The panel does not exist yet when the menu bar is built, hence the lambdas.
-        open_folder_act.triggered.connect(
-            lambda: self._config_panel.select_folder()  # noqa: PLW0108
-        )
-        file_menu.addAction(open_folder_act)
-        open_files_act = QAction("Open Files\u2026", self)
-        open_files_act.triggered.connect(
-            lambda: self._config_panel.select_files()  # noqa: PLW0108
-        )
-        file_menu.addAction(open_files_act)
-        export_menu, kinds = build_export_menu(file_menu)
-        export_menu.triggered.connect(
-            lambda action: self._export_controller.on_toolbar_action(kinds[action])
-        )
-        file_menu.addMenu(export_menu)
-        # Enabled together with the Export button: there is nothing to export before a run.
-        self._export_controller.add_actions(list(kinds))
-        file_menu.addSeparator()
-        quit_act = QAction("Quit", self)
-        quit_act.setShortcut(QKeySequence(QKeySequence.StandardKey.Quit))
-        quit_act.setMenuRole(QAction.MenuRole.QuitRole)
-        quit_act.triggered.connect(self._on_quit_requested)
-        file_menu.addAction(quit_act)
-
-    def _build_settings_menu(self, bar: Any) -> None:
-        """Settings: one entry per main page of the Settings window, and "All settings…"."""
-        settings_menu = bar.addMenu("Settings")
-        assert settings_menu is not None
-        tooltips = {
-            SettingsPage.GENERAL: (
-                "How the app behaves while it works, for example keeping the computer awake "
-                "during a run."
-            ),
-            SettingsPage.AI_MODELS: "Which AI reads the handwriting, proofreads and reviews.",
-            SettingsPage.AI_SETUP: (
-                "What the AI models need from this computer: how powerful it is and where "
-                "the local AI server is."
-            ),
-            SettingsPage.ONLINE_SERVICES: (
-                "The access keys (API keys) of the online AI services you can use."
-            ),
-            SettingsPage.SCAN_QUALITY: "How scans are cleaned up before the text is read.",
-            SettingsPage.PRIVACY: (
-                "What may leave this computer, and how names and other personal information "
-                "are found and replaced."
-            ),
-            SettingsPage.ADDONS: "Download AI models and install optional parts.",
-        }
-        for page in SettingsPage:
-            if page in SUB_PAGES:
-                continue  # reached from AI models and in the window's sidebar, not from here
-            action = QAction(f"{PAGE_TITLES[page]}\u2026", self)
-            action.setToolTip(tooltips[page])
-            action.triggered.connect(lambda _checked=False, p=page: self.open_settings(p))
-            settings_menu.addAction(action)
-            self._settings_actions[page] = action
-        settings_menu.addSeparator()
-        all_act = QAction("All settings\u2026", self)
-        all_act.setShortcut(QKeySequence("Ctrl+,"))
-        all_act.setMenuRole(QAction.MenuRole.PreferencesRole)
-        all_act.triggered.connect(lambda: self.open_settings(last_page()))
-        settings_menu.addAction(all_act)
-        self._all_settings_action = all_act
-
-    def _build_tools_menu(self, bar: Any) -> None:
-        """Tools: things that are not part of a batch (Benchmark, System Monitor, Setup)."""
-        tools_menu = bar.addMenu("Tools")
-        assert tools_menu is not None
-        benchmark_act = QAction("Benchmark\u2026", self)
-        benchmark_act.setToolTip(
-            "Try a document with different text-recognition settings and compare the results."
-        )
-        benchmark_act.triggered.connect(self._open_benchmark)
-        tools_menu.addAction(benchmark_act)
-        monitor_act = QAction("System Monitor", self)
-        monitor_act.setToolTip("How busy this computer is, and how long each document took.")
-        monitor_act.triggered.connect(self._open_system_monitor)
-        tools_menu.addAction(monitor_act)
-        tools_menu.addSeparator()
-        setup_act = QAction("Setup Assistant\u2026", self)
-        setup_act.setToolTip("Answer a few questions to set up the AI for this computer.")
-        setup_act.triggered.connect(lambda _checked=False: self._open_setup_assistant())
-        tools_menu.addAction(setup_act)
-        self._benchmark_action = benchmark_act
-        self._monitor_action = monitor_act
-        self._setup_action = setup_act
-
     def _open_system_monitor(self) -> None:
         self._monitor.show_and_raise()
 
@@ -603,15 +488,6 @@ class MainWindow(QMainWindow):
         window.show()
         window.raise_()
         window.activateWindow()
-
-    def _open_help_dialog(self) -> None:
-        HelpDialog(self).exec()
-
-    def _open_licenses_dialog(self) -> None:
-        ThirdPartyLicensesDialog(self).exec()
-
-    def _open_about_dialog(self) -> None:
-        AboutDialog(self).exec()
 
     def _build_left_panel(self) -> QWidget:
         left = QWidget()

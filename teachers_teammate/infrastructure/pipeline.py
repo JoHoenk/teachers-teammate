@@ -185,7 +185,7 @@ class OCRPipeline:
         (CLI behaviour).  The GUI injects a reporter that feeds its log pane.
     progress:
         Optional per-file progress hooks; see
-        :class:`~teachers_teammate.infrastructure.reporting.ProgressCallbacks`.
+        :class:`~teachers_teammate.interfaces.ProgressCallbacks`.
     """
 
     def __init__(

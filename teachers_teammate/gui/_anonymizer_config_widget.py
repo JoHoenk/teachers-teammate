@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.composition import AppServices
+from ..domain.local_models import PRIVACY_ADDON_ID
 from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from ..texts import dialogs as dlg
 from ..texts import privacy
@@ -524,10 +525,9 @@ class AnonymizerConfigWidget(QWidget):
         instead.  On successful download the model combos are refreshed and the
         preview is re-run automatically.
         """
-        from ..application.addons import PRIVACY_ADDON  # noqa: PLC0415
         from ._addon_installer_dialog import SpacyModelDownloadDialog  # noqa: PLC0415
 
-        if not self._app_service.addons.is_addon_available(PRIVACY_ADDON):
+        if not self._app_service.addons.is_addon_available(PRIVACY_ADDON_ID):
             _dialogs.notify(self.window(), dlg.spacy_not_installed())
             return
 

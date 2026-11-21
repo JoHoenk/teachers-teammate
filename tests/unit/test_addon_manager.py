@@ -12,10 +12,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.infrastructure import addon_manager
+from teachers_teammate.domain.local_models import PRIVACY_ADDON_ID
 from teachers_teammate.exceptions import AddonInstallError, InstallFailure
 from teachers_teammate.infrastructure.addon_manager import (
     ADDON_LLM_OPENAI,
-    ADDON_PRIVACY,
     _packages_dir_readable,
     can_install_addons,
     clear_stale_modules,
@@ -108,17 +108,17 @@ def test_inject_packages_dir_does_not_double_insert_if_already_present(tmp_path:
 def test_is_addon_importable_returns_false_when_spacy_missing() -> None:
     """
     Given  spacy is not installed (absent from sys.modules)
-    When   is_addon_importable(ADDON_PRIVACY) is called
+    When   is_addon_importable(PRIVACY_ADDON_ID) is called
     Then   False is returned
     """
     with patch.dict(sys.modules, {"spacy": None}):
-        assert is_addon_importable(ADDON_PRIVACY) is False
+        assert is_addon_importable(PRIVACY_ADDON_ID) is False
 
 
 def test_is_addon_importable_returns_true_when_spacy_present() -> None:
     """
     Given  spacy is importable (find_spec returns a non-None spec)
-    When   is_addon_importable(ADDON_PRIVACY) is called
+    When   is_addon_importable(PRIVACY_ADDON_ID) is called
     Then   True is returned
     """
     # Patch find_spec at the import site: inserting a MagicMock into sys.modules causes
@@ -127,7 +127,7 @@ def test_is_addon_importable_returns_true_when_spacy_present() -> None:
         "teachers_teammate.infrastructure.addon_manager.importlib.util.find_spec",
         return_value=MagicMock(),
     ):
-        assert is_addon_importable(ADDON_PRIVACY) is True
+        assert is_addon_importable(PRIVACY_ADDON_ID) is True
 
 
 def test_is_addon_importable_unknown_addon_returns_false() -> None:
@@ -145,12 +145,12 @@ def test_is_addon_importable_unknown_addon_returns_false() -> None:
 def test_clear_stale_modules_removes_spacy_entries() -> None:
     """
     Given  spacy and submodule entries are present in sys.modules
-    When   clear_stale_modules(ADDON_PRIVACY) is called
+    When   clear_stale_modules(PRIVACY_ADDON_ID) is called
     Then   all spacy-prefixed keys are removed from sys.modules
     """
     fake_modules = {"spacy": MagicMock(), "spacy.util": MagicMock(), "spacy.lang.en": MagicMock()}
     with patch.dict(sys.modules, fake_modules):
-        clear_stale_modules(ADDON_PRIVACY)
+        clear_stale_modules(PRIVACY_ADDON_ID)
         assert "spacy" not in sys.modules
         assert "spacy.util" not in sys.modules
         assert "spacy.lang.en" not in sys.modules
@@ -159,12 +159,12 @@ def test_clear_stale_modules_removes_spacy_entries() -> None:
 def test_clear_stale_modules_leaves_unrelated_modules() -> None:
     """
     Given  unrelated modules (e.g. 'requests') are in sys.modules
-    When   clear_stale_modules(ADDON_PRIVACY) is called
+    When   clear_stale_modules(PRIVACY_ADDON_ID) is called
     Then   the unrelated modules remain untouched
     """
     with patch.dict(sys.modules, {"spacy": MagicMock()}):
         requests_before = sys.modules.get("requests")
-        clear_stale_modules(ADDON_PRIVACY)
+        clear_stale_modules(PRIVACY_ADDON_ID)
         assert sys.modules.get("requests") is requests_before
 
 
@@ -208,7 +208,7 @@ def test_install_addon_subprocess_uses_pip_install_mode_flag(tmp_path: Path) -> 
 
     with patch.object(addon_manager.sys, "frozen", True, create=True):
         with patch("subprocess.Popen", side_effect=fake_popen):
-            install_addon_subprocess(ADDON_PRIVACY, tmp_path / "pkg", lambda _: None)
+            install_addon_subprocess(PRIVACY_ADDON_ID, tmp_path / "pkg", lambda _: None)
 
     assert len(captured) == 1
     assert sys.executable == captured[0][0]
@@ -239,7 +239,7 @@ def test_install_addon_subprocess_streams_progress_cb(tmp_path: Path) -> None:
             pass
 
     with patch("subprocess.Popen", return_value=_FakeProc()):
-        install_addon_subprocess(ADDON_PRIVACY, tmp_path / "pkg", lines_received.append)
+        install_addon_subprocess(PRIVACY_ADDON_ID, tmp_path / "pkg", lines_received.append)
 
     assert "Collecting spacy\n" in lines_received
     assert "Installing...\n" in lines_received
@@ -267,7 +267,7 @@ def test_install_addon_subprocess_raises_on_nonzero_exit(tmp_path: Path) -> None
 
     with patch("subprocess.Popen", return_value=_FakeProc()):
         with pytest.raises(AddonInstallError) as raised:
-            install_addon_subprocess(ADDON_PRIVACY, tmp_path / "pkg", lambda _: None)
+            install_addon_subprocess(PRIVACY_ADDON_ID, tmp_path / "pkg", lambda _: None)
     assert raised.value.reason is InstallFailure.INSTALL_FAILED
 
 
@@ -284,7 +284,7 @@ def test_install_addon_subprocess_raises_oserror_on_bad_target(tmp_path: Path) -
     try:
         with pytest.raises((OSError, PermissionError)):
             install_addon_subprocess(
-                ADDON_PRIVACY,
+                PRIVACY_ADDON_ID,
                 read_only / "sub" / "pkg",
                 lambda _: None,
             )
@@ -462,7 +462,7 @@ def test_install_addon_subprocess_sets_no_window_flag_on_win32(tmp_path: Path) -
 
     with patch.object(addon_manager.sys, "platform", "win32"):
         with patch("subprocess.Popen", side_effect=fake_popen):
-            install_addon_subprocess(ADDON_PRIVACY, tmp_path / "pkg", lambda _: None)
+            install_addon_subprocess(PRIVACY_ADDON_ID, tmp_path / "pkg", lambda _: None)
 
     assert captured_kwargs[0]["creationflags"] == 0x08000000
 
@@ -876,7 +876,7 @@ def test_installed_app_pip_call_carries_the_policy(
 
     monkeypatch.setattr(subprocess, "Popen", lambda cmd, **_k: captured.append(cmd) or _Proc())
 
-    install_addon_subprocess(ADDON_PRIVACY, tmp_path / "pkg", lambda _: None)
+    install_addon_subprocess(PRIVACY_ADDON_ID, tmp_path / "pkg", lambda _: None)
     download_spacy_model_subprocess("en_core_web_sm", tmp_path / "pkg", lambda _: None)
 
     assert len(captured) == 2
@@ -1283,7 +1283,7 @@ def test_an_install_never_writes_into_the_live_folder(tmp_path: Path) -> None:
         patch.object(sys, "frozen", True, create=True),
         patch("subprocess.Popen", side_effect=fake_popen),
     ):
-        install_addon_subprocess(ADDON_PRIVACY, live, lambda _: None)
+        install_addon_subprocess(PRIVACY_ADDON_ID, live, lambda _: None)
 
     assert len(targets) == 1
     assert not targets[0].exists()
@@ -1618,6 +1618,6 @@ def test_a_pip_failure_is_told_apart_by_what_pip_printed(
         patch("subprocess.Popen", return_value=proc),
     ):
         with pytest.raises(AddonInstallError) as raised:
-            install_addon_subprocess(ADDON_PRIVACY, tmp_path / "pkg", lambda _: None)
+            install_addon_subprocess(PRIVACY_ADDON_ID, tmp_path / "pkg", lambda _: None)
 
     assert raised.value.reason is reason

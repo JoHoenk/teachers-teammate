@@ -194,6 +194,16 @@ def _export_failed(title: str, errors: Sequence[str]) -> Notice:
     )
 
 
+def export_no_text(name: str) -> str:
+    """Return the line that says a document has no text to export yet."""
+    return f"{name}: No OCR text — run the pipeline first."
+
+
+def export_would_overwrite_input(name: str, target: str) -> str:
+    """Return the line that says an export would replace an input document."""
+    return f"{name}: {target} is an input document and would be overwritten; choose another name or folder."
+
+
 def word_export_failed(errors: Sequence[str]) -> Notice:
     """Tell the teacher which documents could not be written as a Word file."""
     return _export_failed("Export Word Document", errors)

@@ -18,6 +18,7 @@ from teachers_teammate.application.ollama_server import OllamaServerService
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.speed_estimates import SpeedSummary
 from teachers_teammate.application.documents import WorkedOn
+from teachers_teammate.application.export import NothingToExport, WouldOverwriteInput
 from teachers_teammate.application.model_recommendations import ModelRecommendationService
 from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.application.run import IssueKind, RequirementIssue, RunPreflight, RunService
@@ -6672,3 +6673,20 @@ def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
 
     assert second._check.body._stored_split == (300, 500, 400)
     assert second._check.body.panel._card_split == (200, 300)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (NothingToExport("note.png"), "note.png: No OCR text"),
+        (WouldOverwriteInput(Path("/in/essay.txt")), "note.png: essay.txt is an input document"),
+        (OSError("disk full"), "note.png: disk full"),
+    ],
+)
+def test_an_export_error_is_told_in_the_teachers_words(error: Exception, expected: str) -> None:
+    """
+    Given  an export that failed for a document, for each kind of failure
+    When   the window words the failure
+    Then   the two refusals use the sentences of texts/ and any other error its own message
+    """
+    assert main_window_module._export_failure("note.png", error).startswith(expected)

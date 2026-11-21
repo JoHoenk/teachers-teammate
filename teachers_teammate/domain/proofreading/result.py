@@ -14,6 +14,7 @@ Pure: no I/O, no provider imports.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Literal
 
 from .review import CorrectionReview
@@ -21,13 +22,25 @@ from .review import CorrectionReview
 StepName = Literal["correct", "explain", "unclear", "review"]
 """The steps a request can belong to: ① correct, ② explain, ③ unclear, and R's review."""
 
-ExchangeKind = Literal["T", "R-walk", "R-list"]
-"""Which exchange proofreads a text.
+class ExchangeKind(StrEnum):
+    """Which exchange proofreads a text."""
 
-``T`` — the three steps (correct, explain, unclear).  ``R-walk`` / ``R-list`` — the prepared
-one-request exchange, which walks every sentence or lists only the changed ones; it is built only
-when a tuning stage keeps it for a model.
-"""
+    TEXT_FIRST = "text-first"
+    """The three steps: ① the corrected text, ② the explanations, ③ the unclear wording."""
+
+
+_STORED_EXCHANGE_IDS: dict[ExchangeKind, str] = {ExchangeKind.TEXT_FIRST: "T"}
+"""The id each exchange has in a stored cache key."""
+
+
+def stored_exchange_id(kind: ExchangeKind) -> str:
+    """Return the id *kind* has in a stored cache key.
+
+    The correction cache key carries ``"T"`` for the text-first exchange, while the enum's value
+    is the word the evaluation tools use.  Renaming the value must not make every stored
+    proofreading stale.
+    """
+    return _STORED_EXCHANGE_IDS[kind]
 
 FailureKind = Literal["", "truncated", "invalid", "transport"]
 """How a request ended.

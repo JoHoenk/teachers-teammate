@@ -1763,3 +1763,20 @@ def test_prepare_freezes_the_reading_of_a_document_the_teacher_fixed(tmp_path: P
         svc.prepare(src)
 
     assert repo.reconcile.call_args.kwargs["stale_stage"] is None
+
+
+def test_the_correction_key_of_the_default_profile_is_pinned(tmp_path: Path) -> None:
+    """
+    Given  the default configuration
+    When   the correction config hash is computed
+    Then   it is the value it had before the exchange was named in the tools' words, so the
+           rename makes no stored proofreading stale
+    """
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_correction_config_hash,
+    )
+
+    assert (
+        compute_correction_config_hash(make_config(tmp_path))
+        == "9b95c89d1b6f679277f7b3d19565e3e49873a04cf524f1834f517e08eef9cfe7"
+    )

@@ -23,7 +23,12 @@ from typing import TYPE_CHECKING
 from ...domain.correction_policy import DEFAULT_LEVEL
 from ...domain.correction_prompts import PROMPT_VERSION
 from ...domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
-from ...domain.proofreading.result import CorrectionOutcome, ExchangeKind, StepName
+from ...domain.proofreading.result import (
+    CorrectionOutcome,
+    ExchangeKind,
+    StepName,
+    stored_exchange_id,
+)
 from ...exceptions import StageError, StageErrorKind
 from ...interfaces import Corrector
 from .exchanges import Exchange, ExchangeCost, ProofreadContext, build_exchange
@@ -177,7 +182,12 @@ def exchange_identity(profile: RequestProfile, *, corrections_only: bool) -> str
     prompts = exchange_prompts(profile, corrections_only=corrections_only)
     digest = hashlib.sha256("\n".join(text for _step, text in prompts).encode("utf-8")).hexdigest()
     return "|".join(
-        [profile.exchange, f"prompts-{PROMPT_VERSION}", digest[:12], profile.fingerprint()]
+        [
+            stored_exchange_id(profile.exchange),
+            f"prompts-{PROMPT_VERSION}",
+            digest[:12],
+            profile.fingerprint(),
+        ]
     )
 
 

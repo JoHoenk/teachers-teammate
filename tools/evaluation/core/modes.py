@@ -4,16 +4,17 @@ The old tools said ``mode: exchange`` and meant the app's ``ExchangeKind`` ``"T"
 name said ``T`` and meant the temperature.  One word, two meanings, and the exchange itself was
 never named.  Here an answer is described by two axes instead:
 
-* **``exchange``** — how the text travels: ``text-first`` (the app's ``"T"``: the corrected text
+* **``exchange``** — how the text travels: ``text-first`` (the app's exchange: the corrected text
   first, then the explanations), ``one-request-text`` (the corrected text in one JSON answer),
   ``one-request-review`` (corrections and explanations in one JSON answer), and the POC's
   ``sentence-walk`` and ``sentence-list``.
 * **``steps``** — which steps of the exchange ran: a subset of ``correct``, ``explain``,
   ``unclear``.  ``correct-only`` is ``text-first`` with ``["correct"]``.
 
-The app's ``ExchangeKind`` is renamed to the same words in its own small PR.  Until then
-:class:`AnswerMode` — the old vocabulary, moved here unchanged — is what a stored v1 header says,
-and :func:`exchange_and_steps` is the one place it is translated, so no other module knows both.
+The app names its exchange with the same words (``ExchangeKind`` in
+``domain/proofreading/result.py``).  :class:`AnswerMode` — the old vocabulary, moved here
+unchanged — is what a stored v1 header says, and :func:`exchange_and_steps` is the one place it
+is translated, so no other module knows both.
 """
 
 from __future__ import annotations

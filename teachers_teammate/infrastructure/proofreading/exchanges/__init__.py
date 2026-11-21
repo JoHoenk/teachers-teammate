@@ -7,6 +7,7 @@ this layer changes, because every exchange returns the same
 
 from __future__ import annotations
 
+from ....domain.proofreading.result import ExchangeKind
 from .base import (
     EXCHANGES,
     Exchange,
@@ -18,7 +19,7 @@ from .base import (
 )
 from .t import TExchange
 
-EXCHANGES["T"] = TExchange
+EXCHANGES[ExchangeKind.TEXT_FIRST] = TExchange
 
 __all__ = [
     "EXCHANGES",

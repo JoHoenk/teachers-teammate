@@ -141,7 +141,7 @@ number and ``"old" → "new"``; the figure covers a batch of long edits.
 class TExchange:
     """The three-step exchange: ① correct, ② explain, ③ unclear."""
 
-    kind: ExchangeKind = "T"
+    kind: ExchangeKind = ExchangeKind.TEXT_FIRST
 
     def __init__(
         self,

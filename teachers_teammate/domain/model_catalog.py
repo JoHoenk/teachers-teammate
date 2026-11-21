@@ -25,7 +25,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
 from .correction_prompts import correct_system, prompt_identity
-from .proofreading.result import ExchangeKind, StepName
+from .proofreading.result import ExchangeKind, StepName, stored_exchange_id
 
 if TYPE_CHECKING:
     from .performance_estimate import SpeedBand, SpeedSource
@@ -267,8 +267,8 @@ class RequestProfile:
     the request the app sends is what a run measures.
     """
 
-    #: Which exchange proofreads the text (see :data:`~.proofreading.result.ExchangeKind`).
-    exchange: ExchangeKind = "T"
+    #: Which exchange proofreads the text (see :class:`~.proofreading.result.ExchangeKind`).
+    exchange: ExchangeKind = ExchangeKind.TEXT_FIRST
     #: The three steps of the exchange.
     correct: StepProfile = StepProfile()
     explain: StepProfile = StepProfile()
@@ -330,7 +330,7 @@ class RequestProfile:
         )
         return "|".join(
             [
-                self.exchange,
+                stored_exchange_id(self.exchange),
                 steps,
                 "unclear" if self.unclear_check else "no-unclear",
                 str(self.explain_batch),

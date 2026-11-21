@@ -219,6 +219,7 @@ _GUI_SRCS = [
     "gui/_app_bootstrap.py",
     "gui/_background.py",
     "gui/_chart_widget.py",
+    "gui/_check_controller.py",
     "gui/_collapsible_section.py",
     "gui/_config_panel.py",
     "gui/_credential_store.py",

@@ -27,12 +27,12 @@ SCANNED = "teachers_teammate/gui"
 #: The classes still over the limit, at the size they have today.
 OVERSIZED: dict[str, int] = {
     "teachers_teammate/gui/_config_panel.py::ConfigPanel": 1094,
-    "teachers_teammate/gui/_main_window.py::MainWindow": 1999,
+    "teachers_teammate/gui/_main_window.py::MainWindow": 1760,
 }
 
 #: The classes still over the attribute limit, at the number they assign today.
 OVERSIZED_ATTRIBUTES: dict[str, int] = {
-    "teachers_teammate/gui/_main_window.py::MainWindow": 51,
+    "teachers_teammate/gui/_main_window.py::MainWindow": 49,
 }
 
 
@@ -146,8 +146,7 @@ def test_no_class_assigns_more_attributes_than_allowed() -> None:
         if name in OVERSIZED_ATTRIBUTES and count > OVERSIZED_ATTRIBUTES[name]
     ]
     assert not grown, (
-        "Hand the new state to the object that owns it instead of the window:\n"
-        + "\n".join(grown)
+        "Hand the new state to the object that owns it instead of the window:\n" + "\n".join(grown)
     )
 
     over = [
@@ -174,6 +173,4 @@ def test_every_attribute_entry_is_the_number_the_class_has() -> None:
         for name, recorded in OVERSIZED_ATTRIBUTES.items()
         if counts.get(name, 0) < recorded
     ]
-    assert not stale, (
-        "Lower these entries to the number the class has now:\n" + "\n".join(stale)
-    )
+    assert not stale, "Lower these entries to the number the class has now:\n" + "\n".join(stale)

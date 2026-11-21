@@ -408,7 +408,7 @@ def test_main_window_stop_is_a_two_step_button(main_window) -> None:
     worker = _DummyWorker(None)
     worker.start()
     main_window._run_controller._worker = worker
-    main_window._run_controller.set_stop_stage(main_window_module.StopStage.RUNNING)
+    main_window._run_controller.set_stop_stage(run_session_module.StopStage.RUNNING)
     assert main_window._stop_btn.text() == "Stop"
 
     main_window._run_controller.on_stop_clicked()
@@ -435,7 +435,7 @@ def test_main_window_progress_says_it_stops_after_this_document(main_window) -> 
     worker = _DummyWorker(None)
     worker.start()
     main_window._run_controller._worker = worker
-    main_window._run_controller.set_stop_stage(main_window_module.StopStage.RUNNING)
+    main_window._run_controller.set_stop_stage(run_session_module.StopStage.RUNNING)
     main_window._run_controller.on_stop_clicked()
 
     main_window._run_controller._on_stage_started("/tmp/a.png", "a.png", "ocr", 1, 3)
@@ -833,9 +833,9 @@ def test_main_window_file_done_reloads_the_open_document(main_window, monkeypatc
     seen: list[str] = []
     main_window._results_table.set_queue([_queue_row("/tmp/page.png", "page.png")])
     main_window._results_table.selectRow(0)
-    main_window._current_preview_source_id = "/tmp/page.png"
+    main_window._check_controller._open = "/tmp/page.png"
 
-    monkeypatch.setattr(main_window, "_load_check", seen.append)
+    monkeypatch.setattr(main_window._check_controller, "load", seen.append)
 
     main_window._run_controller._on_file_done(
         FileDoneEvent(
@@ -935,8 +935,8 @@ def test_main_window_file_done_leaves_another_open_document_alone(main_window, m
     main_window._results_table.set_queue(
         [_queue_row("/tmp/a.png", "a.png"), _queue_row("/tmp/b.png", "b.png")]
     )
-    main_window._current_preview_source_id = "/tmp/a.png"
-    monkeypatch.setattr(main_window, "_load_check", seen.append)
+    main_window._check_controller._open = "/tmp/a.png"
+    monkeypatch.setattr(main_window._check_controller, "load", seen.append)
 
     main_window._run_controller._on_file_done(
         FileDoneEvent(
@@ -952,7 +952,7 @@ def test_main_window_file_done_leaves_another_open_document_alone(main_window, m
     )
 
     assert seen == []
-    assert main_window._current_preview_source_id == "/tmp/a.png"
+    assert main_window._check_controller.current == "/tmp/a.png"
 
 
 @pytest.mark.gui
@@ -967,7 +967,7 @@ def test_main_window_load_check_warns_about_a_document_without_state(
     main_window._results_table.set_queue([_queue_row("/tmp/page.png", "page.png")])
     shown = _record_notices(monkeypatch)
 
-    main_window._load_check("/tmp/page.png")
+    main_window._check_controller.load("/tmp/page.png")
 
     assert len(shown) == 1
     assert "page.png" in shown[0].body
@@ -985,21 +985,21 @@ def test_a_failed_load_does_not_leave_the_open_document_locked(
     Then   the teacher is told and the lock of the finished run is lifted
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     main_window._run_session.pending = {a}
-    main_window._apply_lock()
-    assert main_window._check.body.banner.text == txt.WAITING_FOR_RUN
+    main_window._check_controller.apply_lock()
+    assert main_window._check_controller.page.body.banner.text == txt.WAITING_FOR_RUN
     main_window._run_session.pending = set()
     monkeypatch.setattr(
         main_window._app_service.documents, "check_document", lambda *_a, **_k: None
     )
     shown = _record_notices(monkeypatch)
 
-    assert main_window._load_check(a) is False
+    assert main_window._check_controller.load(a) is False
 
     assert len(shown) == 1
-    assert main_window._check.body.banner.isHidden()
-    assert main_window._current_preview_source_id == a
+    assert main_window._check_controller.page.body.banner.isHidden()
+    assert main_window._check_controller.current == a
 
 
 @pytest.mark.gui
@@ -1020,8 +1020,8 @@ def test_a_document_opens_although_the_settings_are_not_valid_yet(
     monkeypatch.setattr(main_window._config_panel, "to_config", _invalid)
     monkeypatch.setattr(main_window._config_panel, "lookup_config", lambda: cfg)
 
-    assert main_window._load_check(a) is True
-    assert "what was read" in main_window._check.body.read_view.toPlainText()
+    assert main_window._check_controller.load(a) is True
+    assert "what was read" in main_window._check_controller.page.body.read_view.toPlainText()
 
 
 @pytest.mark.gui
@@ -1034,9 +1034,11 @@ def test_a_typed_edit_is_stored_before_a_stage_run_clears_the_cache(
     Then   the typed edit is stored first, then the cache is cleared, then the worker starts
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     order: list[str] = []
-    monkeypatch.setattr(main_window._check, "flush_pending_edit", lambda: order.append("flush"))
+    monkeypatch.setattr(
+        main_window._check_controller.page, "flush_pending_edit", lambda: order.append("flush")
+    )
     monkeypatch.setattr(
         main_window._app_service.documents, "worked_on_documents", lambda *_a, **_k: WorkedOn()
     )
@@ -1065,7 +1067,7 @@ def test_a_stored_edit_reads_the_document_state_once(main_window, monkeypatch, s
     """
     [a] = stored("a.png", raw="raw text", corrected="corr old")
     main_window._results_table.selectRow(0)
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     real = main_window._app_service.documents.load_view
     calls: list[str] = []
 
@@ -1090,7 +1092,7 @@ def test_main_window_ocr_edit_is_stored_as_the_teachers_work(main_window, stored
     [source_id] = stored("page.png", raw="raw old", corrected="corr old")
     source = Path(source_id)
     main_window._results_table.selectRow(0)
-    main_window._open_check(source_id)
+    main_window._check_controller.open_document(source_id)
 
     main_window._on_ocr_text_edited("raw edited")
 
@@ -1124,7 +1126,7 @@ def test_main_window_correction_edit_is_stored_as_the_teachers_work(
     [source_id] = stored("page.png", raw="raw text", corrected="corr old")
     source = Path(source_id)
     main_window._results_table.selectRow(0)
-    main_window._open_check(source_id)
+    main_window._check_controller.open_document(source_id)
 
     main_window._on_correction_text_edited("corr edited")
 
@@ -1156,7 +1158,7 @@ def test_main_window_correction_edit_keeps_the_stored_warning_banner(
     [source_id] = stored("page.png", raw="raw text", corrected="corr old")
     source = Path(source_id)
     main_window._results_table.selectRow(0)
-    main_window._open_check(source_id)
+    main_window._check_controller.open_document(source_id)
     cfg = main_window._config_panel.to_config()
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
     state = repo.load(source)
@@ -1165,9 +1167,9 @@ def test_main_window_correction_edit_keeps_the_stored_warning_banner(
 
     main_window._on_correction_text_edited("corr edited")
 
-    assert main_window._check.body.banner.text == txt.READING_FIX_WARNING
-    main_window._check.body.banner.action_clicked.emit()
-    assert main_window._check.body.banner.text == "No explanations."
+    assert main_window._check_controller.page.body.banner.text == txt.READING_FIX_WARNING
+    main_window._check_controller.page.body.banner.action_clicked.emit()
+    assert main_window._check_controller.page.body.banner.text == "No explanations."
 
 
 # ── Additional coverage ─────────────────────────────────────────────────────
@@ -1227,11 +1229,11 @@ def test_main_window_load_check_shows_the_text_of_the_document(main_window, stor
     """
     [source_id] = stored("page.png", raw="ocr content")
 
-    main_window._load_check(source_id)
+    main_window._check_controller.load(source_id)
 
-    assert "ocr content" in main_window._check.body.read_view.toPlainText()
-    assert main_window._check._name_label.text() == "page.png"
-    assert main_window._check._position_label.text() == "1 of 1"
+    assert "ocr content" in main_window._check_controller.page.body.read_view.toPlainText()
+    assert main_window._check_controller.page._name_label.text() == "page.png"
+    assert main_window._check_controller.page._position_label.text() == "1 of 1"
 
 
 @pytest.mark.gui
@@ -1256,9 +1258,9 @@ def test_main_window_load_check_hands_the_page_the_stored_review(main_window, st
         "page.png", raw="She have a dog.", corrected="She has a dog.", review=review
     )
 
-    main_window._load_check(source_id)
+    main_window._check_controller.load(source_id)
 
-    assert main_window._check.body.panel.row_count == 1
+    assert main_window._check_controller.page.body.panel.row_count == 1
 
 
 @pytest.mark.gui
@@ -1334,7 +1336,7 @@ def test_the_check_strip_counts_down_with_the_bar(main_window, monkeypatch, stor
     from teachers_teammate.gui._run_status import RunPace  # noqa: PLC0415
 
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     clock = {"now": 1000.0}
@@ -1346,7 +1348,7 @@ def test_the_check_strip_counts_down_with_the_bar(main_window, monkeypatch, stor
     main_window._run_session.pace.set_pages(1)
     main_window._run_controller._on_file_started(a, "a.png", 1, 1)
     main_window._run_controller._on_stage_started(a, "a.png", "correction", 1, 1)
-    strip = main_window._check._run_strip
+    strip = main_window._check_controller.page._run_strip
 
     clock["now"] = 1050.0
     main_window._run_controller._refresh_progress()
@@ -1373,7 +1375,7 @@ def test_the_clock_waits_for_the_first_token_of_a_local_model(
            at the first token, so neither figure moves during the wait
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     clock = {"now": 1000.0}
@@ -1394,7 +1396,7 @@ def test_the_clock_waits_for_the_first_token_of_a_local_model(
     )
 
     assert "still working with ministral-3:8b" in main_window._progress.format()
-    assert "still working with ministral-3:8b" in main_window._check._run_strip.text
+    assert "still working with ministral-3:8b" in main_window._check_controller.page._run_strip.text
     assert main_window._run_session.pace._work_started_at is None
 
     clock["now"] = 1020.0
@@ -1402,7 +1404,7 @@ def test_the_clock_waits_for_the_first_token_of_a_local_model(
 
     assert main_window._run_session.pace._work_started_at == 1020.0
     assert "correcting" in main_window._progress.format()
-    assert "still working" not in main_window._check._run_strip.text
+    assert "still working" not in main_window._check_controller.page._run_strip.text
 
 
 @pytest.mark.gui
@@ -1416,7 +1418,7 @@ def test_a_wait_note_of_another_stage_goes_with_the_first_token(
            the proofreading says
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     _pretend_a_run_is_going(main_window, monkeypatch)
@@ -1432,7 +1434,7 @@ def test_a_wait_note_of_another_stage_goes_with_the_first_token(
 
     assert "Loading" not in main_window._progress.format()
     assert "OCR" in main_window._progress.format()
-    assert "Loading" not in main_window._check._run_strip.text
+    assert "Loading" not in main_window._check_controller.page._run_strip.text
     assert main_window._run_session.pace._work_started_at is not None
 
 
@@ -1446,7 +1448,7 @@ def test_a_run_without_a_local_model_starts_its_clock_at_the_stage(
     Then   the clock starts there, so a run that never waits for a model is not held back
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     clock = {"now": 1000.0}
@@ -1928,7 +1930,7 @@ def test_the_window_has_a_documents_tab_and_a_check_tab(main_window) -> None:
 
     assert tabs == ["Documents", "Check"]
     assert main_window._tabs.widget(0) is main_window._main_splitter
-    assert main_window._tabs.widget(1) is main_window._check
+    assert main_window._tabs.widget(1) is main_window._check_controller.page
 
 
 def _store_document(
@@ -2001,7 +2003,7 @@ def stored(main_window, monkeypatch, tmp_path: Path):
                 for source_id, name in zip(source_ids, names, strict=True)
             ]
         )
-        main_window._update_check_tab()
+        main_window._check_controller.update_tab()
         return source_ids
 
     return _make
@@ -2015,14 +2017,14 @@ def test_check_tab_is_disabled_until_a_document_has_a_result(main_window) -> Non
     Then   Check cannot be opened, because there would be nothing to check
     """
     main_window._results_table.set_queue([_queue_row("/tmp/a.png", "a.png")])
-    main_window._update_check_tab()
+    main_window._check_controller.update_tab()
 
     assert main_window._tabs.isTabEnabled(1) is False
 
     main_window._results_table.update_row(
         _queue_row("/tmp/a.png", "a.png", ocr=StageState.DONE, has_text=True)
     )
-    main_window._update_check_tab()
+    main_window._check_controller.update_tab()
 
     assert main_window._tabs.isTabEnabled(1) is True
 
@@ -2036,12 +2038,12 @@ def test_opening_a_document_shows_the_check_tab_and_labels_it(main_window, store
     """
     _a, b = stored("a.png", "b.png")
 
-    main_window._open_check(b)
+    main_window._check_controller.open_document(b)
 
     assert main_window._tabs.currentIndex() == 1
     assert main_window._tabs.tabText(1) == "Check \u2014 b.png"
     assert main_window._tabs.tabToolTip(1) == "b.png\nCheck (Ctrl+2)"
-    assert main_window._check._position_label.text() == "2 of 2"
+    assert main_window._check_controller.page._position_label.text() == "2 of 2"
 
 
 @pytest.mark.gui
@@ -2054,7 +2056,7 @@ def test_the_check_tab_label_shortens_a_long_name(main_window, stored) -> None:
     name = "a_very_long_document_name_that_does_not_fit.pdf"
     [source_id] = stored(name)
 
-    main_window._open_check(source_id)
+    main_window._check_controller.open_document(source_id)
 
     label = main_window._tabs.tabText(1)
     assert label.startswith("Check \u2014 ")
@@ -2075,7 +2077,7 @@ def test_clicking_the_check_tab_opens_the_current_row(main_window, stored) -> No
 
     main_window._tabs.setCurrentIndex(1)
 
-    assert main_window._current_preview_source_id == b
+    assert main_window._check_controller.current == b
     assert main_window._results_table.currentRow() == 1
 
 
@@ -2094,7 +2096,7 @@ def test_check_target_falls_back_to_the_first_document_with_a_result(main_window
     )
     main_window._results_table.selectRow(0)
 
-    assert main_window._check_target() == "/tmp/b.png"
+    assert main_window._check_controller._target() == "/tmp/b.png"
 
 
 @pytest.mark.gui
@@ -2119,10 +2121,10 @@ def test_ctrl_2_opens_a_document_when_none_is_open(main_window, stored) -> None:
     [a] = stored("a.png")
     main_window._results_table.selectRow(0)
 
-    main_window._show_check_tab()
+    main_window._check_controller.show_check()
 
     assert main_window._tabs.currentIndex() == 1
-    assert main_window._current_preview_source_id == a
+    assert main_window._check_controller.current == a
 
 
 @pytest.mark.gui
@@ -2133,9 +2135,9 @@ def test_ctrl_2_does_nothing_while_no_document_can_be_opened(main_window) -> Non
     Then   nothing happens: the tab stays disabled and Documents stays in front
     """
     main_window._results_table.set_queue([_queue_row("/tmp/a.png", "a.png")])
-    main_window._update_check_tab()
+    main_window._check_controller.update_tab()
 
-    main_window._show_check_tab()
+    main_window._check_controller.show_check()
 
     assert main_window._tabs.currentIndex() == 0
 
@@ -2148,12 +2150,12 @@ def test_escape_in_the_check_tab_goes_back_to_documents(main_window, stored) -> 
     Then   Documents is in front and the document stays open
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
 
-    main_window._check.back_requested.emit()
+    main_window._check_controller.page.back_requested.emit()
 
     assert main_window._tabs.currentIndex() == 0
-    assert main_window._current_preview_source_id == a
+    assert main_window._check_controller.current == a
 
 
 @pytest.mark.gui
@@ -2164,18 +2166,18 @@ def test_the_arrows_move_through_the_documents_and_select_the_row(main_window, s
     Then   the open document and the selected row follow, and stop at the ends
     """
     a, b, c = stored("a.png", "b.png", "c.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
 
-    main_window._on_check_next()
-    assert main_window._current_preview_source_id == b
+    main_window._check_controller.next_document()
+    assert main_window._check_controller.current == b
     assert main_window._results_table.currentRow() == 1
 
-    main_window._on_check_next()
-    main_window._on_check_next()  # already at the end
-    assert main_window._current_preview_source_id == c
+    main_window._check_controller.next_document()
+    main_window._check_controller.next_document()  # already at the end
+    assert main_window._check_controller.current == c
 
-    main_window._on_check_previous()
-    assert main_window._current_preview_source_id == b
+    main_window._check_controller.previous_document()
+    assert main_window._check_controller.current == b
     assert main_window._results_table.currentRow() == 1
 
 
@@ -2190,16 +2192,16 @@ def test_a_run_start_locks_the_document_it_redoes_and_keeps_it_open(
            until its own result arrives
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
 
     main_window._run_controller.start(make_config(Path("/tmp")), [a])
 
-    assert main_window._current_preview_source_id == a
+    assert main_window._check_controller.current == a
     assert main_window._tabs.currentIndex() == 0
     assert main_window._run_session.pending == {a}
-    assert main_window._check.body.banner.text == txt.WAITING_FOR_RUN
+    assert main_window._check_controller.page.body.banner.text == txt.WAITING_FOR_RUN
 
 
 @pytest.mark.gui
@@ -2212,7 +2214,7 @@ def test_a_run_started_from_the_check_header_keeps_the_check_tab(
     Then   the Check tab stays in front, and the document is locked there
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     main_window._tabs.setCurrentIndex(1)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
@@ -2222,7 +2224,7 @@ def test_a_run_started_from_the_check_header_keeps_the_check_tab(
         lambda ids, _stage: main_window._run_controller.start(make_config(Path("/tmp")), ids),
     )
 
-    main_window._on_check_proofread_requested()
+    main_window._check_controller.on_proofread_requested()
 
     assert main_window._tabs.currentIndex() == 1
     assert main_window._run_session.pending == {a}
@@ -2238,7 +2240,7 @@ def test_a_run_started_from_documents_goes_on_showing_documents_after_a_check_ru
     Then   Documents comes to the front, because the Check request was used up by the first run
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     main_window._run_session.from_check = True
@@ -2261,12 +2263,12 @@ def test_a_proofread_request_from_check_during_a_run_is_refused_and_not_remember
            next run started in Documents is not mistaken for one started in Check
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     warned: list[bool] = []
     _pretend_a_run_is_going(main_window, monkeypatch)
     monkeypatch.setattr(main_window._run_controller, "warn_busy", lambda: warned.append(True))
 
-    main_window._on_check_proofread_requested()
+    main_window._check_controller.on_proofread_requested()
 
     assert warned == [True]
     assert main_window._run_session.from_check is False
@@ -2313,10 +2315,10 @@ def test_the_check_tab_shows_the_run_while_the_open_document_is_in_it(
     Then   the run strip waits, then says what is done with the document, then is gone
     """
     a, b = stored("a.png", "b.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
-    strip = main_window._check._run_strip
+    strip = main_window._check_controller.page._run_strip
 
     config = dataclasses.replace(make_config(Path("/tmp")), correction_enabled=True)
     main_window._run_controller.start(config, [b, a])
@@ -2346,13 +2348,13 @@ def test_a_run_that_leaves_the_open_document_alone_shows_no_run_in_check(
     Then   the Check tab shows no run strip
     """
     a, b = stored("a.png", "b.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
 
     main_window._run_controller.start(make_config(Path("/tmp")), [b])
 
-    assert main_window._check._run_strip.isHidden()
+    assert main_window._check_controller.page._run_strip.isHidden()
 
 
 @pytest.mark.gui
@@ -2366,16 +2368,16 @@ def test_the_check_stop_button_stops_the_run_like_the_documents_tab(
            Stop now
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     main_window._run_controller.start(make_config(Path("/tmp")), [a])
     main_window._run_controller._on_file_started(a, "a.png", 1, 1)
 
-    main_window._check._run_strip.stop_button.click()
+    main_window._check_controller.page._run_strip.stop_button.click()
 
     assert main_window._run_controller._worker.stop_after_file_event.is_set()
-    assert main_window._check._run_strip.stop_button.text() == "Stop now"
+    assert main_window._check_controller.page._run_strip.stop_button.text() == "Stop now"
 
 
 @pytest.mark.gui
@@ -2388,7 +2390,7 @@ def test_the_redone_document_is_shown_again_when_its_result_arrives(
     Then   it is loaded again, on the tab the teacher is on
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     main_window._run_controller.start(make_config(Path("/tmp")), [a])
@@ -2420,12 +2422,12 @@ def test_a_run_that_ends_before_the_open_document_shows_it_again(
     Then   the document is loaded again from what it has, so Check is not left empty
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     main_window._run_controller.start(make_config(Path("/tmp")), [a])
     seen: list[str] = []
-    monkeypatch.setattr(main_window, "_load_check", seen.append)
+    monkeypatch.setattr(main_window._check_controller, "load", seen.append)
 
     main_window._run_controller._on_run_finished(RunSummary())
 
@@ -2443,16 +2445,16 @@ def test_the_copy_menu_follows_the_privacy_add_on_for_the_open_document(
     """
     [a] = stored("a.png")
     main_window._privacy_available = False
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     kind = CopyKind.RAW_ANONYMIZED
-    assert main_window._check._copy_actions[kind].isEnabled() is False
+    assert main_window._check_controller.page._copy_actions[kind].isEnabled() is False
 
     main_window._app_service.anonymization.anonymizer_available = lambda _language, _config=None: (
         True
     )
     main_window._refresh_privacy_availability()
 
-    assert main_window._check._copy_actions[kind].isEnabled() is True
+    assert main_window._check_controller.page._copy_actions[kind].isEnabled() is True
 
 
 @pytest.mark.gui
@@ -2463,14 +2465,14 @@ def test_a_run_start_keeps_a_document_it_leaves_alone(main_window, monkeypatch, 
     Then   the open document stays open, so the teacher can go on working on it
     """
     a, b = stored("a.png", "b.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
 
     main_window._run_controller.start(make_config(Path("/tmp")), [b])
 
-    assert main_window._current_preview_source_id == a
-    assert main_window._check.body.banner.text != txt.WAITING_FOR_RUN
+    assert main_window._check_controller.current == a
+    assert main_window._check_controller.page.body.banner.text != txt.WAITING_FOR_RUN
 
 
 @pytest.mark.gui
@@ -2483,12 +2485,12 @@ def test_a_rebuilt_queue_without_the_open_document_closes_check(
     Then   the tab is closed and Documents is in front
     """
     _a, b = stored("a.png", "b.png")
-    main_window._open_check(b)
+    main_window._check_controller.open_document(b)
     monkeypatch.setattr(main_window, "_scan_input_files", lambda: [])
 
     main_window._refresh_queue_from_inputs()
 
-    assert main_window._current_preview_source_id == ""
+    assert main_window._check_controller.current == ""
     assert main_window._tabs.currentIndex() == 0
 
 
@@ -2505,7 +2507,7 @@ def test_the_documents_tab_label_counts_the_run(main_window, monkeypatch, stored
     main_window._run_controller.start(make_config(Path("/tmp")), [a, b, c])
 
     main_window._run_session.names = ["a.png"]
-    main_window._update_check_tab()
+    main_window._check_controller.update_tab()
 
     assert main_window._tabs.tabText(0) == "Documents \u00b7 1 of 3"
 
@@ -2518,12 +2520,12 @@ def test_copy_puts_what_was_read_on_the_clipboard(main_window, stored) -> None:
     Then   the clipboard holds that text and the header confirms it
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
 
     main_window._on_check_copy(CopyKind.RAW)
 
     assert QApplication.clipboard().text() == "what was read"
-    assert main_window._check._copied_label.isHidden() is False
+    assert main_window._check_controller.page._copied_label.isHidden() is False
 
 
 @pytest.mark.gui
@@ -2534,7 +2536,7 @@ def test_save_goes_through_the_export_path(main_window, monkeypatch, stored) -> 
     Then   the window's own export path is used, for that one document
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     asked: list[tuple[list[str], ExportKind]] = []
     monkeypatch.setattr(
         main_window._export_controller, "on_requested", lambda ids, kind: asked.append((ids, kind))
@@ -2559,7 +2561,7 @@ def test_a_double_click_in_the_queue_opens_the_document_in_the_check_tab(
     main_window._results_table.check_requested.emit(b)
 
     assert main_window._tabs.currentIndex() == 1
-    assert main_window._current_preview_source_id == b
+    assert main_window._check_controller.current == b
     assert main_window._results_table.currentRow() == 1
 
 
@@ -2575,7 +2577,7 @@ def test_an_edit_goes_to_the_open_document_not_to_the_selected_row(
     The selection is how rows are chosen for a run; the edit belongs to what is on screen.
     """
     source_a, source_b = (Path(sid) for sid in stored("a.png", "b.png", raw="raw old"))
-    main_window._open_check(str(source_a))
+    main_window._check_controller.open_document(str(source_a))
     main_window._results_table.selectRow(1)
 
     main_window._on_ocr_text_edited("raw edited")
@@ -2598,7 +2600,7 @@ def test_copy_with_names_hidden_puts_the_anonymized_text_on_the_clipboard(
     Then   the clipboard holds the text the anonymizer produced
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     main_window._privacy_available = True
     monkeypatch.setattr(
         main_window._app_service.export,
@@ -2623,7 +2625,7 @@ def test_a_failing_anonymizer_leaves_the_clipboard_alone(main_window, monkeypatc
     Then   the failure is explained and the clipboard keeps what it had
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     QApplication.clipboard().setText("before")
     warned: list[Notice] = []
     monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: warned.append(notice))
@@ -2661,9 +2663,11 @@ def test_copy_saves_a_half_typed_edit_first(main_window, monkeypatch, stored) ->
     Then   the pending edit is flushed before the text is read
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
     flushed: list[bool] = []
-    monkeypatch.setattr(main_window._check, "flush_pending_edit", lambda: flushed.append(True))
+    monkeypatch.setattr(
+        main_window._check_controller.page, "flush_pending_edit", lambda: flushed.append(True)
+    )
 
     main_window._on_check_copy(CopyKind.RAW)
 
@@ -2678,17 +2682,17 @@ def test_a_new_result_joins_the_arrows(main_window, stored) -> None:
     Then   the header counts it and the next arrow reaches it
     """
     _a, b = stored("a.png", "b.png")
-    main_window._open_check(b)
-    assert main_window._check._position_label.text() == "2 of 2"
+    main_window._check_controller.open_document(b)
+    assert main_window._check_controller.page._position_label.text() == "2 of 2"
 
     _a, b, c = stored("a.png", "b.png", "c.png")
-    main_window._load_check(b)
+    main_window._check_controller.load(b)
 
-    assert main_window._check._position_label.text() == "2 of 3"
+    assert main_window._check_controller.page._position_label.text() == "2 of 3"
 
-    main_window._on_check_next()
+    main_window._check_controller.next_document()
 
-    assert main_window._current_preview_source_id == c
+    assert main_window._check_controller.current == c
 
 
 @pytest.mark.gui
@@ -2699,12 +2703,12 @@ def test_the_header_follows_a_rename_of_the_row(main_window, stored) -> None:
     Then   the tab label and the header show the new name
     """
     [a] = stored("a.png")
-    main_window._open_check(a)
+    main_window._check_controller.open_document(a)
 
     main_window._results_table.set_queue(
         [_queue_row(a, "renamed.png", ocr=StageState.DONE, has_text=True)]
     )
-    main_window._update_check_tab()
+    main_window._check_controller.update_tab()
 
     assert main_window._tabs.tabText(1) == "Check \u2014 renamed.png"
 
@@ -5358,7 +5362,7 @@ def test_main_window_does_not_probe_again_and_again_when_the_probe_fails(
         [_queue_row(source_id, "page.png", ocr=StageState.DONE, has_text=True)]
     )
     main_window._results_table.selectRow(0)
-    main_window._load_check(source_id)
+    main_window._check_controller.load(source_id)
     qtbot.wait(600)
     settled = len(calls)
     qtbot.wait(600)
@@ -6159,16 +6163,16 @@ def test_checked_marks_the_corrections_and_shows_in_the_queue(main_window, store
     [source_id] = stored("page.png", raw="raw text", corrected="corr")
     source = Path(source_id)
     main_window._results_table.selectRow(0)
-    main_window._open_check(source_id)
+    main_window._check_controller.open_document(source_id)
 
-    main_window._check._checked_btn.click()
+    main_window._check_controller.page._checked_btn.click()
 
     work = TeacherWorkStore().load(compute_file_hash(source))
     assert work is not None
     assert work.corrections is not None
     assert work.corrections.checked is True
     assert main_window._results_table.item(0, ResultsTable._COL_CHECKED).text() == "Checked"
-    assert main_window._check._checked_btn.text() == txt.CHECKED_BUTTON
+    assert main_window._check_controller.page._checked_btn.text() == txt.CHECKED_BUTTON
 
 
 @pytest.mark.gui
@@ -6184,9 +6188,9 @@ def test_checked_without_a_proofreading_marks_the_text_and_keeps_a_copy(
     [source_id] = stored("page.png", raw="raw text")
     source = Path(source_id)
     main_window._results_table.selectRow(0)
-    main_window._open_check(source_id)
+    main_window._check_controller.open_document(source_id)
 
-    main_window._check._checked_btn.click()
+    main_window._check_controller.page._checked_btn.click()
 
     work = TeacherWorkStore().load(compute_file_hash(source))
     assert work is not None
@@ -6218,13 +6222,13 @@ def test_showing_a_card_records_that_the_teacher_looked_at_it(main_window, store
         "page.png", raw="She have a dog.", corrected="She has a dog.", review=review
     )
 
-    main_window._open_check(source_id)
+    main_window._check_controller.open_document(source_id)
 
     work = TeacherWorkStore().load(compute_file_hash(Path(source_id)))
     assert work is not None
     assert work.corrections is not None
     assert work.corrections.looked_at == frozenset({"edit:1"})
-    assert main_window._check.body.panel._counts.text().endswith("1 of 1 looked at")
+    assert main_window._check_controller.page.body.panel._counts.text().endswith("1 of 1 looked at")
 
 
 @pytest.mark.gui
@@ -6237,10 +6241,10 @@ def test_checked_is_its_own_undo(main_window, stored) -> None:
     """
     [source_id] = stored("page.png", raw="raw text", corrected="corr")
     main_window._results_table.selectRow(0)
-    main_window._open_check(source_id)
-    main_window._check._checked_btn.click()
+    main_window._check_controller.open_document(source_id)
+    main_window._check_controller.page._checked_btn.click()
 
-    main_window._check._checked_btn.click()
+    main_window._check_controller.page._checked_btn.click()
 
     work = TeacherWorkStore().load(compute_file_hash(Path(source_id)))
     assert work is None or work.corrections is None or work.corrections.checked is False
@@ -6635,8 +6639,8 @@ def test_the_queue_shows_the_checked_mark_when_it_is_loaded(
     """
     [source_id] = stored("page.png", raw="raw text", corrected="corr")
     main_window._results_table.selectRow(0)
-    main_window._open_check(source_id)
-    main_window._check._checked_btn.click()
+    main_window._check_controller.open_document(source_id)
+    main_window._check_controller.page._checked_btn.click()
     monkeypatch.setattr(main_window, "_scan_input_files", lambda: [Path(source_id)])
 
     main_window._refresh_queue_from_inputs()
@@ -6655,7 +6659,7 @@ def test_an_edit_that_cannot_be_stored_says_so(main_window, monkeypatch, stored,
     """
     [source_id] = stored("page.png", raw="raw text", corrected="corr")
     main_window._results_table.selectRow(0)
-    main_window._open_check(source_id)
+    main_window._check_controller.open_document(source_id)
     shown: list[Notice] = []
     monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
 
@@ -6691,7 +6695,7 @@ def test_checked_that_cannot_be_stored_says_so_and_the_button_goes_back(
     """
     [source_id] = stored("page.png", raw="raw text", corrected="corr")
     main_window._results_table.selectRow(0)
-    main_window._open_check(source_id)
+    main_window._check_controller.open_document(source_id)
     shown: list[Notice] = []
     monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
 
@@ -6700,12 +6704,12 @@ def test_checked_that_cannot_be_stored_says_so_and_the_button_goes_back(
 
     monkeypatch.setattr(TeacherWorkStore, "update", refuse)
 
-    main_window._check._checked_btn.click()
+    main_window._check_controller.page._checked_btn.click()
 
     assert len(shown) == 1
     assert shown[0].title == "Not saved"
-    assert main_window._check._checked_btn.isChecked() is False
-    assert main_window._check._checked_btn.text() == txt.MARK_AS_CHECKED
+    assert main_window._check_controller.page._checked_btn.isChecked() is False
+    assert main_window._check_controller.page._checked_btn.text() == txt.MARK_AS_CHECKED
 
 
 @pytest.mark.gui
@@ -6717,10 +6721,10 @@ def test_checked_stores_a_typed_edit_first(main_window, stored) -> None:
     """
     [source_id] = stored("page.png", raw="raw text", corrected="corr")
     main_window._results_table.selectRow(0)
-    main_window._open_check(source_id)
-    main_window._check.body.final_view.setPlainText("typed text")
+    main_window._check_controller.open_document(source_id)
+    main_window._check_controller.page.body.final_view.setPlainText("typed text")
 
-    main_window._check._checked_btn.click()
+    main_window._check_controller.page._checked_btn.click()
 
     work = TeacherWorkStore().load(compute_file_hash(Path(source_id)))
     assert work is not None and work.corrections is not None
@@ -6767,8 +6771,12 @@ def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
     first = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(first)
 
-    first._check.layout_changed.emit(CheckLayout(split=(300, 100, 400), card_split=(100, 100)))
-    first._check.layout_changed.emit(CheckLayout(split=(300, 500, 400), card_split=(200, 300)))
+    first._check_controller.page.layout_changed.emit(
+        CheckLayout(split=(300, 100, 400), card_split=(100, 100))
+    )
+    first._check_controller.page.layout_changed.emit(
+        CheckLayout(split=(300, 500, 400), card_split=(200, 300))
+    )
 
     assert "view/check_split" not in _MemorySettings.store  # nothing is written mid-drag
 
@@ -6780,8 +6788,8 @@ def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
     second = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(second)
 
-    assert second._check.body._stored_split == (300, 500, 400)
-    assert second._check.body.panel._card_split == (200, 300)
+    assert second._check_controller.page.body._stored_split == (300, 500, 400)
+    assert second._check_controller.page.body.panel._card_split == (200, 300)
 
 
 @pytest.mark.parametrize(

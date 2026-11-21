@@ -12,11 +12,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.infrastructure import addon_manager
+from teachers_teammate.exceptions import AddonInstallError, InstallFailure
 from teachers_teammate.infrastructure.addon_manager import (
     ADDON_LLM_OPENAI,
     ADDON_PRIVACY,
-    AddonInstallError,
-    InstallFailure,
     _packages_dir_readable,
     can_install_addons,
     clear_stale_modules,

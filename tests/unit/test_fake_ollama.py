@@ -18,8 +18,9 @@ from urllib.request import urlopen
 
 import pytest
 
+from teachers_teammate.domain.ollama_discovery import WaitKind
 from teachers_teammate.infrastructure import ollama_utils
-from teachers_teammate.infrastructure.ollama_utils import OllamaClient, WaitKind
+from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 
 from ..fakes.fake_ollama import (
     CHAT_ANSWER,

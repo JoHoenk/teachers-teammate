@@ -15,6 +15,7 @@ from teachers_teammate.domain.data_location import (
     StageLocation,
     describe_fingerprint,
 )
+from teachers_teammate.domain.anonymization import DEFAULT_PATTERNS, AnonymizerConfig
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._privacy_settings import (
     DISPLAY_ANONYMIZED_KEY,
@@ -29,7 +30,6 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_SENDING,
 )
 from teachers_teammate.gui.settings._privacy_page import NOTHING_REMEMBERED, PrivacyPage
-from teachers_teammate.infrastructure.anonymizer import DEFAULT_PATTERNS, AnonymizerConfig
 
 from ._gui_harness import settings_context
 from teachers_teammate.texts.settings import WHERE_ADDONS

@@ -516,7 +516,7 @@ def test_stats_widget_shows_the_gpu_rows_when_the_card_answers(qtbot, monkeypatc
     Then   the GPU and VRAM rows appear with those readings, read off the GUI thread
     """
     from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
-    from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import GpuUsage  # noqa: PLC0415
 
     w = sw.SystemStatsWidget(lambda: GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192))
     qtbot.addWidget(w)

@@ -19,6 +19,7 @@ from teachers_teammate.application.speed_estimates import (
 )
 from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection
 from teachers_teammate.domain.performance_estimate import (
+    ProbeResult,
     SpeedBand,
     SpeedStep,
     StepOutcome,
@@ -28,7 +29,6 @@ from teachers_teammate.exceptions import RunStoppedError
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._hardware_profile_selector import HardwareProfileSelector
 from teachers_teammate.gui.settings._speed_panel import SpeedPanel
-from teachers_teammate.infrastructure.performance_probe import ProbeResult
 from teachers_teammate.texts.settings import WHERE_AI_MODELS
 from ._service_stubs import services_of
 

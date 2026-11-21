@@ -11,15 +11,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.domain.anonymization import _LEGACY_DEFAULT_PATTERNS
+from teachers_teammate.domain.anonymization import (
+    _LEGACY_DEFAULT_PATTERNS,
+    AnonymizerConfig,
+    DEFAULT_PATTERNS,
+    resolve_patterns,
+)
 from teachers_teammate.infrastructure.anonymizer import (
     AnonymizationResultCache,
-    AnonymizerConfig,
     CachedAnonymizer,
-    DEFAULT_PATTERNS,
     SpacyAnonymizer,
     _trim_street,
-    resolve_patterns,
 )
 
 

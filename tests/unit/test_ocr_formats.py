@@ -755,7 +755,7 @@ def test_stored_markdown_leaves_email_addresses_matchable_by_the_anonymizer() ->
     Then   it matches the whole address (no backslash splits the local part, so no part of
            the name reaches the correction LLM)
     """
-    from teachers_teammate.infrastructure.anonymizer import DEFAULT_PATTERNS  # noqa: PLC0415
+    from teachers_teammate.domain.anonymization import DEFAULT_PATTERNS  # noqa: PLC0415
 
     email_pattern = dict(DEFAULT_PATTERNS)["EMAIL"]
     result = OcrOutputPostprocessor().process_pages(

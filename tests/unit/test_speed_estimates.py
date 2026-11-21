@@ -20,29 +20,25 @@ from teachers_teammate.application.speed_estimates import (
 from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     DetectionReason,
+    ServerFacts,
     request_profile,
 )
 from teachers_teammate.domain.performance_estimate import (
     AnswerLength,
     ModelSpeed,
+    ProbeResult,
     SpeedBand,
     SpeedStep,
     StepOutcome,
+    StepResult,
     TYPICAL_PAGE_WORDS,
     TimeRange,
     proofreading_time,
 )
 from teachers_teammate.domain.proofreading.result import StepName
 from teachers_teammate.infrastructure.proofreading.corrector import exchange_cost
-from teachers_teammate.infrastructure.ollama_utils import (
-    PROOFREADING_NUM_CTX,
-    ServerFacts,
-)
-from teachers_teammate.infrastructure.performance_probe import (
-    PerformanceProbe,
-    ProbeResult,
-    StepResult,
-)
+from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX
+from teachers_teammate.infrastructure.performance_probe import PerformanceProbe
 from teachers_teammate.infrastructure.speed_store import (
     RunSample,
     SampleKey,

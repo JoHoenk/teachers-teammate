@@ -49,10 +49,17 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_PROOFREADING_KEY,
 )
 from teachers_teammate.gui.settings._window import SUB_PAGES
-from teachers_teammate.domain.run_summary import FileOutcome, FileStatus, RunSummary
-from teachers_teammate.infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
-from teachers_teammate.infrastructure.ollama_utils import WaitDetail, WaitKind
-from teachers_teammate.infrastructure.reporting import KeepAwakeState
+from teachers_teammate.domain.ollama_discovery import (
+    OLLAMA_DOWNLOAD_URL,
+    WaitDetail,
+    WaitKind,
+)
+from teachers_teammate.domain.run_summary import (
+    FileOutcome,
+    FileStatus,
+    KeepAwakeState,
+    RunSummary,
+)
 from teachers_teammate.infrastructure.state_repository import (
     StateRepository,
     compute_file_hash,

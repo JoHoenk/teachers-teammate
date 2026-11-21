@@ -14,12 +14,12 @@ import pytest
 
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
+from teachers_teammate.interfaces import ProgressCallbacks
 from teachers_teammate.infrastructure.pipeline import (
     OCRPipeline,
     PipelineDependencies,
 )
 from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
-from teachers_teammate.infrastructure.reporting import ProgressCallbacks
 from teachers_teammate.infrastructure.stage_builder import StageBuilder
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir

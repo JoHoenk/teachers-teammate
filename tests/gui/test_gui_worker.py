@@ -10,8 +10,13 @@ from teachers_teammate.gui._qt_stream import QtStream
 from teachers_teammate.gui._worker import (
     OCRWorker,
 )
-from teachers_teammate.domain.run_summary import FileOutcome, FileStatus, RunStatus, RunSummary
-from teachers_teammate.infrastructure.reporting import KeepAwakeState
+from teachers_teammate.domain.run_summary import (
+    FileOutcome,
+    FileStatus,
+    KeepAwakeState,
+    RunStatus,
+    RunSummary,
+)
 from tests.conftest import make_config
 
 from ._gui_harness import real_service

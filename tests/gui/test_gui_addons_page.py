@@ -25,6 +25,7 @@ from teachers_teammate.gui._constants import _SPACY_MODEL_CHOICES
 from teachers_teammate.gui._install_round import PAGE_MODELS_ITEM, READER_ITEM
 from teachers_teammate.gui.settings import _addons_page
 from teachers_teammate.gui.settings._addons_page import AddonsPage
+from teachers_teammate.domain.name_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
 from teachers_teammate.gui.settings._page import (
     FOCUS_ADDON_UPDATE,
     FOCUS_LOCAL_MODELS,
@@ -32,12 +33,7 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_READING_MODELS,
     SettingsPage,
 )
-from teachers_teammate.infrastructure.addon_manager import (
-    AddonInstallError,
-    AddonUpdateError,
-    InstallFailure,
-)
-from teachers_teammate.infrastructure.spacy_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
+from teachers_teammate.exceptions import AddonInstallError, AddonUpdateError, InstallFailure
 from teachers_teammate.texts._types import Question
 
 from ..fakes.fake_ollama import FakeOllama

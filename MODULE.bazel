@@ -71,6 +71,10 @@ pip_dev.parse(
 )
 use_repo(pip_dev, "ocr_dev_dependencies")
 
+# Every package ships an explicit `__init__.py`; rules_python must not create missing ones.
+rules_python_config = use_extension("@rules_python//python/extensions:config.bzl", "config")
+rules_python_config.explicit_init_py(default = True)
+
 # Test pip hub: runtime subset + pytest, used by //tests:unit_tests.  Not a dev dependency: the
 # evaluation tools in //tools are built from the private evaluation repository, a module of its
 # own that depends on this one, and a dependent module sees only the non-dev parts.

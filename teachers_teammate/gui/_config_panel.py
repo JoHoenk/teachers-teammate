@@ -1019,7 +1019,7 @@ class ConfigPanel(QScrollArea):
     def _guard_stage(self, stage: str) -> None:
         """Check the requirements of *stage* after the user enabled it, off the GUI thread.
 
-        The box stays ticked meanwhile; if a requirement is unmet the guard untickes it and
+        The box stays ticked meanwhile; if a requirement is unmet the guard unticks it and
         explains why.  Nothing happens while saved settings are being loaded.
         """
         self._stage_guard.check(stage)

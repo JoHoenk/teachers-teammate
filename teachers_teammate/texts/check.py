@@ -51,6 +51,28 @@ TEXT_ZOOM_OUT = "T\u2212"
 TEXT_ZOOM_OUT_TIP = "Smaller text (Ctrl + mouse wheel)"
 """The header's buttons that change the size of the texts, and their tooltips."""
 
+TAB_DOCUMENTS = "Documents"
+TAB_DOCUMENTS_TIP = "Documents (Ctrl+1)"
+TAB_CHECK = "Check"
+TAB_CHECK_TIP = "Check (Ctrl+2)"
+"""The window's two tabs and the tooltips that name their shortcuts."""
+
+
+def tab_documents_progress(done: int, total: int) -> str:
+    """The Documents tab while a batch runs: how many documents are through."""
+    return f"{TAB_DOCUMENTS} \u00b7 {done} of {total}"
+
+
+def tab_check_named(name: str) -> str:
+    """The Check tab with the name of the document it shows."""
+    return f"{TAB_CHECK} \u2014 {name}"
+
+
+def tab_check_tip_named(name: str) -> str:
+    """The Check tab's tooltip: the document's full name above the shortcut."""
+    return f"{name}\n{TAB_CHECK_TIP}"
+
+
 NEXT_STEP = "Check the text against the scan and fix reading mistakes, then proofread."
 NEXT_STEP_SET_UP = "Set up proofreading…"
 NEXT_STEP_SET_UP_TIP = "Choose the AI that proofreads, in Settings"

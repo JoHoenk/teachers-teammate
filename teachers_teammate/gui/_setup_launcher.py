@@ -153,7 +153,7 @@ class SetupLauncher(QObject):
         self._hooks.applied()
 
     def _apply_first_start_model_settings(self) -> None:
-        """Start first-start hardware detection in the background (AC12/AC13)."""
+        """Start first-start hardware detection in the background."""
         service = self._services
         ollama_url = str(self._panel.get_settings_dict().get("ollama_url", DEFAULTS["ollama_url"]))
         # Detection must never get in the way of starting the app: any failure

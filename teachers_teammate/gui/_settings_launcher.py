@@ -3,7 +3,7 @@
 The window keeps one ``open_settings`` that hands over here, so a deep link from a dialog
 (``CheckController``, the readiness line, the menu bar) still reaches the same place.  What the
 window has to do afterwards — save, check again, refresh the queue — arrives as
-:class:`SettingsHooks`, looked up when the window closes, not when it opens.
+:class:`SettingsHooks`.
 """
 
 from __future__ import annotations

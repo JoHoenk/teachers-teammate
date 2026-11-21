@@ -26,7 +26,7 @@ SCANNED = "teachers_teammate/gui"
 
 #: The classes still over the limit, at the size they have today.
 OVERSIZED: dict[str, int] = {
-    "teachers_teammate/gui/_main_window.py::MainWindow": 1087,
+    "teachers_teammate/gui/_main_window.py::MainWindow": 1067,
 }
 
 #: The classes still over the attribute limit, at the number they assign today (none).
@@ -77,13 +77,23 @@ def _assigned_attributes(node: ast.ClassDef) -> set[str]:
         else:
             continue
         for target in targets:
-            if (
-                isinstance(target, ast.Attribute)
-                and isinstance(target.value, ast.Name)
-                and target.value.id == "self"
-            ):
-                names.add(target.attr)
+            for leaf in _leaves(target):
+                if (
+                    isinstance(leaf, ast.Attribute)
+                    and isinstance(leaf.value, ast.Name)
+                    and leaf.value.id == "self"
+                ):
+                    names.add(leaf.attr)
     return names
+
+
+def _leaves(target: ast.expr) -> list[ast.expr]:
+    """Return the names assigned by *target*, also those inside ``a, (b, c) = …``."""
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return [leaf for element in target.elts for leaf in _leaves(element)]
+    if isinstance(target, ast.Starred):
+        return _leaves(target.value)
+    return [target]
 
 
 def _attribute_counts() -> dict[str, int]:
@@ -171,3 +181,20 @@ def test_every_attribute_entry_is_the_number_the_class_has() -> None:
         if counts.get(name, 0) < recorded
     ]
     assert not stale, "Lower these entries to the number the class has now:\n" + "\n".join(stale)
+
+
+def test_attributes_assigned_in_a_tuple_are_counted() -> None:
+    """
+    Given  a class that assigns self.a, self.b and a nested pair in one statement
+    When   its assigned attributes are collected
+    Then   every self name in the statement counts, and a plain local does not
+    """
+    node = ast.parse(
+        "class C:\n"
+        "    def f(self):\n"
+        "        self.a, (self.b, local) = 1, (2, 3)\n"
+        "        *self.rest, last = [1]\n"
+    ).body[0]
+    assert isinstance(node, ast.ClassDef)
+
+    assert _assigned_attributes(node) == {"a", "b", "rest"}

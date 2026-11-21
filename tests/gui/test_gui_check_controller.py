@@ -5,68 +5,28 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
-import threading
-from typing import Any, ClassVar
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QShortcut
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QTabWidget, QWidget
 
-from teachers_teammate.domain.setting_values import PreprocessMethod
-from teachers_teammate.application.ollama_server import OllamaServerService
-from teachers_teammate.application.queue import QueueRow, StageState
-from teachers_teammate.application.speed_estimates import SpeedSummary
-from teachers_teammate.application.documents import WorkedOn
-from teachers_teammate.application.export import NothingToExport, WouldOverwriteInput
-from teachers_teammate.application.model_recommendations import ModelRecommendationService
-from teachers_teammate.application.providers import ProviderService
-from teachers_teammate.application.run import IssueKind, RequirementIssue, RunPreflight, RunService
-from teachers_teammate.application.setup_plan import SetupService
-from teachers_teammate.domain.model_catalog import (
-    DEFAULT_OCR_MODEL,
-    DEFAULT_WRITING_MODEL,
-    RECOMMENDED,
-    DetectionReason,
-    HardwareDetection,
-)
+from teachers_teammate.application.queue import StageState
+from teachers_teammate.domain.data_location import STAGE_CORRECTION
 from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.domain.teacher_work import WorkTooNewError
 from teachers_teammate.gui import _dialogs
-from teachers_teammate.gui import _export_controller as export_controller_module
 from teachers_teammate.gui import _main_window as main_window_module
-from teachers_teammate.gui import _preprocess_preview as preprocess_module
-from teachers_teammate.gui import _readiness_controller as readiness_controller_module
 from teachers_teammate.gui import _run_controller as run_controller_module
-from teachers_teammate.gui import _run_session as run_session_module
 from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.gui._check_controller import CheckController, CheckHooks
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._readiness_controller import ReadinessController
 from teachers_teammate.gui._results_table import ResultsTable
-from teachers_teammate.gui._types import FileDoneEvent
+from teachers_teammate.gui._run_session import RunSession
 from teachers_teammate.gui.check import CheckLayout, CopyKind
-from teachers_teammate.gui.settings import SettingsPage, SettingsResult
-from teachers_teammate.gui.settings._page import (
-    FOCUS_LOCAL_MODELS,
-    FOCUS_NAME_DETECTION,
-    FOCUS_ONLINE_SERVICES,
-    FOCUS_PROOFREADING_KEY,
-)
-from teachers_teammate.gui.settings._window import SUB_PAGES
-from teachers_teammate.domain.ollama_discovery import (
-    OLLAMA_DOWNLOAD_URL,
-    WaitDetail,
-    WaitKind,
-)
-from teachers_teammate.domain.run_summary import (
-    FileOutcome,
-    FileStatus,
-    KeepAwakeState,
-    RunSummary,
-)
+from teachers_teammate.domain.run_summary import RunSummary
 from teachers_teammate.infrastructure.state_repository import (
     StateRepository,
     compute_file_hash,
@@ -74,165 +34,28 @@ from teachers_teammate.infrastructure.state_repository import (
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore
 from teachers_teammate.texts import check as check_text
-from teachers_teammate.texts import dialogs as dlg
-from teachers_teammate.texts._types import Answer, Notice, Question, StandardButton
+from teachers_teammate.texts._types import Notice
 from tests.conftest import make_config
 
-from ._gui_harness import install_scripted_settings_window, real_service
-
-
-def _queue_row(
-    source_id: str,
-    name: str = "",
-    *,
-    ocr: StageState = StageState.NONE,
-    correction: StageState = StageState.NONE,
-    evaluation: StageState = StageState.NONE,
-    has_text: bool = False,
-    has_scan: bool = False,
-    **extra: Any,
-) -> QueueRow:
-    """Return a queue row for *source_id*, named after the file unless told otherwise."""
-    return QueueRow(
-        source_id=source_id,
-        name=name or Path(source_id).name,
-        ocr=ocr,
-        correction=correction,
-        evaluation=evaluation,
-        has_text=has_text,
-        has_scan=has_scan,
-        **extra,
-    )
-
-
-class _DummySignal:
-    def __init__(self) -> None:
-        self._subs: list = []
-
-    def connect(self, fn):
-        self._subs.append(fn)
-
-    def disconnect(self) -> None:
-        self._subs.clear()
-
-    def emit(self, *args):
-        for fn in self._subs:
-            fn(*args)
-
-
-class _DummyWorker:
-    def __init__(self, _config, files=None, app_service=None) -> None:
-        self.log_line = _DummySignal()
-        self.file_started = _DummySignal()
-        self.stage_started = _DummySignal()
-        self.ocr_done = _DummySignal()
-        self.stage_detail = _DummySignal()
-        self.first_token = _DummySignal()
-        self.file_done = _DummySignal()
-        self.keep_awake_changed = _DummySignal()
-        self.run_finished = _DummySignal()
-        self.files = list(files or [])
-        self.app_service = app_service
-        self.stop_event = threading.Event()
-        self.stop_after_file_event = threading.Event()
-        self._running = False
-
-    def start(self) -> None:
-        self._running = True
-
-    def isRunning(self) -> bool:
-        return self._running
-
-    def request_stop(self, *, now: bool) -> None:
-        self.stop_after_file_event.set()
-        if now:
-            self.stop_event.set()
-
-    def wait(self, _msecs: int) -> bool:
-        self._running = False
-        return True
-
-
-class _AlwaysRunning:
-    """A worker that reports it is running, for the figures a run shows meanwhile."""
-
-    def isRunning(self) -> bool:
-        return True
-
-    def request_stop(self, *, now: bool) -> None:
-        pass
-
-    def wait(self, _msecs: int) -> bool:
-        return True
-
-
-def _pretend_a_run_is_going(main_window, monkeypatch) -> None:
-    """Give the run controller a running worker without starting one."""
-    monkeypatch.setattr(main_window._run_controller, "_worker", _AlwaysRunning())
-
-
-def _record_notices(monkeypatch) -> list[Notice]:
-    """Record every notice the window shows; return the list it appends to."""
-    shown: list[Notice] = []
-    monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
-    return shown
-
-
-@pytest.fixture(autouse=True)
-def _no_network_in_gui_tests(monkeypatch) -> None:
-    """Prevent all MainWindow tests from making Ollama/network calls via the dependency guard."""
-    monkeypatch.setattr(RunService, "check_stage_requirements", lambda *_: [])
-    monkeypatch.setattr(RunService, "check_run_preflight", lambda *_args, **_kw: RunPreflight())
-    # The silent server search must not probe the real computer or its network.
-    monkeypatch.setattr(OllamaServerService, "discover_ollama_servers", lambda *_a, **_kw: [])
-    # The status row checks its services in the background; never probe a real server.
-    monkeypatch.setattr(
-        ProviderService, "check_connection", lambda self, **_kw: (False, False, "offline (test)")
-    )
-
-
-@pytest.fixture(autouse=True)
-def _no_privacy_prompt(monkeypatch) -> None:
-    """Skip the "documents will leave this computer" question: tests must never block on it.
-
-    ``make_config`` proofreads with an online provider, so many runs would ask.  The tests
-    of the question itself restore the real method through the ``confirm_box`` fixture.
-    """
-    monkeypatch.setattr(
-        MainWindow, "_confirm_data_flow_then", lambda self, _config, on_ready: on_ready()
-    )
-
-
-class _DummyUpdateThread:
-    """Stand-in for UpdateCheckThread that never touches the network or starts a QThread.
-
-    Without this, MainWindow.__init__ schedules a real UpdateCheckThread via
-    QTimer.singleShot(0, ...); if a test only spins the event loop briefly, that timer
-    never fires within the test, but it can fire during a *later* test's event-loop
-    spin (the same QApplication persists across the whole session) and touch a
-    MainWindow instance whose widgets are already torn down, crashing the process.
-    """
-
-    def __init__(self, _parent=None) -> None:
-        self.update_available = _DummySignal()
-
-    def start(self) -> None:
-        pass
-
-
-@pytest.fixture
-def main_window(qtbot, monkeypatch) -> MainWindow:
-    """Create a MainWindow with startup side effects disabled."""
-    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
-    monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
-    win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
-    qtbot.addWidget(win)
-    return win
+from ._gui_harness import (
+    MemorySettings,
+    DummyUpdateThread,
+    DummyWorker,
+    main_window,
+    no_network_in_gui_tests,
+    no_privacy_prompt,
+    pretend_a_run_is_going,
+    queue_row,
+    real_service,
+    record_notices,
+    store_document,
+    SharedMemorySettings,
+    stored,
+)
 
 
 @pytest.mark.gui
-def test_main_window_load_check_warns_about_a_document_without_state(
+def test_check_controller_load_warns_about_a_document_without_state(
     main_window, monkeypatch
 ) -> None:
     """
@@ -240,8 +63,8 @@ def test_main_window_load_check_warns_about_a_document_without_state(
     When   _load_check is called for it
     Then   the teacher is told, and the tab stays where it is
     """
-    main_window._results_table.set_queue([_queue_row("/tmp/page.png", "page.png")])
-    shown = _record_notices(monkeypatch)
+    main_window._results_table.set_queue([queue_row("/tmp/page.png", "page.png")])
+    shown = record_notices(monkeypatch)
 
     main_window._check_controller.load("/tmp/page.png")
 
@@ -269,7 +92,7 @@ def test_a_failed_load_does_not_leave_the_open_document_locked(
     monkeypatch.setattr(
         main_window._app_service.documents, "check_document", lambda *_a, **_k: None
     )
-    shown = _record_notices(monkeypatch)
+    shown = record_notices(monkeypatch)
 
     assert main_window._check_controller.load(a) is False
 
@@ -325,7 +148,7 @@ def test_a_stored_edit_reads_the_document_state_once(main_window, monkeypatch, s
 
 
 @pytest.mark.gui
-def test_main_window_ocr_edit_is_stored_as_the_teachers_work(main_window, stored) -> None:
+def test_check_controller_ocr_edit_is_stored_as_the_teachers_work(main_window, stored) -> None:
     """
     Given  a document open in the Check tab with a cached proofreading
     When   OCR text is edited
@@ -356,7 +179,7 @@ def test_main_window_ocr_edit_is_stored_as_the_teachers_work(main_window, stored
 
 
 @pytest.mark.gui
-def test_main_window_correction_edit_is_stored_as_the_teachers_work(
+def test_check_controller_correction_edit_is_stored_as_the_teachers_work(
     main_window,
     stored,
 ) -> None:
@@ -388,7 +211,7 @@ def test_main_window_correction_edit_is_stored_as_the_teachers_work(
 
 
 @pytest.mark.gui
-def test_main_window_correction_edit_keeps_the_stored_warning_banner(
+def test_check_controller_correction_edit_keeps_the_stored_warning_banner(
     main_window,
     stored,
 ) -> None:
@@ -418,7 +241,7 @@ def test_main_window_correction_edit_keeps_the_stored_warning_banner(
 
 
 @pytest.mark.gui
-def test_main_window_load_check_shows_the_text_of_the_document(main_window, stored) -> None:
+def test_check_controller_load_shows_the_text_of_the_document(main_window, stored) -> None:
     """
     Given  a row whose document has extracted text
     When   _load_check is called for it
@@ -434,7 +257,7 @@ def test_main_window_load_check_shows_the_text_of_the_document(main_window, stor
 
 
 @pytest.mark.gui
-def test_main_window_load_check_hands_the_page_the_stored_review(main_window, stored) -> None:
+def test_check_controller_load_hands_the_page_the_stored_review(main_window, stored) -> None:
     """
     Given  a row whose document has a stored review
     When   _load_check is called for it
@@ -477,7 +300,7 @@ def test_the_check_strip_counts_down_with_the_bar(main_window, monkeypatch, stor
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     clock = {"now": 1000.0}
     monkeypatch.setattr(run_controller_module.time, "monotonic", lambda: clock["now"])
-    _pretend_a_run_is_going(main_window, monkeypatch)
+    pretend_a_run_is_going(main_window, monkeypatch)
     main_window._run_controller.start(make_config(Path("/tmp")), [a])
     main_window._run_session.pace = RunPace(TimeRange(100.0, 100.0))
     main_window._run_session.pace.set_files(1)
@@ -513,82 +336,6 @@ def test_the_window_has_a_documents_tab_and_a_check_tab(main_window) -> None:
     assert main_window._tabs.widget(1) is main_window._check_controller.page
 
 
-def _store_document(
-    cfg,
-    source: Path,
-    *,
-    raw: str = "",
-    corrected: str = "",
-    review: CorrectionReview | None = None,
-    warning: str = "",
-    text_format: str = "plain",
-) -> None:
-    """Write a stored state for *source*, so the Check tab has something to read."""
-    repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
-    state = repo.create(source, compute_file_hash(source))
-    repo.save(
-        source,
-        dataclasses.replace(
-            state,
-            raw_text=raw,
-            correction_text=corrected,
-            correction_review=review.to_dict() if review is not None else None,
-            correction_warning=warning,
-            raw_text_format=text_format,
-            ocr_done=bool(raw),
-            correction_done=bool(corrected),
-        ),
-    )
-
-
-@pytest.fixture
-def stored(main_window, monkeypatch, tmp_path: Path):
-    """Return a factory that makes real documents with a stored state and queues them."""
-
-    def _make(
-        *names: str,
-        raw: str = "what was read",
-        corrected: str = "",
-        review: CorrectionReview | None = None,
-        warning: str = "",
-        text_format: str = "plain",
-    ) -> list[str]:
-        cfg = make_config(tmp_path)
-        cfg.input_dir.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
-        source_ids: list[str] = []
-        for name in names:
-            source = cfg.input_dir / name
-            # One essay per file: the work is keyed by content, so two files must differ.
-            source.write_text(f"page of {name}", encoding="utf-8")
-            _store_document(
-                cfg,
-                source,
-                raw=raw,
-                corrected=corrected,
-                review=review,
-                warning=warning,
-                text_format=text_format,
-            )
-            source_ids.append(str(source))
-        main_window._results_table.set_queue(
-            [
-                _queue_row(
-                    source_id,
-                    name,
-                    ocr=StageState.DONE if raw else StageState.NONE,
-                    correction=StageState.DONE if corrected else StageState.NONE,
-                    has_text=bool(raw),
-                )
-                for source_id, name in zip(source_ids, names, strict=True)
-            ]
-        )
-        main_window._check_controller.update_tab()
-        return source_ids
-
-    return _make
-
-
 @pytest.mark.gui
 def test_check_tab_is_disabled_until_a_document_has_a_result(main_window) -> None:
     """
@@ -596,13 +343,13 @@ def test_check_tab_is_disabled_until_a_document_has_a_result(main_window) -> Non
     When   the tabs are read
     Then   Check cannot be opened, because there would be nothing to check
     """
-    main_window._results_table.set_queue([_queue_row("/tmp/a.png", "a.png")])
+    main_window._results_table.set_queue([queue_row("/tmp/a.png", "a.png")])
     main_window._check_controller.update_tab()
 
     assert main_window._tabs.isTabEnabled(1) is False
 
     main_window._results_table.update_row(
-        _queue_row("/tmp/a.png", "a.png", ocr=StageState.DONE, has_text=True)
+        queue_row("/tmp/a.png", "a.png", ocr=StageState.DONE, has_text=True)
     )
     main_window._check_controller.update_tab()
 
@@ -670,8 +417,8 @@ def test_check_target_falls_back_to_the_first_document_with_a_result(main_window
     """
     main_window._results_table.set_queue(
         [
-            _queue_row("/tmp/a.png", "a.png"),
-            _queue_row("/tmp/b.png", "b.png", ocr=StageState.DONE, has_text=True),
+            queue_row("/tmp/a.png", "a.png"),
+            queue_row("/tmp/b.png", "b.png", ocr=StageState.DONE, has_text=True),
         ]
     )
     main_window._results_table.selectRow(0)
@@ -702,7 +449,7 @@ def test_ctrl_2_does_nothing_while_no_document_can_be_opened(main_window) -> Non
     When   the Check tab is asked for
     Then   nothing happens: the tab stays disabled and Documents stays in front
     """
-    main_window._results_table.set_queue([_queue_row("/tmp/a.png", "a.png")])
+    main_window._results_table.set_queue([queue_row("/tmp/a.png", "a.png")])
     main_window._check_controller.update_tab()
 
     main_window._check_controller.show_check()
@@ -833,7 +580,7 @@ def test_a_proofread_request_from_check_during_a_run_is_refused_and_not_remember
     [a] = stored("a.png")
     main_window._check_controller.open_document(a)
     warned: list[bool] = []
-    _pretend_a_run_is_going(main_window, monkeypatch)
+    pretend_a_run_is_going(main_window, monkeypatch)
     monkeypatch.setattr(main_window._run_controller, "warn_busy", lambda: warned.append(True))
 
     main_window._check_controller.on_proofread_requested()
@@ -1189,7 +936,7 @@ def test_the_header_follows_a_rename_of_the_row(main_window, stored) -> None:
     main_window._check_controller.open_document(a)
 
     main_window._results_table.set_queue(
-        [_queue_row(a, "renamed.png", ocr=StageState.DONE, has_text=True)]
+        [queue_row(a, "renamed.png", ocr=StageState.DONE, has_text=True)]
     )
     main_window._check_controller.update_tab()
 
@@ -1381,24 +1128,6 @@ def test_checked_stores_a_typed_edit_first(main_window, stored) -> None:
     assert work.corrections.checked is True
 
 
-class _MemorySettings:
-    """In-memory QSettings stand-in so tests never touch the user's real settings."""
-
-    store: ClassVar[dict] = {}
-
-    def __init__(self, *_args) -> None:
-        pass
-
-    def value(self, key, default=None):
-        return self.store.get(key, default)
-
-    def setValue(self, key, value) -> None:
-        self.store[key] = value
-
-    def remove(self, key) -> None:
-        self.store.pop(key, None)
-
-
 @pytest.mark.gui
 def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
     """
@@ -1406,12 +1135,12 @@ def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
     When   the window is opened again
     Then   the panes and the card have the sizes they were left at
     """
-    _MemorySettings.store = {}
-    monkeypatch.setattr(main_window_module, "QSettings", _MemorySettings)
+    SharedMemorySettings.store = {}
+    monkeypatch.setattr(main_window_module, "QSettings", SharedMemorySettings)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
-    monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
-    first = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
+    monkeypatch.setattr(main_window_module, "UpdateCheckThread", DummyUpdateThread)
+    first = MainWindow(app_service=real_service(), worker_factory=DummyWorker)
     qtbot.addWidget(first)
 
     first._check_controller.page.layout_changed.emit(
@@ -1421,15 +1150,205 @@ def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
         CheckLayout(split=(300, 500, 400), card_split=(200, 300))
     )
 
-    assert "view/check_split" not in _MemorySettings.store  # nothing is written mid-drag
+    assert "view/check_split" not in SharedMemorySettings.store  # nothing is written mid-drag
 
-    qtbot.waitUntil(lambda: "view/check_split" in _MemorySettings.store)
+    qtbot.waitUntil(lambda: "view/check_split" in SharedMemorySettings.store)
 
-    assert _MemorySettings.store["view/check_split"] == "300,500,400"
-    assert _MemorySettings.store["view/check_card_split"] == "200,300"
+    assert SharedMemorySettings.store["view/check_split"] == "300,500,400"
+    assert SharedMemorySettings.store["view/check_card_split"] == "200,300"
 
-    second = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
+    second = MainWindow(app_service=real_service(), worker_factory=DummyWorker)
     qtbot.addWidget(second)
 
     assert second._check_controller.page.body._stored_split == (300, 500, 400)
     assert second._check_controller.page.body.panel._card_split == (200, 300)
+
+
+# ── The controller on its own, with the window replaced by recorded hooks ─────
+
+
+@dataclasses.dataclass
+class _Alone:
+    """A :class:`CheckController` built without a main window, and what its hooks were asked."""
+
+    controller: CheckController
+    table: ResultsTable
+    tabs: QTabWidget
+    session: RunSession
+    synced: list[str]
+    stages: list[tuple[list[str], str]]
+    busy_warnings: list[None]
+    busy: list[bool]
+    sources: list[str]
+
+
+@pytest.fixture
+def alone(qtbot, monkeypatch, tmp_path: Path) -> _Alone:
+    """Build the controller from its parts; two stored documents are queued."""
+    window = QWidget()
+    qtbot.addWidget(window)
+    services = real_service()
+    panel = ConfigPanel()
+    panel.set_service(services)
+    qtbot.addWidget(panel)
+    cfg = make_config(tmp_path)
+    cfg.input_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(panel, "to_config", lambda: cfg)
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    sources: list[str] = []
+    for name in ("a.txt", "b.txt"):
+        source = cfg.input_dir / name
+        source.write_text(f"page of {name}", encoding="utf-8")
+        store_document(cfg, source, raw=f"text of {name}")
+        sources.append(str(source))
+    table.set_queue(
+        [
+            queue_row(source_id, Path(source_id).name, ocr=StageState.DONE, has_text=True)
+            for source_id in sources
+        ]
+    )
+    tabs = QTabWidget()
+    qtbot.addWidget(tabs)
+    session = RunSession()
+    synced: list[str] = []
+    stages: list[tuple[list[str], str]] = []
+    busy_warnings: list[None] = []
+    busy = [False]
+    settings = MemorySettings()
+    controller = CheckController(
+        window,
+        services=services,
+        panel=panel,
+        table=table,
+        session=session,
+        tabs=tabs,
+        settings_store=lambda: settings,
+        hooks=CheckHooks(
+            sync_row=synced.append,
+            run_busy=lambda: busy[0],
+            warn_busy=lambda: busy_warnings.append(None),
+            run_stage=lambda ids, stage: stages.append((ids, stage)),
+            open_settings=lambda *_a, **_kw: None,
+            privacy_available=lambda: False,
+            export=lambda *_a: None,
+        ),
+    )
+    tabs.addTab(QWidget(), "Documents")
+    tabs.addTab(controller.page, "Check")
+    return _Alone(controller, table, tabs, session, synced, stages, busy_warnings, busy, sources)
+
+
+@pytest.mark.gui
+def test_the_controller_loads_a_document_and_asks_the_window_to_show_its_row(alone) -> None:
+    """
+    Given  a controller built from its parts, with two stored documents queued
+    When   it loads the first one
+    Then   it is the open document, its row is synced through the hook and Check is labelled
+    """
+    assert alone.controller.load(alone.sources[0]) is True
+
+    assert alone.controller.current == alone.sources[0]
+    assert alone.synced == [alone.sources[0]]
+    assert alone.tabs.tabText(1) == check_text.tab_check_named("a.txt")
+    assert alone.tabs.isTabEnabled(1)
+
+
+@pytest.mark.gui
+def test_the_controller_steps_through_the_queue_and_stops_at_its_ends(alone) -> None:
+    """
+    Given  an open first document of two
+    When   the teacher goes to the previous one, to the next one, and on past the last
+    Then   the first stays put, the second opens and the last stays open
+    """
+    alone.controller.load(alone.sources[0])
+
+    alone.controller.previous_document()
+    assert alone.controller.current == alone.sources[0]
+    alone.controller.next_document()
+    assert alone.controller.current == alone.sources[1]
+    alone.controller.next_document()
+    assert alone.controller.current == alone.sources[1]
+
+
+@pytest.mark.gui
+def test_proofreading_from_check_asks_the_window_for_one_stage_run(alone) -> None:
+    """
+    Given  an open document and no run going
+    When   the teacher asks to proofread it
+    Then   the window is asked to run the proofreading of that document, and the run is
+           marked as started from Check
+    """
+    alone.controller.load(alone.sources[0])
+
+    alone.controller.on_proofread_requested()
+
+    assert alone.stages == [([alone.sources[0]], STAGE_CORRECTION)]
+    assert alone.session.from_check is True
+
+
+@pytest.mark.gui
+def test_proofreading_from_check_during_a_run_only_warns(alone) -> None:
+    """
+    Given  an open document while a run is going
+    When   the teacher asks to proofread it
+    Then   the window is told the run is busy, no stage runs and Check is not marked as the origin
+    """
+    alone.controller.load(alone.sources[0])
+    alone.busy[0] = True
+
+    alone.controller.on_proofread_requested()
+
+    assert alone.stages == []
+    assert len(alone.busy_warnings) == 1
+    assert alone.session.from_check is False
+
+
+@pytest.mark.gui
+def test_going_back_to_documents_forgets_a_request_that_never_started_a_run(alone) -> None:
+    """
+    Given  a session marked as started from Check
+    When   the Documents tab comes to the front
+    Then   the mark is gone
+    """
+    alone.session.from_check = True
+
+    alone.controller.on_tab_changed(0)
+
+    assert alone.session.from_check is False
+
+
+@pytest.mark.gui
+def test_the_documents_tab_counts_the_documents_of_a_running_batch(alone) -> None:
+    """
+    Given  a run over two documents of which one is through
+    When   the tab labels are updated
+    Then   Documents says how many are through, and plain Documents once the run is over
+    """
+    alone.session.source_ids = list(alone.sources)
+    alone.session.names = ["a.txt"]
+    alone.busy[0] = True
+
+    alone.controller.update_tab()
+    assert alone.tabs.tabText(0) == check_text.tab_documents_progress(1, 2)
+
+    alone.busy[0] = False
+    alone.controller.update_tab()
+    assert alone.tabs.tabText(0) == check_text.TAB_DOCUMENTS
+
+
+@pytest.mark.gui
+def test_a_long_document_name_is_shortened_in_the_check_label_and_whole_in_its_tooltip(
+    alone,
+) -> None:
+    """
+    Given  an open document whose name is longer than the label shows
+    When   the tab labels are updated
+    Then   the label ends in an ellipsis and the tooltip carries the full name
+    """
+    name = "a" * 40 + ".txt"
+    alone.table.set_queue([queue_row(alone.sources[0], name, ocr=StageState.DONE, has_text=True)])
+    alone.controller.load(alone.sources[0])
+
+    assert alone.tabs.tabText(1).endswith("\u2026")
+    assert alone.tabs.tabToolTip(1) == check_text.tab_check_tip_named(name)

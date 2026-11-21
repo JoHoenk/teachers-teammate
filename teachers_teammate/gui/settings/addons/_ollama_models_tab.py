@@ -461,7 +461,7 @@ class OllamaModelsTab(QWidget):
         self._auto_ticked.discard(tag)
 
     def _apply_auto_ticks(self) -> None:
-        """Tick the BEST model of each category that has nothing downloaded yet (AC14).
+        """Tick the BEST model of each category that has nothing downloaded yet.
 
         Earlier automatic ticks the user did not touch are replaced, so a change
         of "My computer" moves the suggestion.  Ticked rows are never downloaded

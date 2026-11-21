@@ -1,7 +1,7 @@
 """The requirement check that runs after a stage was switched on.
 
 The check contacts Ollama or imports spaCy, so it runs in the background, and its answer may
-arrive late: the guard compares what the stage's requirements depend on before it untickes
+arrive late: the guard compares what the stage's requirements depend on before it unticks
 anything, so a box the teacher ticked again with another model stays ticked.  It holds the
 per-stage task and nothing else — the settings dict stays with the panel.
 """

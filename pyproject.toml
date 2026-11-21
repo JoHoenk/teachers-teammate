@@ -142,6 +142,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
     "F401",    # Tests frequently import symbols in local scenarios and monkeypatch chains.
+    "F811",    # A fixture imported from a harness module is redefined by the test argument that asks for it.
     "I001",    # Local import placement in Given/When/Then tests is intentional.
     "ARG",     # pytest fixtures are declared as args and injected by name; unused declarations are intentional.
     "PLW0108", # Lambda callbacks keep signal assertions compact in GUI tests.

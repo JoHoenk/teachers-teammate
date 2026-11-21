@@ -44,11 +44,11 @@ from ..application.composition import (
 from ..application.documents import WorkedOn
 from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
-from ..application.run import IssueKind, RunPreflight
+from ..application.run import RunPreflight
 from ..config import DEFAULTS, Config
 from ..domain.data_location import DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
-from ..domain.ollama_discovery import ServerKind
+from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts.settings import WHERE_GENERAL
 from . import _dialogs
@@ -85,14 +85,6 @@ if TYPE_CHECKING:
     from .benchmark._benchmark_window import BenchmarkWindow
 
 
-def _is_shown(widget: QWidget) -> bool:
-    """Return whether *widget* still exists and is visible (a closed window is not)."""
-    try:
-        return widget.isVisible()
-    except RuntimeError:  # its C++ object was deleted
-        return False
-
-
 def _app_icon() -> QIcon | None:
     """Return the best available icon for the current platform."""
     assets = Path(__file__).parent.parent / "assets"
@@ -122,22 +114,6 @@ def _app_icon() -> QIcon | None:
     return None
 
 
-#: The two texts the Check tab lets the teacher type in, as the store names them.
-
-#: Whose computer a found server is on, as the readiness line says it.
-_SERVER_PLACES = {
-    ServerKind.THIS_COMPUTER: "this computer",
-    ServerKind.WINDOWS_HOST: "the Windows computer",
-    ServerKind.NETWORK: "another computer",
-}
-
-#: The kinds that mean "Ollama isn't answering": the line keeps looking while one of them
-#: blocks the run, so an Ollama installed or started meanwhile turns it green by itself.
-_OLLAMA_KINDS = frozenset(
-    {IssueKind.OLLAMA_UNREACHABLE, IssueKind.OLLAMA_NOT_FOUND, IssueKind.OLLAMA_NOT_RUNNING}
-)
-
-
 class MainWindow(QMainWindow):
     """Teacher's Teammate main application window."""
 
@@ -161,7 +137,6 @@ class MainWindow(QMainWindow):
         if _icon is not None:
             self.setWindowIcon(_icon)
         self._init_runtime_state()
-        self._init_run_state()
 
         self._pull_manager.progress.connect(self._on_pull_progress)
         self._pull_manager.started.connect(self._on_pull_started)
@@ -182,16 +157,13 @@ class MainWindow(QMainWindow):
         self._menu_bar: MenuBar
         #: The Benchmark window once opened (parentless, see ``_open_benchmark``).
         self._benchmark_window: BenchmarkWindow | None = None
-        #: Whether the Setup Assistant is open, so a second click cannot open a second one.
+        #: Opens the Setup Assistant, also on a first start.
         self._setup_launcher: SetupLauncher
-
-    def _init_run_state(self) -> None:
-        """Declare what the window needs for a run that is going: the clock and closing."""
-        #: Set once the teacher agreed to stop the run and close (File → Quit asks itself).
-        self._close_confirmed = False
 
     def _init_runtime_state(self) -> None:
         """Initialise per-window runtime state and declare widgets built later."""
+        #: Set once the teacher agreed to stop the run and close (File → Quit asks itself).
+        self._close_confirmed = False
         self._settings_file: SettingsFile
         self._pull_manager = PullManager(self, service=self._app_service)
         #: What the run in progress is doing: the file, the step, the pace and the Stop stage.
@@ -480,9 +452,9 @@ class MainWindow(QMainWindow):
         self._main_splitter.addWidget(self._build_right_panel())
         self._main_splitter.setStretchFactor(0, 0)
         self._main_splitter.setStretchFactor(1, 1)
-        self._tabs.addTab(self._main_splitter, "Documents")
+        self._tabs.addTab(self._main_splitter, check_text.TAB_DOCUMENTS)
 
-        self._tabs.addTab(self._check_controller.page, "Check")
+        self._tabs.addTab(self._check_controller.page, check_text.TAB_CHECK)
         self._tabs.setTabEnabled(1, False)  # nothing to check before a document has a result
         self._tabs.currentChanged.connect(self._check_controller.on_tab_changed)
         return self._tabs
@@ -557,10 +529,6 @@ class MainWindow(QMainWindow):
     _QSETTINGS_ORG = "TeachersTeammate"
     _QSETTINGS_APP = "TeachersTeammate"
 
-    def _restore_gui_state(self) -> None:
-        """Restore the window geometry and the splitter sizes from the GUI settings."""
-        self._settings_file.restore_gui_state()
-
     def _load_toml_if_present(self) -> None:
         """Read the settings file, or ask the first-start questions when there is none."""
         self._settings_file.load_if_present()
@@ -620,10 +588,6 @@ class MainWindow(QMainWindow):
             else QSystemTrayIcon.MessageIcon.Information
         )
         self._tray.showMessage("Teacher's Teammate", text, icon, 4000)
-
-    def _get_file_names(self, config: Config) -> list[str]:
-        """Return queued file names via application-layer file discovery."""
-        return [file.name for file in self._app_service.run.collect_input_files(config)]
 
     def _scan_input_files(self) -> list[Path]:
         """Scan the input folder through the run service while the config is incomplete."""
@@ -773,7 +737,7 @@ class MainWindow(QMainWindow):
             on_ready(RunPreflight())
             return
         if result.blocked:
-            self._show_blocking_preflight(result)
+            self._readiness_controller.show_blocking(result)
             return
         note = wait_detail_text(result.ollama_wait)
         if note:
@@ -793,10 +757,6 @@ class MainWindow(QMainWindow):
         """
         if _dialogs.ask(self, dlg.not_enough_memory(warning)):
             on_ready()
-
-    def _show_blocking_preflight(self, result: RunPreflight) -> None:
-        """Explain the requirement that stops the run, with a button for each way to fix it."""
-        self._readiness_controller.show_blocking(result)
 
     def _settings_store(self) -> QSettings:
         """Return a QSettings for the window's GUI preferences (not pipeline settings)."""
@@ -1055,14 +1015,10 @@ class MainWindow(QMainWindow):
         self._app_service.recommendations.on_ollama_models_changed(
             self._pull_manager.current_url or self._current_ollama_url()
         )
-        self._end_download()
+        self._readiness_controller.end_download()
 
     def _on_pull_error(self, msg: str) -> None:
         self._readiness_controller.model_download_failed(msg)
-
-    def _end_download(self) -> None:
-        """Hand the line back; the model that was missing may be there now."""
-        self._readiness_controller.end_download()
 
     # ── Drag-and-drop ─────────────────────────────────────────────────────
 

@@ -12,22 +12,30 @@ Provides:
   leaves no thread running.
 * :func:`assert_no_running_threads` / :func:`exercise_lifecycle` — drive a widget
   through construct → show → close and assert nothing is left running.
+* The ``main_window`` and ``stored`` fixtures and the helpers around them, which the
+  main-window and Check-controller tests share.
 """
+# pylint: disable=W0621  # redefined-outer-name — a fixture is injected by parameter name
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+import dataclasses
+import threading
 from pathlib import Path
 import tempfile
 from typing import Any, ClassVar
 
+import pytest
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import QWidget
 
 from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.application.composition import AppServices
+from teachers_teammate.application.ollama_server import OllamaServerService
+from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.providers import ProviderService
-from teachers_teammate.application.run import RunService
+from teachers_teammate.application.run import RunPreflight, RunService
 from teachers_teammate.domain.benchmark import PairComparison, compare_pair
 from teachers_teammate.domain.model_catalog import (
     OLLAMA_CATALOG,
@@ -36,13 +44,19 @@ from teachers_teammate.domain.model_catalog import (
     ModelUses,
 )
 from teachers_teammate.domain.model_listing import ModelListing
-from teachers_teammate.gui import _anonymizer_config_widget, _install_round, _model_fetch
+from teachers_teammate.domain.proofreading.review import CorrectionReview
+from teachers_teammate.gui import _anonymizer_config_widget, _dialogs, _install_round, _model_fetch
+from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui._background import LatestTask
 from teachers_teammate.gui._privacy_settings import FlowAcknowledgements
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._readiness_controller import ReadinessController
 from teachers_teammate.gui._update_check import UpdateCheckThread
 from teachers_teammate.gui.settings import SettingsContext, SettingsResult
+from teachers_teammate.infrastructure.state_repository import StateRepository, compute_file_hash
+from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
+from teachers_teammate.texts._types import Notice
+from tests.conftest import make_config
 
 from ._service_stubs import LocalDataFlowStub, context_choice_from, services_of
 
@@ -352,3 +366,250 @@ def _as_services(service: object) -> AppServices:
 def real_service() -> AppServices:
     """Return the process's fresh services, for a test that needs the real ones."""
     return build_app_services()
+
+
+# ── The main window, as the window's tests build it ───────────────────────────
+
+
+def queue_row(
+    source_id: str,
+    name: str = "",
+    *,
+    ocr: StageState = StageState.NONE,
+    correction: StageState = StageState.NONE,
+    evaluation: StageState = StageState.NONE,
+    has_text: bool = False,
+    has_scan: bool = False,
+    **extra: Any,
+) -> QueueRow:
+    """Return a queue row for *source_id*, named after the file unless told otherwise."""
+    return QueueRow(
+        source_id=source_id,
+        name=name or Path(source_id).name,
+        ocr=ocr,
+        correction=correction,
+        evaluation=evaluation,
+        has_text=has_text,
+        has_scan=has_scan,
+        **extra,
+    )
+
+
+class DummySignal:
+    def __init__(self) -> None:
+        self._subs: list = []
+
+    def connect(self, fn):
+        self._subs.append(fn)
+
+    def disconnect(self) -> None:
+        self._subs.clear()
+
+    def emit(self, *args):
+        for fn in self._subs:
+            fn(*args)
+
+
+class DummyWorker:
+    def __init__(self, _config, files=None, app_service=None) -> None:
+        self.log_line = DummySignal()
+        self.file_started = DummySignal()
+        self.stage_started = DummySignal()
+        self.ocr_done = DummySignal()
+        self.stage_detail = DummySignal()
+        self.first_token = DummySignal()
+        self.file_done = DummySignal()
+        self.keep_awake_changed = DummySignal()
+        self.run_finished = DummySignal()
+        self.files = list(files or [])
+        self.app_service = app_service
+        self.stop_event = threading.Event()
+        self.stop_after_file_event = threading.Event()
+        self._running = False
+
+    def start(self) -> None:
+        self._running = True
+
+    def isRunning(self) -> bool:
+        return self._running
+
+    def request_stop(self, *, now: bool) -> None:
+        self.stop_after_file_event.set()
+        if now:
+            self.stop_event.set()
+
+    def wait(self, _msecs: int) -> bool:
+        self._running = False
+        return True
+
+
+class AlwaysRunning:
+    """A worker that reports it is running, for the figures a run shows meanwhile."""
+
+    def isRunning(self) -> bool:
+        return True
+
+    def request_stop(self, *, now: bool) -> None:
+        pass
+
+    def wait(self, _msecs: int) -> bool:
+        return True
+
+
+def pretend_a_run_is_going(main_window, monkeypatch) -> None:
+    """Give the run controller a running worker without starting one."""
+    monkeypatch.setattr(main_window._run_controller, "_worker", AlwaysRunning())
+
+
+def record_notices(monkeypatch) -> list[Notice]:
+    """Record every notice the window shows; return the list it appends to."""
+    shown: list[Notice] = []
+    monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
+    return shown
+
+
+@pytest.fixture(autouse=True)
+def no_network_in_gui_tests(monkeypatch) -> None:
+    """Prevent all MainWindow tests from making Ollama/network calls via the dependency guard."""
+    monkeypatch.setattr(RunService, "check_stage_requirements", lambda *_: [])
+    monkeypatch.setattr(RunService, "check_run_preflight", lambda *_args, **_kw: RunPreflight())
+    # The silent server search must not probe the real computer or its network.
+    monkeypatch.setattr(OllamaServerService, "discover_ollama_servers", lambda *_a, **_kw: [])
+    # The status row checks its services in the background; never probe a real server.
+    monkeypatch.setattr(
+        ProviderService, "check_connection", lambda self, **_kw: (False, False, "offline (test)")
+    )
+
+
+@pytest.fixture(autouse=True)
+def no_privacy_prompt(monkeypatch) -> None:
+    """Skip the "documents will leave this computer" question: tests must never block on it.
+
+    ``make_config`` proofreads with an online provider, so many runs would ask.  The tests
+    of the question itself restore the real method through the ``confirm_box`` fixture.
+    """
+    monkeypatch.setattr(
+        MainWindow, "_confirm_data_flow_then", lambda self, _config, on_ready: on_ready()
+    )
+
+
+class DummyUpdateThread:
+    """Stand-in for UpdateCheckThread that never touches the network or starts a QThread.
+
+    Without this, MainWindow.__init__ schedules a real UpdateCheckThread via
+    QTimer.singleShot(0, ...); if a test only spins the event loop briefly, that timer
+    never fires within the test, but it can fire during a *later* test's event-loop
+    spin (the same QApplication persists across the whole session) and touch a
+    MainWindow instance whose widgets are already torn down, crashing the process.
+    """
+
+    def __init__(self, _parent=None) -> None:
+        self.update_available = DummySignal()
+
+    def start(self) -> None:
+        pass
+
+
+@pytest.fixture
+def main_window(qtbot, monkeypatch) -> MainWindow:
+    """Create a MainWindow with startup side effects disabled."""
+    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
+    monkeypatch.setattr(main_window_module, "UpdateCheckThread", DummyUpdateThread)
+    win = MainWindow(app_service=real_service(), worker_factory=DummyWorker)
+    qtbot.addWidget(win)
+    return win
+
+
+def store_document(
+    cfg,
+    source: Path,
+    *,
+    raw: str = "",
+    corrected: str = "",
+    review: CorrectionReview | None = None,
+    warning: str = "",
+    text_format: str = "plain",
+) -> None:
+    """Write a stored state for *source*, so the Check tab has something to read."""
+    repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
+    state = repo.create(source, compute_file_hash(source))
+    repo.save(
+        source,
+        dataclasses.replace(
+            state,
+            raw_text=raw,
+            correction_text=corrected,
+            correction_review=review.to_dict() if review is not None else None,
+            correction_warning=warning,
+            raw_text_format=text_format,
+            ocr_done=bool(raw),
+            correction_done=bool(corrected),
+        ),
+    )
+
+
+@pytest.fixture
+def stored(main_window, monkeypatch, tmp_path: Path):
+    """Return a factory that makes real documents with a stored state and queues them."""
+
+    def _make(
+        *names: str,
+        raw: str = "what was read",
+        corrected: str = "",
+        review: CorrectionReview | None = None,
+        warning: str = "",
+        text_format: str = "plain",
+    ) -> list[str]:
+        cfg = make_config(tmp_path)
+        cfg.input_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+        source_ids: list[str] = []
+        for name in names:
+            source = cfg.input_dir / name
+            # One essay per file: the work is keyed by content, so two files must differ.
+            source.write_text(f"page of {name}", encoding="utf-8")
+            store_document(
+                cfg,
+                source,
+                raw=raw,
+                corrected=corrected,
+                review=review,
+                warning=warning,
+                text_format=text_format,
+            )
+            source_ids.append(str(source))
+        main_window._results_table.set_queue(
+            [
+                queue_row(
+                    source_id,
+                    name,
+                    ocr=StageState.DONE if raw else StageState.NONE,
+                    correction=StageState.DONE if corrected else StageState.NONE,
+                    has_text=bool(raw),
+                )
+                for source_id, name in zip(source_ids, names, strict=True)
+            ]
+        )
+        main_window._check_controller.update_tab()
+        return source_ids
+
+    return _make
+
+
+class SharedMemorySettings:
+    """In-memory QSettings stand-in so tests never touch the user's real settings."""
+
+    store: ClassVar[dict] = {}
+
+    def __init__(self, *_args) -> None:
+        pass
+
+    def value(self, key, default=None):
+        return self.store.get(key, default)
+
+    def setValue(self, key, value) -> None:
+        self.store[key] = value
+
+    def remove(self, key) -> None:
+        self.store.pop(key, None)

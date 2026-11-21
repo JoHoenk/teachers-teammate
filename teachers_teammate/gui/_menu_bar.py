@@ -1,8 +1,7 @@
 """The main window's menu bar: File, Settings, Tools and Help, and what each entry does.
 
-The window builds the bar once and hands over the handlers it needs; nothing here reaches
-into the window (:class:`MenuHooks` is looked up when an entry is triggered, so an entry
-that is clicked before the panels exist finds them by then).
+The window builds the bar once and hands over the handlers it needs as :class:`MenuHooks`;
+nothing here reaches into the window.
 """
 
 from __future__ import annotations

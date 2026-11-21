@@ -360,28 +360,30 @@ class CheckController(QObject):
         self._tabs.setTabEnabled(1, bool(self._table.checkable_source_ids()))
         self._tabs.setTabText(0, self._documents_label())
         self._tabs.setTabText(1, self._check_label())
-        self._tabs.setTabToolTip(0, "Documents (Ctrl+1)")
+        self._tabs.setTabToolTip(0, check_text.TAB_DOCUMENTS_TIP)
         self._tabs.setTabToolTip(1, self._check_tooltip())
 
     def _documents_label(self) -> str:
         """``Documents``, or how far the running batch has got."""
         if not self._hooks.run_busy() or not self._session.source_ids:
-            return "Documents"
-        return f"Documents \u00b7 {len(self._session.names)} of {len(self._session.source_ids)}"
+            return check_text.TAB_DOCUMENTS
+        return check_text.tab_documents_progress(
+            len(self._session.names), len(self._session.source_ids)
+        )
 
     def _check_label(self) -> str:
         """``Check``, or the name of the open document."""
         name = self._open_name()
         if not name:
-            return "Check"
+            return check_text.TAB_CHECK
         if len(name) > TAB_NAME_CHARS:
             name = name[: TAB_NAME_CHARS - 1] + "\u2026"
-        return f"Check \u2014 {name}"
+        return check_text.tab_check_named(name)
 
     def _check_tooltip(self) -> str:
         """The full name of the open document above the shortcut, so a short label stays clear."""
         name = self._open_name()
-        return f"{name}\nCheck (Ctrl+2)" if name else "Check (Ctrl+2)"
+        return check_text.tab_check_tip_named(name) if name else check_text.TAB_CHECK_TIP
 
     # ── What the teacher types and marks ─────────────────────────────────
 

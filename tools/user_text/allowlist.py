@@ -222,8 +222,6 @@ ALLOWED: dict[str, frozenset[str]] = {
     ),
     "teachers_teammate/gui/_main_window.py": frozenset(
         {
-            "Check",
-            "Documents",
             "Teacher's Teammate",
             'f\'Version <b>{version}</b> is available — <a href="{url}" style="color:#ffd966;">Download</a> · turn this check off under {WHERE_GENERAL}\'',
             "✕",

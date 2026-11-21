@@ -111,10 +111,11 @@ The codebase is split into four layers. Each layer may only depend on layers bel
 - **Infrastructure** (`infrastructure/`) — concrete implementations: OCR engines, LLM providers, file I/O, DOCX builder, and the pipeline orchestration in `infrastructure/workflow/`.
 
 The presentation layer never imports `infrastructure`. The modules that wire concrete classes
-are the exception, and the only one: `gui/composition.py`, `gui/_app_bootstrap.py`,
-`gui/__main__.py`, `gui/benchmark/composition.py`, `gui/benchmark/__main__.py`,
-`cli_composition.py`, `__main__.py` and `frozen_modes.py`. `tests/unit/test_layer_imports.py`
-holds both rules.
+are the exception, and the only one: `gui/composition.py`, `gui/__main__.py`,
+`gui/benchmark/composition.py`, `gui/benchmark/__main__.py`, `cli_composition.py`,
+`__main__.py` and `frozen_modes.py`. `tests/unit/test_layer_imports.py` holds both rules, the
+third being that a module does not re-export a name of another layer (`from … import Name as
+Name`): a name has one home, and a caller imports it from there.
 
 A service in `application/` does not reach into `infrastructure` from a method body. What it
 needs of a module comes in through its constructor, typed by a `Protocol` in

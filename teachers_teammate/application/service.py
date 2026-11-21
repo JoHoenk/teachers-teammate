@@ -129,7 +129,7 @@ from ..infrastructure.workflow.cache_service import (
 )
 from ..interfaces import SUPPORTED_SUFFIXES, SleepBlocker
 from .check_document import CheckDocument, check_document_of
-from .commands import ApplicationCommands
+from .commands import DocumentCommands
 from .commands import WorkNotSavedError as WorkNotSavedError  # noqa: PLC0414
 from .context_choice import ContextChoice, context_choice
 from .correction_options import prompt_step_title
@@ -389,7 +389,7 @@ class ProcessingApplicationService:
         )
         # Owns the speed test, the stored measurements and the server facts behind them.
         self._speeds = SpeedEstimateService()
-        self._commands = ApplicationCommands(
+        self.commands = DocumentCommands(
             state_store_factory=self._state_store,
             windows_for=self.resolved_windows,
             model_store=self._model_store,
@@ -2422,56 +2422,3 @@ class ProcessingApplicationService:
         return None
 
     # ── Commands ──────────────────────────────────────────────────────────
-
-    def invalidate_from_stage(
-        self,
-        config: Config,
-        *,
-        files: Sequence[Path],
-        stage: str,
-    ) -> tuple[str, ...]:
-        return self._commands.invalidate_from_stage(config, files=files, stage=stage)
-
-    def edit_transcription(
-        self, config: Config, *, source: Path, text: str, text_format: str = "plain"
-    ) -> DocumentStateView | None:
-        """Store the teacher's transcription of *source*; ``None`` when it has no state.
-
-        Raises:
-            WorkNotSavedError: the work could not be stored.
-        """
-        return self._commands.edit_transcription(
-            config, source=source, text=text, text_format=text_format
-        )
-
-    def edit_corrected_text(
-        self, config: Config, *, source: Path, text: str
-    ) -> DocumentStateView | None:
-        """Store the teacher's corrections of *source*; ``None`` when there is nothing to bind.
-
-        Raises:
-            WorkNotSavedError: the work could not be stored.
-        """
-        return self._commands.edit_corrected_text(config, source=source, text=text)
-
-    def set_checked(
-        self, config: Config, *, source: Path, checked: bool
-    ) -> DocumentStateView | None:
-        """Mark *source* as checked, or take the mark back.
-
-        Raises:
-            WorkNotSavedError: the work could not be stored.
-        """
-        return self._commands.set_checked(config, source=source, checked=checked)
-
-    def mark_looked_at(self, config: Config, *, source: Path, keys: Collection[str]) -> None:
-        """Record that the teacher looked at the items *keys* of *source*."""
-        self._commands.mark_looked_at(config, source=source, keys=keys)
-
-    def keep_teacher_work(self, config: Config, *, files: Collection[Path]) -> None:
-        """Record that the teacher keeps their corrections over the settings of this run."""
-        self._commands.keep_teacher_work(config, files=files)
-
-    def drop_unbound_corrections(self, config: Config, *, files: Collection[Path]) -> None:
-        """Drop the corrections of *files* that belong to no stored proofreading."""
-        self._commands.drop_unbound_corrections(config, files=files)

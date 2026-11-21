@@ -1585,9 +1585,9 @@ class MainWindow(QMainWindow):
             return
         service = self._app_service
         if answer.choice.id == dlg.KEEP_MY_CHANGES:
-            service.keep_teacher_work(config, files=worked_on.unanswered)
+            service.commands.keep_teacher_work(config, files=worked_on.unanswered)
         elif answer.choice.id == dlg.PROOFREAD_AGAIN:
-            failures = service.invalidate_from_stage(
+            failures = service.commands.invalidate_from_stage(
                 config, files=worked_on.unanswered, stage="correction"
             )
             if failures:
@@ -1595,7 +1595,7 @@ class MainWindow(QMainWindow):
                 return
         # The teacher was told that a new proofreading will not contain these corrections and
         # went on: they belong to no stored answer, so they are not asked about again.
-        service.drop_unbound_corrections(config, files=worked_on.unbound)
+        service.commands.drop_unbound_corrections(config, files=worked_on.unbound)
         on_ready()
 
     def _continue_run(self, config: Config) -> None:
@@ -1819,7 +1819,9 @@ class MainWindow(QMainWindow):
             _dialogs.notify(self, dlg.selection_mismatch())
             return
 
-        failures = self._app_service.invalidate_from_stage(config, files=files, stage=stage)
+        failures = self._app_service.commands.invalidate_from_stage(
+            config, files=files, stage=stage
+        )
         if failures:
             _dialogs.notify(self, dlg.cache_invalidation_failed(list(failures)))
             return
@@ -2732,7 +2734,7 @@ class MainWindow(QMainWindow):
             config = self._config_panel.to_config()
         except ValueError:
             config = self._config_panel.lookup_config()
-        self._app_service.mark_looked_at(config, source=Path(source_id), keys=[key])
+        self._app_service.commands.mark_looked_at(config, source=Path(source_id), keys=[key])
 
     def _on_checked_toggled(self, checked: bool) -> None:
         """The teacher pressed *Checked*: store the decision and show what the store says.
@@ -2755,7 +2757,7 @@ class MainWindow(QMainWindow):
             self._check.refresh_checked()
             return
         try:
-            view = self._app_service.set_checked(config, source=source, checked=checked)
+            view = self._app_service.commands.set_checked(config, source=source, checked=checked)
         except WorkNotSavedError as exc:
             _dialogs.notify(self, dlg.work_not_saved(exc.name, too_new=exc.too_new))
             self._check.refresh_checked()
@@ -3025,11 +3027,11 @@ class MainWindow(QMainWindow):
         text_format = self._results_table.text_format_for_source(source_id)
         try:
             if kind == _EDIT_RAW:
-                view = self._app_service.edit_transcription(
+                view = self._app_service.commands.edit_transcription(
                     config, source=source, text=edited_text, text_format=text_format
                 )
             else:
-                view = self._app_service.edit_corrected_text(
+                view = self._app_service.commands.edit_corrected_text(
                     config, source=source, text=edited_text
                 )
         except WorkNotSavedError as exc:

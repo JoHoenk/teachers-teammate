@@ -1017,7 +1017,7 @@ def test_a_typed_edit_is_stored_before_a_stage_run_clears_the_cache(
         order.append("invalidate")
         return ()
 
-    monkeypatch.setattr(main_window._app_service, "invalidate_from_stage", _invalidate)
+    monkeypatch.setattr(main_window._app_service.commands, "invalidate_from_stage", _invalidate)
     monkeypatch.setattr(main_window, "_start_worker", lambda *_a, **_k: order.append("start"))
 
     main_window._run_stage(make_config(Path("/tmp")), [a], "correction")
@@ -3287,7 +3287,7 @@ def test_stage_run_force_runs_correction_when_checkbox_disabled(main_window, mon
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     captured: list = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "invalidate_from_stage",
         lambda config, **k: captured.append(config) or (),
     )
@@ -3313,7 +3313,7 @@ def test_stage_run_force_runs_evaluation_when_checkbox_disabled(main_window, mon
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     captured: list = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "invalidate_from_stage",
         lambda config, **k: captured.append(config) or (),
     )
@@ -3354,7 +3354,7 @@ def test_stage_run_informs_when_the_selection_is_not_in_the_queue(main_window, m
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     invalidated: list = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "invalidate_from_stage",
         lambda *a, **k: invalidated.append(a) or (),
     )
@@ -3383,7 +3383,7 @@ def test_stage_run_warns_on_invalidation_failure(main_window, monkeypatch) -> No
     _queue_a(main_window)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "invalidate_from_stage",
         lambda *a, **k: ("a.png: locked",),
     )
@@ -3409,7 +3409,7 @@ def test_stage_run_starts_worker_on_success(main_window, monkeypatch) -> None:
     _queue_a(main_window)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "invalidate_from_stage",
         lambda *a, **k: (),
     )
@@ -3986,7 +3986,7 @@ def _capture_stage_run(main_window, monkeypatch, cfg, stage: str):
     _queue_a(main_window)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "invalidate_from_stage",
         lambda config, **k: (),
     )
@@ -4628,7 +4628,7 @@ def test_stage_rerun_with_unmet_requirement_keeps_the_cached_results(
     )
     invalidated: list = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "invalidate_from_stage",
         lambda *a, **k: invalidated.append(a) or (),
     )
@@ -4699,7 +4699,7 @@ def test_stage_rerun_is_refused_while_a_worker_runs(
     main_window._worker = worker
     invalidated: list = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "invalidate_from_stage",
         lambda *a, **k: invalidated.append(a) or (),
     )
@@ -6174,7 +6174,7 @@ def test_the_run_start_question_keeps_the_changes_by_default(
     kept: list[list[str]] = []
     started: list[bool] = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "keep_teacher_work",
         lambda _cfg, *, files: kept.append([str(path) for path in files]),
     )
@@ -6208,7 +6208,7 @@ def test_the_run_start_question_proofreads_again_when_asked(
     dropped: list[tuple[list[str], str]] = []
     started: list[bool] = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "invalidate_from_stage",
         lambda _cfg, *, files, stage: (
             dropped.append(([str(file.resolve()) for file in files], stage)) or ()
@@ -6399,7 +6399,7 @@ def test_the_run_start_question_does_not_start_when_the_proofreading_cannot_be_d
     shown: list[object] = []
     started: list[bool] = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "invalidate_from_stage",
         lambda *_a, **_k: ("a.png: denied",),
     )
@@ -6433,7 +6433,7 @@ def test_the_run_start_question_names_a_document_by_its_resolved_path(
     _answer_with(monkeypatch, index=1)
     asked_for: list[list[str]] = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "invalidate_from_stage",
         lambda _cfg, *, files, stage: (
             asked_for.append([str(file.resolve()) for file in files]) or ()
@@ -6463,7 +6463,7 @@ def test_the_corrections_of_no_stored_answer_are_dropped_once_the_teacher_went_o
     cfg = make_config(tmp_path)
     dropped: list[list[Path]] = []
     monkeypatch.setattr(
-        main_window._app_service,
+        main_window._app_service.commands,
         "drop_unbound_corrections",
         lambda _cfg, *, files: dropped.append(list(files)),
     )

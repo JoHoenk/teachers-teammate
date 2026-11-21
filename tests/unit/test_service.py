@@ -20,7 +20,7 @@ from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.application import service as service_module
 from teachers_teammate.config import Config
 from teachers_teammate.application.composition import inject_addon_packages_dir
-from teachers_teammate.application.commands import ApplicationCommands, WorkNotSavedError
+from teachers_teammate.application.commands import DocumentCommands, WorkNotSavedError
 from teachers_teammate.application.documents import DocumentQueries
 from teachers_teammate.application.queue import StageState
 from teachers_teammate.application.service import (
@@ -676,7 +676,7 @@ def test_invalidate_from_stage_static_resets_exactly_the_files_it_is_given(tmp_p
     mock_store = MagicMock()
     mock_store.invalidate_from_stage.return_value = MagicMock()
 
-    failures = ApplicationCommands._invalidate_from_stage(
+    failures = DocumentCommands._invalidate_from_stage(
         stage="ocr",
         files=[source],
         store=mock_store,
@@ -698,7 +698,7 @@ def test_invalidate_from_stage_static_accumulates_oserror_failures(tmp_path: Pat
     mock_store = MagicMock()
     mock_store.invalidate_from_stage.side_effect = OSError("disk full")
 
-    failures = ApplicationCommands._invalidate_from_stage(
+    failures = DocumentCommands._invalidate_from_stage(
         stage="ocr",
         files=[source],
         store=mock_store,
@@ -741,9 +741,9 @@ def _repo_with_document(
     return repo, source
 
 
-def _commands_for(repo: StateRepository, **kwargs) -> ApplicationCommands:
+def _commands_for(repo: StateRepository, **kwargs) -> DocumentCommands:
     """The window's write commands over *repo*, with the teacher's work in a temporary folder."""
-    return ApplicationCommands(
+    return DocumentCommands(
         state_store_factory=lambda _config: repo,
         **kwargs,
     )
@@ -942,7 +942,7 @@ def test_a_teachers_transcription_survives_reconcile(tmp_path: Path) -> None:
 
     repo = StateRepository(tmp_path / "state")
     work_store = TeacherWorkStore(tmp_path / "work")
-    commands = ApplicationCommands(
+    commands = DocumentCommands(
         state_store_factory=lambda _c: repo,
         work_store=work_store,
     )
@@ -1207,7 +1207,7 @@ def test_invalidate_from_stage_static_invalid_stage_propagates_value_error(tmp_p
     source.touch()
 
     with pytest.raises(ValueError, match="Invalid stage"):
-        ApplicationCommands._invalidate_from_stage(
+        DocumentCommands._invalidate_from_stage(
             stage="nonexistent",
             files=[source],
             store=MagicMock(),
@@ -2039,7 +2039,7 @@ def test_export_docx_writes_the_teachers_corrections(tmp_path: Path) -> None:
 
     svc, source = _svc_with_document(tmp_path, raw_text="hello world", corrected="Hello world.")
     config = make_config(tmp_path)
-    svc.edit_corrected_text(config, source=source, text="Hello, world!")
+    svc.commands.edit_corrected_text(config, source=source, text="Hello, world!")
     out = tmp_path / "doc.docx"
 
     svc.export_docx(config, source, out)
@@ -2060,7 +2060,7 @@ def test_export_docx_writes_the_teachers_transcription(tmp_path: Path) -> None:
 
     svc, source = _svc_with_document(tmp_path, raw_text="hello world")
     config = make_config(tmp_path)
-    svc.edit_transcription(config, source=source, text="hello, world")
+    svc.commands.edit_transcription(config, source=source, text="hello, world")
     out = tmp_path / "doc.docx"
 
     svc.export_docx(config, source, out)
@@ -3103,7 +3103,7 @@ def test_export_text_writes_the_teachers_transcription(tmp_path: Path) -> None:
     """
     svc, source = _svc_with_document(tmp_path, raw_text="hello world")
     config = make_config(tmp_path)
-    svc.edit_transcription(config, source=source, text="hello, world")
+    svc.commands.edit_transcription(config, source=source, text="hello, world")
     out = tmp_path / "scan.txt"
 
     svc.export_text(config, source, out)
@@ -4810,7 +4810,7 @@ def test_checking_a_document_whose_proofreading_was_kept_leaves_it_kept(tmp_path
     other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    view = svc.set_checked(other, source=worked, checked=True)
+    view = svc.commands.set_checked(other, source=worked, checked=True)
 
     assert view is not None
     assert view.correction_done is True
@@ -4830,7 +4830,7 @@ def test_a_stored_mark_shows_a_stage_stale_by_its_settings_as_not_done(tmp_path:
     other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    view = svc.set_checked(other, source=source, checked=False)
+    view = svc.commands.set_checked(other, source=source, checked=False)
 
     assert view is not None
     assert view.correction_done is False
@@ -4860,7 +4860,7 @@ def test_corrections_of_no_stored_answer_are_dropped_and_not_asked_about_again(
         worked,
     )
 
-    svc.drop_unbound_corrections(made, files=[worked])
+    svc.commands.drop_unbound_corrections(made, files=[worked])
 
     assert svc.documents.worked_on_documents(made, [worked], run_proofreads=True).unbound == ()
     assert TeacherWorkStore().load(compute_file_hash(worked)) is None
@@ -4883,7 +4883,7 @@ def test_corrections_that_apply_are_not_dropped_as_unbound(tmp_path: Path) -> No
     )
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    svc.drop_unbound_corrections(made, files=[worked])
+    svc.commands.drop_unbound_corrections(made, files=[worked])
 
     work = TeacherWorkStore().load(compute_file_hash(worked))
     assert work is not None and work.corrections is not None
@@ -4908,7 +4908,7 @@ def test_keeping_the_changes_stamps_the_settings_on_corrections_that_apply(tmp_p
     other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    svc.keep_teacher_work(other, files=[worked])
+    svc.commands.keep_teacher_work(other, files=[worked])
 
     stamped = TeacherWorkStore().load(compute_file_hash(worked))
     assert stamped is not None and stamped.corrections is not None
@@ -4935,7 +4935,7 @@ def test_keeping_the_changes_does_not_stamp_corrections_of_another_answer(tmp_pa
     other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    svc.keep_teacher_work(other, files=[worked])
+    svc.commands.keep_teacher_work(other, files=[worked])
 
     stamped = TeacherWorkStore().load(compute_file_hash(worked))
     assert stamped is not None and stamped.corrections is not None
@@ -4953,7 +4953,7 @@ def test_a_rerun_that_cannot_drop_the_work_resets_nothing(tmp_path: Path) -> Non
     work_store = MagicMock()
     work_store.update.side_effect = PermissionError("denied")
 
-    failures = ApplicationCommands._invalidate_from_stage(
+    failures = DocumentCommands._invalidate_from_stage(
         stage="correction",
         files=[source],
         store=repo,

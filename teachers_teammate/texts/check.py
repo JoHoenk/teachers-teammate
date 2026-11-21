@@ -78,12 +78,20 @@ TAB_CORRECTIONS = "Corrections"
 TAB_CONTENT = "Content"
 """The side panel's two tabs: the list of corrections, and the content review."""
 
-FILTER_ALL = "All"
-FILTER_ALL_TIP = "Show every correction"
 FILTER_NOT_LOOKED_AT = "Not looked at"
-FILTER_NOT_LOOKED_AT_TIP = "Show only the corrections you have not looked at yet"
-FILTER_CATEGORY_TIP = "Show only the {category} corrections"
-"""The filter row above the list: everything, what is left, and one chip per category."""
+FILTER_NOT_LOOKED_AT_TIP = "Narrow the list to the corrections you have not looked at yet"
+FILTER_CATEGORY_TIP = "Show the {category} corrections"
+FILTER_UNCLEAR = "Unclear"
+FILTER_UNCLEAR_TIP = "Show the passages whose meaning is unclear"
+FILTER_LEFT_OUT = "Left out"
+FILTER_LEFT_OUT_TIP = "Show the passages the model left out of the correction"
+"""The boxes above the list: what is left, one per category, and the two kinds without one."""
+
+BADGE_UNCLEAR = "unclear"
+BADGE_LEFT_OUT = "left out"
+BADGE_OWN = "your change"
+BADGE_TAKEN_OUT = "taken out"
+"""The badge of an item the list has no category for: what kind of thing it is."""
 
 
 def filter_label(label: str, count: int) -> str:

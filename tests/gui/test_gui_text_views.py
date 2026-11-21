@@ -210,11 +210,12 @@ def test_a_mark_is_drawn_in_the_look_of_its_item(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_the_chosen_item_is_selected_and_scrolled_to(qtbot) -> None:
+def test_the_chosen_item_is_scrolled_to_without_selecting_its_words(qtbot) -> None:
     """
     Given  a Markdown text with two corrections, the second one far down the text
     When   the second item is revealed
-    Then   the view selects its words
+    Then   the caret stands at its first word and nothing is selected, so the theme's selection
+           blue is not drawn over the mark
     """
     doc = _document(MARKDOWN_RAW, MARKDOWN_CORRECTED, text_format="markdown")
     view = _view(qtbot, FinalView, doc)
@@ -222,8 +223,8 @@ def test_the_chosen_item_is_selected_and_scrolled_to(qtbot) -> None:
 
     view.reveal(second.key)
 
-    assert view.textCursor().selectedText() == "braune"
-    assert view.textCursor().selectionStart() == view._mark_cursors[1][1].selectionStart()
+    assert view.textCursor().selectedText() == ""
+    assert view.textCursor().position() == view._mark_cursors[1][1].selectionStart()
 
 
 @pytest.mark.gui

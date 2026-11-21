@@ -9,6 +9,7 @@ import dataclasses
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QTextCursor
+from PySide6.QtWidgets import QToolTip
 
 from teachers_teammate.application.check_document import CheckDocument, check_document_of
 from teachers_teammate.application.check_items import ItemKind
@@ -71,12 +72,12 @@ def _document(
     )
 
 
-def _masking(*, enabled: bool = True) -> Masking:
+def _masking(*, enabled: bool = True, error: str = "") -> Masking:
     """Return a masking that can hide names, with no name in the text."""
     masking = Masking()
     masking.set_available(True)
     masking.set_enabled(enabled)
-    masking.set_result({})
+    masking.set_result({}, error=error)
     return masking
 
 
@@ -273,7 +274,7 @@ def test_the_banner_shows_the_most_important_reason_first(qtbot) -> None:
     """
     Given  a proofread document with a warning, names hidden and a run holding it
     When   the body shows it, and then each reason is taken away in turn
-    Then   the banner says the lock, then the names, then the reading fix, then the warning
+    Then   the banner says the lock, then the reading fix, then the warning
     """
     body = _body(qtbot, _document(review=_review(RAW, CORRECTED), warning=WARNING), _masking())
     body.set_lock(txt.WAITING_FOR_RUN)
@@ -282,16 +283,72 @@ def test_the_banner_shows_the_most_important_reason_first(qtbot) -> None:
     assert body.banner.action == ""
 
     body.set_lock(None)
-    assert body.banner.text == txt.TURN_OFF_HIDING_TO_EDIT
-    assert body.banner.action == txt.SHOW_NAMES
-
-    body.set_masking(Masking())
     assert body.banner.text == txt.READING_FIX_WARNING
     assert body.banner.action == txt.EDIT_ANYWAY
 
     body.banner.action_clicked.emit()
     assert body.banner.text == WARNING
     assert body.banner.action == ""
+
+
+@pytest.mark.gui
+def test_a_failed_hide_stays_in_the_banner(qtbot) -> None:
+    """
+    Given  a document whose names could not be hidden
+    When   the body shows it
+    Then   the banner says so, because the names stand in the text while the toggle says hidden
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)), _masking(error="no model"))
+
+    assert body.banner.text == txt.HIDING_PERSONAL_INFO_FAILED.format(reason="no model")
+    assert body.banner.action == txt.SHOW_NAMES
+
+
+@pytest.mark.gui
+def test_the_warning_shows_while_the_names_are_hidden(qtbot) -> None:
+    """
+    Given  a document that was only read, with a warning, and the names hidden
+    When   the body shows it
+    Then   the banner carries the warning, since hiding is no reason of its own
+    """
+    body = _body(qtbot, _document(corrected="", warning=WARNING), _masking())
+
+    assert body.banner.text == WARNING
+
+
+@pytest.mark.gui
+def test_toggling_privacy_leaves_the_banner_and_the_views_where_they_are(qtbot) -> None:
+    """
+    Given  a proofread document with a warning, shown with the names hidden
+    When   the names are shown again
+    Then   the banner says the same and the two texts keep their height
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED), warning=WARNING), _masking())
+    before = (body.banner.text, body.read_view.height(), body.final_view.height())
+
+    body.set_masking(Masking())
+    qtbot.wait(20)
+
+    assert (body.banner.text, body.read_view.height(), body.final_view.height()) == before
+
+
+@pytest.mark.gui
+def test_edit_anyway_is_greyed_out_while_the_names_are_hidden(qtbot) -> None:
+    """
+    Given  a proofread document whose transcription is locked, with the names hidden
+    When   the body shows it, and then the names are shown again
+    Then   the button is there but disabled with the reason, and works again once they show
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)), _masking())
+
+    assert body.banner.action == txt.EDIT_ANYWAY
+    assert body.banner._button.isEnabled() is False
+    assert body.banner._button.toolTip() == txt.SHOW_NAMES_TO_CHANGE
+
+    body.set_masking(Masking())
+
+    assert body.banner._button.isEnabled() is True
+    assert body.banner._button.toolTip() == ""
 
 
 @pytest.mark.gui
@@ -352,7 +409,7 @@ def test_hiding_the_names_blocks_typing_and_keeps_the_chosen_item(qtbot) -> None
     """
     Given  a body that shows a document with a chosen item
     When   the names are hidden
-    Then   the texts cannot be typed in, the card says why, and the item stays chosen
+    Then   the texts cannot be typed in, a keystroke and the card say why, and the item stays
     """
     body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
     body.panel.set_chosen("edit:1")
@@ -361,7 +418,28 @@ def test_hiding_the_names_blocks_typing_and_keeps_the_chosen_item(qtbot) -> None
 
     assert body.chosen == "edit:1"
     assert body.final_view.isReadOnly() is True
+    assert body.final_view.toolTip() != txt.SHOW_NAMES_TO_CHANGE
+    assert body.read_view.toolTip() != txt.SHOW_NAMES_TO_CHANGE
+    QToolTip.hideText()
+    qtbot.keyClick(body.final_view, Qt.Key.Key_X)
+    assert QToolTip.text() == txt.SHOW_NAMES_TO_CHANGE
     assert body.panel._card.take_out.toolTip() == txt.SHOW_NAMES_TO_CHANGE
+
+
+@pytest.mark.gui
+def test_a_read_only_view_says_nothing_until_the_teacher_types(qtbot) -> None:
+    """
+    Given  a proofread document whose *What was read* is read-only
+    When   the pointer is over the text, and then a key is typed
+    Then   no tooltip covers the text, and the key is answered with the reason
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
+
+    assert body.read_view.isReadOnly() is True
+    assert body.read_view.toolTip() != txt.READING_FIX_WARNING
+    QToolTip.hideText()
+    qtbot.keyClick(body.read_view, Qt.Key.Key_X)
+    assert QToolTip.text() == txt.READING_FIX_WARNING
 
 
 # ── The layout ────────────────────────────────────────────────────────────

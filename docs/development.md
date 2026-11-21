@@ -2218,8 +2218,15 @@ the placeholder map (placeholder → original surface text):
 `gui/check/_masking.py:Masking` holds that state for the Check tab: the mapping, whether the
 stand-ins are ready, the failure, and the text they were asked for.  The page keeps the texts
 *unmasked* in the `CheckDocument` it was given and asks `Masking.mask(text)` for what it shows,
-so switching the setting off shows the stored text again without a reload.  The note above the
-text is clickable only while the setting locks the views: a click emits
+so switching the setting off shows the stored text again without a reload.  Whether the names
+are hidden is the 👁 toggle's business and nothing else: no strip above the text says it, because
+a strip that came and went with the toggle moved the texts under the cursor.  Until the
+placeholders have arrived (`Masking.working`) the toggle reads *👁…* with the tooltip *Hiding
+personal information…*, because the names still stand in the text.  Why the texts cannot be
+typed into is the answer to a keystroke in them (`CheckTextView.keyPressEvent`, a tooltip at the
+caret) and the tooltip of the card's buttons (`txt.SHOW_NAMES_TO_CHANGE`); a tooltip over the
+whole text would pop up wherever the pointer rests.  Only a hide that *failed* gets a strip — the names then stand in
+the text while the toggle says they are hidden — and its button emits
 `display_anonymized_changed(False)`, the **Hide names** box's route, so the window stores the
 choice and the Settings → Privacy checkbox follows.  Placeholders are marked as chips:
 `gui/_formatted_text.py:chip_placeholders()` wraps them in the rendered Markdown HTML (markup is
@@ -2236,7 +2243,7 @@ window answers through a background task (`_anonymize_task`), which calls
 `ProcessingApplicationService.anonymize_preview()` off the GUI thread and therefore reuses the
 shared cache above (a run then needs no second spaCy pass, and vice versa).  A result that
 belongs to a text the page no longer shows is dropped (`set_anonymization(..., raw_text=…)`),
-and a failure keeps the names hidden behind a note instead of showing them.  Changing the
+and a failure keeps the names hidden behind the strip that says so.  Changing the
 anonymizer settings in the dialog calls `forget_anonymization()`.
 
 The setting itself is a GUI preference, not part of `Config`: the checkbox under
@@ -2514,28 +2521,39 @@ either; "checked only" export is that selection plus *Export*, not a separate op
 (*Corrections · Content*, `show_corrections()` / `show_content()`, chosen by `CheckPage.set_view`
 from the view kind); the tab bar hides itself while there is no review, so a document without one
 looks as it did.  Above the list a `FlowLayout` (`gui/check/_flow.py`, wraps and skips hidden
-widgets) holds the filter chips in a `QButtonGroup`: *All*, *Not looked at* and one per category
-with its count.  `set_filter()` only re-applies row visibility (`_apply_row_visibility`), which
-also keeps the chosen row when it survives and otherwise chooses the first visible one, so a
-filter never leaves the card pointing at a hidden row.  The card is a fixed-height `QScrollArea`
+widgets) holds one `QCheckBox` per category, plus *Unclear* and *Left out*, each with its count;
+a box whose count is 0 is hidden.  Nothing ticked shows every row, ticked boxes combine, and
+*Not looked at* is a box of its own that narrows whatever else is ticked.  `set_filter()` only
+re-applies row visibility (`_apply_row_visibility`), which also keeps the chosen row when it
+survives and otherwise chooses the first visible one, so a filter never leaves the card pointing
+at a hidden row.  The card is a fixed-height `QScrollArea`
 around the text plus a fixed-height button row: a long explanation scrolls inside the card and the
 buttons stay where the pointer is.  Its text is HTML built by `_body_html()` — the bold
 `before → after` line, the sentence around the change with the student's words highlighted
 (`_context_html()`, masked like the title), the category as a coloured chip and *optional* /
-*AI not sure* as grey tags (`_tags_of()`), then the explanation as normal text.  The list's
-`_ItemDelegate` draws the icon, two aligned word columns (`_column_rects()`) and the category as a
-coloured badge, and dims a looked-at row (`_faded()`) instead of hiding it.  The colours are one
-table, `gui/check/_style.py:CATEGORY_COLOURS`, used by both the chip and the badge.
+*AI not sure* as grey tags (`_tags_of()`), then the explanation as normal text.  The button row
+holds *Take out* / *Put back*, *Use suggestion*, the field that replaces the words and *OK*; a
+spelling or punctuation change of the model also carries *Take out all N*, which puts the
+student's words back for every such change still standing (`minor_corrections()`); a correction
+the teacher took out and a change of their own are not in it.  The list's
+`_ItemDelegate` draws the icon, two aligned word columns (`_column_rects()`) and a badge, and
+greys a looked-at row instead of hiding it.  Every row has a badge: a model change shows its
+category (*other* when it has none, and the *Other* box counts it), every other item its kind
+(*unclear*, *left out*, *your change*, *taken out*).
+The colours are one table, `gui/check/_style.py`: `MARK_COLOURS` for the marks in the text,
+`CATEGORY_COLOURS` for the badge and the chip, `KIND_BADGE_COLOURS` for the other rows, in the
+hue of their mark but weaker, so no kind's badge looks like a category's.  The app always runs on the dark theme, so every colour is a dark tint with light text
+on it and the chosen item is the one bright background.
 
 **Looked at.**  `SidePanel.item_shown` fires when an item becomes the chosen one (a list click, a
 text click, the first item on open); the window calls `mark_looked_at` once per new key and
 updates the document's set in place, without a reload.  The keys are `edit:<id>` (also for a
-correction the teacher took out: it is the same item), `unclear:<n>`, `own:<start>-<end>` (the
-words' place in the student's text, so taking another change back does not renumber them) and
-`minor` for the group row; the list shows ● for a looked-at item and ○ otherwise (own changes
-keep ✋, taken out ↶), and the footer says "8 of 12 looked at" from `looked_at_progress`.  Own
-changes do not count, the minor group counts once, and looking at an item is never undone and is
-not *worked on* — a run may still replace the answer.
+correction the teacher took out: it is the same item), `unclear:<n>` and `own:<start>-<end>` (the
+words' place in the student's text, so taking another change back does not renumber them); the
+list shows ● for a looked-at item and ○ otherwise (own changes keep ✋, taken out ↶), and the
+footer says "8 of 12 looked at" from `looked_at_progress`.  Own changes do not count, every other
+item counts on its own — a spelling change is a row like any other — and looking at an item is
+never undone and is not *worked on* — a run may still replace the answer.
 
 **Walking the corrections.**  *Next* on the card (`SidePanel.choose_next`) chooses the next row
 that counts for looked-at, in list order and from the top at the end; a document opens at the
@@ -2543,10 +2561,20 @@ first of them.  With a filter on it stays inside the filter — the next not-loo
 filter shows — while the counts above the list keep covering the whole document.
 `counts_for_looked_at`, `next_unseen` and `first_unseen`
 (`application/check_items.py`) are pure and on keys, so the list's rows and `looked_at_progress`
-count the same rows — a single spelling change is not folded and does not count either.  The walk
+count the same rows.  The walk
 keeps no state of its own: choosing a row is what marks it looked at, so the icons and the footer
 say how far it got, and a card action does not move the choice — the teacher presses *Next* when
 they are done with the item.
+
+**The strip above the texts.**  One `_Banner` (`_refresh_banner`), and it shows the one reason
+that matters most: the lock, a hide that failed, the reading fix, then `doc.warning` (the AI
+warning).  Nothing that comes and goes with the 👁 toggle is in it, because a strip that appeared
+and disappeared moved the texts under the cursor: the privacy state is the toggle's own, the
+reason the texts cannot be typed into is the answer to a keystroke, the 👁 toggle says while the
+names are still being hidden, and the AI warning is visible while the names are hidden.  The
+reading fix's *Edit anyway* is greyed out, with the reason, while the names are hidden: the texts
+would stay locked.  A failed hide is the exception — the names then stand in the text while the toggle
+says they are hidden — so the strip says so and its button shows them again.
 
 **The questions.**  Three, all in `texts/dialogs.py`, all one dialog for the whole selection:
 
@@ -3695,9 +3723,11 @@ can start.
 
 **Focus in the Check tab** (`gui/check/_text_views.py`, `gui/check/_side_panel.py`). Choosing an
 item — by clicking its words in the text or its row in the list — marks it in both. The text
-uses Qt *extra selections* (`CheckTextView._apply_chosen`), not HTML, so a click neither
-re-renders the page nor loses the scroll position; the list marks the row with the focus
-background and opens the collapsed minor-changes row when the item is in it. A click on a mark
+uses Qt *extra selections* (`CheckTextView._apply_marks`), not HTML, so a click neither
+re-renders the page nor loses the scroll position; the chosen item is the one bright background
+among the dark tints, and the list marks its row with the focus background. `reveal()` scrolls
+to the item and puts the caret on its first word without selecting anything: a selection would
+draw the theme's blue over the mark. A click on a mark
 is found with `cursorForPosition()` → `PlainMap.offset()` → the item whose span contains it,
 innermost first; tests click with `qtbot.mouseClick` on a position found that way, because
 emitting a signal by hand would not show what a person sees.

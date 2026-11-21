@@ -261,7 +261,7 @@ class CorrectionsWork:
     """The corrected text; ``None`` while it is the machine's own."""
     checked: bool = False
     looked_at: frozenset[str] = frozenset()
-    """Keys of the items the teacher has seen (``"edit:3"``, ``"unclear:2"``, ``"minor"``)."""
+    """Keys of the items the teacher has seen (``"edit:3"``, ``"unclear:2"``)."""
     kept: frozenset[str] = frozenset()
     """Items the teacher decided to leave as they are; empty until the app offers that."""
     kept_under: str = ""

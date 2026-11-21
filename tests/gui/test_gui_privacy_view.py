@@ -328,13 +328,45 @@ def _privacy_page(qtbot, win: MainWindow) -> PrivacyPage:
 
 
 @pytest.mark.gui
-def test_clicking_the_lock_note_makes_the_texts_editable(
+def test_the_eye_button_says_while_the_names_are_being_hidden(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a document whose placeholders are still being worked out
+    When   the names are hidden, and then the placeholders arrive
+    Then   the toggle says it is working, and says nothing of the kind afterwards
+    """
+    release = threading.Event()
+
+    def _slow_anonymize(_self, _text, _language, _config=None):
+        release.wait(5)
+        return ANONYMIZED, MAPPING
+
+    monkeypatch.setattr(ProcessingApplicationService, "anonymize_preview", _slow_anonymize)
+    main_window.show()
+    _open_document(main_window, monkeypatch, tmp_path, RAW)
+    box = main_window._check._hide_names_box
+    banner = main_window._check.body.banner
+
+    assert box.text() == txt.HIDE_PERSONAL_INFO_BUTTON_WORKING
+    assert box.toolTip() == txt.HIDING_PERSONAL_INFO
+    assert banner.isHidden()
+
+    release.set()
+    _wait_for(lambda: not main_window._check._masking.pending)
+
+    assert box.text() == txt.HIDE_PERSONAL_INFO_BUTTON
+    assert box.toolTip() == txt.HIDE_PERSONAL_INFO_BUTTON_TIP
+
+
+@pytest.mark.gui
+def test_the_eye_button_makes_the_texts_editable(
     main_window, settings, monkeypatch, tmp_path: Path
 ) -> None:
     """
     Given  a window whose texts are locked because the names are hidden
-    When   the note above the texts is clicked
-    Then   the names are shown, the texts are editable and the menu entry and setting follow
+    When   the eye button shows the names
+    Then   the texts are editable and the menu entry and setting follow
     """
     monkeypatch.setattr(
         ProcessingApplicationService,
@@ -346,9 +378,9 @@ def test_clicking_the_lock_note_makes_the_texts_editable(
     body = main_window._check.body
     _wait_for(lambda: not main_window._check._masking.pending)
     assert body.read_view.isReadOnly()
-    assert body.banner.text == txt.TURN_OFF_HIDING_TO_EDIT
+    assert body.read_view.toolTip() != txt.SHOW_NAMES_TO_CHANGE
 
-    body.banner.action_clicked.emit()
+    main_window._check._hide_names_box.click()
 
     assert not main_window._check._masking.enabled
     assert not body.read_view.isReadOnly()

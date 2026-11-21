@@ -14,13 +14,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import functools
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..infrastructure import power
+from ..infrastructure.addon_manager import AddonPackages
 from ..infrastructure.file_discovery import FileDiscovery
+from ..infrastructure.gpu_detector import SystemHardwareProbe
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline
+from ..infrastructure.spacy_models import SpacyModels
 from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.state_repository import StateRepository
 from ..infrastructure.teacher_work_store import TeacherWorkStore
@@ -30,11 +34,12 @@ from .anonymization import AnonymizationService
 from .commands import DocumentCommands
 from .data_flow import DataFlowService
 from .documents import DocumentQueries
+from .export import ExportService
 from .model_recommendations import ModelRecommendationService
 from .ollama_server import OllamaServerService
 from .providers import ProviderService
 from .reader import ReaderService
-from .service import ProcessingApplicationService
+from .run import RunService, state_store_for, windows_for
 from .setup_plan import SetupService
 from .speed_estimates import SpeedEstimateService
 
@@ -46,13 +51,13 @@ if TYPE_CHECKING:
 class AppServices:
     """The application's services, one instance per process.
 
-    ``processing`` is the facade the adapters call today; the focused services take its place
-    one topic at a time.  The rest are the parts that must not exist twice: the teacher's work,
-    the reader's model files, and the sleep blocker held around a run.
+    Every service is built once here, so the caches that must not exist twice — the anonymizer,
+    the model listings, the installed models — are shared by the whole process.  ``run`` is the
+    run itself; the rest are the parts of it.
     """
 
-    processing: ProcessingApplicationService
-    """The facade the adapters still call for the topics that have not moved yet."""
+    run: RunService
+    """The run: its files, what it needs before it starts, and the summary it leaves."""
     ollama: OllamaServerService
     """The Ollama server: discovery, status, model sizes and pulls."""
     providers: ProviderService
@@ -73,6 +78,8 @@ class AppServices:
     """What the Setup Assistant asks the computer, and the settings file of a first start."""
     documents: DocumentQueries
     """What the store says about a document."""
+    export: ExportService
+    """The Word file, the text file and the text for the clipboard."""
     commands: DocumentCommands
     """The writes: the teacher's texts and decisions."""
     work_store: TeacherWorkStore
@@ -91,22 +98,31 @@ def build_app_services(
     work_store: TeacherWorkStore | None = None,
 ) -> AppServices:
     """Build the application's services, sharing the parts that must exist once."""
+    discovery = discovery or FileDiscovery()
+    pipeline_factory = pipeline_factory or OCRPipeline
+    state_repository_factory = state_repository_factory or StateRepository
+    component_factory = component_factory or PipelineComponentFactory()
     work_store = work_store or TeacherWorkStore()
     model_store = model_store or ModelStore()
     sleep_blocker = sleep_blocker or power.default_sleep_blocker()
     ollama = OllamaServerService()
+    # The narrow collaborators the services below branch on: this computer, the add-on packages
+    # folder, the spaCy models.  Each is a Protocol in ``application/ports.py``.
+    hardware = SystemHardwareProbe()
+    addon_state = AddonPackages()
+    names = SpacyModels()
     providers = ProviderService()
-    component_factory = component_factory or PipelineComponentFactory()
     reader = ReaderService(
         model_store=model_store, component_factory=component_factory, providers=providers
     )
     speeds = SpeedEstimateService(effective_model=providers.effective_model)
-    anonymization = AnonymizationService()
+    anonymization = AnonymizationService(names=names)
     addons = AddonService(
         model_store=model_store,
         providers=providers,
         reader=reader,
         anonymization=anonymization,
+        state=addon_state,
     )
     data_flow = DataFlowService(
         provider_info=providers.get_provider_info,
@@ -118,7 +134,10 @@ def build_app_services(
         invalidate_model_list=providers.forget_ollama_model_list,
         invalidate_speed_facts=speeds.forget_server_facts,
         machine_factor=lambda url, task: speeds.machine_factors(url).for_category(task),
+        hardware=hardware,
     )
+    # Refreshing a server's model list also drops what was classified from it.
+    providers.watch_classifications(recommendations.invalidate_classification)
     setup = SetupService(
         ollama=ollama,
         providers=providers,
@@ -127,26 +146,43 @@ def build_app_services(
         reader=reader,
         addons=addons,
     )
-    processing = ProcessingApplicationService(
-        ollama=ollama,
-        providers=providers,
-        reader=reader,
-        recommendations=recommendations,
-        speeds=speeds,
-        anonymization=anonymization,
-        addons=addons,
+    # One store per output folder, and the context windows the run itself uses: the queue, the
+    # Check tab and the run all compute their cache keys with these two.
+    state_store = functools.partial(state_store_for, repository=state_repository_factory)
+    windows = functools.partial(windows_for, recommendations=recommendations)
+    documents = DocumentQueries(
+        state_store_factory=state_store,
+        work_store=work_store,
+        model_store=model_store,
+        windows_for=windows,
         data_flow=data_flow,
-        setup=setup,
+        anonymization=anonymization,
+    )
+    commands = DocumentCommands(
+        state_store_factory=state_store,
+        windows_for=windows,
+        model_store=model_store,
+        work_store=work_store,
+    )
+    run = RunService(
         discovery=discovery,
         pipeline_factory=pipeline_factory,
-        state_repository_factory=state_repository_factory,
         component_factory=component_factory,
         sleep_blocker=sleep_blocker,
         model_store=model_store,
         work_store=work_store,
+        ollama=ollama,
+        hardware=hardware,
+        providers=providers,
+        reader=reader,
+        recommendations=recommendations,
+        anonymization=anonymization,
+        addons=addons,
+        documents=documents,
     )
+    export = ExportService(documents=documents, anonymization=anonymization)
     return AppServices(
-        processing=processing,
+        run=run,
         ollama=ollama,
         providers=providers,
         reader=reader,
@@ -156,8 +192,9 @@ def build_app_services(
         addons=addons,
         data_flow=data_flow,
         setup=setup,
-        documents=processing.documents,
-        commands=processing.commands,
+        documents=documents,
+        export=export,
+        commands=commands,
         work_store=work_store,
         model_store=model_store,
         sleep_blocker=sleep_blocker,

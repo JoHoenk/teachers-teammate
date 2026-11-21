@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.anonymization import AnonymizationService
-from teachers_teammate.application.service import ProcessingApplicationService
+from teachers_teammate.application.providers import ProviderService
+from teachers_teammate.application.run import RunService
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._main_window import MainWindow
@@ -141,11 +142,9 @@ def _open_document(main_window, monkeypatch, tmp_path, raw: str, corrected: str 
 @pytest.fixture(autouse=True)
 def _no_network(monkeypatch) -> None:
     """Never probe a real service: the status row and the menu ask in the background."""
-    monkeypatch.setattr(ProcessingApplicationService, "check_stage_requirements", lambda *_: [])
+    monkeypatch.setattr(RunService, "check_stage_requirements", lambda *_: [])
     monkeypatch.setattr(
-        ProcessingApplicationService,
-        "check_connection",
-        lambda self, **_kw: (False, False, "offline"),
+        ProviderService, "check_connection", lambda self, **_kw: (False, False, "offline")
     )
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)

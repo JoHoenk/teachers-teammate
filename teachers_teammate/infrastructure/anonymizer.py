@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Callable, Collection
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 import hashlib
 import importlib.util
 import logging
@@ -24,6 +24,11 @@ import re
 import threading
 from typing import TYPE_CHECKING
 
+from ..domain.anonymization import (
+    DEFAULT_PATTERNS as DEFAULT_PATTERNS,  # noqa: PLC0414
+)
+from ..domain.anonymization import AnonymizerConfig as AnonymizerConfig  # noqa: PLC0414
+from ..domain.anonymization import resolve_patterns as resolve_patterns  # noqa: PLC0414
 from ..domain.anonymization import restore
 from ..domain.formatted_text import INLINE_TAG_ALTERNATION
 from ..interfaces import AnonymizationMap, Anonymizer
@@ -38,116 +43,6 @@ if TYPE_CHECKING:
 
 #: Identifies one cached result: language and settings of the anonymizer, then the text hash.
 CacheKey = tuple[object, ...]
-
-# ── Default regex patterns ─────────────────────────────────────────────────
-
-# Street and postcode patterns are German formats. They stay on one line and never span more
-# than one capitalised word before/after the match, so they cannot swallow a neighbouring name.
-_WORD = r"[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)*"
-_STREET_SUFFIX = r"(?:straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer)"
-_STREET_WORD = r"(?:Straße|Strasse|Str\.|Weg|Platz|Allee|Gasse|Ring|Damm|Ufer)"
-# "Der Weg 5 km" is a sentence, not an address: a leading article rules out the two-word form.
-_ARTICLE = (
-    r"(?:Der|Die|Das|Dem|Den|Des|Ein|Eine|Einem|Einen|Einer|Kein|Keine|Jeder|Jede|"
-    r"Diese|Dieser|Mein|Meine|Sein|Seine|Ihr|Ihre|Unser|Unsere)"
-)
-# One to three digits (so years do not count) and an optional letter: "12", "5a", "12 a".
-_HOUSE_NO = r"[ ]?\d{1,3}(?:[ ]?[a-z])?\b"
-_MONTHS = (
-    r"(?:Januar|Februar|März|Maerz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)"
-)
-_MONTHS_EN = (
-    r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
-)
-_ORDINAL_EN = r"(?:st|nd|rd|th)?"
-_DAY = r"(?:0?[1-9]|[12]\d|3[01])"
-_MONTH = r"(?:0?[1-9]|1[0-2])"
-# Capitalised nouns that follow a five-digit number in ordinary prose ("20000 Menschen").
-_NOT_CITY = (
-    r"(?:Euro|Dollar|Menschen|Einwohner|Einwohnern|Jahre|Jahren|Meter|Metern|"
-    r"Kilometer|Kilometern|Tonnen|Soldaten|Mal)\b"
-)
-# A postcode starts a line, follows a comma, "in ", "D-" or a placeholder (a street just replaced).
-_POSTCODE_START = r"(?:(?<![^\n])|(?<=,)|(?<=,[ ])|(?<=\bin[ ])|(?<=\][ ])|(?<=\bD-))"
-
-DEFAULT_PATTERNS: list[tuple[str, str]] = [
-    ("IBAN", r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}[A-Z0-9]{0,16}\b"),
-    ("EMAIL", r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"),
-    # German street + house number: "Hauptstraße 12", "Berliner Straße 5a",
-    # "Konrad-Adenauer-Straße 5"
-    (
-        "STREET",
-        r"\b(?:(?:St\.|Sankt)[ ])?(?:"
-        + _WORD
-        + _STREET_SUFFIX
-        + "|(?!"
-        + _ARTICLE
-        + "[ -])"
-        + _WORD
-        + "[ -]"
-        + _STREET_WORD
-        + ")"
-        + _HOUSE_NO,
-    ),
-    # German postcode + one-word city: "10115 Berlin"
-    ("POSTCODE_CITY", _POSTCODE_START + r"\d{5}[ ]+(?!" + _NOT_CITY + ")" + _WORD),
-    # Dates: "01.02.2010", "1/2/10", "2010-02-01", "1. Februar 2010", "March 5, 2024"
-    (
-        "DATE",
-        r"(?<![\d.])" + _DAY + r"[./][ ]?" + _MONTH + r"[./][ ]?(?:\d{4}|\d{2})(?!\d|\.\d)",
-    ),
-    ("DATE_ISO", r"(?<!\d)\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)"),
-    (
-        "DATE_TEXT",
-        r"(?:(?<!\d)"
-        + _DAY
-        + r"\.?[ ]*"
-        + _MONTHS
-        + "|(?<!\\d)"
-        + _DAY
-        + _ORDINAL_EN
-        + "[ ]+"
-        + _MONTHS_EN
-        + r"|\b"
-        + _MONTHS_EN
-        + "[ ]+"
-        + _DAY
-        + _ORDINAL_EN
-        + r",?)[ ]+\d{4}(?!\d)",
-    ),
-    (
-        "PHONE",
-        r"(?<!\d)(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{3,6}(?!\d)",
-    ),
-]
-
-# The patterns saved by versions that only knew IBAN, EMAIL and PHONE.  A configuration that still
-# holds exactly this list never customised the patterns, so it follows the current defaults.
-_LEGACY_DEFAULT_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("IBAN", r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}[A-Z0-9]{0,16}\b"),
-    ("EMAIL", r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"),
-    (
-        "PHONE",
-        r"(?<!\d)(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{3,6}(?!\d)",
-    ),
-)
-
-
-def resolve_patterns(
-    configured: list[tuple[str, str]] | tuple[tuple[str, str], ...] | None,
-) -> tuple[tuple[str, str], ...]:
-    """Return the regex patterns to apply for a *configured* pattern list.
-
-    ``None`` and the list of the earlier built-in defaults mean "use the current defaults";
-    any other list, including an empty one (no regex anonymization), is kept as it is.
-    """
-    if configured is None:
-        return tuple(DEFAULT_PATTERNS)
-    patterns = tuple((tag, pattern) for tag, pattern in configured)
-    if patterns == _LEGACY_DEFAULT_PATTERNS:
-        return tuple(DEFAULT_PATTERNS)
-    return patterns
-
 
 # ── Markdown markup ────────────────────────────────────────────────────────
 
@@ -214,36 +109,6 @@ def _split_at_markup(
 # ── Language → spacy model mapping ─────────────────────────────────────────
 
 _NER_PERSON_LABELS = frozenset({"PER", "PERSON"})
-
-
-# ── AnonymizerConfig ────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class AnonymizerConfig:
-    """Configuration for the anonymization passes.
-
-    Args:
-        secondary_model: spaCy model name for a second NER pass (e.g.
-            ``"xx_ent_wiki_sm"`` to catch foreign names in documents whose
-            primary language differs from the names' origin).  ``None``
-            disables the second NER pass.
-        primary_model: Override the primary spaCy model.  ``None`` (default)
-            means the model is derived automatically from the document language.
-            Set to e.g. ``"xx_ent_wiki_sm"`` to force the multilingual model
-            regardless of language.
-        patterns: Regex patterns applied after NER, as ``(tag, pattern)``
-            pairs.  An empty tuple skips regex anonymization entirely.
-            Defaults to :data:`DEFAULT_PATTERNS` (IBAN, EMAIL, street,
-            postcode + city, dates, PHONE).
-    """
-
-    #: SECONDARY_MODEL_AUTO ("the system language's model"), SECONDARY_MODEL_NONE / None
-    #: (no extra pass) or a model name.  Left unresolved here: :class:`SpacyAnonymizer`
-    #: and :func:`resolve_anonymizer_config` turn it into a model name or ``None``.
-    secondary_model: str | None = None
-    primary_model: str | None = None
-    patterns: tuple[tuple[str, str], ...] = field(default_factory=lambda: tuple(DEFAULT_PATTERNS))
 
 
 #: Called with a warning sentence the user should see (e.g. the reporter's ``warn``).

@@ -337,7 +337,7 @@ def test_anonymizer_receives_models_and_current_default_patterns(tmp_path: Path)
     When   the stage anonymizer and the anonymized-text anonymizer are built
     Then   both get the models and the current default patterns instead of the old list
     """
-    from teachers_teammate.infrastructure.anonymizer import (  # noqa: PLC0415
+    from teachers_teammate.domain.anonymization import (  # noqa: PLC0415
         _LEGACY_DEFAULT_PATTERNS,
         DEFAULT_PATTERNS,
     )

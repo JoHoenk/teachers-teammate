@@ -91,7 +91,7 @@ class _StubService(RecommendationServiceStub):
     def pending_addon_packages(self) -> list[str]:
         return []
 
-    def list_ollama_model_sizes(self, url: str = "") -> dict[str, int]:
+    def list_ollama_model_sizes(self, url: str) -> dict[str, int]:
         _ = url
         return {}
 

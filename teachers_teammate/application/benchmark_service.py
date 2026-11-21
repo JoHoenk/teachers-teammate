@@ -18,6 +18,7 @@ import threading
 
 from ..config import DEFAULTS, Config, OcrConfig, load_config_file
 from ..domain.benchmark import PairComparison, compare_pair
+from ..domain.model_catalog import normalize_tag
 from ..infrastructure.benchmark.run_store import BenchmarkRunStore, NewRunRequest, StoredRun
 from ..infrastructure.benchmark.runner import OcrRunResult, run_ocr
 from ..infrastructure.ocr_processor import get_ocr_prompt
@@ -46,7 +47,6 @@ class BenchmarkApplicationService:
         runner: _Runner | None = None,
     ) -> None:
         self.services = app_services
-        self._processing = app_services.processing
         self._setup = app_services.setup
         self._store = run_store or BenchmarkRunStore()
         self._component_factory = component_factory or PipelineComponentFactory()
@@ -68,7 +68,7 @@ class BenchmarkApplicationService:
             return {}
 
     def list_supported_suffixes(self) -> frozenset[str]:
-        return self._processing.list_supported_suffixes()
+        return self.services.run.list_supported_suffixes()
 
     # ── Benchmark operations ────────────────────────────────────────────────
 
@@ -126,7 +126,7 @@ class BenchmarkApplicationService:
                 source,
                 component_factory=self._component_factory,
                 stop_event=stop_event,
-                model_store=self._processing.model_store,
+                model_store=self.services.model_store,
             )
         finally:
             # A benchmark that ends or is stopped must not leave its model in memory: the next
@@ -136,7 +136,7 @@ class BenchmarkApplicationService:
             raise BenchmarkRunError(result.error)
 
         ocr_config_hash = compute_ocr_config_hash(
-            config, get_ocr_prompt(language), source, self._processing.model_store
+            config, get_ocr_prompt(language), source, self.services.model_store
         )
         if on_progress is not None:
             on_progress("Storing run…")
@@ -155,21 +155,14 @@ class BenchmarkApplicationService:
             )
         )
 
-    @staticmethod
-    def _loaded_tags(url: str, ocr: OcrConfig) -> frozenset[str]:
+    def _loaded_tags(self, url: str, ocr: OcrConfig) -> frozenset[str]:
         """Return the models the server holds in memory before a run, or nothing."""
         if ocr.engine != "ollama":
             return frozenset()
-        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
-            OllamaClient,
-            normalize_tag,
-        )
-
-        loaded = OllamaClient(url).activity().loaded_names()
+        loaded = self.services.ollama.activity(url).loaded_names()
         return frozenset(normalize_tag(name) for name in loaded)
 
-    @staticmethod
-    def _unload_models_it_loaded(url: str, ocr: OcrConfig, before: frozenset[str]) -> None:
+    def _unload_models_it_loaded(self, url: str, ocr: OcrConfig, before: frozenset[str]) -> None:
         """Drop the models this run loaded, so the benchmark does not hold the memory.
 
         Only the ones that were not in memory before: a model the teacher was already using
@@ -177,15 +170,9 @@ class BenchmarkApplicationService:
         """
         if ocr.engine != "ollama":
             return
-        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
-            OllamaClient,
-            normalize_tag,
-        )
-
-        client = OllamaClient(url)
-        for name in client.activity().loaded_names():
+        for name in self.services.ollama.activity(url).loaded_names():
             if normalize_tag(name) not in before:
-                client.unload(name)
+                self.services.ollama.unload(url, name)
 
     def delete_run(self, source: Path, run_id: str) -> None:
         """Delete a single stored run for *source*."""

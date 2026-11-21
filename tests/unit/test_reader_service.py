@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,7 +12,7 @@ from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.local_models import PAGE_MODELS
 from teachers_teammate.domain.setting_values import PreprocessMethod
-from tests.conftest import fake_page_models_store
+from tests.conftest import fake_page_models_store, fake_reader_store
 
 
 @pytest.mark.unit

@@ -10,7 +10,7 @@ from .cli import main
 
 
 def build_cli_app_service() -> AppServices:
-    """Return the application service the CLI entrypoints use."""
+    """Return the application's services, as the CLI entrypoints use them."""
     return build_app_services()
 
 

@@ -71,7 +71,7 @@ def test_first_start_settings_tells_a_first_start_from_a_saved_setup(tmp_path: P
 @pytest.mark.unit
 def test_default_config_path_delegates(tmp_path: Path) -> None:
     """
-    Given  a ProcessingApplicationService and a patched storage root
+    Given  the composed services and a patched storage root
     When   default_config_path() is called
     Then   it delegates to storage_root.default_config_path and returns a Path
     """

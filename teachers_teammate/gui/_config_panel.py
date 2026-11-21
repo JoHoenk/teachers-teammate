@@ -37,7 +37,7 @@ from ..application.correction_options import (
     proofreading_prompts,
 )
 from ..application.data_flow import ticked_steps
-from ..application.service import RequirementIssue
+from ..application.run import RequirementIssue
 from ..config import DEFAULTS, Config
 from ..domain.correction_policy import LEVELS
 from ..domain.correction_prompts import NOTES_LIMIT
@@ -993,9 +993,9 @@ class ConfigPanel(QScrollArea):
         Centralised here so callers (this panel and the main window's privacy
         preview) do not each rebuild the config from raw settings keys.
         """
-        from ..application.service import (  # noqa: PLC0415
+        from ..domain.anonymization import (  # noqa: PLC0415
             AnonymizerConfig,
-            resolve_anonymizer_patterns,
+            resolve_patterns,
         )
 
         return AnonymizerConfig(
@@ -1003,7 +1003,7 @@ class ConfigPanel(QScrollArea):
             # "auto:system" and "none" are meaningful values, not "not set"
             secondary_model=self._settings_dict.get("anonymizer_secondary_model")
             or SECONDARY_MODEL_NONE,
-            patterns=resolve_anonymizer_patterns(self._settings_dict.get("anonymizer_patterns")),
+            patterns=resolve_patterns(self._settings_dict.get("anonymizer_patterns")),
         )
 
     def _on_configure_anonymizer(self) -> None:
@@ -1020,8 +1020,8 @@ class ConfigPanel(QScrollArea):
 
     def update_anonymizer_config(self, config: object) -> None:
         """Write an updated AnonymizerConfig back into the settings dict."""
-        from ..application.service import (  # noqa: PLC0415
-            DEFAULT_ANONYMIZER_PATTERNS,
+        from ..domain.anonymization import (  # noqa: PLC0415
+            DEFAULT_PATTERNS,
             AnonymizerConfig,
         )
 
@@ -1032,7 +1032,7 @@ class ConfigPanel(QScrollArea):
         # Unchanged defaults stay symbolic (None) so later changes to them reach this user;
         # an empty list is kept, it means "no regex anonymization".
         self._settings_dict["anonymizer_patterns"] = (
-            None if config.patterns == tuple(DEFAULT_ANONYMIZER_PATTERNS) else list(config.patterns)
+            None if config.patterns == tuple(DEFAULT_PATTERNS) else list(config.patterns)
         )
 
     # ── public API ────────────────────────────────────────────────────────────────
@@ -1263,7 +1263,7 @@ class ConfigPanel(QScrollArea):
         config = self.lookup_config()
         task = self._guard_tasks.setdefault(stage, LatestTask(self))
         task.submit(
-            lambda: service.processing.check_stage_requirements(config, stage),
+            lambda: service.run.check_stage_requirements(config, stage),
             lambda result, error: self._on_stage_guard_result(config, stage, result, error),
         )
 

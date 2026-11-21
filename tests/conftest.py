@@ -284,19 +284,16 @@ def make_config(tmp_path: Path, **overrides: object):
 def _no_background_network_threads(monkeypatch: pytest.MonkeyPatch) -> None:
     """Never let MainWindow start real network threads during tests.
 
-    MainWindow schedules an UpdateCheckThread (GitHub API) at construction and a
-    _ConnectionCheckThread (Ollama) shortly after. If a test tears the window down while
-    one is still blocked on a socket, Qt aborts the whole pytest process
+    MainWindow schedules an UpdateCheckThread (GitHub API) at construction. If a test tears the
+    window down while it is still blocked on a socket, Qt aborts the whole pytest process
     ("QThread: Destroyed while thread is still running"). Tests that exercise ``run()``
     call it directly and are unaffected.
     """
     try:
         from teachers_teammate.gui._update_check import UpdateCheckThread  # noqa: PLC0415
-        from teachers_teammate.gui._worker import _ConnectionCheckThread  # noqa: PLC0415
     except ImportError:  # pure-unit targets without PySide6
         return
     monkeypatch.setattr(UpdateCheckThread, "start", lambda self, *_a: None)
-    monkeypatch.setattr(_ConnectionCheckThread, "start", lambda self, *_a: None)
 
 
 @pytest.fixture(autouse=True)

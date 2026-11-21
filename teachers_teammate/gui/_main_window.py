@@ -44,7 +44,9 @@ from PySide6.QtWidgets import (
 import qdarkstyle
 
 from .. import __version__ as _APP_VERSION
+from ..application.addons import PRIVACY_ADDON
 from ..application.check_document import CheckDocument
+from ..application.commands import WorkNotSavedError
 from ..application.composition import (
     AppServices,
     diagnostics_phase,
@@ -52,18 +54,11 @@ from ..application.composition import (
     start_diagnostics,
 )
 from ..application.documents import WorkedOn
+from ..application.export import NO_TEXT_MESSAGE, DocxExport
 from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
+from ..application.run import IssueKind, RequirementIssue, RunPreflight
 from ..application.sent_text import SentTexts
-from ..application.service import (
-    ADDON_PRIVACY,
-    NO_TEXT_MESSAGE,
-    DocxExport,
-    IssueKind,
-    RequirementIssue,
-    RunPreflight,
-    WorkNotSavedError,
-)
 from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
 from ..domain.data_location import STAGE_CORRECTION, DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
@@ -1121,8 +1116,7 @@ class MainWindow(QMainWindow):
         language = ""
         if first_start:
             language = (
-                self._app_service.processing.system_language()
-                or self._config_panel.lookup_language()
+                self._app_service.setup.system_language() or self._config_panel.lookup_language()
             )
         context = SetupContext(
             settings=self._config_panel.get_settings_dict(),
@@ -1165,7 +1159,7 @@ class MainWindow(QMainWindow):
         The system language goes into the panel, because no settings file names one yet; then
         today's first start runs: the best models for this computer, once detection finishes.
         """
-        language = self._app_service.processing.system_language()
+        language = self._app_service.setup.system_language()
         if language:
             self._config_panel.load_from_dict({"language": language})
             self._save_settings(notify=False)
@@ -1342,10 +1336,10 @@ class MainWindow(QMainWindow):
 
     def _get_file_names(self, config: Config) -> list[str]:
         """Return queued file names via application-layer file discovery."""
-        return [file.name for file in self._app_service.processing.collect_input_files(config)]
+        return [file.name for file in self._app_service.run.collect_input_files(config)]
 
     def _scan_input_files(self) -> list[Path]:
-        """Scan input folder via application service while config is incomplete."""
+        """Scan the input folder through the run service while the config is incomplete."""
         selected = self._config_panel.get_selected_files()
         if selected is not None:
             return selected
@@ -1355,7 +1349,7 @@ class MainWindow(QMainWindow):
         input_dir = Path(input_text)
         if not input_dir.is_dir():
             return []
-        return self._app_service.processing.collect_input_files_from_dir(input_dir, recursive=True)
+        return self._app_service.run.collect_input_files_from_dir(input_dir, recursive=True)
 
     def _refresh_queue_from_inputs(self) -> None:
         """Refresh queue from input selection without showing modal validation errors."""
@@ -1409,7 +1403,7 @@ class MainWindow(QMainWindow):
 
     def _recognition_needed(self, source_ids: list[str] | None = None) -> bool:
         """Return whether a run over *source_ids* (default: the whole queue) reads pages."""
-        return self._app_service.processing.needs_text_recognition(
+        return self._app_service.run.needs_text_recognition(
             self._queued_files(source_ids), recognised=self._recognised_files()
         )
 
@@ -1464,7 +1458,7 @@ class MainWindow(QMainWindow):
         in, Run is disabled and :meth:`_run_in_progress` reports busy, so no second
         worker can be started from the Run button or the right-click menu.
         """
-        refusal = self._app_service.processing.output_refusal_for_run(config)
+        refusal = self._app_service.run.output_refusal_for_run(config)
         if refusal:
             _dialogs.notify(self, dlg.output_folder_refused(refusal))
             return
@@ -1476,7 +1470,7 @@ class MainWindow(QMainWindow):
         service = self._app_service
         recognised = self._recognised_files()
         run_in_background(
-            lambda: service.processing.check_run_preflight(
+            lambda: service.run.check_run_preflight(
                 config,
                 recognition=recognition,
                 files=files,
@@ -1613,7 +1607,7 @@ class MainWindow(QMainWindow):
         queued_source_ids = self._results_table.queued_source_ids()
         queue_was_empty = not queued_source_ids
         if queue_was_empty:
-            queued_files = self._app_service.processing.collect_input_files(config)
+            queued_files = self._app_service.run.collect_input_files(config)
             self._queued_files_by_source_id = {str(file.resolve()): file for file in queued_files}
             queued_source_ids = [str(file.resolve()) for file in queued_files]
             self._results_table.set_queue(
@@ -1721,7 +1715,7 @@ class MainWindow(QMainWindow):
         if not files:
             return
         service = self._app_service
-        self._pages_task.submit(lambda: service.processing.page_counts(files), self._on_pages_known)
+        self._pages_task.submit(lambda: service.run.page_counts(files), self._on_pages_known)
 
     def _estimate_per_page(self, config: Config) -> TimeRange | None:
         """Return how long one page takes on this computer, or ``None`` when nothing is known."""
@@ -1755,7 +1749,7 @@ class MainWindow(QMainWindow):
 
         # One stage by hand: the service builds that config, so the GUI holds no variant of
         # its own that could drift from what a run does.
-        config = self._app_service.processing.config_for_stage_run(config, stage)
+        config = self._app_service.run.config_for_stage_run(config, stage)
 
         # Check before touching the cache: a re-run that cannot work (Ollama stopped, model
         # missing) must not throw away the results that are there.
@@ -1889,7 +1883,7 @@ class MainWindow(QMainWindow):
         return [
             (
                 sid,
-                self._app_service.processing.export_target(
+                self._app_service.export.export_target(
                     Path(sid),
                     Path(input_dir) if input_dir else None,
                     Path(folder),
@@ -1933,7 +1927,7 @@ class MainWindow(QMainWindow):
         """Warn when text files would land in the input folder, where the next run reads them.
 
         A one-off export only asks; a run with text files configured there is refused
-        (:meth:`~teachers_teammate.application.service.ProcessingApplicationService.output_refusal_for_run`)
+        (:meth:`~teachers_teammate.application.run.RunService.output_refusal_for_run`)
         since it would repeat.
         """
         input_dir = self._config_panel.get_input_dir()
@@ -1942,9 +1936,7 @@ class MainWindow(QMainWindow):
             return True
         # Folder mode always scans subfolders (see ConfigPanel.to_config).
         if not any(
-            self._app_service.processing.is_in_input_folder(
-                out.parent, Path(input_dir), recursive=True
-            )
+            self._app_service.export.is_in_input_folder(out.parent, Path(input_dir), recursive=True)
             for _sid, out in targets
         ):
             return True
@@ -1967,7 +1959,7 @@ class MainWindow(QMainWindow):
             try:
                 # The texts, their notation and the review come from the stored document, so the
                 # file carries what the Check tab shows.
-                self._app_service.processing.export_docx(
+                self._app_service.export.export_docx(
                     config,
                     Path(source_id),
                     out_path,
@@ -2021,7 +2013,7 @@ class MainWindow(QMainWindow):
             failed = list(preflight_errors)
             for source, out_path in jobs:
                 try:
-                    service.processing.export_text(
+                    service.export.export_text(
                         config,
                         source,
                         out_path,
@@ -2325,7 +2317,7 @@ class MainWindow(QMainWindow):
         files = self._queued_files()
         recognised = self._recognised_files()
         self._readiness_task.submit(
-            lambda: service.processing.check_run_preflight(
+            lambda: service.run.check_run_preflight(
                 config,
                 memory=False,
                 recognition=recognition,
@@ -2457,7 +2449,7 @@ class MainWindow(QMainWindow):
         panel.show_recognition_note(
             skipped=len(skipped),
             not_needed=bool(files)
-            and not self._app_service.processing.needs_text_recognition(
+            and not self._app_service.run.needs_text_recognition(
                 files, recognised=self._recognised_files()
             ),
         )
@@ -2467,7 +2459,7 @@ class MainWindow(QMainWindow):
         panel = self._config_panel
         if panel.results_problem():
             return results_fix(RESULTS_NO_FOLDER)
-        if panel.get_input_dir() and self._app_service.processing.output_refusal_for_run(
+        if panel.get_input_dir() and self._app_service.run.output_refusal_for_run(
             panel.lookup_config()
         ):
             return results_fix(RESULTS_TEXT_IN_INPUT)
@@ -2940,7 +2932,7 @@ class MainWindow(QMainWindow):
             return
         if not kind.is_anonymized:
             QApplication.clipboard().setText(
-                service.processing.text_for_copy(view, corrected=kind.is_corrected)
+                service.export.text_for_copy(view, corrected=kind.is_corrected)
             )
             self._check.show_copied()
             return
@@ -2948,7 +2940,7 @@ class MainWindow(QMainWindow):
         anon_config = self._config_panel.build_anonymizer_config()
 
         def _copy() -> object:
-            return service.processing.text_for_copy(
+            return service.export.text_for_copy(
                 view,
                 corrected=kind.is_corrected,
                 anonymize=True,
@@ -3089,7 +3081,7 @@ class MainWindow(QMainWindow):
             view = service.documents.load_view(config, Path(source_id))
             if view is None:
                 return None
-            return service.processing.describe_sent_texts(config, view)
+            return service.documents.describe_sent_texts(config, view)
 
         def _on_done(result: object, error: BaseException | None) -> None:
             busy.accept()
@@ -3335,7 +3327,7 @@ class MainWindow(QMainWindow):
             self.packages_changed.emit()
 
     def _on_addon_installed(self, addon: str) -> None:
-        if addon == ADDON_PRIVACY:
+        if addon == PRIVACY_ADDON:
             self.packages_changed.emit()  # spaCy may be available now
             _dialogs.notify(self._dialog_parent(), dlg.privacy_addon_installed())
         elif addon == READER_ADDON_ID:
@@ -3355,7 +3347,7 @@ class MainWindow(QMainWindow):
         if thread is not None and thread.isRunning():
             return  # a preview is already in flight; ignore the extra click
 
-        image_suffixes = self._app_service.processing.list_supported_suffixes() - {".txt"}
+        image_suffixes = self._app_service.run.list_supported_suffixes() - {".txt"}
         # Prefer the file the user selected in the queue so the preview matches the
         # document they are looking at, not just whichever file sorts first.
         source_path: Path | None = next(
@@ -3380,8 +3372,7 @@ class MainWindow(QMainWindow):
                 )
         if source_path is None:
             supported_glob = " ".join(
-                f"*{s}"
-                for s in sorted(self._app_service.processing.list_supported_suffixes() - {".txt"})
+                f"*{s}" for s in sorted(self._app_service.run.list_supported_suffixes() - {".txt"})
             )
             chosen = _dialogs.pick_file(owner, dlg.select_image_or_pdf(supported_glob))
             if chosen is None:

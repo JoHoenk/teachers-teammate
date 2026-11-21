@@ -618,3 +618,31 @@ def _read_mb(path: Path) -> int | None:
     """Return the byte count in *path* as MB, or ``None`` when it is missing."""
     value = _read_int(path)
     return _bytes_to_mb(value) if value is not None else None
+
+
+class SystemHardwareProbe:
+    """This computer's graphics cards and memory, asked through the functions above.
+
+    Each method looks its function up by name when it is called, so patching one of them in a
+    test changes what this object answers.
+    """
+
+    def gpus(self) -> list[GpuInfo]:
+        """Return the graphics cards of this computer."""
+        return detect_gpus()
+
+    def apple_unified_memory_gb(self) -> float | None:
+        """Return the shared memory of an Apple Silicon computer, or ``None``."""
+        return detect_apple_unified_memory_gb()
+
+    def system_memory_gb(self) -> float | None:
+        """Return the main memory of this computer, or ``None`` when it cannot be read."""
+        return detect_system_memory_gb()
+
+    def available_memory_gb(self) -> float | None:
+        """Return the main memory free right now, or ``None`` when it cannot be read."""
+        return detect_available_memory_gb()
+
+    def gpu_usage(self) -> GpuUsage | None:
+        """Return how busy the first graphics card is, or ``None`` when it cannot be read."""
+        return read_gpu_usage()

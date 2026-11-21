@@ -11,10 +11,9 @@ from typing import Any
 from PySide6.QtCore import QThread, Signal
 
 from ..application.composition import AppServices
-from ..application.service import ProgressCallbacks
 from ..config import Config
 from ..domain.run_summary import FileOutcome, KeepAwakeState, RunSummary
-from ..interfaces import CallbackReporter
+from ..interfaces import CallbackReporter, ProgressCallbacks
 from ..texts.run import BATTERY_WARNING
 from ._types import FileDoneEvent
 
@@ -138,7 +137,7 @@ class OCRWorker(QThread):
                     on_first_token=on_first_token,
                 ),
             }
-            summary = self._app_service.processing.run_selected(
+            summary = self._app_service.run.run_selected(
                 self._config, self._files, **pipeline_kwargs
             )
         except (Exception, SystemExit) as exc:  # noqa: BLE001  # catch SystemExit to prevent the worker thread from killing the GUI process; also catches unexpected exceptions
@@ -163,34 +162,3 @@ def detach_running_worker(worker: QThread) -> None:
 def detached_workers_running() -> bool:
     """Return whether a detached worker is still running."""
     return any(worker.isRunning() for worker in _DETACHED)
-
-
-class _ConnectionCheckThread(QThread):
-    """Background check: OCR engine reachability / correction provider auth."""
-
-    check_done = Signal(bool, bool, str)  # (connected, model_ok, message)
-
-    def __init__(
-        self,
-        *,
-        engine: str = "",
-        provider: str = "",
-        url: str = "http://127.0.0.1:11434",
-        model: str = "",
-        app_service: AppServices,
-    ) -> None:
-        super().__init__()
-        self._engine = engine
-        self._provider = provider
-        self._url = url
-        self._model = model
-        self._app_service = app_service
-
-    def run(self) -> None:
-        connected, model_ok, msg = self._app_service.processing.check_connection(
-            engine=self._engine,
-            provider=self._provider,
-            url=self._url,
-            model=self._model,
-        )
-        self.check_done.emit(connected, model_ok, msg)

@@ -12,8 +12,10 @@ from dataclasses import dataclass
 import functools
 from pathlib import Path
 
-from ..config import Config
+from ..config import DEFAULTS, Config
 from ..domain.context_budget import RunWindows
+from ..domain.formatted_text import TextFormat, normalize_text_format
+from ..infrastructure.anonymizer import anonymizer_config_from
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.state_repository import (
     DocumentState,
@@ -29,10 +31,14 @@ from ..infrastructure.workflow.cache_service import (
     privacy_fingerprint,
     stage_hashes,
 )
+from .anonymization import AnonymizationService
 from .check_document import CheckDocument, check_document_of
+from .correction_options import proofreading_prompts
+from .data_flow import DataFlowService
 from .document_view import DocumentStateView, to_view
 from .merged_view import merged_view, reconciled_view
 from .queue import QueueRow, StoredStages, queue_row
+from .sent_text import Anonymize, SentTexts, describe_sent_texts
 
 
 @dataclass(frozen=True)
@@ -73,12 +79,17 @@ class DocumentQueries:
         work_store: TeacherWorkStore,
         model_store: ModelStore,
         windows_for: Callable[[Config], RunWindows],
+        data_flow: DataFlowService,
+        anonymization: AnonymizationService,
     ) -> None:
         self._state_store = state_store_factory
         self._work_store = work_store
         self._model_store = model_store
         # The context windows a run would use; the run service owns them.
         self._windows_for = windows_for
+        # Where each step takes place, and the shared anonymizer used to show what is sent.
+        self._data_flow = data_flow
+        self._anonymization = anonymization
 
     def _documents(
         self, config: Config, files: Iterable[Path], *, reconciled: bool
@@ -230,6 +241,66 @@ class DocumentQueries:
             transcribed=tuple(transcribed),
             worked_on=tuple(worked_on_documents),
         )
+
+    def describe_sent_texts(self, config: Config, view: DocumentStateView) -> SentTexts:
+        """Return what every step that leaves this computer receives, exactly as sent.
+
+        Uses the shared anonymizer (and so its cache), so opening the dialog costs one spaCy
+        pass per text and settings for the whole session — the same result a run sends.  The
+        prompts are built with the code the stages use, so the dialog cannot drift from them.
+
+        Args:
+            config: The live settings; decides the steps and the prompts.
+            view: The document as it is now: the texts a run would send, and how the results
+                that are already stored were sent, so the dialog can say what really went out
+                next to what would go next.
+        """
+        flow = self._data_flow.describe_data_flow(config)
+        return describe_sent_texts(
+            flow,
+            raw_text=view.raw_text,
+            correction_text=view.correction_text,
+            anonymize=self._sent_text_anonymizer(config),
+            preview_extracted=config.anonymization_enabled,
+            correction_prompt=self._sent_correction_prompt(config),
+            evaluation_prompt=self._sent_evaluation_prompt(
+                config, normalize_text_format(view.raw_text_format)
+            ),
+            stored=view.sent,
+        )
+
+    def _sent_text_anonymizer(self, config: Config) -> Anonymize | None:
+        """Return the anonymizer for this config — the shared, caching one — or ``None``.
+
+        ``None`` when personal-info removal is off: nothing is hidden then, so the dialog
+        must show the text as written.
+        """
+        if not config.anonymization_enabled:
+            return None
+        anon_config = anonymizer_config_from(config)
+        language = config.language
+        return lambda text: self._anonymization.anonymize_preview(text, language, anon_config)
+
+    def _sent_correction_prompt(self, config: Config) -> str:
+        """Return the instructions the corrector sends, or ``""`` when it sends none.
+
+        One heading per step that runs, then the teacher's notes when there are any: the
+        prompts are fixed, so this is the whole of what the model is told.
+        """
+        from ..domain.correction_prompts import notes_block  # noqa: PLC0415
+
+        parts = [f"{title}\n\n{prompt}" for title, prompt in proofreading_prompts(config)]
+        notes = notes_block(config.correction_notes).strip()
+        if notes:
+            parts.append(notes)
+        return "\n\n".join(parts)
+
+    def _sent_evaluation_prompt(self, config: Config, text_format: TextFormat) -> str:
+        """Return the instructions the evaluator sends, or ``""`` when it sends none."""
+        from ..domain.notation import with_notation_hint  # noqa: PLC0415
+
+        prompt = config.evaluate_prompt or DEFAULTS["evaluate_prompt"]
+        return with_notation_hint(prompt, text_format, task="evaluation")
 
     def _merged(self, view: DocumentStateView, state: DocumentState) -> DocumentStateView:
         """Return *view* with the teacher's texts over the machine's."""

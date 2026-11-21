@@ -92,7 +92,7 @@ class AnonymizerConfigWidget(QWidget):
         *,
         sample_text: str = "",
     ) -> None:
-        from ..application.service import AnonymizerConfig  # noqa: PLC0415
+        from ..domain.anonymization import AnonymizerConfig  # noqa: PLC0415
 
         super().__init__(parent)
         self._language = language
@@ -392,9 +392,9 @@ class AnonymizerConfigWidget(QWidget):
         self._revalidate_all()
 
     def _restore_default_patterns(self) -> None:
-        from ..application.service import DEFAULT_ANONYMIZER_PATTERNS  # noqa: PLC0415
+        from ..domain.anonymization import DEFAULT_PATTERNS  # noqa: PLC0415
 
-        self._set_patterns(DEFAULT_ANONYMIZER_PATTERNS)
+        self._set_patterns(DEFAULT_PATTERNS)
 
     def _set_patterns(self, patterns) -> None:
         """Replace the table rows with *patterns* (``(tag, regex)`` pairs) and validate them."""
@@ -524,10 +524,10 @@ class AnonymizerConfigWidget(QWidget):
         instead.  On successful download the model combos are refreshed and the
         preview is re-run automatically.
         """
-        from ..application.service import ADDON_PRIVACY  # noqa: PLC0415
+        from ..application.addons import PRIVACY_ADDON  # noqa: PLC0415
         from ._addon_installer_dialog import SpacyModelDownloadDialog  # noqa: PLC0415
 
-        if not self._app_service.addons.is_addon_available(ADDON_PRIVACY):
+        if not self._app_service.addons.is_addon_available(PRIVACY_ADDON):
             _dialogs.notify(self.window(), dlg.spacy_not_installed())
             return
 

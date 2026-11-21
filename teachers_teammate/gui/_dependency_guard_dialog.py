@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..application.service import RequirementIssue
+from ..application.run import RequirementIssue
 from ._fix_targets import COMMAND_RETRY, FixAction
 
 

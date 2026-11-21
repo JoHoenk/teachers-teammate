@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from PySide6.QtWidgets import QPushButton
 
-from teachers_teammate.application.service import IssueKind, RequirementIssue
+from teachers_teammate.application.run import IssueKind, RequirementIssue
 from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog
 from teachers_teammate.gui._fix_targets import (
     COMMAND_CHOOSE_FOLDER,

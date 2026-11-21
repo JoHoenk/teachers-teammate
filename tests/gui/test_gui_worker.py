@@ -9,7 +9,6 @@ import pytest
 from teachers_teammate.gui._qt_stream import QtStream
 from teachers_teammate.gui._worker import (
     OCRWorker,
-    _ConnectionCheckThread,
 )
 from teachers_teammate.domain.run_summary import FileOutcome, FileStatus, RunStatus, RunSummary
 from teachers_teammate.infrastructure.reporting import KeepAwakeState
@@ -172,25 +171,6 @@ def test_ocr_worker_emits_fatal_error_on_pipeline_exception(qtbot, tmp_path: Pat
 
     assert any("FATAL ERROR" in line for line in logs)
     assert [(s.status, s.error) for s in summaries] == [(RunStatus.FAILED, "boom")]
-
-
-@pytest.mark.gui
-def test_connection_thread_no_engine_or_provider(qtbot) -> None:
-    """
-    Given  a _ConnectionCheckThread with neither engine nor provider
-    When   run() is invoked
-    Then   check_done emits False with a 'Nothing to check' message
-
-    The engine/provider matrix for check_connection itself is covered in
-    tests/unit/test_service.py; here we only exercise the GUI thread wiring.
-    """
-    thread = _ConnectionCheckThread(app_service=real_service())
-    results: list[tuple[bool, str]] = []
-    thread.check_done.connect(lambda ok, _model_ok, msg: results.append((ok, msg)))
-    thread.run()
-    qtbot.wait(10)
-    assert results and results[0][0] is False
-    assert "Nothing" in results[0][1]
 
 
 @pytest.mark.gui

@@ -14,6 +14,7 @@ from typing import cast
 import pytest
 
 from teachers_teammate.application.model_recommendations import ModelRecommendationService
+from teachers_teammate.infrastructure.gpu_detector import SystemHardwareProbe
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.model_catalog import (
     DetectionReason,
@@ -49,6 +50,7 @@ def _service(
         machine_factor=(
             (lambda _url, _category: machine_factor) if machine_factor is not None else None
         ),
+        hardware=SystemHardwareProbe(),
     )
 
 
@@ -538,7 +540,9 @@ def test_the_context_choice_resolves_the_models_a_run_would_use() -> None:
             DEFAULTS[f"{'correction' if task == 'correction' else 'evaluate'}_model"]
         )
 
-    service = ModelRecommendationService(effective_model=effective_model)
+    service = ModelRecommendationService(
+        effective_model=effective_model, hardware=SystemHardwareProbe()
+    )
     settings: Mapping[str, object] = {
         "correction_provider": "ollama",
         "correction_model": "",

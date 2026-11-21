@@ -1,10 +1,10 @@
 """A service is built in one place, so every adapter shares its caches.
 
-``ProcessingApplicationService`` was built in about twenty places — eight in the add-on installer
-dialog, three in the anonymizer widget, the worker, the frozen-mode check, both entry points.
-Each copy had its own anonymizer cache, its own model listing cache and its own list of installed
-models, so a download in one place was invisible in another, and the main window had to clear the
-long-lived cache by hand after an install.
+The run's services were once built in about twenty places — eight in the add-on installer dialog,
+three in the anonymizer widget, the worker, the frozen-mode check, both entry points.  Each copy
+had its own anonymizer cache, its own model listing cache and its own list of installed models, so
+a download in one place was invisible in another, and the main window had to clear the long-lived
+cache by hand after an install.
 
 ``application/composition.py`` builds the process's services once.  This test keeps a second
 construction from growing back.
@@ -30,11 +30,14 @@ CONSTRUCTED = {
     "AnonymizationService",
     "AppServices",
     "DataFlowService",
+    "DocumentCommands",
+    "DocumentQueries",
+    "ExportService",
     "ModelRecommendationService",
     "OllamaServerService",
-    "ProcessingApplicationService",
     "ProviderService",
     "ReaderService",
+    "RunService",
     "SetupService",
     "SpeedEstimateService",
 }
@@ -98,4 +101,4 @@ def test_the_composition_module_builds_the_service() -> None:
     """
     root = _root()
 
-    assert "ProcessingApplicationService" in _constructions(root / COMPOSITION)
+    assert "RunService" in _constructions(root / COMPOSITION)

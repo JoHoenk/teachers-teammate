@@ -11,12 +11,13 @@ import pytest
 
 from teachers_teammate.application.anonymization import AnonymizationService
 from teachers_teammate.infrastructure.anonymizer import AnonymizerConfig
+from teachers_teammate.infrastructure.spacy_models import SpacyModels
 from tests.conftest import make_config
 
 
 def _service() -> AnonymizationService:
     """Return a service whose spaCy models are never asked for at construction."""
-    return AnonymizationService()
+    return AnonymizationService(names=SpacyModels())
 
 
 # ── The anonymizer and its caches ─────────────────────────────────────────────
@@ -230,7 +231,7 @@ def test_installed_models_are_listed_once_until_forgotten(caplog: pytest.LogCapt
     Then   spaCy is asked for its models once per remembered state, and the missing-model
            warning is logged once
     """
-    svc = AnonymizationService()
+    svc = AnonymizationService(names=SpacyModels())
     config = AnonymizerConfig(secondary_model="auto:system")
     with (
         patch.object(svc, "list_installed_spacy_models", return_value=[]) as listing,

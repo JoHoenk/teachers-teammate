@@ -1,4 +1,11 @@
-"""Application-layer orchestration services used by GUI and CLI adapters."""
+"""The run: what it needs before it starts, the files it reads, and the summary it leaves.
+
+One service answers everything a run asks — which files the queue holds, whether text
+recognition may read the pages, whether the server answers, whether the models are downloaded,
+whether the stages are ready and whether the models fit the free memory — and runs the files it
+is given.  The context windows a cache key has to match are worked out here too, so the queue,
+the Check tab and the run itself agree.
+"""
 
 from __future__ import annotations
 
@@ -6,22 +13,13 @@ from collections.abc import Callable, Collection, Sequence
 import dataclasses
 from dataclasses import dataclass
 from enum import StrEnum
-import logging
 from pathlib import Path
 import threading
-from typing import TYPE_CHECKING
 
-from ..config import DEFAULTS, Config
+from ..config import Config
 from ..domain.context_budget import RunWindows, memory_at_context_gb
-from ..domain.data_location import (
-    ENGINE_PPOCR,
-)
-from ..domain.formatted_text import TextFormat, normalize_text_format
-from ..domain.local_models import (
-    PAGE_MODELS_SKIPPED_NOTICE,
-    READER_NOT_DOWNLOADED,
-    READER_SIZE_LABEL,
-)
+from ..domain.data_location import ENGINE_PPOCR
+from ..domain.local_models import PAGE_MODELS_SKIPPED_NOTICE, READER_NOT_DOWNLOADED
 from ..domain.model_catalog import (
     RUN_MEMORY_MARGIN_GB,
     DetectionReason,
@@ -31,68 +29,32 @@ from ..domain.model_catalog import (
     ram_needed_gb,
 )
 from ..domain.model_listing import ModelListing
-from ..domain.output_files import (
-    TEXT_SUFFIX,
-    feeds_inputs,
-    output_folder_refusal,
-    output_path,
-)
+from ..domain.output_files import TEXT_SUFFIX, output_folder_refusal
 from ..domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
 from ..domain.run_summary import RunSummary
-from ..infrastructure import power
-from ..infrastructure.addon_manager import ADDON_PRIVACY as ADDON_PRIVACY  # noqa: PLC0414
-from ..infrastructure.anonymizer import (
-    DEFAULT_PATTERNS as DEFAULT_ANONYMIZER_PATTERNS,  # noqa: F401
-)
-
-# ── Re-exports for GUI/CLI use — keeps infrastructure types out of adapter layers ──
-from ..infrastructure.anonymizer import AnonymizerConfig as AnonymizerConfig  # noqa: PLC0414
-from ..infrastructure.anonymizer import (
-    resolve_patterns as resolve_anonymizer_patterns,  # noqa: F401
-)
 from ..infrastructure.file_discovery import FileDiscovery
-from ..infrastructure.gpu_detector import GpuInfo as GpuInfo  # noqa: PLC0414
 from ..infrastructure.ollama_utils import WaitDetail
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline
 from ..infrastructure.power import KEEP_AWAKE_REASON, NullSleepBlocker, on_battery
-from ..infrastructure.reporting import KeepAwakeState
-from ..infrastructure.reporting import ProgressCallbacks as ProgressCallbacks  # noqa: PLC0414
+from ..infrastructure.reporting import KeepAwakeState, ProgressCallbacks
 from ..infrastructure.stage_builder import (
     PipelineComponentFactory,
     resolve_run_windows,
     window_of_model,
 )
-from ..infrastructure.state_repository import (
-    StateRepository,
-    compute_file_hash_cached,
-)
-from ..infrastructure.storage_root import (
-    resolve_artifact_dir,
-)
+from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
+from ..infrastructure.storage_root import resolve_artifact_dir
 from ..infrastructure.teacher_work_store import TeacherWorkStore
 from ..interfaces import SUPPORTED_SUFFIXES, SleepBlocker
 from .addons import AddonService
 from .anonymization import AnonymizationService
-from .commands import DocumentCommands
-from .commands import WorkNotSavedError as WorkNotSavedError  # noqa: PLC0414
-from .correction_options import proofreading_prompts
-from .data_flow import DataFlowService, ocr_refusal
-from .document_view import DocumentStateView
+from .data_flow import ocr_refusal
 from .documents import DocumentQueries, WorkedOn
-from .formatting import TextFormatter
 from .model_recommendations import ModelRecommendationService
-from .ollama_server import OllamaServerService
+from .ports import HardwareProbe, OllamaServer
 from .providers import ProviderService
 from .reader import ReaderService
-from .sent_text import Anonymize, SentTexts, describe_sent_texts
-from .setup_plan import SetupService
-from .speed_estimates import SpeedEstimateService
-
-_logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    pass
 
 
 class IssueKind(StrEnum):
@@ -135,16 +97,6 @@ class RequirementIssue:
     models: tuple[str, ...] = ()
     #: The app can start Ollama itself (``OLLAMA_NOT_RUNNING``): the fix offers a button.
     startable: bool = False
-
-
-@dataclass(frozen=True)
-class DocxExport:
-    """Presentation options for :meth:`ProcessingApplicationService.export_docx`."""
-
-    docx_format: str = "table"
-    """``"table"`` (three columns) or ``"comments"`` (diff hunks as Word comments)."""
-    labels_language: str = ""
-    """Language of the review headings and column titles (empty: English)."""
 
 
 @dataclass(frozen=True)
@@ -238,79 +190,75 @@ class RecognitionPlan:
     """Scans: images and PDFs that have to be read from page images."""
 
 
-#: Why an export has nothing to write: the document was never read.
-NO_TEXT_MESSAGE = "No OCR text — run the pipeline first."
+def state_store_for(
+    config: Config, *, repository: Callable[[Path], StateRepository]
+) -> StateRepository:
+    """Return the store of *config*'s document results: one per output folder."""
+    return repository(resolve_artifact_dir(config.output_dir) / "state")
 
 
-class ProcessingApplicationService:
-    """Coordinates processing and state transitions behind a small app-facing API."""
+def windows_for(config: Config, *, recommendations: ModelRecommendationService) -> RunWindows:
+    """Return the context windows a run with *config* uses on this computer.
+
+    The same resolution the run itself uses, so a cache key computed here matches the one the
+    run writes — once this computer has been probed.  It never probes itself: the GUI asks for
+    the expected cache keys on its own thread, and the probe runs ``nvidia-smi`` and the ROCm
+    tools.  While the computer is still unknown the base window is returned; a caller that
+    needs the card-derived window calls
+    :meth:`ModelRecommendationService.detect_hardware` in the background first and asks again
+    (``.cached_hardware_profile`` says whether that is needed).
+    """
+    return resolve_run_windows(
+        config,
+        recommendations.cached_hardware_profile(config.hardware_profile, config.ollama_url),
+    )
+
+
+class RunService:
+    """The run and everything it asks before it starts: files, requirements, windows, summary."""
 
     def __init__(  # noqa: PLR0913
         self,
         *,
-        discovery: FileDiscovery | None = None,
-        pipeline_factory: Callable[..., OCRPipeline] | None = None,
-        state_repository_factory: Callable[[Path], StateRepository] | None = None,
-        component_factory: PipelineComponentFactory | None = None,
-        sleep_blocker: SleepBlocker | None = None,
-        model_store: ModelStore | None = None,
-        work_store: TeacherWorkStore | None = None,
-        ollama: OllamaServerService,
+        discovery: FileDiscovery,
+        pipeline_factory: Callable[..., OCRPipeline],
+        component_factory: PipelineComponentFactory,
+        sleep_blocker: SleepBlocker,
+        model_store: ModelStore,
+        work_store: TeacherWorkStore,
+        ollama: OllamaServer,
+        hardware: HardwareProbe,
         providers: ProviderService,
         reader: ReaderService,
         recommendations: ModelRecommendationService,
-        speeds: SpeedEstimateService,
         anonymization: AnonymizationService,
         addons: AddonService,
-        data_flow: DataFlowService,
-        setup: SetupService,
+        documents: DocumentQueries,
     ) -> None:
-        self._discovery = discovery or FileDiscovery()
+        self._discovery = discovery
+        self._pipeline_factory = pipeline_factory
+        # The stage factory a run starts from; the run swaps in the shared anonymizer.
+        self._component_factory = component_factory
+        # Held around a run only (see run_selected); a fake in tests, the platform's own here.
+        self._sleep_blocker = sleep_blocker
+        self._model_store = model_store
         # The teacher's work: one store for the window's writes and every run's reads, so both
         # see the same folder.
-        self._work_store = work_store or TeacherWorkStore()
-        # The built-in reader's model files; tests give it a store under a temporary folder.
-        self._model_store = model_store or ModelStore()
-        # Held around a run only (see run_selected); a fake in tests, the platform's own here.
-        self._sleep_blocker = sleep_blocker or power.default_sleep_blocker()
-        self._pipeline_factory = pipeline_factory or OCRPipeline
-        self._state_repository_factory = state_repository_factory or StateRepository
-        # Used only to keep preprocess_preview() in sync with a non-default factory a
-        # caller's OCRPipeline was built with; pipeline runs configure their own copy.
-        self._component_factory = component_factory or PipelineComponentFactory()
-        # The services are given, never built here: see ``application/composition.py``.
+        self._work_store = work_store
         self._ollama = ollama
+        # The cheap question of this computer a run asks; the full probe stays with the
+        # recommendations.
+        self._hardware = hardware
         self._providers = providers
         self._reader = reader
-        self.anonymization = anonymization
-        self.data_flow = data_flow
-        self.addons = addons
+        self._recommendations = recommendations
+        self._anonymization = anonymization
+        self._addons = addons
+        # What the store says about a file: what a run would replace, and what needs no reading.
+        self._documents = documents
         # Whether a PDF has a usable text layer, by (path, size, mtime, mode): the readiness
         # check asks again after every settings change, and opening a PDF is not free.
         self._pdf_text_cache: dict[tuple[str, int, int, str], bool] = {}
-        self._speeds = speeds
-        self._recommendations = recommendations
-        # A model list that is forgotten takes the classifications derived from it with it.
-        self._providers.watch_classifications(self._recommendations.invalidate_classification)
-        self.setup = setup
-        self.commands = DocumentCommands(
-            state_store_factory=self._state_store,
-            windows_for=self.resolved_windows,
-            model_store=self._model_store,
-            work_store=self._work_store,
-        )
-        # Read-only queries over the store; the adapters use this one directly.
-        self.documents = DocumentQueries(
-            state_store_factory=self._state_store,
-            work_store=self._work_store,
-            model_store=self._model_store,
-            windows_for=self.resolved_windows,
-        )
-
-    def _state_store(self, config: Config) -> StateRepository:
-        return self._state_repository_factory(resolve_artifact_dir(config.output_dir) / "state")
-
-    # ── Workflow operations ───────────────────────────────────────────────
 
     def run_selected(
         self,
@@ -369,38 +317,16 @@ class ProcessingApplicationService:
     def _run_component_factory(self) -> PipelineComponentFactory:
         """Return the stage factory of a run: its anonymizer shares this service's caches."""
         return dataclasses.replace(
-            self._component_factory, build_anonymizer=self.anonymization.build_cached_anonymizer
+            self._component_factory, build_anonymizer=self._anonymization.build_cached_anonymizer
         )
 
     def run_preview_only(self, config: Config, files: Sequence[Path]) -> RunSummary:
         """Preprocess *files* and return what happened to each; nothing is read or proofread."""
         return self._pipeline_factory(config, files).run_preview_only()
 
-    # ── Queries ───────────────────────────────────────────────────────────
-
     def collect_input_files(self, config: Config) -> list[Path]:
         """Return supported source files for the current config."""
         return self._discovery.collect_input_files(config)
-
-    # ── Context windows ───────────────────────────────────────────────────
-
-    def resolved_windows(self, config: Config) -> RunWindows:
-        """Return the context windows a run with *config* uses on this computer.
-
-        The same resolution the run itself uses, so a cache key computed here matches the
-        one the run writes — once this computer has been probed.  It never probes itself:
-        the GUI asks for the expected cache keys on its own thread, and the probe runs
-        ``nvidia-smi`` and the ROCm tools.  While the computer is still unknown the base
-        window is returned; a caller that needs the card-derived window calls
-        :meth:`ModelRecommendationService.detect_hardware` in the background first and asks
-        again (``.cached_hardware_profile`` says whether that is needed).
-        """
-        return resolve_run_windows(
-            config,
-            self._recommendations.cached_hardware_profile(
-                config.hardware_profile, config.ollama_url
-            ),
-        )
 
     def list_supported_suffixes(self) -> frozenset[str]:
         """Return input file suffixes accepted by the pipeline."""
@@ -409,278 +335,6 @@ class ProcessingApplicationService:
     def collect_input_files_from_dir(self, input_dir: Path, recursive: bool) -> list[Path]:
         """Collect supported input files without a full Config (for partial GUI state)."""
         return self._discovery.collect_input_files_from_dir(input_dir, recursive)
-
-    def export_docx(
-        self,
-        config: Config,
-        source: Path,
-        out_path: Path,
-        *,
-        options: DocxExport | None = None,
-    ) -> None:
-        """Write the Word file of *source* to *out_path*, from the texts it has now.
-
-        The texts, their notation and the review come from the view, so an export carries what
-        the teacher sees — their transcription and their corrections — and never the machine's
-        texts behind them.  *options* selects the layout and the language of the headings.
-
-        Raises:
-            ValueError: the document has no text to export.
-        """
-        from ..infrastructure.docx_builder import DocxDocumentCreator  # noqa: PLC0415
-
-        view = self.documents.load_view(config, source)
-        if view is None or not view.raw_text.strip():
-            raise ValueError(NO_TEXT_MESSAGE)
-        chosen = options or DocxExport()
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        creator = DocxDocumentCreator(
-            fmt=chosen.docx_format, labels_language=chosen.labels_language
-        )
-        creator.create(
-            view.raw_text,
-            view.correction_text,
-            out_path,
-            source.stem,
-            source_image=view.preview_img or None,
-            text_format=TextFormatter.normalize(view.raw_text_format),
-            review=view.correction_review,
-        )
-
-    def text_for_copy(
-        self,
-        view: DocumentStateView,
-        *,
-        corrected: bool = False,
-        anonymize: bool = False,
-        language: str = "English",
-        anonymizer_config: object | None = None,
-    ) -> str:
-        """Return the text of *view* as plain text, the way a text export writes it.
-
-        One function for the clipboard and for the saved file, so a copy and an export of the
-        same document never differ.  *corrected* takes the proofread text instead of the
-        transcription.  With *anonymize* the personal data is replaced by placeholders
-        (``[PERSON_1]``, ...) on the text in its stored notation, as the pipeline and the
-        privacy preview do.
-
-        Raises:
-            ImportError: *anonymize* is set and spacy is not installed.
-            OSError: a required spacy model is not downloaded.
-        """
-        text = view.correction_text if corrected else view.raw_text
-        if anonymize:
-            text, _mapping = self.anonymization.anonymize_preview(text, language, anonymizer_config)
-        return TextFormatter.plain_text(text, view.raw_text_format)
-
-    def export_text(
-        self,
-        config: Config,
-        source: Path,
-        out_path: Path,
-        *,
-        anonymize: bool = False,
-        language: str = "English",
-        anonymizer_config: object | None = None,
-        protected: Collection[Path] = (),
-    ) -> None:
-        """Write the transcription of *source* to *out_path* as a UTF-8 text file.
-
-        The text and its notation come from the view, so the file carries the teacher's
-        transcription where they fixed or checked it.  Markdown is written as plain text.  With
-        *anonymize* the personal data is replaced by placeholders (``[PERSON_1]``, ...) using
-        the local anonymizer, on the text in its stored notation (as the pipeline and the
-        privacy preview do); the placeholder mapping is dropped, so the original names cannot
-        be recovered from the file.
-
-        Args:
-            protected: Further documents that must not be overwritten (the other inputs of
-                the same export); *source* itself is always protected.
-
-        Raises:
-            ValueError: the document has no text, or *out_path* is *source* or one of
-                *protected* (an input document).
-            ImportError: *anonymize* is set and spacy is not installed.
-            OSError: the file cannot be written, or a required spacy model is not downloaded.
-        """
-        target = out_path.resolve()
-        if target == source.resolve() or target in {p.resolve() for p in protected}:
-            raise ValueError(
-                f"{out_path.name} is an input document and would be overwritten; "
-                "choose another name or folder."
-            )
-        view = self.documents.load_view(config, source)
-        if view is None or not view.raw_text.strip():
-            raise ValueError(NO_TEXT_MESSAGE)
-        text = self.text_for_copy(
-            view,
-            anonymize=anonymize,
-            language=language,
-            anonymizer_config=anonymizer_config,
-        )
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(text, encoding="utf-8")
-
-    @staticmethod
-    def is_in_input_folder(folder: Path, input_dir: Path, *, recursive: bool) -> bool:
-        """Return whether files written to *folder* would be found as inputs of *input_dir*."""
-        return feeds_inputs(folder.resolve(), input_dir.resolve(), recursive=recursive)
-
-    @staticmethod
-    def export_target(source: Path, input_dir: Path | None, folder: Path, suffix: str) -> Path:
-        """Return where a folder export saves *source*: the subfolder it has below
-        *input_dir*, recreated below *folder* (so same-named files in different subfolders
-        do not replace each other).
-        """
-        return output_path(
-            source.resolve(), input_dir.resolve() if input_dir else None, folder, suffix
-        )
-
-    def check_connection(
-        self,
-        *,
-        engine: str = "",
-        provider: str = "",
-        url: str = "http://127.0.0.1:11434",
-        model: str = "",
-    ) -> tuple[bool, bool, str]:
-        """Check whether an OCR engine or LLM provider is reachable.
-
-        Returns ``(connected, model_ok, message)``.
-        For non-Ollama services the tuple is ``(ok, ok, message)`` because
-        the model-level distinction does not apply.
-        """
-        if engine:
-            return self._check_engine(engine, url, model=model)
-        if provider:
-            return self._providers.check_connection(provider, url, model=model)
-        return False, False, "Nothing to check."
-
-    def _check_engine(self, engine: str, url: str, *, model: str = "") -> tuple[bool, bool, str]:
-        if engine == "ollama":
-            return self._providers.check_connection("ollama", url, model=model)
-        if engine == ENGINE_PPOCR:
-            if self._reader.reader_installed():
-                return True, True, "✓ built-in reader ready"
-            return False, False, f"✗ built-in reader not downloaded ({READER_SIZE_LABEL})"
-        return True, True, "✓ OK"
-
-    @staticmethod
-    def _ollama_needed(config: Config) -> bool:
-        """Return whether any enabled stage of *config* talks to Ollama."""
-        return (
-            (config.recognition_enabled and config.ocr.engine == "ollama")
-            or (config.correction_enabled and config.correction_provider == "ollama")
-            or (config.evaluation_enabled and config.evaluate_provider == "ollama")
-        )
-
-    @staticmethod
-    def configured_ollama_models(config: Config) -> list[str]:
-        """Return the deduplicated Ollama models the enabled stages of *config* use."""
-        models: list[str] = []
-        if config.recognition_enabled and config.ocr.engine == "ollama" and config.ocr.model:
-            models.append(config.ocr.model)
-        if config.correction_enabled and config.correction_provider == "ollama":
-            model = config.effective_correction_model or ""
-            if model and model not in models:
-                models.append(model)
-        if config.evaluation_enabled and config.evaluate_provider == "ollama":
-            model = config.effective_evaluate_model or ""
-            if model and model not in models:
-                models.append(model)
-        return models
-
-    def _installed_ollama_models(self, url: str) -> tuple[list[str], str]:
-        """Return ``(installed, unreachable)`` for the Ollama server at *url*.
-
-        *unreachable* is ``""`` when the server answered — also when it has no model
-        downloaded yet — and the connection message otherwise.  Makes at most one
-        request (none within the model-cache TTL), so an unreachable server costs a
-        single timeout instead of one per question asked of it.
-        """
-        cached = self._providers.get_cached_models("ollama", base_url=url)
-        if cached is not None:
-            return list(cached), ""
-        installed, unreachable = self._ollama.listed_models(url)
-        self._providers.remember_listing("ollama", ModelListing(installed), base_url=url)
-        return installed, unreachable
-
-    def _ollama_issue(self, url: str, message: str) -> RequirementIssue:
-        """Return what is wrong with Ollama at *url*: not found, not running, or unreachable.
-
-        A local address that does not answer is told apart by looking for the program: a
-        teacher who has just installed the app needs to know whether to install Ollama or to
-        start it.  An address on another computer can only be unreachable.
-        """
-        if not self._ollama.is_local(url, include_wsl_host=True):
-            return RequirementIssue(message, IssueKind.OLLAMA_UNREACHABLE)
-        if not self._ollama.program_found():
-            return RequirementIssue(message, IssueKind.OLLAMA_NOT_FOUND)
-        return RequirementIssue(
-            message, IssueKind.OLLAMA_NOT_RUNNING, startable=self._ollama.can_start()
-        )
-
-    def describe_sent_texts(self, config: Config, view: DocumentStateView) -> SentTexts:
-        """Return what every step that leaves this computer receives, exactly as sent.
-
-        Uses the shared anonymizer (and so its cache), so opening the dialog costs one spaCy
-        pass per text and settings for the whole session — the same result a run sends.  The
-        prompts are built with the code the stages use, so the dialog cannot drift from them.
-
-        Args:
-            config: The live settings; decides the steps and the prompts.
-            view: The document as it is now: the texts a run would send, and how the results
-                that are already stored were sent, so the dialog can say what really went out
-                next to what would go next.
-        """
-        flow = self.data_flow.describe_data_flow(config)
-        return describe_sent_texts(
-            flow,
-            raw_text=view.raw_text,
-            correction_text=view.correction_text,
-            anonymize=self._sent_text_anonymizer(config),
-            preview_extracted=config.anonymization_enabled,
-            correction_prompt=self._sent_correction_prompt(config),
-            evaluation_prompt=self._sent_evaluation_prompt(
-                config, normalize_text_format(view.raw_text_format)
-            ),
-            stored=view.sent,
-        )
-
-    def _sent_text_anonymizer(self, config: Config) -> Anonymize | None:
-        """Return the anonymizer for this config — the shared, caching one — or ``None``.
-
-        ``None`` when personal-info removal is off: nothing is hidden then, so the dialog
-        must show the text as written.
-        """
-        from ..infrastructure.anonymizer import anonymizer_config_from  # noqa: PLC0415
-
-        if not config.anonymization_enabled:
-            return None
-        anon_config = anonymizer_config_from(config)
-        language = config.language
-        return lambda text: self.anonymization.anonymize_preview(text, language, anon_config)
-
-    def _sent_correction_prompt(self, config: Config) -> str:
-        """Return the instructions the corrector sends, or ``""`` when it sends none.
-
-        One heading per step that runs, then the teacher's notes when there are any: the
-        prompts are fixed, so this is the whole of what the model is told.
-        """
-        from ..domain.correction_prompts import notes_block  # noqa: PLC0415
-
-        parts = [f"{title}\n\n{prompt}" for title, prompt in proofreading_prompts(config)]
-        notes = notes_block(config.correction_notes).strip()
-        if notes:
-            parts.append(notes)
-        return "\n\n".join(parts)
-
-    def _sent_evaluation_prompt(self, config: Config, text_format: TextFormat) -> str:
-        """Return the instructions the evaluator sends, or ``""`` when it sends none."""
-        from ..domain.notation import with_notation_hint  # noqa: PLC0415
-
-        prompt = config.evaluate_prompt or DEFAULTS["evaluate_prompt"]
-        return with_notation_hint(prompt, text_format, task="evaluation")
 
     @staticmethod
     def ocr_refusal_for_run(config: Config) -> str:
@@ -724,7 +378,7 @@ class ProcessingApplicationService:
         ):
             return ""
         if not self.needs_text_recognition(
-            files, recognised=self.documents.recognised_files(config, files)
+            files, recognised=self._documents.recognised_files(config, files)
         ):
             return ""
         return READER_NOT_DOWNLOADED
@@ -756,7 +410,7 @@ class ProcessingApplicationService:
             return True
         return any(file.suffix.lower() != TEXT_SUFFIX and file not in recognised for file in files)
 
-    def plan_recognition(
+    def _plan_recognition(
         self,
         files: Collection[Path],
         *,
@@ -835,7 +489,7 @@ class ProcessingApplicationService:
 
         With text recognition switched off and *files* given, the result also lists the files
         the run leaves out (``skipped``), and is blocked (``nothing_to_read``) when none of
-        them can be used.  Such a check opens PDFs, see :meth:`plan_recognition`.  A document
+        them can be used.  Such a check opens PDFs, see :meth:`_plan_recognition`.  A document
         whose transcription the teacher stored is read from that, so it is not left out.
 
         *ask_about_work* adds ``worked_on``: the documents whose corrections or transcription the
@@ -844,7 +498,7 @@ class ProcessingApplicationService:
         """
         skipped: tuple[Path, ...] = ()
         if not config.recognition_enabled and files:
-            plan = self.plan_recognition(
+            plan = self._plan_recognition(
                 files,
                 recognised={*recognised, *self._with_stored_transcription(files)},
                 pdf_text_layer=config.ocr.pdf_text_layer,
@@ -861,7 +515,7 @@ class ProcessingApplicationService:
             # The question about the teacher's work belongs to a run that will start.
             result = dataclasses.replace(
                 result,
-                worked_on=self.documents.worked_on_documents(
+                worked_on=self._documents.worked_on_documents(
                     config, files, run_proofreads=config.correction_enabled
                 ),
             )
@@ -915,7 +569,7 @@ class ProcessingApplicationService:
                     ollama_unreachable=unreachable,
                     ollama_issue=self._ollama_issue(config.ollama_url, unreachable),
                 )
-            configured = self.configured_ollama_models(config)
+            configured = self._configured_ollama_models(config)
             missing = [m for m in configured if not models_include(m, installed)]
             if missing:
                 return RunPreflight(missing_models=tuple(missing))
@@ -933,10 +587,65 @@ class ProcessingApplicationService:
                 return RunPreflight(stage=stage, stage_issues=tuple(issues))
         return RunPreflight(
             memory_warning=self.memory_warning_for_run(config) if memory else "",
-            ollama_wait=self.ollama_wait_for_run(config) if memory else WaitDetail(),
+            ollama_wait=self._ollama_wait(config) if memory else WaitDetail(),
         )
 
-    def ollama_wait_for_run(self, config: Config) -> WaitDetail:
+    @staticmethod
+    def _ollama_needed(config: Config) -> bool:
+        """Return whether any enabled stage of *config* talks to Ollama."""
+        return (
+            (config.recognition_enabled and config.ocr.engine == "ollama")
+            or (config.correction_enabled and config.correction_provider == "ollama")
+            or (config.evaluation_enabled and config.evaluate_provider == "ollama")
+        )
+
+    @staticmethod
+    def _configured_ollama_models(config: Config) -> list[str]:
+        """Return the deduplicated Ollama models the enabled stages of *config* use."""
+        models: list[str] = []
+        if config.recognition_enabled and config.ocr.engine == "ollama" and config.ocr.model:
+            models.append(config.ocr.model)
+        if config.correction_enabled and config.correction_provider == "ollama":
+            model = config.effective_correction_model or ""
+            if model and model not in models:
+                models.append(model)
+        if config.evaluation_enabled and config.evaluate_provider == "ollama":
+            model = config.effective_evaluate_model or ""
+            if model and model not in models:
+                models.append(model)
+        return models
+
+    def _installed_ollama_models(self, url: str) -> tuple[list[str], str]:
+        """Return ``(installed, unreachable)`` for the Ollama server at *url*.
+
+        *unreachable* is ``""`` when the server answered — also when it has no model
+        downloaded yet — and the connection message otherwise.  Makes at most one
+        request (none within the model-cache TTL), so an unreachable server costs a
+        single timeout instead of one per question asked of it.
+        """
+        cached = self._providers.get_cached_models("ollama", base_url=url)
+        if cached is not None:
+            return list(cached), ""
+        installed, unreachable = self._ollama.listed_models(url)
+        self._providers.remember_listing("ollama", ModelListing(installed), base_url=url)
+        return installed, unreachable
+
+    def _ollama_issue(self, url: str, message: str) -> RequirementIssue:
+        """Return what is wrong with Ollama at *url*: not found, not running, or unreachable.
+
+        A local address that does not answer is told apart by looking for the program: a
+        teacher who has just installed the app needs to know whether to install Ollama or to
+        start it.  An address on another computer can only be unreachable.
+        """
+        if not self._ollama.is_local(url, include_wsl_host=True):
+            return RequirementIssue(message, IssueKind.OLLAMA_UNREACHABLE)
+        if not self._ollama.program_found():
+            return RequirementIssue(message, IssueKind.OLLAMA_NOT_FOUND)
+        return RequirementIssue(
+            message, IssueKind.OLLAMA_NOT_RUNNING, startable=self._ollama.can_start()
+        )
+
+    def _ollama_wait(self, config: Config) -> WaitDetail:
         """Return why the first file waits for Ollama, or nothing.
 
         A note, not a refusal.  Only for a server on this computer, and only when the model the
@@ -948,7 +657,7 @@ class ProcessingApplicationService:
             return WaitDetail()
         if not self._ollama.is_local(config.ollama_url):
             return WaitDetail()
-        models = self.configured_ollama_models(config)
+        models = self._configured_ollama_models(config)
         if not models:
             return WaitDetail()
         return self._ollama.wait_for(config.ollama_url, models[0])
@@ -983,7 +692,7 @@ class ProcessingApplicationService:
             config.hardware_profile, config.ollama_url
         )
         unified = self._runs_on_apple_silicon(detection)
-        for tag in self.configured_ollama_models(config):
+        for tag in self._configured_ollama_models(config):
             spec = find_spec(tag)
             if spec is None:
                 continue
@@ -1013,18 +722,15 @@ class ProcessingApplicationService:
         window = window_of_model(config, windows, tag)
         return memory_at_context_gb(spec, window) or spec.memory_gb
 
-    @staticmethod
-    def _runs_on_apple_silicon(detection: HardwareDetection) -> bool:
+    def _runs_on_apple_silicon(self, detection: HardwareDetection) -> bool:
         """Whether the models share one pool of memory with the graphics side (Apple Silicon).
 
         Read from the computer, not from the detection reason: a profile chosen by hand is a
         MANUAL detection, but on Apple Silicon the whole model still comes out of that memory.
         """
-        from ..infrastructure import gpu_detector  # noqa: PLC0415
-
         return (
             detection.reason is DetectionReason.APPLE_UNIFIED_MEMORY
-            or gpu_detector.detect_apple_unified_memory_gb() is not None
+            or self._hardware.apple_unified_memory_gb() is not None
         )
 
     def config_for_stage_run(self, config: Config, stage: str) -> Config:
@@ -1077,15 +783,6 @@ class ProcessingApplicationService:
                 )
             ]
         return []
-
-    # ── The built-in reader's model files ────────────────────────────────
-
-    # ── The page models of the automatic image preparation ───────────────
-
-    @property
-    def model_store(self) -> ModelStore:
-        """The store of the model files this service checks, downloads and runs from."""
-        return self._model_store
 
     def _llm_stage_issues(self, config: Config, stage: str) -> list[RequirementIssue]:
         """Return what proofreading or the content review still needs (package, key, model)."""
@@ -1158,16 +855,11 @@ class ProcessingApplicationService:
 
     def _addon_needs_update(self, distribution: str) -> bool:
         """Return whether *distribution* is installed as an add-on but kept off by an app update."""
-        from ..infrastructure.addon_manager import addon_in_folder, addons_outdated  # noqa: PLC0415
+        return self._addons.addons_outdated() and self._addons.addon_in_folder(distribution)
 
-        return addons_outdated() and addon_in_folder(distribution)
-
-    @staticmethod
-    def _addon_waits_for_restart(distribution: str) -> bool:
+    def _addon_waits_for_restart(self, distribution: str) -> bool:
         """Return whether *distribution* is installed but waits for the next start."""
-        from ..infrastructure.addon_manager import addon_waits_for_restart  # noqa: PLC0415
-
-        return addon_waits_for_restart(distribution)
+        return self._addons.addon_waits_for_restart(distribution)
 
     def _name_detection_issues(self, language: str) -> list[RequirementIssue]:
         """Return what removing names still needs: spaCy itself or the model of *language*."""
@@ -1175,11 +867,11 @@ class ProcessingApplicationService:
             return [self._addon_restart_issue("name detection")]
         if self._addon_needs_update("spacy"):
             return [self._addons_outdated_issue()]
-        installed_models = self.anonymization.list_installed_spacy_models()
-        required = self.anonymization.spacy_model_for_language(language)
+        installed_models = self._anonymization.list_installed_spacy_models()
+        required = self._anonymization.spacy_model_for_language(language)
         if required in installed_models:
             return []
-        if not installed_models and not self.addons.is_module_importable("spacy"):
+        if not installed_models and not self._addons.is_module_importable("spacy"):
             return [
                 RequirementIssue(
                     "spaCy is not installed. Install it under Add-ons in the app.",
@@ -1194,11 +886,3 @@ class ProcessingApplicationService:
                 models=(required,),
             )
         ]
-
-    def system_language(self) -> str | None:
-        """Return the language of this computer's system, or ``None`` when it is not supported."""
-        from ..infrastructure.system_locale import system_language  # noqa: PLC0415
-
-        return system_language()
-
-    # ── Commands ──────────────────────────────────────────────────────────

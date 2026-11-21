@@ -252,6 +252,7 @@ _GUI_SRCS = [
     "gui/_server_card.py",
     "gui/_settings_file.py",
     "gui/_settings_launcher.py",
+    "gui/_setup_launcher.py",
     "gui/_path_row.py",
     "gui/_preprocess_preview.py",
     "gui/_privacy_settings.py",

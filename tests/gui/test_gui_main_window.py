@@ -47,6 +47,7 @@ from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._readiness_controller import ReadinessController
 from teachers_teammate.gui._results_table import ResultsTable
+from teachers_teammate.gui._setup_launcher import SetupLauncher
 from teachers_teammate.gui._types import FileDoneEvent
 from teachers_teammate.gui.check import CheckLayout, CopyKind
 from teachers_teammate.gui.settings import SettingsPage, SettingsResult
@@ -1588,7 +1589,9 @@ def test_opening_settings_while_it_is_open_only_switches_the_page(main_window, m
     """
     scripted = install_scripted_settings_window(monkeypatch)
     scripted.isVisible = lambda self: True  # ty: ignore[invalid-assignment]
-    first = scripted(main_window._settings_launcher.context(), main_window, page=SettingsPage.AI_MODELS)
+    first = scripted(
+        main_window._settings_launcher.context(), main_window, page=SettingsPage.AI_MODELS
+    )
     main_window._settings_launcher._open_window = first
     created_before = len(scripted.instances)
 
@@ -2701,7 +2704,7 @@ def test_a_settings_file_from_the_installer_is_still_a_first_start(
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(
-        MainWindow, "_apply_first_start_defaults", lambda self: self._save_settings(notify=False)
+        SetupLauncher, "_apply_first_start_defaults", lambda self: self._hooks.save()
     )
     monkeypatch.setattr(
         SetupAssistant,
@@ -2849,10 +2852,10 @@ def test_cancelling_the_assistant_from_the_tools_menu_saves_nothing(
     monkeypatch.setattr(SetupAssistant, "exec", lambda self: QDialog.DialogCode.Rejected)
     monkeypatch.setattr(MainWindow, "_save_settings", lambda self, **_kw: written.append("save"))
     monkeypatch.setattr(
-        MainWindow, "_apply_first_start_model_settings", lambda self: written.append("models")
+        SetupLauncher, "_apply_first_start_model_settings", lambda self: written.append("models")
     )
 
-    main_window._open_setup_assistant()
+    main_window._setup_launcher.open()
 
     assert written == []
 
@@ -2873,7 +2876,7 @@ def test_an_idle_install_round_does_not_outlive_the_assistant(main_window, monke
     monkeypatch.setattr(SetupAssistant, "exec", lambda self: QDialog.DialogCode.Rejected)
     before = len(main_window.findChildren(InstallRound))
 
-    main_window._open_setup_assistant()
+    main_window._setup_launcher.open()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     assert len(main_window.findChildren(InstallRound)) == before
@@ -2898,9 +2901,9 @@ def test_closing_the_assistant_after_set_up_keeps_the_setup_on_a_first_start(
         return QDialog.DialogCode.Rejected
 
     monkeypatch.setattr(SetupAssistant, "exec", _exec)
-    monkeypatch.setattr(MainWindow, "_apply_first_start_defaults", lambda self: ran.append(1))
+    monkeypatch.setattr(SetupLauncher, "_apply_first_start_defaults", lambda self: ran.append(1))
 
-    main_window._open_setup_assistant(first_start=True)
+    main_window._setup_launcher.open(first_start=True)
 
     assert ran == []
 
@@ -2963,7 +2966,7 @@ def test_the_setup_result_is_applied_without_a_guard_dialog(
     )
     main_window._settings_file._config_path = tmp_path / "ocr.toml"
 
-    main_window._apply_setup_result(
+    main_window._setup_launcher._apply_result(
         SetupResult(
             settings={"correction_provider": "ollama", "correction_model": "qwen3:8b"},
             panel={"language": "German", "anonymization_enabled": True},

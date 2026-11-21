@@ -48,10 +48,9 @@ from ..application.run import IssueKind, RunPreflight
 from ..config import DEFAULTS, Config
 from ..domain.data_location import DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
-from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import ServerKind
 from ..texts import dialogs as dlg
-from ..texts.settings import WHERE_ADDONS, WHERE_GENERAL
+from ..texts.settings import WHERE_GENERAL
 from . import _dialogs
 from ._app_bootstrap import create_app, finish_process
 from ._background import LatestTask, run_in_background, wait_for_background_tasks
@@ -64,7 +63,6 @@ from ._export_controller import ExportController
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
 from ._menu_bar import MenuBar, MenuHooks
-from ._model_wording import profile_text
 from ._preprocess_preview import PreprocessPreview
 from ._privacy_settings import DISPLAY_ANONYMIZED_DEFAULT, FlowAcknowledgements
 from ._privacy_view_controller import PrivacyViewController
@@ -76,6 +74,7 @@ from ._run_controller import RunController, RunHooks, WorkerLike
 from ._run_session import RunSession, wait_detail_text
 from ._settings_file import SettingsFile, SettingsFileHooks
 from ._settings_launcher import SettingsHooks, SettingsLauncher
+from ._setup_launcher import SetupHooks, SetupLauncher
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
 from ._update_check import UpdateCheckThread
@@ -84,7 +83,6 @@ from .settings._page import FOCUS_DETECTION
 
 if TYPE_CHECKING:
     from .benchmark._benchmark_window import BenchmarkWindow
-    from .setup import SetupResult
 
 
 def _is_shown(widget: QWidget) -> bool:
@@ -185,7 +183,7 @@ class MainWindow(QMainWindow):
         #: The Benchmark window once opened (parentless, see ``_open_benchmark``).
         self._benchmark_window: BenchmarkWindow | None = None
         #: Whether the Setup Assistant is open, so a second click cannot open a second one.
-        self._setup_open = False
+        self._setup_launcher: SetupLauncher
 
     def _init_run_state(self) -> None:
         """Declare what the window needs for a run that is going: the clock, the notes, closing."""
@@ -201,7 +199,6 @@ class MainWindow(QMainWindow):
         self._pull_manager = PullManager(self, service=self._app_service)
         #: What the run in progress is doing: the file, the step, the pace and the Stop stage.
         self._run_session = RunSession()
-        self._first_run_task = LatestTask(self)
         self._preprocess_preview: PreprocessPreview
         #: Opens the Settings window and takes over what it changed.
         self._settings_launcher: SettingsLauncher
@@ -290,7 +287,7 @@ class MainWindow(QMainWindow):
             log=self._log,
             settings_store=self._settings_store,
             hooks=SettingsFileHooks(
-                ask_first_start=self._open_setup_assistant_first_start,
+                ask_first_start=lambda: self._setup_launcher.open(first_start=True),
                 queue_loaded=self._refresh_queue_from_inputs,
             ),
         )
@@ -372,7 +369,7 @@ class MainWindow(QMainWindow):
             open_settings=self.open_settings,
             open_benchmark=self._open_benchmark,
             open_monitor=self._open_system_monitor,
-            open_setup_assistant=self._open_setup_assistant,
+            open_setup_assistant=self._setup_launcher.open,
         )
 
     def _init_controllers(self) -> None:
@@ -431,6 +428,15 @@ class MainWindow(QMainWindow):
         self._export_controller.log_line.connect(self._log.append_text)
         self._preprocess_preview = PreprocessPreview(
             self, services=self._app_service, panel=self._config_panel, table=self._results_table
+        )
+        self._setup_launcher = SetupLauncher(
+            self,
+            services=self._app_service,
+            panel=self._config_panel,
+            pull_manager=self._pull_manager,
+            privacy=self._privacy_controller,
+            log=self._log,
+            hooks=self._setup_hooks(),
         )
         self._settings_launcher = SettingsLauncher(
             self,
@@ -564,142 +570,6 @@ class MainWindow(QMainWindow):
         """Read the settings file, or ask the first-start questions when there is none."""
         self._settings_file.load_if_present()
 
-    def _open_setup_assistant_first_start(self) -> None:
-        """Open the assistant on a first start, on top of the window that just appeared."""
-        self._open_setup_assistant(first_start=True)
-
-    def _open_setup_assistant(self, *, first_start: bool = False) -> None:
-        """Ask the questions a first start needs, then apply the setup plan the teacher agreed to.
-
-        On a first start the assistant starts on the system language, because there is no
-        saved one yet; from the Tools menu it starts on the settings as they are.  Cancel on a
-        first start leaves today's setup in place (the best models for this computer and the
-        system language); from the Tools menu it changes nothing.
-        """
-        if self._setup_open:
-            return
-        from .setup import SetupAssistant, SetupContext  # noqa: PLC0415  # loaded on demand
-
-        language = ""
-        if first_start:
-            language = (
-                self._app_service.setup.system_language() or self._config_panel.lookup_language()
-            )
-        context = SetupContext(
-            settings=self._config_panel.get_settings_dict(),
-            app_service=self._app_service,
-            pull_manager=self._pull_manager,
-            language=language,
-            privacy_available=self._privacy_controller.privacy_available,
-            first_start=first_start,
-            display_anonymized=self._privacy_controller.display_anonymized,
-        )
-        assistant = SetupAssistant(context, self)
-        assistant.committed.connect(self._apply_setup_result)
-        # The round outlives the assistant: a download that finishes after the window closed
-        # must still tell this window that packages changed.
-        install_round = assistant.install_round()
-        install_round.finished.connect(self._on_install_round_finished)
-        self._setup_open = True
-        try:
-            assistant.exec()
-        finally:
-            self._setup_open = False
-        # The round was handed to this window so it can finish after the assistant: it goes
-        # when it is over, or at once when nothing is running.
-        if install_round.running():
-            install_round.finished.connect(install_round.deleteLater)
-        else:
-            install_round.deleteLater()
-        wants_documents = assistant.documents_wanted()
-        # Set up decides, not how the window closed: the X on the done page is a reject too.
-        was_set_up = assistant.is_committed()
-        assistant.deleteLater()
-        if first_start and not was_set_up:
-            self._apply_first_start_defaults()
-        if wants_documents:
-            self._config_panel.select_folder()
-
-    def _apply_first_start_defaults(self) -> None:
-        """Leave a first start with a working setup when the assistant was cancelled.
-
-        The system language goes into the panel, because no settings file names one yet; then
-        today's first start runs: the best models for this computer, once detection finishes.
-        """
-        language = self._app_service.setup.system_language()
-        if language:
-            self._config_panel.load_from_dict({"language": language})
-            self._save_settings(notify=False)
-        self._apply_first_start_model_settings()
-
-    def _apply_setup_result(self, result: SetupResult) -> None:
-        """Take over what the assistant set up, then save once.
-
-        The main-window keys go through ``load_from_dict``, which skips the stage guard: the
-        models are still downloading, so a guard would untick Proofread and open a dialog.
-        """
-        self._config_panel.update_settings(result.settings)
-        self._config_panel.load_from_dict(result.panel)
-        if result.display_anonymized is not None:
-            # The name detection may still be on its way: the wish is stored as it is, and the
-            # view follows it as soon as hiding is possible (refresh_availability).
-            self._privacy_controller.store_display_anonymized(result.display_anonymized)
-        self._save_settings(notify=False)
-        self._readiness_controller.start_check()
-        self._refresh_queue_from_inputs()
-
-    def _apply_first_start_model_settings(self) -> None:
-        """Start first-start hardware detection in the background (AC12/AC13)."""
-        service = self._app_service
-        ollama_url = self._current_ollama_url()
-        # Detection must never get in the way of starting the app: any failure
-        # simply leaves the static defaults in place.
-        self._first_run_task.submit(
-            lambda: service.recommendations.detect_hardware(ollama_url),
-            self._on_first_start_detection,
-        )
-
-    def _on_first_start_detection(self, detection: object, error: BaseException | None) -> None:
-        """Replace untouched static defaults with the BEST models for the profile."""
-        if error is not None or not isinstance(detection, HardwareDetection):
-            return
-        settings = self._config_panel.get_settings_dict()
-        best = self._app_service.recommendations.first_run_model_settings(
-            detection.profile,
-            system_memory_gb=detection.system_memory_gb,
-            card_gb=detection.card_gb,
-        )
-        apply: dict[str, str] = {}
-        if (
-            settings.get("ocr_engine") == "ollama"
-            and settings.get("ocr_model") == DEFAULTS["ocr_model"]
-        ):
-            apply["ocr_model"] = best["ocr_model"]
-        if (
-            settings.get("correction_provider") == "ollama"
-            and settings.get("correction_model") == DEFAULTS["correction_model"]
-        ):
-            apply["correction_model"] = best["correction_model"]
-        if (
-            settings.get("evaluate_provider") == "ollama"
-            and settings.get("evaluate_model") == DEFAULTS["evaluate_model"]
-        ):
-            apply["evaluate_model"] = best["evaluate_model"]
-        if not apply:
-            return
-        self._config_panel.update_settings(apply)
-        ocr_model = apply.get("ocr_model", str(settings.get("ocr_model", "")))
-        general_model = apply.get("correction_model") or apply.get(
-            "evaluate_model", best["correction_model"]
-        )
-        self._log.append_text(
-            f"First start: chose reading model {ocr_model} and writing model "
-            f"{general_model} for your computer ({profile_text(detection.profile)}). "
-            f"You can download them under {WHERE_ADDONS}.\n"
-        )
-        self._save_settings(notify=False)
-        self._readiness_controller.start_check()
-
     def _save_settings(self, *, notify: bool = True, silent_on_error: bool = False) -> None:
         """Write the settings file and remember the window geometry."""
         self._settings_file.save(notify=notify, silent_on_error=silent_on_error)
@@ -735,7 +605,7 @@ class MainWindow(QMainWindow):
             self._benchmark_window.close()
         # The System Monitor is parentless too: closing the last visible window ends the app.
         self._monitor.close()
-        self._first_run_task.cancel()
+        self._setup_launcher.shutdown()
         self._readiness_controller.shutdown()
         # Let the window disappear before waiting: running background tasks are
         # given a moment to end, and the user should not see a frozen window.
@@ -1304,6 +1174,15 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Open the Settings window on *page* (focused on *focus*) and apply it on OK."""
         self._settings_launcher.open(page, focus=focus, preselect=preselect, parent=parent)
+
+    def _setup_hooks(self) -> SetupHooks:
+        """What the Setup Assistant asks of the window."""
+        return SetupHooks(
+            save=lambda: self._save_settings(notify=False),
+            applied=self._after_settings_applied,
+            install_round_finished=self._on_install_round_finished,
+            select_folder=self._config_panel.select_folder,
+        )
 
     def _settings_hooks(self) -> SettingsHooks:
         """What the Settings window asks of the window."""

@@ -14,8 +14,8 @@ from teachers_teammate.config import (
     OcrConfig,
     dump_config_file,
     load_config_file,
-    unavailable_ocr_engine,
 )
+from teachers_teammate.domain.settings_notice import SettingNoticeKind
 from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
 from teachers_teammate.exceptions import ConfigFileNotFoundError, ConfigFileParseError
 from teachers_teammate.infrastructure.storage_root import (
@@ -26,6 +26,11 @@ from teachers_teammate.infrastructure.storage_root import (
 )
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _load(path: Path) -> dict:
+    """Return the settings values of *path*; the notices have their own tests."""
+    return load_config_file(path).values
 
 
 def _cfg(**overrides: Any) -> Config:
@@ -207,7 +212,7 @@ def test_load_config_file_returns_recognised_keys(tmp_path: Path) -> None:
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('language = "German"\nunknown_key = "ignored"\n')
-    result = load_config_file(cfg_file)
+    result = _load(cfg_file)
     assert result.get("language") == "German"
     assert "unknown_key" not in result
 
@@ -221,25 +226,26 @@ def test_load_config_file_reads_recognition_enabled(tmp_path: Path) -> None:
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text("recognition_enabled = false\n")
 
-    assert load_config_file(cfg_file)["recognition_enabled"] is False
+    assert _load(cfg_file)["recognition_enabled"] is False
     assert DEFAULTS["recognition_enabled"] is True
 
 
 @pytest.mark.parametrize("engine", ["langchain", "openai", "gpt"])
-def test_load_config_file_replaces_online_ocr_engine(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], engine: str
-) -> None:
+def test_load_config_file_replaces_online_ocr_engine(tmp_path: Path, engine: str) -> None:
     """
     Given  a settings file from an older version naming an online OCR engine
     When   load_config_file() is called
-    Then   the engine falls back to the default and a warning explains why
+    Then   the engine falls back to the default and a notice says it was replaced
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text(f'ocr_engine = "{engine}"\nocr_provider = "openai"\n')
-    result = load_config_file(cfg_file)
-    assert result["ocr_engine"] == DEFAULTS["ocr_engine"]
-    assert "ocr_provider" not in result
-    assert "stays on this computer" in capsys.readouterr().err
+    loaded = load_config_file(cfg_file)
+
+    assert loaded.values["ocr_engine"] == DEFAULTS["ocr_engine"]
+    assert "ocr_provider" not in loaded.values
+    assert [(n.kind, n.key, n.online) for n in loaded.notices] == [
+        (SettingNoticeKind.ENGINE_REPLACED, "ocr_engine", True)
+    ]
 
 
 @pytest.mark.parametrize(
@@ -254,51 +260,41 @@ def test_load_config_file_replaces_online_ocr_engine(
         ('language = "German"', None),
     ],
 )
-def test_unavailable_ocr_engine_names_what_was_replaced(
+def test_load_config_file_names_the_engine_it_replaced(
     tmp_path: Path, line: str, expected: tuple[str, str, bool] | None
 ) -> None:
     """
     Given  a settings file with an online, a removed local, a current or no OCR engine
-    When   unavailable_ocr_engine() is asked
-    Then   it names the old engine, its replacement and whether it was online (or nothing)
+    When   load_config_file() is called
+    Then   its notice names the old engine, its replacement and whether it was online
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text(line + "\n")
 
-    replaced = unavailable_ocr_engine(cfg_file)
+    notices = load_config_file(cfg_file).notices
 
-    assert (None if replaced is None else (replaced.old, replaced.new, replaced.online)) == expected
-
-
-def test_unavailable_ocr_engine_is_none_for_an_unreadable_file(tmp_path: Path) -> None:
-    """
-    Given  a settings file that is not valid TOML
-    When   unavailable_ocr_engine() is asked
-    Then   it answers None instead of raising (loading reports the parse error itself)
-    """
-    cfg_file = tmp_path / "ocr.toml"
-    cfg_file.write_text("not = = toml")
-
-    assert unavailable_ocr_engine(cfg_file) is None
+    assert (
+        None if not notices else (notices[0].detail, notices[0].replacement, notices[0].online)
+    ) == expected
 
 
 @pytest.mark.parametrize("old", ["tesseract", "paddleocr", " Tesseract "])
-def test_a_removed_local_engine_becomes_the_built_in_reader(
-    tmp_path: Path, old: str, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_removed_local_engine_becomes_the_built_in_reader(tmp_path: Path, old: str) -> None:
     """
     Given  a settings file naming Tesseract or PaddleOCR and an Ollama model
     When   load_config_file() is called
-    Then   the engine is the built-in reader, the model is kept, and stderr says it was removed
+    Then   the engine is the built-in reader, the model is kept, and a notice says it was removed
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text(f'ocr_engine = "{old}"\nocr_model = "my-model:7b"\n')
 
-    values = load_config_file(cfg_file)
+    loaded = load_config_file(cfg_file)
 
-    assert values["ocr_engine"] == "ppocr"
-    assert values["ocr_model"] == "my-model:7b"
-    assert "was removed" in capsys.readouterr().err
+    assert loaded.values["ocr_engine"] == "ppocr"
+    assert loaded.values["ocr_model"] == "my-model:7b"
+    assert [(n.kind, n.online) for n in loaded.notices] == [
+        (SettingNoticeKind.ENGINE_REPLACED, False)
+    ]
 
 
 @pytest.mark.parametrize("method", ["clahe", "adaptive_threshold", "grayscale", "anything"])
@@ -311,7 +307,7 @@ def test_a_method_of_the_old_preparation_reads_as_automatic(tmp_path: Path, meth
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text(f'ocr_engine = "ppocr"\npreprocess_method = "{method}"\n')
 
-    values = load_config_file(cfg_file)
+    values = _load(cfg_file)
 
     assert values["preprocess_method"] == "auto"
     assert (
@@ -330,8 +326,8 @@ def test_original_page_is_kept_and_nothing_is_invented(tmp_path: Path) -> None:
     unset = tmp_path / "unset.toml"
     unset.write_text('ocr_engine = "ppocr"\n')
 
-    assert load_config_file(kept)["preprocess_method"] == "none"
-    assert "preprocess_method" not in load_config_file(unset)
+    assert _load(kept)["preprocess_method"] == "none"
+    assert "preprocess_method" not in _load(unset)
 
 
 def test_the_default_preparation_is_automatic() -> None:
@@ -359,7 +355,7 @@ def test_the_switches_of_the_old_preparation_in_a_settings_file_are_ignored(
         "preprocess_denoise = false\npreprocess_gamma = true\n"
     )
 
-    assert load_config_file(cfg_file) == {}
+    assert _load(cfg_file) == {}
 
 
 def test_load_config_file_resets_model_of_replaced_online_engine(tmp_path: Path) -> None:
@@ -371,7 +367,7 @@ def test_load_config_file_resets_model_of_replaced_online_engine(tmp_path: Path)
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('ocr_engine = "langchain"\nocr_model = "gpt-4o"\n')
 
-    assert load_config_file(cfg_file)["ocr_model"] == DEFAULTS["ocr_model"]
+    assert _load(cfg_file)["ocr_model"] == DEFAULTS["ocr_model"]
 
 
 def test_load_config_file_keeps_model_of_local_engine(tmp_path: Path) -> None:
@@ -383,7 +379,7 @@ def test_load_config_file_keeps_model_of_local_engine(tmp_path: Path) -> None:
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('ocr_engine = "ollama"\nocr_model = "my-model:7b"\n')
 
-    assert load_config_file(cfg_file)["ocr_model"] == "my-model:7b"
+    assert _load(cfg_file)["ocr_model"] == "my-model:7b"
 
 
 def test_load_config_file_keeps_local_ocr_engines(tmp_path: Path) -> None:
@@ -394,7 +390,7 @@ def test_load_config_file_keeps_local_ocr_engines(tmp_path: Path) -> None:
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('ocr_engine = " PPOCR "\n')
-    assert load_config_file(cfg_file)["ocr_engine"] == "ppocr"
+    assert _load(cfg_file)["ocr_engine"] == "ppocr"
 
 
 def test_ocr_config_from_settings_replaces_online_engine() -> None:
@@ -416,7 +412,7 @@ def test_load_config_file_passes_through_unknown_provider(tmp_path: Path) -> Non
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('correction_provider = "nonexistent_xyz"\n')
-    result = load_config_file(cfg_file)
+    result = _load(cfg_file)
     assert result.get("correction_provider") == "nonexistent_xyz"
 
 
@@ -429,7 +425,7 @@ def test_load_config_file_raises_on_invalid_toml(tmp_path: Path) -> None:
     cfg_file = tmp_path / "bad.toml"
     cfg_file.write_text("this = [broken toml")
     with pytest.raises(ConfigFileParseError):
-        load_config_file(cfg_file)
+        _load(cfg_file)
 
 
 def test_load_config_file_accepts_known_correction_provider(tmp_path: Path) -> None:
@@ -440,7 +436,7 @@ def test_load_config_file_accepts_known_correction_provider(tmp_path: Path) -> N
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('correction_provider = "openai"\n')
-    result = load_config_file(cfg_file)
+    result = _load(cfg_file)
     assert result.get("correction_provider") == "openai"
 
 
@@ -452,7 +448,7 @@ def test_load_config_file_accepts_known_evaluate_provider(tmp_path: Path) -> Non
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('evaluate_provider = "openai"\n')
-    result = load_config_file(cfg_file)
+    result = _load(cfg_file)
     assert result.get("evaluate_provider") == "openai"
 
 
@@ -576,7 +572,7 @@ def test_temperature_keys_of_an_old_settings_file_are_ignored(tmp_path: Path) ->
         "ocr_temperature = 0.3\ncorrection_temperature = 0.5\nevaluate_temperature = 0.9\n"
     )
 
-    result = load_config_file(cfg_file)
+    result = _load(cfg_file)
 
     assert not {"ocr_temperature", "correction_temperature", "evaluate_temperature"} & set(result)
 
@@ -602,26 +598,26 @@ def test_load_config_file_keeps_valid_hardware_profile(tmp_path: Path) -> None:
     """
     path = tmp_path / "ocr.toml"
     path.write_text('hardware_profile = "16gb"\n', encoding="utf-8")
-    values = load_config_file(path)
+    values = _load(path)
     assert values["hardware_profile"] == "16gb"
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
-def test_load_config_file_drops_invalid_hardware_profile_with_warning(
-    tmp_path: Path, capsys
-) -> None:
+def test_load_config_file_drops_invalid_hardware_profile_with_a_notice(tmp_path: Path) -> None:
     """
     Given  an ocr.toml with an invalid hardware_profile value
     When   load_config_file is called
-    Then   the key is dropped and a warning is printed to stderr (AC11)
+    Then   the key is dropped and a notice carries the value as it was written (AC11)
     """
     path = tmp_path / "ocr.toml"
     path.write_text('hardware_profile = "supercomputer"\n', encoding="utf-8")
-    values = load_config_file(path)
-    assert "hardware_profile" not in values
-    stderr = capsys.readouterr().err
-    assert "hardware_profile" in stderr
-    assert "auto" in stderr
+    loaded = load_config_file(path)
+
+    assert "hardware_profile" not in loaded.values
+    assert [(n.kind, n.key) for n in loaded.notices] == [
+        (SettingNoticeKind.VALUE_IGNORED, "hardware_profile")
+    ]
+    assert loaded.notices[0].detail == "supercomputer"
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
@@ -634,7 +630,7 @@ def test_dump_config_file_round_trips_hardware_profile(tmp_path: Path) -> None:
     text = dump_config_file({"hardware_profile": "8gb"})
     path = tmp_path / "ocr.toml"
     path.write_text(text, encoding="utf-8")
-    values = load_config_file(path)
+    values = _load(path)
     assert values["hardware_profile"] == "8gb"
 
 
@@ -659,22 +655,25 @@ def test_load_config_file_normalizes_pdf_text_layer(tmp_path: Path) -> None:
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('pdf_text_layer = "Always"\n')
 
-    assert load_config_file(cfg_file)["pdf_text_layer"] == "always"
+    assert _load(cfg_file)["pdf_text_layer"] == "always"
 
 
-def test_load_config_file_drops_invalid_pdf_text_layer(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_load_config_file_drops_invalid_pdf_text_layer(tmp_path: Path) -> None:
     """
     Given  a config file with an unknown pdf_text_layer mode
     When   load_config_file() is called
-    Then   the key is ignored and a warning is printed to stderr
+    Then   the key is ignored and a notice carries the value as it was written
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('pdf_text_layer = "off"\n')
 
-    assert "pdf_text_layer" not in load_config_file(cfg_file)
-    assert "pdf_text_layer must be one of" in capsys.readouterr().err
+    loaded = load_config_file(cfg_file)
+
+    assert "pdf_text_layer" not in loaded.values
+    assert [(n.kind, n.key) for n in loaded.notices] == [
+        (SettingNoticeKind.VALUE_IGNORED, "pdf_text_layer")
+    ]
+    assert loaded.notices[0].detail == "off"
 
 
 def test_ocr_config_from_settings_maps_flat_keys_and_defaults() -> None:
@@ -707,7 +706,7 @@ def test_load_config_file_ignores_the_removed_proofreading_keys(tmp_path: Path) 
         "answer_format_version = 2\n"
         'correction_notes = "Year 9."\n'
     )
-    result = load_config_file(cfg_file)
+    result = _load(cfg_file)
 
     assert "correction_prompt" not in result
     assert "answer_format_review" not in result
@@ -725,26 +724,26 @@ def test_load_config_file_keeps_a_custom_evaluation_prompt(tmp_path: Path) -> No
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('evaluate_prompt = "Report in German."\n')
-    result = load_config_file(cfg_file)
+    result = _load(cfg_file)
     assert result["evaluate_prompt"] == "Report in German."
 
 
-def test_load_config_file_cuts_notes_longer_than_the_limit(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_load_config_file_cuts_notes_longer_than_the_limit(tmp_path: Path) -> None:
     """
     Given  a settings file whose notes for the AI are longer than the limit
     When   load_config_file() is called
-    Then   the notes are cut to the limit and a warning says so
+    Then   the notes are cut to the limit and a notice says so
     """
     from teachers_teammate.domain.correction_prompts import NOTES_LIMIT  # noqa: PLC0415
 
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text(f'correction_notes = "{"x" * (NOTES_LIMIT + 20)}"\n')
-    result = load_config_file(cfg_file)
+    loaded = load_config_file(cfg_file)
 
-    assert result["correction_notes"] == "x" * NOTES_LIMIT
-    assert "longer than" in capsys.readouterr().err
+    assert loaded.values["correction_notes"] == "x" * NOTES_LIMIT
+    assert [(n.kind, n.key) for n in loaded.notices] == [
+        (SettingNoticeKind.NOTES_CUT, "correction_notes")
+    ]
 
 
 def test_load_config_file_gives_unknown_correction_settings_their_defaults(
@@ -760,7 +759,7 @@ def test_load_config_file_gives_unknown_correction_settings_their_defaults(
     good = tmp_path / "good.toml"
     good.write_text('correction_level = "c1"\ncorrection_output = "TEXT"\n')
 
-    assert load_config_file(bad)["correction_level"] == DEFAULTS["correction_level"]
-    assert load_config_file(bad)["correction_output"] == DEFAULTS["correction_output"]
-    assert load_config_file(good)["correction_level"] == "C1"
-    assert load_config_file(good)["correction_output"] == "text"
+    assert _load(bad)["correction_level"] == DEFAULTS["correction_level"]
+    assert _load(bad)["correction_output"] == DEFAULTS["correction_output"]
+    assert _load(good)["correction_level"] == "C1"
+    assert _load(good)["correction_output"] == "text"

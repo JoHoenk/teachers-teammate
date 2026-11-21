@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from teachers_teammate.config import OcrConfig
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.exceptions import PipelineInputError
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.preprocessing.recipes import steps_for
@@ -21,7 +22,7 @@ from teachers_teammate.infrastructure.preprocessing.steps import (
 
 def _pipeline(
     tmp_dir: Path | None = None,
-    method: str = "auto",
+    method: PreprocessMethod = PreprocessMethod.AUTO,
     save_steps: bool = False,
     engine: str = "ollama",
 ) -> StepPipeline:
@@ -47,8 +48,10 @@ def _jpeg_with_tags(path: Path, *, orientation: int | None, camera: bool) -> Pat
     return path
 
 
-@pytest.mark.parametrize("method", ["auto", "none"])
-def test_all_methods_produce_existing_file(tmp_path: Path, sample_png: Path, method: str) -> None:
+@pytest.mark.parametrize("method", list(PreprocessMethod))
+def test_all_methods_produce_existing_file(
+    tmp_path: Path, sample_png: Path, method: PreprocessMethod
+) -> None:
     """
     Given  a step pipeline configured with either method
     When   preprocess() is called on a valid PNG
@@ -64,7 +67,7 @@ def test_none_method_returns_original_path(tmp_path: Path, sample_png: Path) -> 
     When   preprocess() is called
     Then   the original file path is returned unchanged and the steps list is empty
     """
-    out, steps = _pipeline(tmp_dir=tmp_path, method="none").preprocess(sample_png)
+    out, steps = _pipeline(tmp_dir=tmp_path, method=PreprocessMethod.NONE).preprocess(sample_png)
     assert out == sample_png
     assert steps == []
 
@@ -80,7 +83,7 @@ def test_none_method_applies_the_rotation_tag(tmp_path: Path) -> None:
 
     source = _jpeg_with_tags(tmp_path / "photo.jpg", orientation=6, camera=True)
 
-    out, steps = _pipeline(tmp_dir=tmp_path, method="none").preprocess(source)
+    out, steps = _pipeline(tmp_dir=tmp_path, method=PreprocessMethod.NONE).preprocess(source)
 
     assert out != source
     assert out.suffix == ".png"
@@ -100,7 +103,7 @@ def test_none_method_passes_a_jpeg_without_a_turn_on_unchanged(
     """
     source = _jpeg_with_tags(tmp_path / "photo.jpg", orientation=orientation, camera=True)
 
-    out, steps = _pipeline(tmp_dir=tmp_path, method="none").preprocess(source)
+    out, steps = _pipeline(tmp_dir=tmp_path, method=PreprocessMethod.NONE).preprocess(source)
 
     assert out == source
     assert steps == []
@@ -319,10 +322,10 @@ def test_the_recipe_lists_the_automatic_steps_in_order_and_none_lists_nothing(
            "none" gives no step at all
     """
 
-    def names(method: str) -> list[str]:
+    def names(method: PreprocessMethod) -> list[str]:
         return [step.name for step in _pipeline(tmp_path, method=method)._steps]
 
-    assert names("auto") == [
+    assert names(PreprocessMethod.AUTO) == [
         "measure",
         "page",
         "flatten",
@@ -332,7 +335,7 @@ def test_the_recipe_lists_the_automatic_steps_in_order_and_none_lists_nothing(
         "deskew",
         "grayscale",
     ]
-    assert names("none") == []
+    assert names(PreprocessMethod.NONE) == []
 
 
 class _Gray:

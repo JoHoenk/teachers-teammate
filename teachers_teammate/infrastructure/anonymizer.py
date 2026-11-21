@@ -24,7 +24,7 @@ import sys
 import threading
 from typing import TYPE_CHECKING
 
-from ..config import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
+from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from ..domain.anonymization import restore
 from ..domain.formatted_text import INLINE_TAG_ALTERNATION
 from ..interfaces import AnonymizationMap, Anonymizer
@@ -258,7 +258,7 @@ def resolve_anonymizer_config(
 ) -> AnonymizerConfig:
     """Return *config* with the models that will actually be loaded.
 
-    ``secondary_model`` of :data:`~teachers_teammate.config.SECONDARY_MODEL_AUTO` means "the
+    ``secondary_model`` of :data:`~teachers_teammate.settings_schema.SECONDARY_MODEL_AUTO` means "the
     model of the language the operating system is set to".  It is resolved here, once, so a
     run, a preview and an export all use the same models:
 

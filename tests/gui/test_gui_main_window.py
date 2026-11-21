@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import QApplication, QWidget
 
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.speed_estimates import SpeedSummary
 from teachers_teammate.application.service import (
@@ -65,6 +66,9 @@ from teachers_teammate.texts._types import Answer, Notice, Question, StandardBut
 from tests.conftest import make_config
 
 from ._gui_harness import install_scripted_settings_window
+
+#: How long a background thread and the notice it queues may take: a loaded runner is slow.
+THREAD_WAIT_MS = 10_000
 
 
 def _queue_row(
@@ -1807,14 +1811,14 @@ def test_the_settings_window_gets_the_current_state(main_window, monkeypatch) ->
            rules, the acknowledgements and the window's pull manager
     """
     scripted = install_scripted_settings_window(monkeypatch, accepted=False)
-    main_window._config_panel.update_settings({"output_dir": "/tmp/out"})
+    main_window._config_panel.update_settings({"output": "/tmp/out"})
 
     main_window.open_settings(SettingsPage.PRIVACY)
 
     assert len(scripted.instances) == 1
     window = scripted.instances[0]
     context = window.context
-    assert context.settings["output_dir"] == "/tmp/out"
+    assert context.settings["output"] == "/tmp/out"
     assert context.language == main_window._config_panel.lookup_language()
     assert context.pull_manager is main_window._pull_manager
     assert context.app_service is main_window._app_service
@@ -3150,7 +3154,7 @@ def test_main_window_on_preprocess_preview_no_source_user_cancels(
     monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(tmp_path))
     monkeypatch.setattr(_dialogs, "pick_file", lambda *_a, **_k: None)
     main_window._on_preprocess_preview_requested(
-        OcrConfig(preprocess_method="none")
+        OcrConfig(preprocess_method=PreprocessMethod.NONE)
     )  # should not raise
     assert main_window._preprocess_preview_thread is None
 
@@ -3180,8 +3184,11 @@ def test_main_window_on_preprocess_preview_preprocess_error(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad file")),
     )
     shown = _record_notices(monkeypatch)
-    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
-    qtbot.waitUntil(lambda: bool(shown), timeout=2000)
+    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method=PreprocessMethod.NONE))
+    thread = main_window._preprocess_preview_thread
+    assert thread is not None
+    assert thread.wait(THREAD_WAIT_MS), "the preview thread never finished"
+    qtbot.waitUntil(lambda: bool(shown), timeout=THREAD_WAIT_MS)
 
     assert [notice.title for notice in shown] == ["Preview failed"]
 
@@ -3215,12 +3222,13 @@ def test_main_window_on_preprocess_preview_ignores_concurrent_click(
     monkeypatch.setattr(main_window._app_service, "preprocess_preview", _slow_failing_preview)
 
     shown = _record_notices(monkeypatch)
-    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
+    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method=PreprocessMethod.NONE))
     first_thread = main_window._preprocess_preview_thread
-    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
+    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method=PreprocessMethod.NONE))
     assert main_window._preprocess_preview_thread is first_thread
 
-    qtbot.waitUntil(lambda: bool(shown), timeout=2000)
+    assert first_thread.wait(THREAD_WAIT_MS), "the preview thread never finished"
+    qtbot.waitUntil(lambda: bool(shown), timeout=THREAD_WAIT_MS)
     assert call_count["n"] == 1
     assert len(shown) == 1
 
@@ -4530,6 +4538,33 @@ def test_local_ocr_engine_in_saved_settings_is_not_announced(
     assert "Text recognition changed" not in [notice.title for notice in shown]
 
 
+@pytest.mark.gui
+def test_an_unusable_saved_value_is_logged_not_shown_as_a_dialog(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a settings file with a usable setting and a value its key cannot take (a text for
+           a switch)
+    When   the window loads it
+    Then   the log says which setting was not used, in a sentence, and no dialog interrupts
+    """
+    config_path = tmp_path / "ocr.toml"
+    config_path.write_text('language = "German"\ndebug = "false"\n', encoding="utf-8")
+    shown = _record_notices(monkeypatch)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(
+        ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
+    )
+
+    win = MainWindow()
+    qtbot.addWidget(win)
+
+    assert shown == []
+    log = win._log.toPlainText()
+    assert "The saved setting “debug” has a value the app cannot use (false)" in log
+    assert "Traceback" not in log and "ValueError" not in log
+
+
 # ── Run / re-run guards ──────────────────────────────────────────────────────
 
 
@@ -5661,7 +5696,7 @@ def test_the_line_warns_about_text_files_saved_in_a_subfolder_of_the_documents(
     panel.set_input_dir(str(tmp_path))
     results = str(tmp_path / "results")
     panel._output_dir.setText(results)
-    panel._settings_dict["output_dir"] = results
+    panel._settings_dict["output"] = results
     panel._text_enabled.setChecked(True)
     ready_window._results_table.selectAll()
 

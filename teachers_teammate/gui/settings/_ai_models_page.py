@@ -38,7 +38,8 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.correction_options import review_has_own_model
-from ...config import CONTEXT_SETTINGS, DEFAULTS, OcrConfig
+from ...config import DEFAULTS, OcrConfig
+from ...settings_schema import CONTEXT_SETTINGS
 from .. import _user_text as txt
 from .._background import LatestTask
 from .._model_guidance import SPACY_PREFIX

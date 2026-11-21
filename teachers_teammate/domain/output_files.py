@@ -9,6 +9,7 @@ Callers pass resolved (absolute) paths; nothing here touches the file system.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from pathlib import Path
 
 DOCX_SUFFIX = ".docx"
@@ -19,6 +20,51 @@ TEXT_IN_INPUT_FOLDER = (
     "Text files cannot be saved in the input folder: the next run would read them as new "
     "documents. Choose a different output folder."
 )
+
+
+class DocxFormat(StrEnum):
+    """The layout of a generated Word document."""
+
+    TABLE = "table"
+    """Three columns: image | extracted text | proofread text."""
+
+    COMMENTS = "comments"
+    """Two columns, with the corrections as Word comments."""
+
+
+class FolderProblem(StrEnum):
+    """Why a run cannot start with the folders it was given."""
+
+    NO_INPUT = "no_input"
+    """No folder with documents was chosen."""
+
+    NO_OUTPUT = "no_output"
+    """Files are written, but no folder to write them to was chosen."""
+
+    INPUT_MISSING = "input_missing"
+    """The chosen input folder is not there."""
+
+
+def folder_problem(
+    input_text: str,
+    output_text: str,
+    *,
+    input_exists: bool,
+    writes_output_files: bool,
+) -> FolderProblem | None:
+    """Return why a run cannot start with these folders, or ``None`` when it can.
+
+    Pure: the caller says whether the input folder exists.  The order is the one a teacher
+    meets it — choose the documents, choose where the results go, then the folder must be
+    there — so the first thing to fix is the one reported.
+    """
+    if not input_text.strip():
+        return FolderProblem.NO_INPUT
+    if not output_text.strip() and writes_output_files:
+        return FolderProblem.NO_OUTPUT
+    if not input_exists:
+        return FolderProblem.INPUT_MISSING
+    return None
 
 
 def output_path(source: Path, input_dir: Path | None, output_dir: Path, suffix: str) -> Path:

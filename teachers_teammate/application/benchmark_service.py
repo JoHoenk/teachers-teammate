@@ -110,7 +110,7 @@ class BenchmarkApplicationService:
         """
         try:
             path = self._processing.resolve_config_path(None)
-            return load_config_file(path) if path is not None else {}
+            return load_config_file(path).values if path is not None else {}
         except Exception:  # noqa: BLE001  # a broken settings file must never keep Benchmark from opening
             return {}
 
@@ -222,19 +222,18 @@ class BenchmarkApplicationService:
         ollama_url: str = DEFAULTS["ollama_url"],
     ) -> Config:
         """Return an OCR-only Config for *source* (correction/evaluation/DOCX disabled)."""
-        return Config(
+        return Config.from_settings(
+            {
+                "language": language,
+                "ollama_url": ollama_url,
+                "correction_enabled": False,
+                "evaluation_enabled": False,
+                "docx_enabled": False,
+            },
             input_dir=source.parent,
             output_dir=source.parent,
             recursive=False,
-            debug=False,
             ocr=ocr,
-            language=language,
-            ollama_url=ollama_url,
-            correction_enabled=False,
-            correction_provider=DEFAULTS["correction_provider"],
-            correction_model=DEFAULTS["correction_model"],
-            evaluation_enabled=False,
-            docx_enabled=False,
         )
 
     def list_runs(self, source: Path) -> list[StoredRun]:

@@ -2650,7 +2650,7 @@ class ProcessingApplicationService:
         if path is None or not path.is_file():
             return {}
         try:
-            values = load_config_file(path)
+            values = load_config_file(path).values
         except Exception:  # noqa: BLE001  # a broken file is the caller's warning, not a first start
             return None
         if set(values) <= INSTALLER_SETTING_KEYS:

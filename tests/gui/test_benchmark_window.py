@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import DEFAULTS, OcrConfig
 from teachers_teammate.domain.benchmark import compare_pair
 from teachers_teammate.gui.benchmark.composition import build_benchmark_window
@@ -23,7 +24,7 @@ def _run(run_id: str, text: str) -> StoredRun:
         document_path="/docs/sample.pdf",
         display_name="sample.pdf",
         ocr_config_hash="abc12345",
-        ocr=OcrConfig(engine="ppocr", model="", preprocess_method="none"),
+        ocr=OcrConfig(engine="ppocr", model="", preprocess_method=PreprocessMethod.NONE),
         language="English",
         raw_text=text,
         preview_img="",

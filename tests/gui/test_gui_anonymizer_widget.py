@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.config import SECONDARY_MODEL_AUTO
+from teachers_teammate.settings_schema import SECONDARY_MODEL_AUTO
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui._anonymizer_config_widget import AnonymizerConfigWidget
 from teachers_teammate.infrastructure.anonymizer import AnonymizerConfig, DEFAULT_PATTERNS
@@ -776,14 +776,14 @@ def test_primary_model_survives_save_and_reload(qtbot, tmp_path) -> None:
     (tmp_path / "in").mkdir()
     (tmp_path / "out").mkdir()
     panel.set_input_dir(str(tmp_path / "in"))
-    panel._settings_dict["output_dir"] = str(tmp_path / "out")
+    panel._settings_dict["output"] = str(tmp_path / "out")
     panel.update_anonymizer_config(AnonymizerConfig(primary_model="de_core_news_sm"))
     config_path = tmp_path / "ocr.toml"
     config_path.write_text(dump_config_file(panel.to_dict()), encoding="utf-8")
 
     reloaded = ConfigPanel()
     qtbot.addWidget(reloaded)
-    reloaded.load_from_dict(load_config_file(config_path))
+    reloaded.load_from_dict(load_config_file(config_path).values)
 
     assert reloaded.build_anonymizer_config().primary_model == "de_core_news_sm"
     assert reloaded.to_config().anonymizer_primary_model == "de_core_news_sm"
@@ -803,7 +803,7 @@ def test_primary_auto_is_not_persisted_as_a_model(qtbot, tmp_path) -> None:
     (tmp_path / "in").mkdir()
     (tmp_path / "out").mkdir()
     panel.set_input_dir(str(tmp_path / "in"))
-    panel._settings_dict["output_dir"] = str(tmp_path / "out")
+    panel._settings_dict["output"] = str(tmp_path / "out")
     panel.update_anonymizer_config(AnonymizerConfig(primary_model="de_core_news_sm"))
     panel.update_anonymizer_config(AnonymizerConfig(primary_model=None))
 
@@ -820,7 +820,7 @@ def _panel_with_dirs(qtbot, tmp_path):
     (tmp_path / "in").mkdir()
     (tmp_path / "out").mkdir()
     panel.set_input_dir(str(tmp_path / "in"))
-    panel._settings_dict["output_dir"] = str(tmp_path / "out")
+    panel._settings_dict["output"] = str(tmp_path / "out")
     return panel
 
 
@@ -875,7 +875,7 @@ def test_empty_pattern_list_survives_save_and_reload(qtbot, tmp_path) -> None:
 
     reloaded = ConfigPanel()
     qtbot.addWidget(reloaded)
-    reloaded.load_from_dict(load_config_file(config_path))
+    reloaded.load_from_dict(load_config_file(config_path).values)
 
     assert reloaded.build_anonymizer_config().patterns == ()
     assert reloaded.to_config().anonymizer_patterns == []

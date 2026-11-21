@@ -26,17 +26,10 @@ from typing import Protocol
 
 from ._model_defaults import default_model_for_task
 from .application.service import ProcessingApplicationService
-from .config import (
-    CONTEXT_SETTINGS,
-    DEFAULTS,
-    PREPROCESS_METHODS,
-    Config,
-    OcrConfig,
-    load_config_file,
-    normalize_notes,
-)
+from .config import Config, load_config_file
 from .domain.correction_prompts import NOTES_LIMIT
 from .domain.data_location import LOCAL_OCR_ENGINES, DataFlow, PrivacyLevel
+from .domain.output_files import folder_problem
 from .domain.local_models import (
     HUGGING_FACE_HOST,
     PAGE_MODELS_SIZE_LABEL,
@@ -45,6 +38,8 @@ from .domain.local_models import (
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
 from .domain.run_summary import RunSummary
 from .exceptions import ConfigFileNotFoundError, ConfigFileParseError, ModelDownloadError
+from .settings_schema import CONTEXT_SETTINGS, DEFAULTS, PREPROCESS_METHODS, LoadedSettings
+from .texts import dialogs as dlg
 
 
 class _CliAppService(Protocol):
@@ -629,13 +624,15 @@ def run_cli(
 
     try:
         config_path = service.resolve_config_path(pre_args.config)
-        file_defaults = load_config_file(config_path) if config_path else {}
+        loaded = load_config_file(config_path) if config_path else LoadedSettings({})
     except (ConfigFileNotFoundError, ConfigFileParseError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    for notice in loaded.notices:
+        print(dlg.cli_warning(dlg.setting_notice(notice).body), file=sys.stderr)
 
     # ── Full parse: CLI values override file defaults ───────────────────────
-    args = _parse_args(providers, file_defaults, argv)
+    args = _parse_args(providers, loaded.values, argv)
 
     download_exit = _download_only(args, service)
     if download_exit is not None:
@@ -646,74 +643,29 @@ def run_cli(
     for warning in _validate_providers(args, valid_providers):
         print(warning, file=sys.stderr)
 
-    if args.input is None:
+    input_text = args.input or ""
+    output_text = args.output or ""
+    problem = folder_problem(
+        input_text,
+        output_text,
+        input_exists=Path(input_text).is_dir() if input_text else False,
+        writes_output_files=bool(
+            args.docx_enabled or args.text_enabled or args.text_anonymized_enabled
+        ),
+    )
+    if problem is not None:
         print(
-            "ERROR: No input folder specified. Use -i/--input or set 'input' in the config file.",
-            file=sys.stderr,
-        )
-        return 1
-    if args.output is None and (
-        args.docx_enabled or args.text_enabled or args.text_anonymized_enabled
-    ):
-        print(
-            "ERROR: No output folder specified. "
-            "Use -o/--output or set 'output' in the config file. "
-            "(Output can be omitted only when no output files are written.)",
+            dlg.cli_error(dlg.cli_folder_problem_text(problem, input_text=input_text)),
             file=sys.stderr,
         )
         return 1
 
-    input_dir = Path(args.input)
-    if not input_dir.is_dir():
-        print(f"ERROR: Input folder does not exist: {input_dir}", file=sys.stderr)
-        return 1
-
-    config = Config(
+    input_dir = Path(input_text)
+    config = Config.from_settings(
+        vars(args),
         input_dir=input_dir,
-        output_dir=Path(args.output) if args.output is not None else input_dir,
+        output_dir=Path(output_text) if output_text else input_dir,
         recursive=args.recursive,
-        debug=args.debug,
-        keep_awake=args.keep_awake,
-        ocr=OcrConfig(
-            engine=args.ocr_engine,
-            model=args.ocr_model,
-            preprocess_method=args.preprocess_method,
-            pdf_render_dpi=args.pdf_render_dpi,
-            pdf_text_layer=args.pdf_text_layer,
-        ),
-        language=args.language,
-        ollama_url=args.ollama_url,
-        hardware_profile=getattr(args, "hardware_profile", DEFAULTS["hardware_profile"]),
-        proofreading_context=getattr(
-            args, "proofreading_context", DEFAULTS["proofreading_context"]
-        ),
-        ocr_timeout=args.ocr_timeout,
-        recognition_enabled=args.recognition_enabled,
-        correction_enabled=args.correction_enabled,
-        anonymization_enabled=args.anonymization_enabled,
-        # No command-line flags for these: they come from the config file, like in the GUI, so a
-        # run from either gives the same placeholders (and the same cache key).
-        anonymizer_primary_model=getattr(
-            args, "anonymizer_primary_model", DEFAULTS["anonymizer_primary_model"]
-        ),
-        anonymizer_secondary_model=getattr(
-            args, "anonymizer_secondary_model", DEFAULTS["anonymizer_secondary_model"]
-        ),
-        anonymizer_patterns=getattr(args, "anonymizer_patterns", None),
-        correction_provider=args.correction_provider,
-        correction_model=args.correction_model,
-        correction_notes=normalize_notes(args.correction_notes),
-        correction_level=args.correction_level,
-        explanation_language=args.explanation_language,
-        correction_output=args.correction_output,
-        evaluation_enabled=args.evaluation_enabled,
-        evaluate_provider=args.evaluate_provider,
-        evaluate_model=args.evaluate_model,
-        evaluate_prompt=args.evaluate_prompt,
-        docx_format=args.docx_format,
-        docx_enabled=args.docx_enabled,
-        text_enabled=args.text_enabled,
-        text_anonymized_enabled=args.text_anonymized_enabled,
     )
 
     if args.preview_only:

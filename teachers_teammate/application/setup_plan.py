@@ -20,9 +20,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from ..config import DEFAULTS, RETIRED_OCR_ENGINES, normalize_preprocess_method
+from ..config import DEFAULTS
 from ..domain.data_location import (
     ENGINE_PPOCR,
+    RETIRED_OCR_ENGINES,
     STAGE_ANONYMIZATION,
     STAGE_CORRECTION,
     STAGE_EVALUATION,
@@ -48,6 +49,7 @@ from ..domain.model_catalog import (
     suitability_rank,
 )
 from ..infrastructure.ollama_utils import is_local_ollama_url
+from ..settings_schema import normalize_preprocess_method
 from .correction_options import review_has_own_model
 
 

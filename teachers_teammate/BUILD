@@ -43,6 +43,8 @@ _DOMAIN_SRCS = [
     "domain/proofreading/text_loss.py",
     "domain/proofreading/word_diff.py",
     "domain/run_summary.py",
+    "domain/setting_values.py",
+    "domain/settings_notice.py",
     "domain/stages.py",
     "domain/teacher_work.py",
     "domain/text_chunks.py",
@@ -53,6 +55,7 @@ _CORE_SRCS = [
     "_model_defaults.py",
     "config.py",
     "interfaces.py",
+    "settings_schema.py",
 ]
 
 # texts/: the sentences a teacher reads; depend on domain/ only.
@@ -388,6 +391,7 @@ py_library(
         ":domain_lib",
         ":infrastructure_lib",
         ":pkg_lib",
+        ":texts_lib",
     ],
 )
 

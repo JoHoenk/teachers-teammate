@@ -16,12 +16,14 @@ scenarios in ``tests/integration/test_pipeline_scenarios.py``.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.exceptions import OCRError, RunStoppedError
 from teachers_teammate.infrastructure.pipeline import (
@@ -440,7 +442,7 @@ def test_pipeline_reruns_ocr_when_preprocess_method_changes(tmp_path: Path) -> N
 
     assert first_rc == 0
 
-    cfg.ocr.preprocess_method = "auto"
+    cfg = dataclasses.replace(cfg, ocr=dataclasses.replace(cfg.ocr, preprocess_method="auto"))
     second_ocr = MagicMock()
     second_ocr.process_image.return_value = "second"
     with patch(
@@ -1256,7 +1258,7 @@ def test_preprocess_preview_raises_for_text_only_input(tmp_path: Path) -> None:
     txt_file = tmp_path / "notes.txt"
     txt_file.write_text("some handwriting text")
     with pytest.raises(ValueError, match="image-based"):
-        preprocess_preview(txt_file, OcrConfig(preprocess_method="none"), tmp_path)
+        preprocess_preview(txt_file, OcrConfig(preprocess_method=PreprocessMethod.NONE), tmp_path)
 
 
 # ── _print_banner code paths ──────────────────────────────────────────────
@@ -1561,7 +1563,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
 
     assert first_rc == 0
 
-    cfg.evaluate_prompt = "prompt-v2"
+    cfg = dataclasses.replace(cfg, evaluate_prompt="prompt-v2")
     second_ocr = MagicMock()
     second_ocr.process_image.side_effect = OCRError("OCR should be reused from cache")
     second_corrector = MagicMock()

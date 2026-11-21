@@ -37,10 +37,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config import DEFAULTS, PREPROCESS_METHODS, OcrConfig
+from ..config import DEFAULTS, OcrConfig
+from ..settings_schema import PREPROCESS_METHODS, normalize_preprocess_method
 from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, DataLocation
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import OCR_TEMPERATURE
+from ..domain.setting_values import PreprocessMethod
 from ..domain.pdf_text_layer import (
     PDF_TEXT_LAYER_MODES,
     PdfTextLayerMode,
@@ -518,9 +520,9 @@ class ScanQualityControls(QWidget):
             self._pdf_options = holder
         return self._pdf_options
 
-    def preprocess_method(self) -> str:
+    def preprocess_method(self) -> PreprocessMethod:
         """Return the chosen image preparation (``auto`` or ``none``)."""
-        return str(self._preprocess.currentData())
+        return normalize_preprocess_method(self._preprocess.currentData())
 
     def set_preprocess_method(self, method: str) -> None:
         """Choose the image preparation."""

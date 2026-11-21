@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.benchmark import compare_pair
 from teachers_teammate.gui.benchmark._compare_view import CompareView
@@ -20,7 +21,7 @@ def _run(run_id: str, text: str, raw_text_format: str = "plain") -> StoredRun:
         document_path="/docs/sample.pdf",
         display_name="sample.pdf",
         ocr_config_hash="abc12345",
-        ocr=OcrConfig(engine="ppocr", model="", preprocess_method="none"),
+        ocr=OcrConfig(engine="ppocr", model="", preprocess_method=PreprocessMethod.NONE),
         language="English",
         raw_text=text,
         preview_img="",

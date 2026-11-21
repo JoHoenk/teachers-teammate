@@ -28,7 +28,7 @@ def test_config_panel_to_config_maps_values(qtbot, tmp_path: Path) -> None:
     qtbot.addWidget(panel)
 
     panel.set_input_dir(str(input_dir))
-    panel._settings_dict["output_dir"] = str(output_dir)
+    panel._settings_dict["output"] = str(output_dir)
     panel._language.setCurrentText("German")
 
     cfg = panel.to_config()
@@ -51,7 +51,7 @@ def test_config_panel_to_config_rejects_missing_input(qtbot, tmp_path: Path) -> 
 
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel._settings_dict["output_dir"] = str(output_dir)
+    panel._settings_dict["output"] = str(output_dir)
 
     with pytest.raises(ValueError, match="Input folder is required"):
         panel.to_config()
@@ -73,7 +73,7 @@ def test_config_panel_to_config_allows_missing_output_when_docx_disabled(
     qtbot.addWidget(panel)
 
     panel.set_input_dir(str(input_dir))
-    panel._settings_dict["output_dir"] = ""
+    panel._settings_dict["output"] = ""
     panel._settings_dict["docx_enabled"] = False
 
     cfg = panel.to_config()
@@ -313,7 +313,7 @@ def test_the_lookup_config_is_the_run_config(qtbot, tmp_path) -> None:
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel.set_input_dir(str(input_dir))
-    panel._settings_dict["output_dir"] = str(output_dir)
+    panel._settings_dict["output"] = str(output_dir)
     panel.update_settings({"hardware_profile": "16gb", "proofreading_context": "16384"})
 
     assert panel.lookup_config() == panel.to_config()
@@ -918,27 +918,25 @@ def test_a_program_engine_is_named_by_the_engine_not_by_the_ollama_model(qtbot) 
 
 @pytest.mark.gui
 @pytest.mark.parametrize(
-    ("engine", "online"), [("tesseract", False), ("paddleocr", False), ("openai", True)]
+    ("engine", "replacement"),
+    [("tesseract", "ppocr"), ("paddleocr", "ppocr"), ("openai", "ollama")],
 )
-def test_a_replaced_engine_in_a_settings_dict_is_reported_once(
-    qtbot, engine: str, online: bool
+def test_a_replaced_engine_in_a_settings_dict_is_taken_over_quietly(
+    qtbot, engine: str, replacement: str
 ) -> None:
     """
     Given  a settings dict that names a removed local engine or an online one
     When   the panel takes it over
-    Then   the replacement is reported through ocr_engine_replaced (and the engine is local)
+    Then   it holds the local engine that replaces it and says nothing: the loader reports the
+           replacement, so the window shows it once (see test_config.py)
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel.set_service(_StepsService())
-    seen: list[object] = []
-    panel.ocr_engine_replaced.connect(seen.append)
 
     panel.load_from_dict({**_MISTRAL, "ocr_engine": engine})
 
-    assert len(seen) == 1
-    assert (seen[0].old, seen[0].online) == (engine, online)
-    assert panel._settings_dict["ocr_engine"] in ("ppocr", "ollama")
+    assert panel._settings_dict["ocr_engine"] == replacement
 
 
 @pytest.mark.gui
@@ -1177,11 +1175,11 @@ def test_config_panel_round_trips_the_notes(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_config_panel_cuts_notes_longer_than_the_limit(qtbot, capsys) -> None:
+def test_config_panel_cuts_notes_longer_than_the_limit(qtbot) -> None:
     """
     Given  notes longer than the limit the request may carry
     When   they are set on the panel
-    Then   they are cut to the limit and the cut is announced
+    Then   they are cut to the limit
     """
     from teachers_teammate.domain.correction_prompts import NOTES_LIMIT  # noqa: PLC0415
 
@@ -1191,7 +1189,6 @@ def test_config_panel_cuts_notes_longer_than_the_limit(qtbot, capsys) -> None:
     panel.set_correction_notes("x" * (NOTES_LIMIT + 40))
 
     assert len(panel.get_correction_notes()) == NOTES_LIMIT
-    assert "longer than" in capsys.readouterr().err
 
 
 @pytest.mark.gui
@@ -1425,7 +1422,7 @@ def test_text_files_without_a_folder_turn_the_hint_orange(qtbot) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel.update_settings({"output_dir": ""})
+    panel.update_settings({"output": ""})
     assert "#888" in panel._text_hint.styleSheet()
 
     panel._text_enabled.setChecked(True)
@@ -1445,7 +1442,7 @@ def test_settings_from_the_settings_window_reach_the_results_step(qtbot, tmp_pat
     changes: list[bool] = []
     panel.results_changed.connect(lambda: changes.append(True))
 
-    panel.update_settings({"output_dir": str(tmp_path), "docx_format": "comments"})
+    panel.update_settings({"output": str(tmp_path), "docx_format": "comments"})
 
     assert panel._output_dir.text() == str(tmp_path)
     assert panel._docx_format.currentText() == "comments"

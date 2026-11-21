@@ -75,6 +75,7 @@ class SettingsDict(TypedDict, total=False):
     preprocess_method: str
     pdf_render_dpi: int
     pdf_text_layer: str
+    language: str
     correction_provider: str
     correction_model: str
     correction_level: str
@@ -83,7 +84,8 @@ class SettingsDict(TypedDict, total=False):
     correction_notes: str
     evaluate_provider: str
     evaluate_model: str
-    output_dir: str
+    evaluate_prompt: str
+    output: str
     docx_format: str
     docx_enabled: bool
     text_enabled: bool

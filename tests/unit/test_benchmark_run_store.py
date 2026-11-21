@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.infrastructure.benchmark.run_store import (
     BenchmarkRunStore,
@@ -26,7 +27,7 @@ def _save(
             document_hash=doc_hash,
             document_path="/docs/sample.pdf",
             display_name="sample.pdf",
-            ocr=OcrConfig(engine="ppocr", model="", preprocess_method="none"),
+            ocr=OcrConfig(engine="ppocr", model="", preprocess_method=PreprocessMethod.NONE),
             language="English",
             ocr_config_hash=cfg_hash,
             raw_text=text,
@@ -154,7 +155,7 @@ def test_save_round_trips_all_preprocessing_fields(tmp_path: Path) -> None:
     Without this, two runs differing only in the preparation would be indistinguishable.
     """
     store = BenchmarkRunStore(tmp_path)
-    ocr = OcrConfig(engine="ppocr", preprocess_method="none", pdf_render_dpi=600)
+    ocr = OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.NONE, pdf_render_dpi=600)
     store.save(
         NewRunRequest(
             document_hash="doc1",
@@ -329,7 +330,7 @@ def test_save_round_trips_text_format(tmp_path: Path) -> None:
             document_hash="doc1",
             document_path="/docs/sample.pdf",
             display_name="sample.pdf",
-            ocr=OcrConfig(engine="ppocr", model="", preprocess_method="none"),
+            ocr=OcrConfig(engine="ppocr", model="", preprocess_method=PreprocessMethod.NONE),
             language="English",
             ocr_config_hash="abc12345",
             raw_text="~~a~~",

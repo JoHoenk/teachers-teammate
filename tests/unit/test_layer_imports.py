@@ -14,12 +14,12 @@ ALLOWED: dict[str, frozenset[str]] = {
     "texts": frozenset({"pkg", "domain"}),
     "infrastructure": frozenset({"pkg", "domain", "core"}),
     "application": frozenset({"pkg", "domain", "core", "infrastructure"}),
-    "cli": frozenset({"pkg", "domain", "core", "infrastructure", "application"}),
+    "cli": frozenset({"pkg", "domain", "core", "infrastructure", "application", "texts"}),
     "gui": frozenset({"pkg", "domain", "core", "infrastructure", "application", "texts"}),
 }
 
 _PACKAGE = "teachers_teammate"
-_CORE_MODULES = {"config", "interfaces", "_model_defaults"}
+_CORE_MODULES = {"config", "interfaces", "settings_schema", "_model_defaults"}
 _CLI_MODULES = {"cli", "cli_composition", "__main__"}
 
 

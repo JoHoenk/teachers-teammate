@@ -31,21 +31,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..application.correction_options import migrate_saved_evaluation_prompt
 from ..application.data_flow import ticked_steps
 from ..application.service import RequirementIssue
-from ..config import (
-    DEFAULTS,
-    SECONDARY_MODEL_NONE,
-    Config,
-    OcrConfig,
-    normalize_notes,
-    normalize_ocr_engine,
-    normalize_ocr_model,
-    normalize_preprocess_method,
-    replaced_ocr_engine,
-)
-from ..domain.correction_policy import LEVELS, normalize_level, normalize_output_mode
+from ..config import DEFAULTS, Config
+from ..domain.correction_policy import LEVELS
 from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import (
     STAGE_ANONYMIZATION,
@@ -54,7 +43,8 @@ from ..domain.data_location import (
     STAGE_OCR,
     DataFlow,
 )
-from ..domain.pdf_text_layer import normalize_pdf_text_layer
+from ..domain.output_files import folder_problem
+from ..settings_schema import SECONDARY_MODEL_NONE, normalize_notes, normalize_settings
 from ..texts import dialogs as dlg
 from ..texts.settings import WHERE_ADDONS, WHERE_AI_MODELS
 from . import _dialogs
@@ -79,6 +69,26 @@ from .settings._page import FOCUS_OCR, FOCUS_PROOFREADING, FOCUS_REVIEW, Setting
 TEXT_MODE_AS_WRITTEN = "as written"
 TEXT_MODE_ANONYMIZED = "anonymized"
 TEXT_MODE_BOTH = "both"
+
+#: The settings keys a widget shows: loading them means setting the widget, not the dict.
+_WIDGET_KEYS = frozenset(
+    {
+        "input",
+        "output",
+        "language",
+        "correction_level",
+        "correction_notes",
+        "evaluate_prompt",
+        "recognition_enabled",
+        "correction_enabled",
+        "anonymization_enabled",
+        "evaluation_enabled",
+    }
+)
+
+#: Keys a settings file may hold that the panel does not keep: the GUI always searches
+#: subfolders and has no toggle for it, so it never writes the key either.
+_UNSTORED_KEYS = frozenset({"recursive"})
 
 #: The step the teacher sees for each stage the requirement guard can untick.
 _STAGE_STEP_TITLES = {
@@ -253,8 +263,6 @@ class ConfigPanel(QScrollArea):
     """Left-hand panel: main pipeline configuration as a numbered workflow."""
 
     paths_changed = Signal()
-    #: A settings dict named a text-recognition engine that is gone; carries a ReplacedEngine.
-    ocr_engine_replaced = Signal(object)
     anonymizer_configure_requested = Signal(str, object)  # language, AnonymizerConfig
     #: Open a Settings page: the page, the focus value on it, entries to preselect.  Sent by the
     #: "change…" links under the steps and by the requirement guard.
@@ -279,7 +287,8 @@ class ConfigPanel(QScrollArea):
         self.setMinimumWidth(340)
         self.setMaximumWidth(420)
 
-        # Advanced settings stored here; edited via the Settings dialog.
+        # The one store of every setting: the widgets write their key here on change, and
+        # ``to_dict`` is this dict plus the input folder.
         self._settings_dict: SettingsDict = {
             "ocr_engine": DEFAULTS["ocr_engine"],
             "ocr_model": DEFAULTS["ocr_model"],
@@ -290,14 +299,19 @@ class ConfigPanel(QScrollArea):
             "preprocess_method": DEFAULTS["preprocess_method"],
             "pdf_render_dpi": DEFAULTS["pdf_render_dpi"],
             "pdf_text_layer": DEFAULTS["pdf_text_layer"],
+            "language": DEFAULTS["language"],
             "correction_provider": DEFAULTS["correction_provider"],
             "correction_model": DEFAULTS["correction_model"],
+            "correction_level": DEFAULTS["correction_level"],
+            "correction_notes": DEFAULTS["correction_notes"],
             "explanation_language": DEFAULTS["explanation_language"],
             "correction_output": DEFAULTS["correction_output"],
-            "correction_notes": DEFAULTS["correction_notes"],
             "evaluate_provider": DEFAULTS["evaluate_provider"],
             "evaluate_model": DEFAULTS["evaluate_model"],
-            "output_dir": "",
+            # "" = the built-in instructions; the default text is never copied here, so a
+            # code-side change keeps being recognised.
+            "evaluate_prompt": "",
+            "output": "",
             "docx_format": DEFAULTS["docx_format"],
             "docx_enabled": DEFAULTS["docx_enabled"],
             "text_enabled": DEFAULTS["text_enabled"],
@@ -316,13 +330,6 @@ class ConfigPanel(QScrollArea):
         # Input selection state: either a folder or an explicit file list.
         self._selected_folder: Path | None = None
         self._selected_files: list[Path] = []
-
-        # The teacher's notes for the AI, and the content review's prompt, stored internally
-        # (not live QPlainTextEdits in the panel).  "" for the prompt means "use the built-in
-        # one" — the default text is never copied here, so a code-side change keeps being
-        # recognised and the language setting keeps swapping the preset.
-        self._correction_notes_text: str = ""
-        self._evaluation_prompt_text: str = ""
 
         inner = QWidget()
         self._layout = QVBoxLayout(inner)
@@ -345,6 +352,7 @@ class ConfigPanel(QScrollArea):
         self.setWidget(inner)
 
         self._language.currentTextChanged.connect(self._on_language_changed)
+        self._correction_level.currentTextChanged.connect(self._on_level_changed)
         self._on_language_changed(self._language.currentText())
 
         self._update_correction_visibility()
@@ -620,7 +628,7 @@ class ConfigPanel(QScrollArea):
         for widget in self._results_widgets():
             widget.blockSignals(True)
         try:
-            self._output_dir.setText(str(settings.get("output_dir", "") or ""))
+            self._output_dir.setText(str(settings.get("output", "") or ""))
             self._docx_enabled.setChecked(
                 bool(settings.get("docx_enabled", DEFAULTS["docx_enabled"]))
             )
@@ -681,9 +689,9 @@ class ConfigPanel(QScrollArea):
 
     def _on_output_dir_edited(self) -> None:
         folder = self._output_dir.text().strip()
-        if folder == str(self._settings_dict.get("output_dir", "") or "").strip():
+        if folder == str(self._settings_dict.get("output", "") or "").strip():
             return  # focus left the field without a change
-        self._settings_dict["output_dir"] = folder
+        self._settings_dict["output"] = folder
         self._update_results_state()
         self.refresh_data_flow()
         if not self._loading:
@@ -792,7 +800,7 @@ class ConfigPanel(QScrollArea):
         settings = self._settings_dict
         dialog = _ProofreadingDialog(
             txt.CORRECTION_PROMPT_DIALOG_TITLE,
-            self._correction_notes_text,
+            self.get_correction_notes(),
             self._proofreading_prompts,
             self,
             explanations=(
@@ -817,20 +825,25 @@ class ConfigPanel(QScrollArea):
     def _on_configure_evaluation_prompt(self) -> None:
         dialog = _PromptDialog(
             txt.EVALUATION_PROMPT_DIALOG_TITLE,
-            self._evaluation_prompt_text,
+            self.get_evaluation_prompt(),
             self,
             builtin_text=str(DEFAULTS["evaluate_prompt"]),
             fixed_text=self._evaluation_fixed_text(),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._evaluation_prompt_text = dialog.prompt()
+            self.set_evaluation_prompt(dialog.prompt())
             self.instructions_changed.emit()
 
     # ── language change ───────────────────────────────────────────────────────────
 
     def _on_language_changed(self, _language: str) -> None:
-        """Re-render what the language decides: the detection models and the data flow."""
+        """Store the language and re-render what it decides: the models and the data flow."""
+        self._settings_dict["language"] = self._language.currentText().strip()
         self.refresh_data_flow()
+
+    def _on_level_changed(self, level: str) -> None:
+        """Store the CEFR level the teacher picked."""
+        self._settings_dict["correction_level"] = level
 
     # ── visibility updates ────────────────────────────────────────────────────────
 
@@ -938,12 +951,11 @@ class ConfigPanel(QScrollArea):
         self._recognition_enabled.setChecked(True)
 
     def _update_correction_visibility(self, checked: bool = True) -> None:
+        self._settings_dict["correction_enabled"] = checked
         self._sync_review_enabled()
         self.refresh_data_flow()
         if not checked:
-            self._settings_dict["correction_enabled"] = False
             return
-        self._settings_dict["correction_enabled"] = True
         self._correction_prompt_btn.setEnabled(True)
         # The review comes back with proofreading, so its requirements count again: they are
         # checked once proofreading's are met (see :meth:`_on_stage_guard_result`), so a
@@ -964,12 +976,10 @@ class ConfigPanel(QScrollArea):
         pass  # driven by _on_anonymization_changed
 
     def _on_evaluation_enabled_changed(self, checked: bool) -> None:
+        self._settings_dict["evaluation_enabled"] = checked
         self.refresh_data_flow()
-        if not checked:
-            self._settings_dict["evaluation_enabled"] = False
-            return
-        self._settings_dict["evaluation_enabled"] = True
-        self._guard_stage("evaluation")
+        if checked:
+            self._guard_stage("evaluation")
 
     def set_anonymization_enabled(self, enabled: bool) -> None:
         """Tick or untick "Remove personal info" as the teacher would.
@@ -980,12 +990,10 @@ class ConfigPanel(QScrollArea):
         self._anonymization_enabled.setChecked(enabled)
 
     def _on_anonymization_changed(self, checked: bool = True) -> None:
+        self._settings_dict["anonymization_enabled"] = checked
         self.refresh_data_flow()
-        if not checked:
-            self._settings_dict["anonymization_enabled"] = False
-            return
-        self._settings_dict["anonymization_enabled"] = True
-        self._guard_stage("anonymizer")
+        if checked:
+            self._guard_stage("anonymizer")
 
     def build_anonymizer_config(self) -> object:
         """Build an :class:`AnonymizerConfig` from the current settings dict.
@@ -1074,24 +1082,23 @@ class ConfigPanel(QScrollArea):
 
     def get_correction_notes(self) -> str:
         """Return the notes the teacher added for the AI."""
-        return self._correction_notes_text
+        return str(self._settings_dict.get("correction_notes", ""))
 
     def set_correction_notes(self, text: str) -> None:
         """Update the notes for the AI (as the options dialog does on OK)."""
-        self._correction_notes_text = normalize_notes(text)
-        self._settings_dict["correction_notes"] = self._correction_notes_text
+        self._settings_dict["correction_notes"] = normalize_notes(text)
 
     def get_evaluation_prompt(self) -> str:
         """Return the current evaluation system prompt text."""
-        return self._evaluation_prompt_text
+        return str(self._settings_dict.get("evaluate_prompt", ""))
 
     def set_evaluation_prompt(self, text: str) -> None:
         """Update the evaluation system prompt (as the instructions dialog does on OK)."""
-        self._evaluation_prompt_text = text
+        self._settings_dict["evaluate_prompt"] = text
 
     def get_output_dir(self) -> str:
         """Return the configured output directory (set in the Results step)."""
-        return str(self._settings_dict.get("output_dir", "")).strip()
+        return str(self._settings_dict.get("output", "")).strip()
 
     def get_settings_dict(self) -> dict:
         """Return a copy of the settings (what the Settings window shows and edits)."""
@@ -1107,10 +1114,6 @@ class ConfigPanel(QScrollArea):
         self._settings_dict.update(cast("SettingsDict", settings))
         self._sync_results_widgets()
         self.refresh_data_flow()
-
-    def _ocr_config_from_settings(self) -> OcrConfig:
-        """Build the :class:`OcrConfig` slice from the stored advanced settings."""
-        return OcrConfig.from_settings(self._settings_dict)
 
     def review_will_run(self) -> bool:
         """Return whether the content review runs: it is ticked and so is proofreading.
@@ -1135,79 +1138,32 @@ class ConfigPanel(QScrollArea):
 
     def _build(self, *, strict: bool) -> Config:
         """Build the Config of the live panel values; *strict* validates the folders."""
-        input_text = self.get_input_dir()
-        output_text = str(self._settings_dict.get("output_dir", "")).strip()
-        docx_enabled = bool(self._settings_dict.get("docx_enabled", DEFAULTS["docx_enabled"]))
-        text_enabled = bool(self._settings_dict.get("text_enabled", DEFAULTS["text_enabled"]))
-        text_anonymized_enabled = bool(
-            self._settings_dict.get("text_anonymized_enabled", DEFAULTS["text_anonymized_enabled"])
-        )
+        values = self.to_dict()
+        input_text = str(values.get("input", ""))
+        output_text = str(values.get("output", ""))
         input_dir = Path(input_text) if input_text else Path(".")
         if strict:
-            if not input_text:
-                raise ValueError("Input folder is required.")
-            if not output_text and (docx_enabled or text_enabled or text_anonymized_enabled):
-                raise ValueError("Output folder is required.")
-            if not input_dir.is_dir():
-                raise ValueError(f"Input folder does not exist: {input_dir}")
-        output_dir = Path(output_text) if output_text else input_dir
-
-        return Config(
+            problem = folder_problem(
+                input_text,
+                output_text,
+                input_exists=input_dir.is_dir(),
+                writes_output_files=bool(
+                    values.get("docx_enabled")
+                    or values.get("text_enabled")
+                    or values.get("text_anonymized_enabled")
+                ),
+            )
+            if problem is not None:
+                raise ValueError(dlg.folder_problem_text(problem, input_text=input_text))
+        # A review without proofreading does not run, so the config says so: the data-flow box,
+        # the preflight, the model list and the memory check all read this one config.
+        values["evaluation_enabled"] = self.review_will_run()
+        return Config.from_settings(
+            values,
             input_dir=input_dir,
-            output_dir=output_dir,
+            output_dir=Path(output_text) if output_text else input_dir,
             # The GUI is intentionally always-recursive; no toggle is exposed.
             recursive=True,
-            debug=bool(self._settings_dict.get("debug", DEFAULTS["debug"])),
-            keep_awake=bool(self._settings_dict.get("keep_awake", DEFAULTS["keep_awake"])),
-            check_for_updates=bool(
-                self._settings_dict.get("check_for_updates", DEFAULTS["check_for_updates"])
-            ),
-            ocr=self._ocr_config_from_settings(),
-            language=self._language.currentText().strip() or DEFAULTS["language"],
-            ollama_url=self._settings_dict.get("ollama_url", DEFAULTS["ollama_url"]),
-            ocr_timeout=int(self._settings_dict.get("ocr_timeout", DEFAULTS["ocr_timeout"])),
-            recognition_enabled=self._recognition_enabled.isChecked(),
-            correction_enabled=self._correction_enabled.isChecked(),
-            anonymization_enabled=self._anonymization_enabled.isChecked(),
-            anonymizer_primary_model=self._settings_dict.get(
-                "anonymizer_primary_model", DEFAULTS["anonymizer_primary_model"]
-            )
-            or None,
-            anonymizer_secondary_model=self._settings_dict.get(
-                "anonymizer_secondary_model", DEFAULTS["anonymizer_secondary_model"]
-            )
-            or SECONDARY_MODEL_NONE,
-            anonymizer_patterns=self._settings_dict.get("anonymizer_patterns"),
-            correction_provider=self._settings_dict.get(
-                "correction_provider", DEFAULTS["correction_provider"]
-            ),
-            correction_model=self._settings_dict.get(
-                "correction_model", DEFAULTS["correction_model"]
-            ),
-            correction_notes=self._correction_notes_text,
-            correction_level=self._correction_level.currentText(),
-            explanation_language=str(
-                self._settings_dict.get("explanation_language", DEFAULTS["explanation_language"])
-            ),
-            correction_output=str(
-                self._settings_dict.get("correction_output", DEFAULTS["correction_output"])
-            ),
-            evaluation_enabled=self.review_will_run(),
-            evaluate_provider=self._settings_dict.get(
-                "evaluate_provider", DEFAULTS["evaluate_provider"]
-            ),
-            evaluate_model=self._settings_dict.get("evaluate_model", DEFAULTS["evaluate_model"]),
-            evaluate_prompt=self._evaluation_prompt_text,
-            docx_format=self._settings_dict.get("docx_format", DEFAULTS["docx_format"]),
-            docx_enabled=docx_enabled,
-            text_enabled=text_enabled,
-            text_anonymized_enabled=text_anonymized_enabled,
-            hardware_profile=str(
-                self._settings_dict.get("hardware_profile", DEFAULTS["hardware_profile"])
-            ),
-            proofreading_context=str(
-                self._settings_dict.get("proofreading_context", DEFAULTS["proofreading_context"])
-            ),
         )
 
     @staticmethod
@@ -1215,6 +1171,8 @@ class ConfigPanel(QScrollArea):
         idx = combo.findText(value)
         if idx >= 0:
             combo.setCurrentIndex(idx)
+        elif combo.isEditable():
+            combo.setCurrentText(value)  # a language typed in by hand
 
     def load_from_dict(self, values: dict) -> None:
         """Populate fields from a dict (e.g. loaded from ocr.toml).
@@ -1230,28 +1188,29 @@ class ConfigPanel(QScrollArea):
         self.refresh_data_flow()
 
     def _load_from_dict(self, values: dict) -> None:
-        if "input" in values:
-            path = Path(str(values["input"]))
+        loaded = normalize_settings(values).values
+        if "input" in loaded:
+            path = Path(str(loaded["input"]))
             if path.is_dir():
                 self._selected_folder = path
                 self._selected_files = []
             self._update_input_label()
-        if "output" in values:
-            self._settings_dict["output_dir"] = str(values["output"])
+        if "output" in loaded:
+            self._settings_dict["output"] = str(loaded["output"])
 
-        self._load_prompts_and_language(values)
+        self._load_prompts_and_language(loaded)
 
-        if "recognition_enabled" in values:
-            self._recognition_enabled.setChecked(bool(values["recognition_enabled"]))
+        if "recognition_enabled" in loaded:
+            self._recognition_enabled.setChecked(bool(loaded["recognition_enabled"]))
             self._settings_dict["recognition_enabled"] = self._recognition_enabled.isChecked()
-        if "correction_enabled" in values:
-            self._correction_enabled.setChecked(bool(values["correction_enabled"]))
-        if "anonymization_enabled" in values:
-            self._anonymization_enabled.setChecked(bool(values["anonymization_enabled"]))
-        if "evaluation_enabled" in values:
-            self._evaluation_enabled.setChecked(bool(values["evaluation_enabled"]))
+        if "correction_enabled" in loaded:
+            self._correction_enabled.setChecked(bool(loaded["correction_enabled"]))
+        if "anonymization_enabled" in loaded:
+            self._anonymization_enabled.setChecked(bool(loaded["anonymization_enabled"]))
+        if "evaluation_enabled" in loaded:
+            self._evaluation_enabled.setChecked(bool(loaded["evaluation_enabled"]))
 
-        self._apply_settings_dict_values(values)
+        self._apply_settings_dict_values(loaded)
         self._sync_results_widgets()
 
         self._update_correction_visibility(self._correction_enabled.isChecked())
@@ -1266,102 +1225,24 @@ class ConfigPanel(QScrollArea):
         self._language.currentTextChanged.disconnect(self._on_language_changed)
         try:
             if "correction_notes" in values:
-                self._correction_notes_text = normalize_notes(values["correction_notes"])
+                self._settings_dict["correction_notes"] = values["correction_notes"]
             if "evaluate_prompt" in values:
                 # "" = the built-in default; a saved copy of it means the same.
-                self._evaluation_prompt_text = migrate_saved_evaluation_prompt(
-                    str(values["evaluate_prompt"])
-                )
+                self._settings_dict["evaluate_prompt"] = values["evaluate_prompt"]
+            if "correction_level" in values:
+                self._set_combo(self._correction_level, str(values["correction_level"]))
             if "language" in values:
                 self._set_combo(self._language, str(values["language"]))
         finally:
             self._language.currentTextChanged.connect(self._on_language_changed)
         self._on_language_changed(self._language.currentText())
 
-    def _with_local_ocr_engine(self, values: dict) -> dict:
-        """Return *values* with an unavailable OCR engine (and its model) replaced.
-
-        A settings file from an older version may name an online engine: fall back to the
-        default engine and reset the model that went with it.  A removed local engine
-        (Tesseract, PaddleOCR) becomes the built-in reader.  Either replacement is reported
-        through :attr:`ocr_engine_replaced`, so it never happens silently.
-        """
-        if "ocr_engine" not in values:
-            return values
-        replaced = replaced_ocr_engine(values["ocr_engine"])
-        if replaced is not None:
-            self.ocr_engine_replaced.emit(replaced)
-        fixed = {**values, "ocr_engine": normalize_ocr_engine(values["ocr_engine"])}
-        if "ocr_model" in values:
-            fixed["ocr_model"] = normalize_ocr_model(values["ocr_engine"], values["ocr_model"])
-        return fixed
-
     def _apply_settings_dict_values(self, values: dict) -> None:
-        """Copy the recognised string/scalar/flag keys from *values* into the settings dict."""
-        values = self._with_local_ocr_engine(values)
-        if "ocr_engine" in values:
-            self._settings_dict["ocr_engine"] = values["ocr_engine"]
-
-        for key in (
-            "ocr_model",
-            "ollama_url",
-            "hardware_profile",
-            "correction_provider",
-            "correction_model",
-            "explanation_language",
-            "correction_output",
-            "evaluate_provider",
-            "evaluate_model",
-            "docx_format",
-        ):
-            if key in values:
-                self._settings_dict[key] = str(values[key])
-
-        if "correction_level" in values:
-            self._correction_level.setCurrentText(normalize_level(str(values["correction_level"])))
-        if "correction_output" in values:
-            self._settings_dict["correction_output"] = normalize_output_mode(
-                str(values["correction_output"])
-            )
-
-        if "preprocess_method" in values:
-            # Methods of earlier versions (grayscale, clahe, …) read as the automatic one.
-            self._settings_dict["preprocess_method"] = normalize_preprocess_method(
-                values["preprocess_method"]
-            )
-
-        if "pdf_text_layer" in values:
-            self._settings_dict["pdf_text_layer"] = normalize_pdf_text_layer(
-                str(values["pdf_text_layer"])
-            )
-
-        for key in ("ocr_timeout", "pdf_render_dpi"):
-            if key in values:
-                self._settings_dict[key] = int(values[key])
-
-        for key in (
-            "debug",
-            "keep_awake",
-            "check_for_updates",
-            "docx_enabled",
-            "text_enabled",
-            "text_anonymized_enabled",
-            "evaluation_enabled",
-            "anonymization_enabled",
-        ):
-            if key in values:
-                self._settings_dict[key] = bool(values[key])
-
-        if "anonymizer_primary_model" in values:
-            self._settings_dict["anonymizer_primary_model"] = (
-                values["anonymizer_primary_model"] or None
-            )
-        if "anonymizer_secondary_model" in values:
-            self._settings_dict["anonymizer_secondary_model"] = (
-                values["anonymizer_secondary_model"] or SECONDARY_MODEL_NONE
-            )
-        if "anonymizer_patterns" in values:
-            self._settings_dict["anonymizer_patterns"] = values["anonymizer_patterns"]
+        """Copy the keys *values* holds into the settings dict, except the ones a widget shows."""
+        for key, value in values.items():
+            if key in _WIDGET_KEYS or key in _UNSTORED_KEYS:
+                continue
+            self._settings_dict[key] = value
 
     def set_service(self, service: object) -> None:
         """Inject the application service so the panel can run requirement checks."""
@@ -1440,7 +1321,6 @@ class ConfigPanel(QScrollArea):
         checkbox.blockSignals(True)
         checkbox.setChecked(False)
         checkbox.blockSignals(False)
-        self.refresh_data_flow()  # signals were blocked: the box must be told itself
         if stage == "ocr":
             self._settings_dict["recognition_enabled"] = False
         elif stage == "correction":
@@ -1450,6 +1330,7 @@ class ConfigPanel(QScrollArea):
         else:
             self._settings_dict["anonymization_enabled"] = False
         self._sync_review_enabled()
+        self.refresh_data_flow()  # signals were blocked: the box must be told itself
 
         from ..application.service import ProcessingApplicationService  # noqa: PLC0415
         from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
@@ -1477,22 +1358,13 @@ class ConfigPanel(QScrollArea):
     def to_dict(self) -> dict:
         """Return current values as a TOML-compatible settings dict.
 
-        Note: the GUI is intentionally always-recursive (see :meth:`to_config`),
-        so ``recursive`` is deliberately not persisted — writing it would imply a
-        toggle the GUI does not expose.
+        The settings dict plus the input folder: every widget writes its key there, so this is
+        the whole state of the panel.  Note: the GUI is intentionally always-recursive (see
+        :meth:`to_config`), so ``recursive`` is deliberately not persisted — writing it would
+        imply a toggle the GUI does not expose.
         """
-        values = {
-            "input": self.get_input_dir(),
-            "output": str(self._settings_dict.get("output_dir", "")).strip(),
-            "language": self._language.currentText().strip(),
-            "recognition_enabled": self._recognition_enabled.isChecked(),
-            "correction_enabled": self._correction_enabled.isChecked(),
-            "anonymization_enabled": self._anonymization_enabled.isChecked(),
-            "correction_notes": self._correction_notes_text,
-            "correction_level": self._correction_level.currentText(),
-            "evaluate_prompt": self._evaluation_prompt_text,
-            **self._settings_dict,
-        }
+        values = dict(self._settings_dict)
+        values["input"] = self.get_input_dir()
         if values.get("anonymizer_secondary_model") is None:
             # None is skipped when writing the file, so an explicit "(none)" would be lost.
             values["anonymizer_secondary_model"] = SECONDARY_MODEL_NONE

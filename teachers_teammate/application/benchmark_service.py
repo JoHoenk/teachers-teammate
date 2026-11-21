@@ -51,12 +51,12 @@ class BenchmarkApplicationService:
     def __init__(
         self,
         *,
-        processing_service: ProcessingApplicationService | None = None,
+        processing_service: ProcessingApplicationService,
         run_store: BenchmarkRunStore | None = None,
         component_factory: PipelineComponentFactory | None = None,
         runner: _Runner | None = None,
     ) -> None:
-        self._processing = processing_service or ProcessingApplicationService()
+        self._processing = processing_service
         self._store = run_store or BenchmarkRunStore()
         self._component_factory = component_factory or PipelineComponentFactory()
         self._runner = runner or run_ocr

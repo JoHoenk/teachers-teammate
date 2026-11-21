@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.domain.data_location import DataFlow
 from teachers_teammate.domain.run_summary import RunSummary
 
@@ -195,7 +196,7 @@ def test_main_exits_when_no_input_given(tmp_path: Path, monkeypatch) -> None:
     original_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)  # ensure no ocr.toml in CWD either
-        rc = run_cli(argv=["-o", str(tmp_path)])
+        rc = run_cli(argv=["-o", str(tmp_path)], app_service=build_app_services().processing)
     finally:
         os.chdir(original_cwd)
     assert rc == 1
@@ -321,7 +322,13 @@ def test_main_exits_when_input_dir_does_not_exist(tmp_path: Path) -> None:
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
 
     non_existent = tmp_path / "does_not_exist"
-    assert run_cli(argv=["-i", str(non_existent), "-o", str(tmp_path)]) == 1
+    assert (
+        run_cli(
+            argv=["-i", str(non_existent), "-o", str(tmp_path)],
+            app_service=build_app_services().processing,
+        )
+        == 1
+    )
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
@@ -396,7 +403,10 @@ def test_main_exits_1_when_config_file_missing(tmp_path: Path) -> None:
     input_dir = tmp_path / "input"
     input_dir.mkdir()
 
-    rc = run_cli(argv=["--config", non_existent, "-i", str(input_dir)])
+    rc = run_cli(
+        argv=["--config", non_existent, "-i", str(input_dir)],
+        app_service=build_app_services().processing,
+    )
     assert rc == 1
 
 
@@ -1175,11 +1185,7 @@ def test_main_injects_the_add_on_folder_before_it_runs(monkeypatch) -> None:
     from teachers_teammate import cli  # noqa: PLC0415
 
     calls: list[object] = []
-    monkeypatch.setattr(
-        cli.ProcessingApplicationService,
-        "inject_addon_packages_dir",
-        staticmethod(lambda: calls.append("inject")),
-    )
+    monkeypatch.setattr(cli, "inject_addon_packages_dir", lambda: calls.append("inject"))
     monkeypatch.setattr(cli, "run_cli", lambda **_k: calls.append("run") or 7)
 
     cli.main(exit_fn=calls.append)

@@ -25,6 +25,7 @@ import threading
 from typing import Protocol
 
 from ._model_defaults import default_model_for_task
+from .application.composition import inject_addon_packages_dir
 from .application.service import ProcessingApplicationService
 from .config import Config, load_config_file
 from .domain.correction_prompts import NOTES_LIMIT
@@ -612,13 +613,14 @@ def _download_only(args: argparse.Namespace, service: _CliAppService) -> int | N
 
 def run_cli(
     argv: Sequence[str] | None = None,
-    app_service: _CliAppService | None = None,
+    *,
+    app_service: _CliAppService,
 ) -> int:
     """Parse args and execute the CLI flow, returning process exit code."""
     logging.basicConfig(
         level=logging.WARNING, stream=sys.stderr, format="%(levelname)s: %(message)s"
     )
-    service = app_service or ProcessingApplicationService()
+    service = app_service
     providers = service.list_providers()
 
     # ── First pass: extract --config before the full parse ─────────────────
@@ -706,7 +708,11 @@ def main(
     """CLI entry point that exits the process with the computed return code."""
     # A wheel install starts here, not in __main__ or run_gui.py: packages added under
     # Settings → Add-ons must be importable after a restart in every way of starting the app.
-    ProcessingApplicationService.inject_addon_packages_dir()
+    inject_addon_packages_dir()
+    if app_service is None:
+        from .cli_composition import build_cli_app_service  # noqa: PLC0415  # imports this module
+
+        app_service = build_cli_app_service()
     exit_fn(run_cli(argv=argv, app_service=app_service))
 
 

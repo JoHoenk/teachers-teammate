@@ -252,7 +252,7 @@ def _check_setup_assistant() -> str | None:
     Nothing lands in the user's folders: the cache, the config root and the data root are one
     temporary folder for the duration of the check.
     """
-    from teachers_teammate.application.service import ProcessingApplicationService  # noqa: PLC0415
+    from teachers_teammate.application.composition import build_app_services  # noqa: PLC0415
     from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
 
     frozen = bool(getattr(sys, "frozen", False))
@@ -270,7 +270,7 @@ def _check_setup_assistant() -> str | None:
             # The real detection runs in the frozen process: subprocesses, psutil, the platform's
             # own memory query.  That is part of what this check is for.
             settings["hardware_profile"] = "auto"
-            service = ProcessingApplicationService()
+            service = build_app_services().processing
             plan = service.plan_setup(_setup_answers(settings), settings)
             problem = _setup_plan_problem(plan, frozen)
             if problem is not None:

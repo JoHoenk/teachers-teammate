@@ -19,6 +19,7 @@ import pytest
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.application import service as service_module
 from teachers_teammate.config import Config
+from teachers_teammate.application.composition import inject_addon_packages_dir
 from teachers_teammate.application.commands import ApplicationCommands, WorkNotSavedError
 from teachers_teammate.application.queue import StageState
 from teachers_teammate.application.service import (
@@ -4296,14 +4297,14 @@ def test_a_spacy_model_downloaded_while_the_app_runs_is_found_at_once(tmp_path: 
             "teachers_teammate.infrastructure.addon_manager.get_packages_dir",
             return_value=packages,
         ):
-            svc.inject_addon_packages_dir()
+            inject_addon_packages_dir()
             assert not svc.anonymizer_available("German")
             assert [issue.kind for issue in svc._name_detection_issues("German")] == [
                 IssueKind.NAME_DETECTION_MISSING
             ]
 
             (packages / "de_core_news_sm").mkdir()
-            svc.inject_addon_packages_dir()
+            inject_addon_packages_dir()
             svc.forget_installed_models()  # what the install round does after a download
 
             assert svc.anonymizer_available("German")

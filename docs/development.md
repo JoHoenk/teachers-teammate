@@ -3527,7 +3527,7 @@ OpenCV) is deleted by its `RECORD` files only; numpy is left alone.  It is then 
   usable in the same session without a restart.
 
 The function is idempotent — safe to call multiple times.  Every entry point calls it first
-(`ProcessingApplicationService.inject_addon_packages_dir()`): `run_gui.py` and `__main__.py`,
+(`inject_addon_packages_dir()` in `application/composition.py`): `run_gui.py` and `__main__.py`,
 and `main_gui()`, `main_benchmark()` and `cli.main()` for a wheel install, so a spaCy model
 downloaded in one session is found after a restart however the app was started.
 

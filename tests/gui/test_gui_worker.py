@@ -15,6 +15,8 @@ from teachers_teammate.domain.run_summary import FileOutcome, FileStatus, RunSta
 from teachers_teammate.infrastructure.reporting import KeepAwakeState
 from tests.conftest import make_config
 
+from ._gui_harness import real_service
+
 
 class _DummyAppService:
     def run_selected(
@@ -179,7 +181,7 @@ def test_connection_thread_no_engine_or_provider(qtbot) -> None:
     The engine/provider matrix for check_connection itself is covered in
     tests/unit/test_service.py; here we only exercise the GUI thread wiring.
     """
-    thread = _ConnectionCheckThread()
+    thread = _ConnectionCheckThread(app_service=real_service())
     results: list[tuple[bool, str]] = []
     thread.check_done.connect(lambda ok, _model_ok, msg: results.append((ok, msg)))
     thread.run()

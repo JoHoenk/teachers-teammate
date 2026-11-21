@@ -267,7 +267,7 @@ class AddonsPage(SettingsPageBase):
         super().__init__(context, parent)
         settings = context.settings
         self._ollama_url = str(settings.get("ollama_url") or "").strip() or DEFAULTS["ollama_url"]
-        self._svc = context.app_service or ProcessingApplicationService()
+        self._svc = context.app_service
         self._hardware_profile = str(settings.get("hardware_profile", DEFAULTS["hardware_profile"]))
         self._preselect: list[str] = []
         self._provider_packages = self._svc.list_provider_packages()

@@ -1444,7 +1444,7 @@ def test_finished_pull_shows_model_as_downloaded_without_waiting_for_cache(
         finished_ok = Signal(str)
         finished_err = Signal(str)
 
-        def __init__(self, _url: str, model: str) -> None:
+        def __init__(self, _service: Any, _url: str, model: str) -> None:
             super().__init__()
             self._model = model
 
@@ -1482,7 +1482,7 @@ def test_pulled_custom_models_stay_in_other_with_their_abilities(
         finished_ok = Signal(str)
         finished_err = Signal(str)
 
-        def __init__(self, _url: str, model: str) -> None:
+        def __init__(self, _service: Any, _url: str, model: str) -> None:
             super().__init__()
             self._model = model
 

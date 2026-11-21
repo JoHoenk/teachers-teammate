@@ -73,6 +73,9 @@ or `docs/development.md`.
 - A sentence a teacher reads is defined in `teachers_teammate/texts/` and used by reference,
   never a literal at the call site. Message boxes and file pickers go through
   `gui/_dialogs.py`. `tests/unit/test_user_text_centralised.py` enforces it.
+- A service is built once per entry point (`application/composition.py`, called from the
+  composition modules); every other class is given the one it uses, never builds or looks one up
+  (`tests/unit/test_service_construction.py`).
 - A new setting goes on exactly one page of `gui/settings/` (or in `ConfigPanel` if it is a
   per-batch choice), never two.
 - Anything a teacher cannot rebuild lives in the config or data root, never the cache.

@@ -43,9 +43,13 @@ class _SpacyModelFetchThread(QThread):
     models_ready = Signal(list)
     error = Signal(str)
 
+    def __init__(self, service: ProcessingApplicationService) -> None:
+        super().__init__()
+        self._service = service
+
     def run(self) -> None:
         try:
-            self.models_ready.emit(ProcessingApplicationService().list_installed_spacy_models())
+            self.models_ready.emit(self._service.list_installed_spacy_models())
         except Exception as exc:  # noqa: BLE001
             # spaCy discovery may raise anything; report via signals and emit an empty list
             self.error.emit(str(exc))
@@ -316,7 +320,7 @@ class AnonymizerConfigWidget(QWidget):
         """Populate the primary and secondary model combos after the background fetch."""
         # Derive the auto label for the primary combo
         try:
-            auto_model = ProcessingApplicationService().spacy_model_for_language(self._language)
+            auto_model = self._app_service.spacy_model_for_language(self._language)
         except Exception:  # noqa: BLE001
             # model lookup is best-effort; fall back to the generic auto label
             auto_model = ""
@@ -352,7 +356,7 @@ class AnonymizerConfigWidget(QWidget):
     def _system_spacy_model(self) -> str | None:
         """Return the spaCy model for the language this computer is set to (if it is known)."""
         try:
-            return ProcessingApplicationService().system_spacy_model()
+            return self._app_service.system_spacy_model()
         except Exception:  # noqa: BLE001  # a missing spaCy must not break the dialog
             return None
 
@@ -527,7 +531,7 @@ class AnonymizerConfigWidget(QWidget):
             _dialogs.notify(self.window(), dlg.spacy_not_installed())
             return
 
-        dialog = SpacyModelDownloadDialog(needed_model, self.window())
+        dialog = SpacyModelDownloadDialog(needed_model, self.window(), service=self._app_service)
         dialog.model_downloaded.connect(self._on_model_downloaded)
         dialog.exec()
 
@@ -541,7 +545,7 @@ class AnonymizerConfigWidget(QWidget):
         """Ask for the installed spaCy models off the GUI thread (a running ask is retired)."""
         _retire_thread(self._spacy_fetch_thread)
         # No parent: a retired thread must outlive this widget until it ends on its own.
-        thread = _SpacyModelFetchThread()
+        thread = _SpacyModelFetchThread(self._app_service)
         thread.models_ready.connect(self._on_spacy_models_fetched)
         thread.error.connect(self._on_spacy_fetch_error)
         self._spacy_fetch_thread = thread

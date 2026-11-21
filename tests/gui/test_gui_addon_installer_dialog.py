@@ -19,7 +19,9 @@ from teachers_teammate.gui._addon_installer_dialog import (
     SpacyModelDownloadDialog,
 )
 
-_SVC = "teachers_teammate.gui._addon_installer_dialog.ProcessingApplicationService"
+from ._gui_harness import real_service
+
+_SVC = "teachers_teammate.gui._addon_installer_dialog.inject_addon_packages_dir"
 
 
 class _FakeThread:
@@ -99,7 +101,7 @@ def test_spacy_dialog_preselects_default_model(qtbot) -> None:
     When   the dialog is built
     Then   the combo box pre-selects that model
     """
-    dlg = SpacyModelDownloadDialog(default_model="de_core_news_sm")
+    dlg = SpacyModelDownloadDialog(default_model="de_core_news_sm", service=real_service())
     qtbot.addWidget(dlg)
 
     assert dlg._model_combo.currentData() == "de_core_news_sm"
@@ -113,7 +115,7 @@ def test_spacy_dialog_on_ok_emits_model_downloaded(qtbot) -> None:
     When   _on_download_ok fires
     Then   model_downloaded is emitted with the selected package name
     """
-    dlg = SpacyModelDownloadDialog(default_model="fr_core_news_sm")
+    dlg = SpacyModelDownloadDialog(default_model="fr_core_news_sm", service=real_service())
     qtbot.addWidget(dlg)
     received: list[str] = []
     dlg.model_downloaded.connect(received.append)
@@ -132,7 +134,7 @@ def test_spacy_dialog_on_err_reenables_controls(qtbot) -> None:
     When   _on_download_err fires
     Then   the download button and model combo are re-enabled
     """
-    dlg = SpacyModelDownloadDialog()
+    dlg = SpacyModelDownloadDialog(service=real_service())
     qtbot.addWidget(dlg)
     dlg._download_btn.setEnabled(False)
     dlg._model_combo.setEnabled(False)
@@ -157,26 +159,27 @@ def _all_label_texts(dlg) -> list[str]:
 @pytest.mark.use_case("Runtime_Addon_Installation")
 def test_install_thread_run_emits_finished_ok() -> None:
     """Given a successful install / When _InstallThread.run executes / Then finished_ok is emitted."""
-    thread = mod._InstallThread(ADDON_PRIVACY, Path("/tmp/pkg"))
+    service = MagicMock()
+    thread = mod._InstallThread(service, ADDON_PRIVACY, Path("/tmp/pkg"))
     ok = MagicMock()
     thread.finished_ok.connect(ok)
 
-    with patch(_SVC):
-        thread.run()
+    thread.run()
 
     ok.assert_called_once()
+    service.install_addon.assert_called_once()
 
 
 @pytest.mark.gui
 def test_install_thread_run_emits_finished_err_on_failure() -> None:
     """Given install raises / When _InstallThread.run executes / Then finished_err carries the message."""
-    thread = mod._InstallThread(ADDON_PRIVACY, Path("/tmp/pkg"))
+    service = MagicMock()
+    service.install_addon.side_effect = RuntimeError("pip failed")
+    thread = mod._InstallThread(service, ADDON_PRIVACY, Path("/tmp/pkg"))
     err: list[str] = []
     thread.finished_err.connect(err.append)
 
-    with patch(_SVC) as svc:
-        svc.return_value.install_addon.side_effect = RuntimeError("pip failed")
-        thread.run()
+    thread.run()
 
     assert err == ["pip failed"]
 
@@ -185,14 +188,15 @@ def test_install_thread_run_emits_finished_err_on_failure() -> None:
 @pytest.mark.use_case("Language_Model_Download")
 def test_model_download_thread_run_emits_finished_ok() -> None:
     """Given a successful download / When _ModelDownloadThread.run executes / Then finished_ok is emitted."""
-    thread = mod._ModelDownloadThread("en_core_web_sm", Path("/tmp/pkg"))
+    service = MagicMock()
+    thread = mod._ModelDownloadThread(service, "en_core_web_sm", Path("/tmp/pkg"))
     ok = MagicMock()
     thread.finished_ok.connect(ok)
 
-    with patch(_SVC):
-        thread.run()
+    thread.run()
 
     ok.assert_called_once()
+    service.download_spacy_model.assert_called_once()
 
 
 @pytest.mark.gui

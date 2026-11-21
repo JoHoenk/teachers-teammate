@@ -17,6 +17,7 @@ from typing import Any, Protocol
 
 from PySide6.QtCore import QObject, QThread, Signal
 
+from ..application.composition import inject_addon_packages_dir
 from ..application.service import PAGE_MODELS_STATUS_KEY, READER_STATUS_KEY
 from . import _user_text as txt
 from ._model_fetch import _start_thread
@@ -52,7 +53,17 @@ class _InstallService(Protocol):
 
     def addon_packages_dir(self) -> Path: ...
 
-    def inject_addon_packages_dir(self) -> None: ...
+    def download_spacy_model(
+        self, model: str, target: Path, progress_cb: Callable[[str], None]
+    ) -> None: ...
+
+    def pull_ollama_model(
+        self,
+        url: str,
+        model_name: str,
+        progress_cb: Callable[[str, float, float], None] | None = None,
+        abort_event: threading.Event | None = None,
+    ) -> None: ...
 
     def on_ollama_models_changed(self, ollama_url: str) -> None: ...
 
@@ -322,7 +333,7 @@ class InstallRound(QObject):
         for package in packages:
             self.item_done.emit(f"{PACKAGE_PREFIX}{package}")
         self._installed_any = True
-        self._svc.inject_addon_packages_dir()
+        inject_addon_packages_dir()
         if self._spacy_models:
             self._start_spacy()
         else:
@@ -337,7 +348,7 @@ class InstallRound(QObject):
         self.log_line.emit(f"Downloading spaCy model: {model}")
         self._phase = "spacy"
         self._begin(f"{SPACY_PREFIX}{model}")
-        thread = _ModelDownloadThread(model, self._svc.addon_packages_dir())
+        thread = _ModelDownloadThread(self._svc, model, self._svc.addon_packages_dir())
         thread.log_line.connect(self.log_line)
         thread.finished_ok.connect(self._on_spacy_done)
         thread.finished_err.connect(self._on_error)
@@ -348,7 +359,7 @@ class InstallRound(QObject):
         self.log_line.emit("✓ spaCy model downloaded.")
         self.item_done.emit(self._current)
         self._installed_any = True
-        self._svc.inject_addon_packages_dir()
+        inject_addon_packages_dir()
         self._spacy_models = self._spacy_models[1:]
         if self._spacy_models:
             self._start_spacy()
@@ -443,7 +454,7 @@ class InstallRound(QObject):
             return
         from ._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
 
-        thread = _OllamaPullThread(self._ollama_url, model)
+        thread = _OllamaPullThread(self._svc, self._ollama_url, model)
         # Bytes travel as floats: a Qt ``int`` is 32 bits and a model is often over 2 GB.
         thread.progress.connect(self.pull_progress)
         thread.finished_ok.connect(self._on_pull_done)

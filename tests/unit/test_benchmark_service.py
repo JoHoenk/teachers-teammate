@@ -10,13 +10,18 @@ from teachers_teammate.application.benchmark_service import (
     BenchmarkApplicationService,
     BenchmarkRunError,
 )
+from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.infrastructure.benchmark.run_store import BenchmarkRunStore
 from teachers_teammate.infrastructure.benchmark.runner import OcrRunResult
 
 
 def _service(tmp_path: Path, runner) -> BenchmarkApplicationService:
-    return BenchmarkApplicationService(run_store=BenchmarkRunStore(tmp_path), runner=runner)
+    return BenchmarkApplicationService(
+        processing_service=build_app_services().processing,
+        run_store=BenchmarkRunStore(tmp_path),
+        runner=runner,
+    )
 
 
 def _source(tmp_path: Path) -> Path:

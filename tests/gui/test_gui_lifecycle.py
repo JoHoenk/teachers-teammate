@@ -62,8 +62,8 @@ WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
             "English", AnonymizerConfig(), ProcessingApplicationService()
         ),
     ),
-    ("addon_installer", lambda: AddonInstallerDialog("privacy")),
-    ("reader_download", lambda: ReaderDownloadDialog()),
+    ("addon_installer", lambda: AddonInstallerDialog("privacy", service=_FAKE)),
+    ("reader_download", lambda: ReaderDownloadDialog(_FAKE)),
     ("about", lambda: AboutDialog()),
     ("help", lambda: HelpDialog()),
     ("licenses", lambda: ThirdPartyLicensesDialog()),

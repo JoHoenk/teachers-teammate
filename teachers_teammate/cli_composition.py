@@ -5,13 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import sys
 
+from .application.composition import build_app_services
 from .application.service import ProcessingApplicationService
 from .cli import main
 
 
 def build_cli_app_service() -> ProcessingApplicationService:
-    """Create the default application service used by CLI entrypoints."""
-    return ProcessingApplicationService()
+    """Return the application service the CLI entrypoints use."""
+    return build_app_services().processing
 
 
 def run_cli_entrypoint(

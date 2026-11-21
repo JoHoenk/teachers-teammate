@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+from typing import Any
 
 from teachers_teammate._model_defaults import default_model_for_task
 from teachers_teammate.application.context_choice import ContextChoice, context_choice
@@ -243,7 +244,6 @@ class RecommendationServiceStub(LocalDataFlowStub):
         self.detect_calls: list[tuple[str, bool]] = []
         self.changed_urls: list[str] = []
         self.gpu_calls: list[bool] = []  # the ``refresh`` flag of every detect_gpus call
-        self.injected_packages_dir = False  # inject_addon_packages_dir was called
         self.outdated_addons = False  # an app update left add-ons that wait for an update
         self.addon_updates = 0  # how often update_addons ran
 
@@ -354,8 +354,19 @@ class RecommendationServiceStub(LocalDataFlowStub):
     def addon_packages_dir(self) -> Path:
         return Path(tempfile.gettempdir()) / "teachers-teammate-addons"
 
-    def inject_addon_packages_dir(self) -> None:
-        self.injected_packages_dir = True
+    def install_addon(self, addon: str, target: Path, progress_cb: Any) -> None:
+        _ = (addon, target, progress_cb)
+
+    def clear_stale_addon_modules(self, addon: str) -> None:
+        _ = addon
+
+    def download_spacy_model(self, model: str, target: Path, progress_cb: Any) -> None:
+        _ = (model, target, progress_cb)
+
+    def pull_ollama_model(
+        self, url: str, model_name: str, progress_cb: Any = None, abort_event: Any = None
+    ) -> None:
+        _ = (url, model_name, progress_cb, abort_event)
 
 
 class FinishedThreadStub:

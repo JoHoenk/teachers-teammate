@@ -46,6 +46,7 @@ import qdarkstyle
 
 from .. import __version__ as _APP_VERSION
 from ..application.check_document import CheckDocument
+from ..application.composition import inject_addon_packages_dir
 from ..application.queue import StageState
 from ..application.sent_text import SentTexts
 from ..application.service import (
@@ -328,8 +329,14 @@ class OllamaDownloadManager(QObject):
     finished = Signal(str)  # model_name (success)
     error = Signal(str)  # error message
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        parent: QObject | None = None,
+        *,
+        service: ProcessingApplicationService,
+    ) -> None:
         super().__init__(parent)
+        self._service = service
         self._thread: QThread | None = None
         self._current_model: str = ""
         self._current_url: str = ""
@@ -376,7 +383,7 @@ class OllamaDownloadManager(QObject):
 
         self._current_model = model_name
         self._current_url = url
-        thread = _OllamaPullThread(url, model_name)
+        thread = _OllamaPullThread(self._service, url, model_name)
         thread.progress.connect(self.progress)
         thread.finished_ok.connect(self._on_finished_ok)
         thread.finished_err.connect(self._on_finished_err)
@@ -438,13 +445,13 @@ class MainWindow(QMainWindow):
     def __init__(
         self,
         *,
-        app_service: ProcessingApplicationService | None = None,
+        app_service: ProcessingApplicationService,
         worker_factory: Callable[..., _WorkerLike] | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Teacher's Teammate")
         self.resize(1500, 860)
-        self._app_service = app_service or ProcessingApplicationService()
+        self._app_service = app_service
         self._worker_factory = worker_factory
         _icon = _app_icon()
         if _icon is not None:
@@ -523,7 +530,7 @@ class MainWindow(QMainWindow):
         """Initialise per-window runtime state and declare widgets built later."""
         self._worker: _WorkerLike | None = None
         self._config_path: Path | None = None
-        self._pull_manager = OllamaDownloadManager(self)
+        self._pull_manager = OllamaDownloadManager(self, service=self._app_service)
         self._sent_texts_task = LatestTask(self)
         self._last_sent_texts: SentTexts | None = None
         self._anonymize_task = LatestTask(self)
@@ -873,11 +880,11 @@ class MainWindow(QMainWindow):
         after it was closed.
         """
         if self._benchmark_window is None:
-            from .benchmark._benchmark_window import (  # noqa: PLC0415  # loaded on demand
+            from .benchmark.composition import (  # noqa: PLC0415  # loaded on demand
                 build_benchmark_window,
             )
 
-            self._benchmark_window = build_benchmark_window()
+            self._benchmark_window = build_benchmark_window(processing=self._app_service)
         elif not self._benchmark_window.isVisible():
             self._benchmark_window.reload_settings()  # closed since: the settings may differ now
         window = self._benchmark_window
@@ -3435,9 +3442,11 @@ class MainWindow(QMainWindow):
 # ── Entry point ────────────────────────────────────────────────────────────
 
 
-def build_main_window() -> MainWindow:
-    """Create the default main window instance for GUI bootstrap."""
-    return MainWindow()
+def _default_window_factory() -> MainWindow:
+    """Build the window with the process's services, for ``teachers-teammate-gui``."""
+    from .composition import build_main_window  # noqa: PLC0415  # imports this module
+
+    return build_main_window()
 
 
 def main_gui(
@@ -3448,7 +3457,7 @@ def main_gui(
     """Launch the Teacher's Teammate GUI.
 
     Args:
-        window_factory: Override the default :func:`build_main_window` factory (used in tests).
+        window_factory: Override the default window factory (used in tests).
         early_splash:   A :class:`QSplashScreen` that was shown before the heavy GUI imports
                         so it is already visible during startup.  When provided the internal
                         splash-creation logic is skipped and the caller's splash is reused.
@@ -3460,7 +3469,7 @@ def main_gui(
         diagnostics.start_watching()
     # Idempotent: run_gui.py and __main__.py did it already; a wheel install's entry point
     # did not, and a language model downloaded in a session would be lost after a restart.
-    ProcessingApplicationService.inject_addon_packages_dir()
+    inject_addon_packages_dir()
     diagnostics_phase("add-on packages folder on sys.path")
     # Start the slow own-host-name lookup before any widget asks where a step runs.
     ProcessingApplicationService.warm_up_locality_checks()
@@ -3507,7 +3516,7 @@ def main_gui(
     app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api="pyside6"))
     diagnostics_phase("theme applied")
 
-    factory = window_factory or build_main_window
+    factory = window_factory or _default_window_factory
     try:
         window = factory()
         diagnostics_phase("main window built")

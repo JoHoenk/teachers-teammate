@@ -13,8 +13,9 @@ import threading
 import pytest
 from PySide6.QtWidgets import QApplication, QWidget
 
-from teachers_teammate.application.service import ProcessingApplicationService
+from teachers_teammate.gui import _main_window
 from teachers_teammate.gui._app_bootstrap import create_app, finish_process
+from teachers_teammate.gui.benchmark import _benchmark_window
 from teachers_teammate.gui.benchmark._benchmark_window import main_benchmark
 from teachers_teammate.gui.benchmark.composition import build_benchmark_window
 from teachers_teammate.gui._main_window import main_gui
@@ -234,11 +235,8 @@ def test_the_gui_entry_points_inject_the_add_on_folder_first(qtbot, monkeypatch,
     Then   the add-on folder is injected before the window is built
     """
     calls: list[str] = []
-    monkeypatch.setattr(
-        ProcessingApplicationService,
-        "inject_addon_packages_dir",
-        staticmethod(lambda: calls.append("inject")),
-    )
+    for module in (_main_window, _benchmark_window):
+        monkeypatch.setattr(module, "inject_addon_packages_dir", lambda: calls.append("inject"))
     monkeypatch.setattr(QApplication, "exec", lambda self: 0)
     monkeypatch.setattr(sys, "exit", lambda *a: None)
 
@@ -251,3 +249,19 @@ def test_the_gui_entry_points_inject_the_add_on_folder_first(qtbot, monkeypatch,
     {"main_gui": main_gui, "main_benchmark": main_benchmark}[entry](window_factory=factory)
 
     assert calls[:2] == ["inject", "window"]
+
+
+@pytest.mark.gui
+def test_the_default_window_factories_build_their_windows(qtbot) -> None:
+    """
+    Given  the console scripts, which start main_gui() and main_benchmark() with no factory
+    When   the default factories run
+    Then   each builds its window with services of its own, with nothing looked up globally
+    """
+    main = _main_window._default_window_factory()
+    qtbot.addWidget(main)
+    bench = _benchmark_window._default_window_factory()
+    qtbot.addWidget(bench)
+
+    assert isinstance(main, _main_window.MainWindow)
+    assert isinstance(bench, _benchmark_window.BenchmarkWindow)

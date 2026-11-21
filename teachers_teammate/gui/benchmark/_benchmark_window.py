@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.benchmark_service import BenchmarkApplicationService
+from ...application.composition import inject_addon_packages_dir
 from ...application.service import ProcessingApplicationService
 from ...config import DEFAULTS
 from ...texts import dialogs as dlg
@@ -36,13 +37,13 @@ class BenchmarkWindow(QMainWindow):
     def __init__(
         self,
         *,
-        app_service: BenchmarkApplicationService | None = None,
+        app_service: BenchmarkApplicationService,
         worker_factory=None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Teacher's Teammate — OCR Benchmark")
         self.resize(1100, 720)
-        self._service = app_service or BenchmarkApplicationService()
+        self._service = app_service
         self._worker_factory = worker_factory or BenchmarkWorker
         self._worker: BenchmarkWorker | None = None
         self._source: Path | None = None
@@ -235,24 +236,22 @@ class BenchmarkWindow(QMainWindow):
         self._stop_btn.setEnabled(running)
 
 
+def _default_window_factory() -> BenchmarkWindow:
+    """Build the window with the process's services, for ``teachers-teammate-benchmark``."""
+    from .composition import build_benchmark_window  # noqa: PLC0415  # imports this module
+
+    return build_benchmark_window()
+
+
 def main_benchmark(*, window_factory=None) -> None:
     """Launch the benchmark GUI."""
-    ProcessingApplicationService.inject_addon_packages_dir()  # idempotent; a wheel install's entry point starts here
+    inject_addon_packages_dir()  # idempotent; a wheel install's entry point starts here
     from .._main_window import _app_icon  # noqa: PLC0415  reuse the shared app icon
 
     # Start the slow own-host-name lookup before any widget asks where a step runs.
     ProcessingApplicationService.warm_up_locality_checks()
     app = create_app(icon_factory=_app_icon)
-    factory = window_factory or build_benchmark_window
+    factory = window_factory or _default_window_factory
     window = factory()
     window.show()
     finish_process(app.exec())
-
-
-def build_benchmark_window(
-    *,
-    app_service: BenchmarkApplicationService | None = None,
-    worker_factory=None,
-) -> BenchmarkWindow:
-    """Create the benchmark window with optional injected dependencies."""
-    return BenchmarkWindow(app_service=app_service, worker_factory=worker_factory)

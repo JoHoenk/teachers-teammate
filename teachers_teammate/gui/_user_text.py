@@ -780,10 +780,8 @@ HIDE_PERSONAL_INFO_UNAVAILABLE_TIP = (
 )
 HIDING_PERSONAL_INFO = "Hiding personal information…"
 HIDING_PERSONAL_INFO_FAILED = "Personal information could not be hidden: {reason}"
-TURN_OFF_HIDING_TO_EDIT = (
-    "Personal information is hidden, so the texts can't be edited. Click here to show it and edit."
-)
 HIDE_PERSONAL_INFO_BUTTON = "👁"
+HIDE_PERSONAL_INFO_BUTTON_WORKING = "👁…"
 HIDE_PERSONAL_INFO_BUTTON_TIP = "Hide personal information in the texts shown here"
 SHOW_PERSONAL_INFO_BUTTON_TIP = "Show names again in the texts shown here"
 
@@ -809,16 +807,20 @@ OPTIONAL_CHANGE = "optional"
 AI_NOT_SURE = "AI not sure"
 NO_EXPLANATION_MADE = "no explanation was made for this one"
 TAKEN_OUT = "taken out"
-MINOR_GROUP_NOTE = "marked in the text"
 SHOW_NAMES_TO_CHANGE = "Show the names to change the text"
 COULD_NOT_MARK = "The corrections could not be marked in this text."
 NO_ITEMS = "Nothing to correct in this text."
 
 
-def minor_group_label(count: int) -> str:
-    """Return the row of the spelling and punctuation changes, e.g. ``"9 spelling, punctuation"``."""
+def take_out_all_label(count: int) -> str:
+    """Return the button that takes out every spelling and punctuation change, e.g. ``"Take out all 9"``."""
+    return f"{TAKE_OUT_ALL} {count}"
+
+
+def take_out_all_tooltip(count: int) -> str:
+    """Return what the *Take out all* button does, naming how many changes it takes out."""
     noun = "correction" if count == 1 else "corrections"
-    return f"{count} spelling, punctuation {noun}"
+    return f"{TAKE_OUT_ALL_TOOLTIP}: {count} spelling and punctuation {noun}"
 
 
 def item_counts(corrections: int, unclear: int, left_out: int = 0) -> str:

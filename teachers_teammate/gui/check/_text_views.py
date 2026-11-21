@@ -187,6 +187,7 @@ class CheckTextView(FormattedTextEdit):
         self._mark_cursors: list[tuple[Mark, QTextCursor]] = []
         self._chosen = ""
         self._rendering = False
+        self._reason = ""
         self.installEventFilter(_ZoomWheel(self))
 
     # ── the text ──────────────────────────────────────────────────────────
@@ -219,9 +220,17 @@ class CheckTextView(FormattedTextEdit):
         """Whether the document reproduces the plain text, so marks can be placed."""
         return self._map is not None
 
-    def set_editable(self, editable: bool) -> None:
-        """Allow or refuse typing in the view."""
+    def set_editable(self, editable: bool, *, reason: str = "") -> None:
+        """Allow or refuse typing in the view; *reason* is what a keystroke is answered with."""
         self.setReadOnly(not editable)
+        self._reason = "" if editable else reason
+
+    def keyPressEvent(self, e) -> None:  # Qt override
+        """Say why the view cannot be typed in when the teacher tries, and only then."""
+        if self.isReadOnly() and self._reason and e.text().isprintable() and e.text():
+            where = self.mapToGlobal(self.cursorRect().bottomLeft())
+            QToolTip.showText(where, self._reason, self)
+        super().keyPressEvent(e)
 
     # ── the marks ─────────────────────────────────────────────────────────
 
@@ -252,10 +261,16 @@ class CheckTextView(FormattedTextEdit):
         self.setExtraSelections(selections)
 
     def reveal(self, key: str) -> None:
-        """Scroll to the mark of *key* and select its words."""
+        """Scroll to the mark of *key*, with the caret at its first word and nothing selected.
+
+        The words are not selected: the theme draws a selection in its own blue over the mark's
+        colour, and the mark already says which item it is.
+        """
         for mark, cursor in self._mark_cursors:
             if mark.key == key:
-                self.setTextCursor(cursor)
+                caret = QTextCursor(self.document())
+                caret.setPosition(cursor.selectionStart())
+                self.setTextCursor(caret)
                 self.ensureCursorVisible()
                 return
 

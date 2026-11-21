@@ -26,9 +26,6 @@ from ..domain.proofreading.review import (
 #: Sort position of an expression the model quoted but the text does not contain: it goes last.
 _NOT_FOUND = 1 << 30
 
-#: The key of the row that folds the minor changes: one thing to look at, not one per comma.
-MINOR_KEY = "minor"
-
 
 class ItemKind(Enum):
     """What kind of thing an item of the list is."""
@@ -81,7 +78,7 @@ class CheckItem:
     suggestion_uncertain: bool = False
     """``True`` when the model could not tell the intended meaning and only suggests."""
     is_minor: bool = False
-    """``True`` for a spelling or punctuation change, which the list folds into one row."""
+    """``True`` for a spelling or punctuation change, which the text marks more weakly."""
 
 
 def check_items(aligned: AlignedReview) -> tuple[CheckItem, ...]:
@@ -120,30 +117,37 @@ def check_items(aligned: AlignedReview) -> tuple[CheckItem, ...]:
     )
 
 
-def group_minor(items: Sequence[CheckItem]) -> tuple[CheckItem, ...]:
-    """Return the items the minor group row folds: the spelling and punctuation changes."""
-    return tuple(item for item in items if item.is_minor)
+#: The kinds that are the model's own changes, still standing in the text.
+MODEL_KINDS = frozenset({ItemKind.CORRECTION, ItemKind.CHANGED, ItemKind.UNEXPLAINED})
+
+
+def is_minor_correction(item: CheckItem) -> bool:
+    """Whether *Take out all* takes *item* out: a spelling or punctuation change of the model.
+
+    A correction the teacher already took out stays out, and a change of their own is theirs.
+    """
+    return item.is_minor and item.kind in MODEL_KINDS
+
+
+def minor_corrections(items: Sequence[CheckItem]) -> tuple[CheckItem, ...]:
+    """Return the items of *items* that *Take out all* takes out, which the button also counts."""
+    return tuple(item for item in items if is_minor_correction(item))
 
 
 def counts_for_looked_at(item: CheckItem) -> bool:
     """Whether *item* is a row the teacher has to look at.
 
-    Their own changes are not something to look at — they made them — and the spelling and
-    punctuation changes count once, as the row that folds them, not one per comma.
+    Their own changes are not something to look at — they made them.
     """
-    return not item.is_minor and item.kind is not ItemKind.OWN
+    return item.kind is not ItemKind.OWN
 
 
 def countable_keys(items: Sequence[CheckItem]) -> tuple[str, ...]:
-    """Return the keys the "looked at" count counts: one per row that counts, the group as one.
+    """Return the keys the "looked at" count counts: one per row that counts.
 
-    The keys are those of the rows the list shows, so the count and the list never disagree: a
-    single spelling change is a row of its own and is not folded, so it does not count either.
+    The keys are those of the rows the list shows, so the count and the list never disagree.
     """
-    keys = [item.key for item in items if counts_for_looked_at(item)]
-    if sum(1 for item in items if item.is_minor) > 1:
-        keys.append(MINOR_KEY)
-    return tuple(keys)
+    return tuple(item.key for item in items if counts_for_looked_at(item))
 
 
 def next_unseen(rows: Sequence[str], looked_at: frozenset[str], after: str) -> str:

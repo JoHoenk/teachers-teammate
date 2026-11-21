@@ -11,7 +11,7 @@ from teachers_teammate.application.check_items import (
     countable_keys,
     counts_for_looked_at,
     first_unseen,
-    group_minor,
+    minor_corrections,
     next_unseen,
 )
 from teachers_teammate.domain.proofreading.edits import Edit, EditPart, edits
@@ -234,26 +234,54 @@ def test_an_unclear_item_carries_its_why_and_suggestion() -> None:
     assert items[0].suggestion_uncertain is True
 
 
-def test_minor_changes_are_folded_into_one_group() -> None:
+def test_the_minor_changes_are_the_ones_take_out_all_takes_out() -> None:
     """
     Given  a review with a spelling change and a word choice
     When   the minor items are asked for
-    Then   only the spelling change is in the group, and it is marked minor
+    Then   only the spelling change is in the set, and it is marked minor
     """
     items = check_items(align(RAW, CORRECTED, _review("spelling", "word_choice")))
 
-    minor = group_minor(items)
+    minor = minor_corrections(items)
 
     assert [item.key for item in minor] == ["edit:1"]
     assert minor[0].is_minor is True
     assert [item.is_minor for item in items] == [True, False]
 
 
+def test_take_out_all_leaves_a_taken_out_correction_and_the_teachers_own_change() -> None:
+    """
+    Given  a spelling correction the teacher took out, one still standing, and a comma of their own
+    When   the items *Take out all* takes out are asked for
+    Then   only the correction that still stands is in the set
+    """
+    raw = "Der Hunt bellt. Er lauft schnell."
+    machine = "Der Hund bellt. Er lauft schnell."
+    teacher = "Der Hund bellt. Er lauft, schnell."
+    first, second = edits(raw, "Der Hund bellt. Er läuft schnell.")
+    review = CorrectionReview(
+        edits=(
+            edit_note(first, category="spelling", explanation="Typo."),
+            edit_note(second, category="spelling", explanation="Umlaut."),
+        )
+    )
+
+    items = check_items(align(raw, teacher, review, machine_plain=machine))
+
+    assert sorted(_kinds(items), key=lambda kind: kind.value) == [
+        ItemKind.CORRECTION,
+        ItemKind.OWN,
+        ItemKind.TAKEN_OUT,
+    ]
+    assert all(item.is_minor for item in items)
+    assert [item.kind for item in minor_corrections(items)] == [ItemKind.CORRECTION]
+
+
 def test_an_edit_without_a_note_is_minor_when_it_touches_no_word() -> None:
     """
     Given  a text whose only change is an added comma, with no review
     When   the items are built
-    Then   the change is minor, so the list folds it away
+    Then   the change is minor, so it is drawn weaker and taken out with the others
     """
     items = check_items(align("Der Hund bellt", "Der Hund, bellt", CorrectionReview()))
 
@@ -301,17 +329,17 @@ def test_a_correction_keeps_its_key_when_the_teacher_takes_it_out() -> None:
     assert inside[0].key == taken_out[0].key == "edit:1"
 
 
-def test_counts_for_looked_at_skips_own_changes_and_group_members() -> None:
+def test_counts_for_looked_at_skips_only_the_teachers_own_changes() -> None:
     """
     Given  a correction, a spelling change, an unexplained change and the teacher's own change
     When   each item is asked whether it counts for looked-at
-    Then   the correction and the unexplained change count, the other two do not
+    Then   every item counts except the teacher's own change
     """
     items = check_items(align(RAW, CORRECTED, _review("word_choice", "spelling")))
     unexplained = check_items(align("aa bb", "aa BB", CorrectionReview(), machine_plain="aa BB"))
     own = check_items(align("aa bb", "aa BB", CorrectionReview(), machine_plain="aa bb"))
 
-    assert [counts_for_looked_at(item) for item in items] == [True, False]
+    assert [counts_for_looked_at(item) for item in items] == [True, True]
     assert [counts_for_looked_at(item) for item in unexplained] == [True]
     assert [counts_for_looked_at(item) for item in own] == [False]
 
@@ -320,13 +348,13 @@ def test_the_countable_keys_are_the_rows_the_list_counts() -> None:
     """
     Given  a document with one spelling change, and one with two
     When   the keys the looked-at count counts are asked for
-    Then   the single change is not folded and does not count, the two count once as the group
+    Then   every spelling change is a row of its own, so each has its own key
     """
     single = check_items(align(RAW, CORRECTED, _review("word_choice", "spelling")))
-    folded = check_items(align(RAW, CORRECTED, _review("spelling", "spelling")))
+    two = check_items(align(RAW, CORRECTED, _review("spelling", "spelling")))
 
-    assert countable_keys(single) == ("edit:1",)
-    assert countable_keys(folded) == ("minor",)
+    assert countable_keys(single) == ("edit:1", "edit:2")
+    assert countable_keys(two) == ("edit:1", "edit:2")
 
 
 @pytest.mark.parametrize(

@@ -5,9 +5,10 @@
 from __future__ import annotations
 
 import pytest
+import qdarkstyle
 from PySide6.QtCore import QPoint, QRect
-from PySide6.QtGui import QColor, QImage
-from PySide6.QtWidgets import QBoxLayout
+from PySide6.QtGui import QColor, QImage, QPalette
+from PySide6.QtWidgets import QApplication, QBoxLayout
 
 from teachers_teammate.application.check_document import CheckDocument, check_document_of
 from teachers_teammate.application.check_items import ItemKind
@@ -22,13 +23,13 @@ from teachers_teammate.gui.check import _style
 from teachers_teammate.gui.check._masking import Masking
 from teachers_teammate.domain.teacher_work import WorkStatus
 from teachers_teammate.gui.check._side_panel import (
-    FILTER_ALL,
+    FILTER_LEFT_OUT,
+    FILTER_UNCLEAR,
     FILTER_UNSEEN,
-    GROUP_KEY,
     SidePanel,
+    _category_of,
     _column_rects,
     _icon_of,
-    rows_of,
 )
 from teachers_teammate.infrastructure.state_repository import DocumentStateView
 from teachers_teammate.texts import check as check_txt
@@ -178,7 +179,7 @@ def test_a_looked_at_item_has_a_filled_icon(qtbot) -> None:
     panel = _panel(qtbot, doc)
 
     assert panel._delegate.looked_at == frozenset({"edit:1"})
-    assert _icon_of(panel._rows[0], expanded=False, looked_at=panel._delegate.looked_at) == "\u25cf"
+    assert _icon_of(panel._rows[0], looked_at=panel._delegate.looked_at) == "\u25cf"
     assert panel._counts.text() == "1 correction \u00b7 1 of 1 looked at"
 
 
@@ -191,23 +192,23 @@ def test_an_item_not_looked_at_has_an_open_icon(qtbot) -> None:
     """
     panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
 
-    assert _icon_of(panel._rows[0], expanded=False, looked_at=frozenset()) == "\u25cb"
+    assert _icon_of(panel._rows[0], looked_at=frozenset()) == "\u25cb"
 
 
 @pytest.mark.gui
-def test_the_folded_minor_changes_count_once(qtbot) -> None:
+def test_every_minor_change_counts_on_its_own(qtbot) -> None:
     """
     Given  a document with two spelling corrections
-    When   the side panel shows it, and the group row is looked at
-    Then   the footer counts the group as one thing, not one per correction
+    When   the side panel shows it, and one of them is looked at
+    Then   the footer counts both, since each is a row of its own
     """
     panel = _panel(qtbot, _minor_document())
 
-    assert panel._counts.text() == "2 corrections \u00b7 0 of 1 looked at"
+    assert panel._counts.text() == "2 corrections \u00b7 0 of 2 looked at"
 
-    panel.set_looked_at(frozenset({GROUP_KEY}), (1, 1))
+    panel.set_looked_at(frozenset({"edit:1"}), (1, 2))
 
-    assert panel._counts.text() == "2 corrections \u00b7 1 of 1 looked at"
+    assert panel._counts.text() == "2 corrections \u00b7 1 of 2 looked at"
 
 
 @pytest.mark.gui
@@ -277,7 +278,7 @@ def test_choosing_an_item_selects_its_row_without_telling(qtbot) -> None:
     panel = _panel(qtbot, _document(review=review))
     chosen: list[str] = []
     panel.item_chosen.connect(chosen.append)
-    key = panel._rows[1].item.key
+    key = panel._rows[1].key
 
     panel.set_chosen(key)
 
@@ -298,7 +299,7 @@ def test_the_chosen_item_stays_chosen_when_the_list_is_rebuilt(qtbot) -> None:
     )
     doc = _document(review=review)
     panel = _panel(qtbot, doc)
-    key = panel._rows[1].item.key
+    key = panel._rows[1].key
     panel.set_chosen(key)
 
     panel.set_document(doc, Masking())
@@ -318,7 +319,7 @@ def test_a_gone_item_leaves_its_neighbour_chosen(qtbot) -> None:
         unclear=(UnclearNote(4, 9, "bunte", "Farbe unklar.", "bunte Farbe"),),
     )
     panel = _panel(qtbot, _document(review=review))
-    panel.set_chosen(panel._rows[1].item.key)
+    panel.set_chosen(panel._rows[1].key)
 
     panel.set_document(_document(review=_note(RAW, CORRECTED)), Masking())
 
@@ -353,7 +354,7 @@ def test_the_card_of_an_unexplained_correction_says_so(qtbot) -> None:
     """
     panel = _panel(qtbot, _document(review=None))
 
-    assert panel._rows[0].item.kind is ItemKind.UNEXPLAINED
+    assert panel._rows[0].kind is ItemKind.UNEXPLAINED
     assert txt.NO_EXPLANATION_MADE in _card_text(panel)
     assert _buttons(panel) == [txt.TAKE_OUT]
     assert _replace_field(panel) == "braune"
@@ -368,7 +369,7 @@ def test_the_card_of_the_teachers_own_change_offers_take_out_only(qtbot) -> None
     """
     panel = _panel(qtbot, _document(review=CorrectionReview(), machine=RAW))
 
-    assert panel._rows[0].item.kind is ItemKind.OWN
+    assert panel._rows[0].kind is ItemKind.OWN
     assert txt.YOUR_CHANGE in _card_text(panel)
     assert _buttons(panel) == [txt.TAKE_OUT]
     assert _replace_field(panel) == ""
@@ -385,7 +386,7 @@ def test_the_card_of_a_changed_correction_says_you_changed_this(qtbot) -> None:
 
     panel = _panel(qtbot, _document(review=review))
 
-    assert panel._rows[0].item.kind is ItemKind.CHANGED
+    assert panel._rows[0].kind is ItemKind.CHANGED
     assert txt.YOUR_CHANGE in _card_text(panel)
     assert _buttons(panel) == [txt.TAKE_OUT]
     assert _replace_field(panel) == "braune"
@@ -400,7 +401,7 @@ def test_the_card_of_a_taken_out_correction_offers_put_back(qtbot) -> None:
     """
     panel = _panel(qtbot, _document(corrected=RAW, review=_note(RAW, CORRECTED)))
 
-    assert panel._rows[0].item.kind is ItemKind.TAKEN_OUT
+    assert panel._rows[0].kind is ItemKind.TAKEN_OUT
     assert "<s>braune</s>" in panel._card._title.text()
     assert txt.TAKEN_OUT in _card_text(panel)
     assert _buttons(panel) == [txt.PUT_BACK]
@@ -419,7 +420,7 @@ def test_the_card_of_an_unclear_passage_offers_the_suggestion(qtbot) -> None:
 
     panel = _panel(qtbot, _document(corrected=RAW, review=review))
 
-    assert panel._rows[0].item.kind is ItemKind.UNCLEAR
+    assert panel._rows[0].kind is ItemKind.UNCLEAR
     assert "Farbe unklar." in _card_text(panel)
     assert f"{txt.SUGGESTION_PREFIX} bunte Farbe" in _card_text(panel)
     assert txt.MEANING_NOT_CERTAIN in _card_text(panel)
@@ -443,7 +444,7 @@ def test_the_card_of_a_question_is_not_offered_as_wording(qtbot) -> None:
     assert _buttons(panel) == [txt.USE_SUGGESTION]
 
 
-# ── The folded spelling and punctuation changes ───────────────────────────
+# ── The spelling and punctuation changes ──────────────────────────────────
 
 
 def _minor_document() -> CheckDocument:
@@ -475,57 +476,107 @@ def _minor_after_a_correction() -> CheckDocument:
 
 
 @pytest.mark.gui
-def test_the_minor_changes_are_one_row_that_opens(qtbot) -> None:
+def test_every_minor_change_is_a_row_of_its_own(qtbot) -> None:
     """
     Given  a document with a word choice and two spelling corrections after it
-    When   the side panel shows it, and the group row is chosen
-    Then   one row folds the spelling changes, its items are hidden until it is chosen, and then
-           they show
+    When   the side panel shows it
+    Then   the list has one row per change, and nothing is hidden
     """
-    doc = _minor_after_a_correction()
-    panel = _panel(qtbot, doc)
-    rows = rows_of(doc.items)
+    panel = _panel(qtbot, _minor_after_a_correction())
 
-    assert [row.key for row in rows] == ["edit:1", GROUP_KEY, "edit:2", "edit:3"]
-    assert panel._list.item(2).isHidden() and panel._list.item(3).isHidden()
-
-    panel._list.setCurrentRow(1)
-
-    assert not panel._list.item(2).isHidden() and not panel._list.item(3).isHidden()
-    assert panel.chosen == ""
+    assert [row.key for row in panel._rows] == ["edit:1", "edit:2", "edit:3"]
+    assert _shown_rows(panel) == ["edit:1", "edit:2", "edit:3"]
 
 
 @pytest.mark.gui
-def test_the_group_row_offers_take_out_all(qtbot) -> None:
+def test_a_minor_change_offers_take_out_all_beside_its_own_take_out(qtbot) -> None:
     """
     Given  a document with two spelling corrections
-    When   the group row is chosen
-    Then   the card counts them and offers Take out all
+    When   the card of one of them is shown
+    Then   it offers Take out all, labelled with how many changes it takes out
     """
     panel = _panel(qtbot, _minor_document())
 
-    panel._list.setCurrentRow(0)
-
-    assert txt.minor_group_label(2) in _card_text(panel)
-    assert _buttons(panel) == [txt.TAKE_OUT_ALL]
+    assert _buttons(panel) == [txt.TAKE_OUT, txt.take_out_all_label(2)]
+    assert panel._card.take_out_all.toolTip() == txt.take_out_all_tooltip(2)
 
 
 @pytest.mark.gui
-def test_one_minor_change_is_not_folded(qtbot) -> None:
+def test_a_correction_that_is_not_minor_offers_no_take_out_all(qtbot) -> None:
     """
-    Given  a document with a single spelling correction
+    Given  a document with one word choice
     When   the side panel shows it
-    Then   it is a row of its own: a group row over one correction is only noise
+    Then   the card offers Take out only: there is no run of small changes to take out
     """
-    raw = "Der bunte Hund bellt."
-    corrected = "Der braune Hund bellt."
-    review = CorrectionReview(
-        edits=(edit_note(edits(raw, corrected)[0], category="spelling", explanation="."),)
-    )
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
 
+    assert _buttons(panel) == [txt.TAKE_OUT]
+
+
+@pytest.mark.gui
+def test_take_out_all_counts_and_offers_only_the_corrections_still_standing(qtbot) -> None:
+    """
+    Given  two spelling corrections, the first of which the teacher took out
+    When   the card of the one still standing, and of the one taken out, is shown
+    Then   the first counts one change, and the taken-out one offers Put back and no Take out all
+    """
+    raw = "Der Hunt bellt. Die Katz mauzt."
+    corrected = "Der Hunt bellt. Die Katze mauzt."
+    review = CorrectionReview(
+        edits=tuple(
+            edit_note(edit, category="spelling", explanation="Schreibweise.")
+            for edit in edits(raw, "Der Hund bellt. Die Katze mauzt.")
+        )
+    )
     panel = _panel(qtbot, _document(raw=raw, corrected=corrected, review=review))
 
-    assert [row.key for row in panel._rows] == ["edit:1"]
+    panel.set_chosen("edit:1")
+    assert _buttons(panel) == [txt.PUT_BACK]
+
+    panel.set_chosen("edit:2")
+    assert _buttons(panel) == [txt.TAKE_OUT, txt.take_out_all_label(1)]
+
+
+@pytest.mark.gui
+def test_the_teachers_own_minor_change_offers_no_take_out_all(qtbot) -> None:
+    """
+    Given  a spelling correction of the model and a comma the teacher added
+    When   the card of the comma is shown
+    Then   it offers Take out only: Take out all is the model's changes, not theirs
+    """
+    raw = "Der Hunt bellt. Die Katz mauzt."
+    machine = "Der Hund bellt. Die Katz mauzt."
+    teacher = "Der Hund bellt. Die Katz, mauzt."
+    review = CorrectionReview(
+        edits=(edit_note(edits(raw, machine)[0], category="spelling", explanation="Typo."),)
+    )
+    panel = _panel(qtbot, _document(raw=raw, corrected=teacher, machine=machine, review=review))
+    own = next(row for row in panel._rows if row.kind is ItemKind.OWN)
+    assert own.is_minor is True
+
+    panel.set_chosen(own.key)
+
+    assert _buttons(panel) == [txt.TAKE_OUT]
+
+
+@pytest.mark.gui
+def test_a_model_change_without_a_category_is_filed_under_other(qtbot) -> None:
+    """
+    Given  a proofreading whose review was lost, so its change has no category
+    When   the side panel shows it and the *Other* box is ticked
+    Then   the row has the *Other* badge, the box counts it, and the row stays in the list
+    """
+    panel = _panel(qtbot, _document(review=None))
+    assert panel._rows[0].kind is ItemKind.UNEXPLAINED
+
+    other = panel._filter_boxes["other"]
+    assert not other.isHidden()
+    assert other.text() == check_txt.filter_label(txt.category_label("other"), 1)
+    assert _category_of(panel._rows[0]) == txt.category_label("other")
+
+    panel.set_filter("other")
+
+    assert _shown_rows(panel) == [panel._rows[0].key]
 
 
 # ── The actions ───────────────────────────────────────────────────────────
@@ -549,14 +600,13 @@ def test_the_buttons_ask_for_their_action(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_take_out_all_asks_for_the_group(qtbot) -> None:
+def test_take_out_all_asks_for_every_minor_change(qtbot) -> None:
     """
-    Given  a side panel with the group row chosen
+    Given  a side panel whose card shows a spelling change
     When   the teacher presses Take out all
     Then   the panel asks for it once, without an item
     """
     panel = _panel(qtbot, _minor_document())
-    panel._list.setCurrentRow(0)
     asked: list[bool] = []
     panel.take_out_all_requested.connect(lambda: asked.append(True))
 
@@ -704,7 +754,7 @@ def test_a_list_rebuilt_after_an_edit_does_not_report_a_new_choice(qtbot) -> Non
     )
     doc = _document(review=review)
     panel = _panel(qtbot, doc)
-    panel.set_chosen(panel._rows[1].item.key)
+    panel.set_chosen(panel._rows[1].key)
     chosen: list[str] = []
     panel.item_chosen.connect(chosen.append)
 
@@ -735,7 +785,7 @@ def _walk_document(
     looked_at: frozenset[str] = frozenset(),
     categories: tuple[str, ...] = ("word_choice", "spelling", "spelling", "word_choice"),
 ) -> CheckDocument:
-    """Return a document with two corrections, a folded group and the teacher's own change."""
+    """Return a document with four corrections and the teacher's own change."""
     found = edits(WALK_RAW, WALK_CORRECTED)
     review = CorrectionReview(
         edits=tuple(
@@ -763,7 +813,7 @@ def _walking_panel(qtbot, doc: CheckDocument) -> SidePanel:
 
     def _mark(key: str) -> None:
         looked_at.add(key)
-        panel.set_looked_at(frozenset(looked_at), (len(looked_at), 3))
+        panel.set_looked_at(frozenset(looked_at), (len(looked_at), 4))
 
     panel.item_shown.connect(_mark)
     panel.set_document(doc, Masking())
@@ -773,43 +823,42 @@ def _walking_panel(qtbot, doc: CheckDocument) -> SidePanel:
 @pytest.mark.gui
 def test_next_walks_every_row_that_counts_once_and_then_says_all_looked_at(qtbot) -> None:
     """
-    Given  a document with two corrections, a folded group of two and the teacher's own change
+    Given  a document with four corrections and the teacher's own change
     When   *Next* is pressed until it stops
-    Then   it visits the two corrections and the group once each, and then reads All looked at
+    Then   it visits the four corrections once each, and then reads All looked at
     """
     panel = _walking_panel(qtbot, _walk_document())
     assert [row.key for row in panel._rows] == [
         "edit:1",
-        GROUP_KEY,
         "edit:2",
         "edit:3",
         "edit:4",
         "own:95-99",
     ]
-    assert panel.chosen_row == "edit:1"
-    walked = [panel.chosen_row]
+    assert panel.chosen == "edit:1"
+    walked = [panel.chosen]
 
-    for _ in range(2):
+    for _ in range(3):
         panel._next_button.click()
-        walked.append(panel.chosen_row)
+        walked.append(panel.chosen)
 
-    assert walked == ["edit:1", GROUP_KEY, "edit:4"]
+    assert walked == ["edit:1", "edit:2", "edit:3", "edit:4"]
     assert panel._next_button.text() == txt.ALL_LOOKED_AT
     assert panel._next_button.isEnabled() is False
-    assert panel._counts.text().endswith("3 of 3 looked at")
+    assert panel._counts.text().endswith("4 of 4 looked at")
 
 
 @pytest.mark.gui
 def test_next_stays_in_place_whatever_the_card_says(qtbot) -> None:
     """
-    Given  a document whose rows have cards of different heights (a correction, a group)
+    Given  a document whose rows have cards of different heights
     When   *Next* walks from row to row until all are looked at
     Then   the button does not move, so the teacher can keep clicking at the same spot
     """
     panel = _walking_panel(qtbot, _walk_document())
     places = set()
 
-    for _ in range(3):
+    for _ in range(4):
         qtbot.wait(10)
         geometry = panel._next_button.geometry()
         places.add((geometry.right(), geometry.top()))
@@ -821,13 +870,13 @@ def test_next_stays_in_place_whatever_the_card_says(qtbot) -> None:
 @pytest.mark.gui
 def test_a_document_opens_at_the_first_correction_not_looked_at(qtbot) -> None:
     """
-    Given  a document whose first correction and group row were looked at
+    Given  a document whose first two corrections were looked at
     When   the side panel shows it
     Then   the first correction not looked at is chosen, so the teacher continues where they were
     """
-    panel = _walking_panel(qtbot, _walk_document(looked_at=frozenset({"edit:1", GROUP_KEY})))
+    panel = _walking_panel(qtbot, _walk_document(looked_at=frozenset({"edit:1", "edit:2"})))
 
-    assert panel.chosen == "edit:4"
+    assert panel.chosen == "edit:3"
 
 
 @pytest.mark.gui
@@ -838,7 +887,7 @@ def test_a_document_whose_rows_were_all_looked_at_opens_at_the_first(qtbot) -> N
     Then   the first row is chosen and *Next* says there is nothing left
     """
     panel = _walking_panel(
-        qtbot, _walk_document(looked_at=frozenset({"edit:1", GROUP_KEY, "edit:4"}))
+        qtbot, _walk_document(looked_at=frozenset({"edit:1", "edit:2", "edit:3", "edit:4"}))
     )
 
     assert panel.chosen == "edit:1"
@@ -854,13 +903,13 @@ def test_a_stored_edit_does_not_move_the_choice(qtbot) -> None:
     """
     doc = _walk_document()
     panel = _walking_panel(qtbot, doc)
-    panel.set_chosen("edit:4")
+    panel.set_chosen("edit:3")
 
     panel.set_document(doc, Masking())
 
-    assert panel.chosen == "edit:4"
+    assert panel.chosen == "edit:3"
     panel._next_button.click()
-    assert panel.chosen_row == GROUP_KEY
+    assert panel.chosen == "edit:4"
 
 
 @pytest.mark.gui
@@ -887,7 +936,7 @@ def test_the_card_of_a_stretch_the_ai_left_out_says_so_and_offers_no_wording(qtb
 
     panel = _panel(qtbot, _document(corrected=RAW, review=review))
 
-    kinds = [row.item.kind for row in panel._rows]
+    kinds = [row.kind for row in panel._rows]
     assert kinds == [ItemKind.LEFT_OUT, ItemKind.UNCLEAR]
     panel.set_chosen(panel._rows[0].key)
     assert "Die KI hat diese Stelle ausgelassen." in _card_text(panel)
@@ -902,14 +951,14 @@ def test_the_card_of_a_stretch_the_ai_left_out_says_so_and_offers_no_wording(qtb
 @pytest.mark.gui
 def test_the_card_keeps_its_height_whatever_it_says(qtbot) -> None:
     """
-    Given  a document whose rows have cards of different lengths (a correction, a group)
+    Given  a document whose rows have cards of different lengths
     When   *Next* walks from row to row
     Then   the card and its buttons stay where they are, so nothing moves under the pointer
     """
     panel = _walking_panel(qtbot, _walk_document())
     places = set()
 
-    for _ in range(3):
+    for _ in range(4):
         qtbot.wait(10)
         places.add((panel._card.height(), panel._card._button_row.geometry().top()))
         panel._next_button.click()
@@ -984,14 +1033,17 @@ def test_the_sentence_around_the_change_hides_the_names(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_a_row_without_words_in_the_text_has_no_context_line(qtbot) -> None:
+def test_a_row_whose_words_are_not_in_the_text_has_no_context_line(qtbot) -> None:
     """
-    Given  the folded row of the spelling and punctuation changes
+    Given  an unclear passage the model quoted but the text does not contain
     When   the side panel shows it
-    Then   the card has no context line, because there is no one sentence to quote
+    Then   the card has no context line, because there is no sentence to quote
     """
-    panel = _panel(qtbot, _minor_document())
-    panel.set_chosen(GROUP_KEY)
+    review = CorrectionReview(
+        unclear=(UnclearNote(500, 505, "bunte", "Farbe unklar.", "bunte Farbe"),)
+    )
+
+    panel = _panel(qtbot, _document(corrected=RAW, review=review))
 
     assert panel._card._context.isHidden()
 
@@ -1007,13 +1059,13 @@ def test_the_card_shows_the_category_as_a_coloured_chip(qtbot) -> None:
     Then   the card shows the category in the colour the list uses for it
     """
     panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
-    item = panel._rows[0].item
+    item = panel._rows[0]
     assert item is not None
-    look = _style.look(item)
+    background, text = _style.badge_colours(item)
     body = panel._card._body.text()
 
-    assert f"background-color:{look.background}" in body
-    assert f"color:{look.text}" in body
+    assert f"background-color:{background}" in body
+    assert f"color:{text}" in body
     assert "Word choice" in body
 
 
@@ -1046,7 +1098,7 @@ def test_the_notes_of_a_change_are_tags(qtbot) -> None:
     assert "<i>Farbe.</i>" not in body
 
 
-# ── The filter row ────────────────────────────────────────────────────────
+# ── The filter boxes ──────────────────────────────────────────────────────
 
 
 def _shown_rows(panel: SidePanel) -> list[str]:
@@ -1057,30 +1109,29 @@ def _shown_rows(panel: SidePanel) -> list[str]:
 
 
 @pytest.mark.gui
-def test_the_filter_row_has_a_chip_per_category_with_its_count(qtbot) -> None:
+def test_the_filter_row_has_a_box_per_category_with_its_count(qtbot) -> None:
     """
     Given  a document with two word choices and two spelling changes
     When   the side panel shows it
-    Then   every chip says how many rows it would show, and a category the text lacks is gone
+    Then   every box says how many rows it would show, and a category the text lacks is gone
     """
     panel = _panel(qtbot, _walk_document())
 
-    labels = {
-        key: button.text() for key, button in panel._filter_buttons.items() if not button.isHidden()
-    }
+    labels = {key: box.text() for key, box in panel._filter_boxes.items() if not box.isHidden()}
 
-    assert labels[FILTER_ALL] == check_txt.FILTER_ALL
-    assert labels[FILTER_UNSEEN] == check_txt.filter_label(check_txt.FILTER_NOT_LOOKED_AT, 3)
+    assert labels[FILTER_UNSEEN] == check_txt.filter_label(check_txt.FILTER_NOT_LOOKED_AT, 4)
     assert labels["word_choice"] == check_txt.filter_label("Word choice", 2)
     assert labels["spelling"] == check_txt.filter_label("Spelling", 2)
     assert "grammar" not in labels
+    assert FILTER_UNCLEAR not in labels
+    assert FILTER_LEFT_OUT not in labels
 
 
 @pytest.mark.gui
-def test_a_category_filter_shows_only_that_category(qtbot) -> None:
+def test_a_ticked_category_shows_only_that_category(qtbot) -> None:
     """
     Given  a document with two word choices and two spelling changes
-    When   the word choice chip is chosen
+    When   the word choice box is ticked
     Then   only the word choice rows are in the list
     """
     panel = _panel(qtbot, _walk_document())
@@ -1091,35 +1142,70 @@ def test_a_category_filter_shows_only_that_category(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_a_category_filter_shows_the_folded_changes_one_by_one(qtbot) -> None:
+def test_two_ticked_categories_combine(qtbot) -> None:
     """
-    Given  a document whose spelling changes are folded into one row
-    When   the spelling chip is chosen
-    Then   the group row gives way to its two items, since the list is short already
+    Given  a document with two word choices and two spelling changes
+    When   the word choice and the spelling boxes are both ticked
+    Then   the list shows the rows of both, and nothing else
     """
     panel = _panel(qtbot, _walk_document())
 
+    panel.set_filter("word_choice")
     panel.set_filter("spelling")
 
-    assert _shown_rows(panel) == ["edit:2", "edit:3"]
+    assert _shown_rows(panel) == ["edit:1", "edit:2", "edit:3", "edit:4"]
 
 
 @pytest.mark.gui
-def test_the_not_looked_at_filter_shows_what_is_left(qtbot) -> None:
+def test_the_unclear_box_shows_the_unclear_passages(qtbot) -> None:
+    """
+    Given  a document with one correction and one unclear passage
+    When   the Unclear box is ticked
+    Then   only the unclear passage is in the list
+    """
+    review = CorrectionReview(
+        edits=_note(RAW, CORRECTED).edits,
+        unclear=(UnclearNote(4, 9, "bunte", "Farbe unklar.", "bunte Farbe"),),
+    )
+    panel = _panel(qtbot, _document(review=review))
+    assert not panel._filter_boxes[FILTER_UNCLEAR].isHidden()
+
+    panel.set_filter(FILTER_UNCLEAR)
+
+    assert _shown_rows(panel) == ["unclear:1"]
+
+
+@pytest.mark.gui
+def test_the_not_looked_at_box_shows_what_is_left(qtbot) -> None:
     """
     Given  a document whose first correction was looked at
-    When   the *Not looked at* chip is chosen
+    When   the *Not looked at* box is ticked
     Then   only the rows that count and were not looked at are in the list
     """
     panel = _panel(qtbot, _walk_document(looked_at=frozenset({"edit:1"})))
 
     panel.set_filter(FILTER_UNSEEN)
 
-    assert _shown_rows(panel) == [GROUP_KEY, "edit:4"]
+    assert _shown_rows(panel) == ["edit:2", "edit:3", "edit:4"]
 
 
 @pytest.mark.gui
-def test_the_not_looked_at_filter_drops_a_row_once_it_is_looked_at(qtbot) -> None:
+def test_the_not_looked_at_box_narrows_the_ticked_categories(qtbot) -> None:
+    """
+    Given  a document whose first word choice was looked at
+    When   the word choice box and *Not looked at* are both ticked
+    Then   only the word choice that is left is in the list
+    """
+    panel = _panel(qtbot, _walk_document(looked_at=frozenset({"edit:1"})))
+
+    panel.set_filter("word_choice")
+    panel.set_filter(FILTER_UNSEEN)
+
+    assert _shown_rows(panel) == ["edit:4"]
+
+
+@pytest.mark.gui
+def test_the_not_looked_at_box_drops_a_row_once_it_is_looked_at(qtbot) -> None:
     """
     Given  a list narrowed to what is left
     When   the teacher looks at the row they are on and moves on
@@ -1128,45 +1214,61 @@ def test_the_not_looked_at_filter_drops_a_row_once_it_is_looked_at(qtbot) -> Non
     panel = _panel(qtbot, _walk_document())
     panel.set_filter(FILTER_UNSEEN)
 
-    panel.set_looked_at(frozenset({"edit:1"}), (1, 3))
-    assert _shown_rows(panel) == ["edit:1", GROUP_KEY, "edit:4"]
+    panel.set_looked_at(frozenset({"edit:1"}), (1, 4))
+    assert _shown_rows(panel) == ["edit:1", "edit:2", "edit:3", "edit:4"]
 
-    panel.set_chosen(GROUP_KEY)
-    panel.set_looked_at(frozenset({"edit:1", GROUP_KEY}), (2, 3))
+    panel.set_chosen("edit:2")
+    panel.set_looked_at(frozenset({"edit:1", "edit:2"}), (2, 4))
 
-    assert _shown_rows(panel) == [GROUP_KEY, "edit:4"]
+    assert _shown_rows(panel) == ["edit:2", "edit:3", "edit:4"]
 
 
 @pytest.mark.gui
-def test_choosing_all_shows_every_row_again(qtbot) -> None:
+def test_unticking_every_box_shows_every_row_again(qtbot) -> None:
     """
     Given  a list narrowed to one category
-    When   the *All* chip is chosen
-    Then   every row is back, the folded ones still folded
+    When   that box is unticked again
+    Then   every row is back, since nothing ticked shows everything
     """
     panel = _panel(qtbot, _walk_document())
     panel.set_filter("word_choice")
 
-    panel.set_filter(FILTER_ALL)
+    panel.set_filter("word_choice", False)
 
-    assert _shown_rows(panel) == ["edit:1", GROUP_KEY, "edit:4", "own:95-99"]
+    assert _shown_rows(panel) == ["edit:1", "edit:2", "edit:3", "edit:4", "own:95-99"]
+    assert panel.ticked == frozenset()
 
 
 @pytest.mark.gui
-def test_next_stays_inside_the_filter(qtbot) -> None:
+def test_next_stays_inside_the_ticked_categories(qtbot) -> None:
     """
     Given  a list narrowed to the word choices
     When   *Next* is pressed
-    Then   it goes to the next word choice, not to a row the filter hides
+    Then   it goes to the next word choice, not to a row the boxes hide
     """
     panel = _walking_panel(qtbot, _walk_document())
     panel.set_filter("word_choice")
-    walked = [panel.chosen_row]
+    walked = [panel.chosen]
 
     panel._next_button.click()
-    walked.append(panel.chosen_row)
+    walked.append(panel.chosen)
 
     assert walked == ["edit:1", "edit:4"]
+
+
+@pytest.mark.gui
+def test_next_says_all_looked_at_when_the_ticked_category_is_done(qtbot) -> None:
+    """
+    Given  a list narrowed to the spelling changes, both looked at
+    When   the side panel shows it
+    Then   *Next* says there is nothing left, although other rows are not looked at
+    """
+    panel = _walking_panel(qtbot, _walk_document(looked_at=frozenset({"edit:2", "edit:3"})))
+
+    panel.set_filter("spelling")
+
+    assert not panel._next_button.isEnabled()
+    assert panel._next_button.text() == txt.ALL_LOOKED_AT
 
 
 @pytest.mark.gui
@@ -1180,14 +1282,14 @@ def test_the_counts_cover_the_whole_document_with_a_filter_on(qtbot) -> None:
 
     panel.set_filter("word_choice")
 
-    assert panel._counts.text().endswith("of 3 looked at")
+    assert panel._counts.text().endswith("of 4 looked at")
 
 
 @pytest.mark.gui
 def test_a_filter_that_hides_the_chosen_row_chooses_the_first_it_shows(qtbot) -> None:
     """
     Given  a list whose chosen row is a spelling change
-    When   the word choice chip is chosen
+    When   the word choice box is ticked
     Then   the first word choice is chosen, so the card never shows a hidden row
     """
     panel = _panel(qtbot, _walk_document())
@@ -1201,36 +1303,36 @@ def test_a_filter_that_hides_the_chosen_row_chooses_the_first_it_shows(qtbot) ->
 @pytest.mark.gui
 def test_a_new_document_opens_with_every_row_shown(qtbot) -> None:
     """
-    Given  a list narrowed to one category
+    Given  a list narrowed to one category and to what is left
     When   another document is opened
-    Then   the filter is back to *All*, so nothing of the new document is hidden unseen
+    Then   no box is ticked, so nothing of the new document is hidden unseen
     """
     panel = _panel(qtbot, _walk_document())
     panel.set_filter("word_choice")
+    panel.set_filter(FILTER_UNSEEN)
 
     panel.set_document(_document(source_id="/tmp/Ben.png"), Masking())
 
-    assert panel.filter == FILTER_ALL
-    assert panel._filter_buttons[FILTER_ALL].isChecked()
+    assert panel.ticked == frozenset()
+    assert panel.unseen_only is False
+    assert not panel._filter_boxes["word_choice"].isChecked()
 
 
 @pytest.mark.gui
-def test_the_filter_chips_wrap_when_the_panel_is_narrow(qtbot) -> None:
+def test_the_filter_boxes_wrap_when_the_panel_is_narrow(qtbot) -> None:
     """
-    Given  a panel narrower than its chips side by side
+    Given  a document with four categories, in a panel as narrow as it goes
     When   the filter row is laid out
-    Then   the chips wrap onto more than one line instead of running out of the panel
+    Then   the boxes wrap onto more than one line instead of running out of the panel
     """
-    panel = _panel(qtbot, _walk_document())
+    panel = _panel(
+        qtbot, _walk_document(categories=("word_choice", "spelling", "grammar", "punctuation"))
+    )
 
     panel.resize(150, 600)
     qtbot.wait(20)
 
-    tops = {
-        button.geometry().top()
-        for button in panel._filter_buttons.values()
-        if not button.isHidden()
-    }
+    tops = {box.geometry().top() for box in panel._filter_boxes.values() if not box.isHidden()}
 
     assert len(tops) > 1
 
@@ -1244,15 +1346,6 @@ def _row_image(panel: SidePanel, index: int) -> QImage:
     return panel._list.viewport().grab(rect).toImage()
 
 
-def _darkest(image: QImage) -> int:
-    """The lightness of the darkest pixel of *image*."""
-    return min(
-        QColor(image.pixel(x, y)).lightness()
-        for x in range(image.width())
-        for y in range(image.height())
-    )
-
-
 def _has_colour(image: QImage, colour: QColor) -> bool:
     """Whether *image* has a pixel of exactly *colour*."""
     return any(
@@ -1262,20 +1355,85 @@ def _has_colour(image: QImage, colour: QColor) -> bool:
     )
 
 
+def _luminance(colour: QColor) -> float:
+    """The relative luminance of *colour*, as WCAG defines it."""
+
+    def channel(value: int) -> float:
+        share = value / 255
+        return share / 12.92 if share <= 0.03928 else ((share + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(colour.red())
+        + 0.7152 * channel(colour.green())
+        + 0.0722 * channel(colour.blue())
+    )
+
+
+def _contrast(first: QColor, second: QColor) -> float:
+    """The contrast ratio between two colours, from 1 (none) to 21 (black on white)."""
+    lighter, darker = sorted((_luminance(first), _luminance(second)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+@pytest.fixture
+def dark_theme():
+    """Give the session the theme the app runs with, and take it away again."""
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api="pyside6"))
+    yield
+    app.setStyleSheet(before)
+
+
 @pytest.mark.gui
-def test_a_row_the_teacher_looked_at_is_drawn_dimmed(qtbot) -> None:
+def test_a_looked_at_row_stays_readable(qtbot, dark_theme) -> None:
     """
-    Given  a correction the teacher has not looked at
-    When   it is marked as looked at
-    Then   its words are drawn faded, so the open rows stand out without being hidden
+    Given  a correction the teacher has looked at, on the theme the app runs with
+    When   the list draws its row
+    Then   its words are the theme's secondary grey, and that grey reads on the list
+    """
+    panel = _panel(qtbot, _walk_document(looked_at=frozenset({"edit:1"})))
+    palette = panel._list.palette()
+    colour = _style.row_text(palette, looked_at=True, selected=False)
+
+    assert _has_colour(_row_image(panel, 0), colour)
+    assert _contrast(colour, palette.color(QPalette.ColorRole.Base)) >= 4.5
+
+
+@pytest.mark.gui
+def test_the_chosen_row_is_drawn_in_the_selection_colours(qtbot, dark_theme) -> None:
+    """
+    Given  a correction the teacher has looked at
+    When   its row is the chosen one
+    Then   its words are the theme's selection text, which reads on the selection background
+    """
+    panel = _panel(qtbot, _walk_document(looked_at=frozenset({"edit:1"})))
+    palette = panel._list.palette()
+    colour = _style.row_text(palette, looked_at=True, selected=True)
+    panel._list.setCurrentRow(0)
+    qtbot.wait(10)
+
+    assert _has_colour(_row_image(panel, 0), colour)
+    assert _contrast(colour, palette.color(QPalette.ColorRole.Highlight)) >= 4.5
+
+
+@pytest.mark.gui
+def test_the_badge_keeps_its_colour_on_a_looked_at_row(qtbot, dark_theme) -> None:
+    """
+    Given  a correction of a known category
+    When   the list draws its row before and after the teacher looked at it
+    Then   the badge is the same colour in both, so the category still reads
     """
     panel = _panel(qtbot, _walk_document())
-    plain = _darkest(_row_image(panel, 0))
+    item = panel._rows[0]
+    assert item is not None
+    badge = QColor(_style.badge_colours(item)[0])
+    assert _has_colour(_row_image(panel, 0), badge)
 
     panel.set_looked_at(frozenset({"edit:1"}), (1, 3))
     qtbot.wait(10)
 
-    assert _darkest(_row_image(panel, 0)) > plain
+    assert _has_colour(_row_image(panel, 0), badge)
 
 
 @pytest.mark.gui
@@ -1286,10 +1444,47 @@ def test_a_row_shows_its_category_as_a_coloured_badge(qtbot) -> None:
     Then   the category is a badge in the colour the card's chip uses
     """
     panel = _panel(qtbot, _walk_document())
-    item = panel._rows[0].item
+    item = panel._rows[0]
     assert item is not None
 
-    assert _has_colour(_row_image(panel, 0), QColor(_style.look(item).background))
+    assert _has_colour(_row_image(panel, 0), QColor(_style.badge_colours(item)[0]))
+
+
+@pytest.mark.gui
+def test_a_row_without_a_category_says_what_kind_it_is(qtbot) -> None:
+    """
+    Given  a document with an unclear passage and a stretch the model left out
+    When   the list draws their rows
+    Then   each row names its kind, and both share the amber badge
+    """
+    review = CorrectionReview(
+        unclear=(
+            UnclearNote(4, 9, "bunte", "Farbe unklar.", "bunte Farbe"),
+            UnclearNote(22, 27, "Katze", "Die KI hat diese Stelle ausgelassen.", "", left_out=True),
+        )
+    )
+    panel = _panel(qtbot, _document(corrected=RAW, review=review))
+    assert [row.kind for row in panel._rows] == [ItemKind.UNCLEAR, ItemKind.LEFT_OUT]
+
+    assert [_category_of(row) for row in panel._rows] == [
+        check_txt.BADGE_UNCLEAR,
+        check_txt.BADGE_LEFT_OUT,
+    ]
+    amber = QColor(_style.KIND_BADGE_COLOURS[ItemKind.UNCLEAR][0])
+    assert _has_colour(_row_image(panel, 0), amber)
+    assert _has_colour(_row_image(panel, 1), amber)
+
+
+@pytest.mark.gui
+def test_a_correction_still_shows_its_category(qtbot) -> None:
+    """
+    Given  a correction of a known category
+    When   the list draws its row
+    Then   the badge names the category, not the kind of thing it is
+    """
+    panel = _panel(qtbot, _walk_document())
+
+    assert _category_of(panel._rows[0]) == txt.category_label("word_choice")
 
 
 def test_the_two_word_columns_are_the_same_width() -> None:
@@ -1303,26 +1498,6 @@ def test_the_two_word_columns_are_the_same_width() -> None:
     assert before.width() == after.width() == 90
     assert before.right() < arrow.left()
     assert arrow.right() < after.left()
-
-
-@pytest.mark.gui
-def test_next_walks_the_folded_changes_under_their_category_filter(qtbot) -> None:
-    """
-    Given  a document whose two spelling changes are folded into one row
-    When   the spelling chip is chosen and *Next* is pressed
-    Then   it is on, and walks the two changes one by one, then says all looked at
-    """
-    panel = _walking_panel(qtbot, _walk_document())
-
-    panel.set_filter("spelling")
-    walked = [panel.chosen_row]
-    assert panel._next_button.isEnabled()
-    panel._next_button.click()
-    walked.append(panel.chosen_row)
-
-    assert walked == ["edit:2", "edit:3"]
-    assert not panel._next_button.isEnabled()
-    assert panel._next_button.text() == txt.ALL_LOOKED_AT
 
 
 @pytest.mark.gui
@@ -1340,25 +1515,25 @@ def test_a_stored_edit_keeps_the_chosen_row_under_the_not_looked_at_filter(qtbot
 
     panel.set_document(_walk_document(looked_at=frozenset({"edit:4"})), Masking())
 
-    assert panel.chosen_row == "edit:4"
+    assert panel.chosen == "edit:4"
     assert "edit:4" in _shown_rows(panel)
-    assert panel.filter == FILTER_UNSEEN
+    assert panel.unseen_only is True
 
 
 @pytest.mark.gui
-def test_a_category_that_is_gone_after_an_edit_gives_the_filter_back_to_all(qtbot) -> None:
+def test_a_category_that_is_gone_after_an_edit_unticks_every_box(qtbot) -> None:
     """
     Given  a list narrowed to the spelling changes
     When   the same document comes back with no spelling change left
-    Then   the filter is *All*, so the list is not empty behind a chip that is gone
+    Then   no box is ticked, so the list is not empty behind a box that is gone
     """
     panel = _panel(qtbot, _walk_document())
     panel.set_filter("spelling")
 
     panel.set_document(_walk_document(categories=("word_choice",) * 4), Masking())
 
-    assert panel.filter == FILTER_ALL
-    assert panel._filter_buttons[FILTER_ALL].isChecked()
+    assert panel.ticked == frozenset()
+    assert not panel._filter_boxes["spelling"].isChecked()
     assert _shown_rows(panel)
 
 
@@ -1374,7 +1549,7 @@ def test_choosing_a_row_the_filter_hides_keeps_it_shown(qtbot) -> None:
 
     panel.set_chosen("edit:1")
 
-    assert panel.chosen_row == "edit:1"
+    assert panel.chosen == "edit:1"
     assert "edit:1" in _shown_rows(panel)
 
 
@@ -1387,7 +1562,7 @@ def test_a_category_the_chips_lack_is_filed_under_other(qtbot) -> None:
     """
     panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED, category="typo")))
 
-    other = panel._filter_buttons["other"]
+    other = panel._filter_boxes["other"]
     assert not other.isHidden()
     assert other.text() == check_txt.filter_label(txt.category_label("other"), 1)
     panel.set_filter("other")

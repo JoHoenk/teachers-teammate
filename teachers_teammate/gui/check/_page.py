@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.check_document import CheckDocument
-from ...application.check_items import CheckItem, ItemKind, countable_keys, group_minor
+from ...application.check_items import CheckItem, ItemKind, countable_keys, minor_corrections
 from ...domain.proofreading.review import AlignedReview
 from ...domain.teacher_work import (
     TextEdit,
@@ -193,11 +193,17 @@ class _Banner(QWidget):
         layout.addWidget(self._button)
         self.setVisible(False)
 
-    def show_message(self, text: str, *, action: str = "") -> None:
-        """Show *text*, with a button labelled *action* when there is something to do about it."""
+    def show_message(self, text: str, *, action: str = "", reason: str = "") -> None:
+        """Show *text*, with a button labelled *action* when there is something to do about it.
+
+        A *reason* greys the button out and is its tooltip: the strip keeps its height, and the
+        button says why it does nothing now.
+        """
         self._label.setText(text)
         self._button.setText(action)
         self._button.setVisible(bool(action))
+        self._button.setEnabled(not reason)
+        self._button.setToolTip(reason)
         self.setVisible(True)
 
     def hide_message(self) -> None:
@@ -260,7 +266,7 @@ class CheckBody(QWidget):
     text_zoom_changed = Signal(int)
     """Ctrl+wheel changed the text size; the window stores it for the next document."""
     item_shown = Signal(str)
-    """An item became the one the card shows: its key, or ``"minor"`` for the group row."""
+    """An item became the one the card shows: its key."""
     layout_changed = Signal(object)
     """The teacher dragged a pane: the :class:`CheckLayout` the tab has now."""
 
@@ -494,7 +500,12 @@ class CheckBody(QWidget):
         self.panel.set_note("" if self.final_view.mapped else txt.COULD_NOT_MARK)
 
     def _refresh_editability(self) -> None:
-        """Let the teacher type where the state allows it, and say why where it does not."""
+        """Let the teacher type where the state allows it, and say why where it does not.
+
+        The reason is a tooltip on the two texts and on the card's buttons: the banner is for
+        what the teacher has to read, and a reason that comes and goes with the 👁 toggle would
+        move the texts under the cursor.
+        """
         doc = self._doc
         if doc is None:
             self._refresh_history_actions()
@@ -502,13 +513,16 @@ class CheckBody(QWidget):
         locked = bool(self._lock)
         masked = self._masking.enabled
         reading_fix = doc.has_proofreading and not self._edit_allowed
-        self.read_view.set_editable(not (locked or masked or reading_fix))
-        self.final_view.set_editable(not (locked or masked))
         reason = ""
         if locked:
             reason = self._lock
         elif masked:
             reason = txt.SHOW_NAMES_TO_CHANGE
+        self.read_view.set_editable(
+            not (locked or masked or reading_fix),
+            reason=reason or txt.READING_FIX_WARNING,
+        )
+        self.final_view.set_editable(not (locked or masked), reason=reason)
         self.panel.set_editable(not (locked or masked), reason=reason)
         self._refresh_history_actions()
 
@@ -520,7 +534,12 @@ class CheckBody(QWidget):
         self._redo_action.setEnabled(editable and document.isRedoAvailable())
 
     def _refresh_banner(self) -> None:
-        """Show the one strip that matters most: the lock, the names, the reading fix, a warning."""
+        """Show the one strip that matters most: the lock, a failed hide, the reading fix, a warning.
+
+        Hiding the names is not a reason of its own: the 👁 toggle shows it, and a strip that
+        came and went with it moved the texts.  A hide that failed is one, because the names
+        then stand in the text while the toggle says they are hidden.
+        """
         doc = self._doc
         if doc is None:
             self.banner.hide_message()
@@ -528,11 +547,15 @@ class CheckBody(QWidget):
         if self._lock:
             self.banner.show_message(self._lock)
             return
-        if self._masking.enabled:
+        if self._masking.error:
             self.banner.show_message(self._masking.note(), action=txt.SHOW_NAMES)
             return
         if doc.has_proofreading and not self._edit_allowed:
-            self.banner.show_message(txt.READING_FIX_WARNING, action=txt.EDIT_ANYWAY)
+            self.banner.show_message(
+                txt.READING_FIX_WARNING,
+                action=txt.EDIT_ANYWAY,
+                reason=txt.SHOW_NAMES_TO_CHANGE if self._masking.enabled else "",
+            )
             return
         if doc.warning:
             self.banner.show_message(doc.warning)
@@ -546,8 +569,8 @@ class CheckBody(QWidget):
         self.panel.setVisible(wanted)
 
     def _on_banner_action(self) -> None:
-        """Do what the strip's button offers."""
-        if self._masking.enabled:
+        """Do what the strip's button offers: show the names again, or edit anyway."""
+        if self._masking.error:
             self.display_anonymized_changed.emit(False)
             return
         self._edit_allowed = True
@@ -691,7 +714,7 @@ class CheckBody(QWidget):
         if self._doc is None:
             return
         edits: list[TextEdit] = []
-        for item in group_minor(self._doc.items):
+        for item in minor_corrections(self._doc.items):
             edits.extend(self._edits_for(item))
         self._apply(tuple(edits))
 
@@ -759,7 +782,7 @@ class CheckPage(QWidget):
     anonymization_needed = Signal(str)
     text_zoom_changed = Signal(int)
     item_shown = Signal(str)
-    """An item became the one the card shows: its key, or ``"minor"`` for the group row."""
+    """An item became the one the card shows: its key."""
     layout_changed = Signal(object)
     """The teacher dragged a pane: the :class:`CheckLayout` the tab has now."""
 
@@ -804,6 +827,7 @@ class CheckPage(QWidget):
         self.body.raw_text_edited.connect(self.raw_text_edited)
         self.body.corrected_text_edited.connect(self.corrected_text_edited)
         self.body.anonymization_needed.connect(self.anonymization_needed)
+        self.body.anonymization_needed.connect(self._refresh_hide_names_box)
         self.body.display_anonymized_changed.connect(self.display_anonymized_changed)
         self.body.text_zoom_changed.connect(self.text_zoom_changed)
         self.body.item_shown.connect(self.item_shown)
@@ -1043,11 +1067,13 @@ class CheckPage(QWidget):
         """Hand over the placeholders of the open document, or why there are none."""
         self._masking.set_result(mapping, error=error)
         self.body.set_masking(self._masking)
+        self._refresh_hide_names_box()
 
     def forget_anonymization(self) -> None:
         """Drop the placeholders: they belong to a text that is no longer shown."""
         self._masking.forget()
         self.body.set_masking(self._masking)
+        self._refresh_hide_names_box()
 
     def set_display_anonymized(self, enabled: bool) -> None:
         """Show the texts with placeholders, or with the names again."""
@@ -1055,6 +1081,7 @@ class CheckPage(QWidget):
         self._sync_hide_names_box()
         self._masking.set_enabled(self._display_anonymized)
         self.body.set_masking(self._masking)
+        self._refresh_hide_names_box()
 
     def _sync_hide_names_box(self) -> None:
         """Tick the box for the stored wish, but only while names can be hidden.
@@ -1071,15 +1098,25 @@ class CheckPage(QWidget):
         self._anonymized_available = bool(available)
         self._hide_names_box.setEnabled(self._anonymized_available)
         self._sync_hide_names_box()
-        self._hide_names_box.setToolTip(
-            txt.HIDE_PERSONAL_INFO_BUTTON_TIP
-            if self._anonymized_available
-            else txt.HIDE_PERSONAL_INFO_UNAVAILABLE_TIP
-        )
         self._masking.set_available(self._anonymized_available)
         if not self._anonymized_available:
             self._masking.set_enabled(False)
             self.body.set_masking(self._masking)
+        self._refresh_hide_names_box()
+
+    def _refresh_hide_names_box(self) -> None:
+        """Say on the 👁 toggle what hiding the names is doing: unavailable, working or done.
+
+        It is the toggle and not the strip above the texts, so the texts stay where they are.
+        """
+        if not self._anonymized_available:
+            tip, label = txt.HIDE_PERSONAL_INFO_UNAVAILABLE_TIP, txt.HIDE_PERSONAL_INFO_BUTTON
+        elif self._masking.working:
+            tip, label = txt.HIDING_PERSONAL_INFO, txt.HIDE_PERSONAL_INFO_BUTTON_WORKING
+        else:
+            tip, label = txt.HIDE_PERSONAL_INFO_BUTTON_TIP, txt.HIDE_PERSONAL_INFO_BUTTON
+        self._hide_names_box.setToolTip(tip)
+        self._hide_names_box.setText(label)
 
     def set_point_size(self, point_size: int) -> None:
         """Read the texts at *point_size* points."""

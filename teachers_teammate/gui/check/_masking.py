@@ -47,6 +47,14 @@ class Masking:
         return self._enabled and (not self._ready or bool(self._error))
 
     @property
+    def working(self) -> bool:
+        """Whether the placeholders of the open text were asked for and have not arrived yet.
+
+        Until they do the names stand in the text, so the 👁 toggle says so.
+        """
+        return self._enabled and bool(self._requested) and not self._ready
+
+    @property
     def error(self) -> str:
         """Why hiding the names failed, or ``""``."""
         return self._error
@@ -57,14 +65,15 @@ class Masking:
         return tuple(self._mapping) if self._enabled else ()
 
     def note(self) -> str:
-        """What the banner above the text says about hiding, or ``""`` for none."""
-        if not self._enabled:
+        """What the banner above the text says about hiding, or ``""`` for none.
+
+        Only a hide that failed is said there: the names then stand in the text while the 👁
+        toggle says they are hidden.  Whether the names are hidden at all is the toggle's own
+        business, and why the texts cannot be typed into is a tooltip on them.
+        """
+        if not self._error:
             return ""
-        if self._error:
-            return txt.HIDING_PERSONAL_INFO_FAILED.format(reason=self._error)
-        if not self._ready:
-            return txt.HIDING_PERSONAL_INFO
-        return txt.TURN_OFF_HIDING_TO_EDIT
+        return txt.HIDING_PERSONAL_INFO_FAILED.format(reason=self._error)
 
     def mask(self, text: str) -> str:
         """Return *text* with every name replaced by its placeholder (unchanged when off)."""

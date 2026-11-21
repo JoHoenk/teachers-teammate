@@ -5,13 +5,11 @@ says what the chosen one is and what the teacher can do with it.  Every action i
 panel never edits a text itself, it says which item and which action, and the page turns that into
 an edit of the final text.
 
-The spelling and punctuation changes are folded into one row, which opens in place into its items;
-a group of one is not folded, since a group row over a single correction is only noise.
-
 *Next* on the card walks the rows the teacher has not looked at yet, in list order and from the top
 at the end; a document opens at the first of them.  The walk keeps no state of its own: choosing a
-row is what marks it looked at, so the icons and the footer say how far it got.  A filter above the
-list narrows both the list and the walk, while the counts keep covering the whole document.
+row is what marks it looked at, so the icons and the footer say how far it got.  The boxes above
+the list narrow both the list and the walk: nothing ticked shows every row, and *Not looked at*
+narrows whatever else is ticked, while the counts keep covering the whole document.
 
 The card says what the change is on one side and why it was made on the other, side by side once
 the panel is wide enough for both.  Its height is the teacher's — a splitter against the list, so
@@ -27,15 +25,15 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 import html
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal, SignalInstance
-from PySide6.QtGui import QColor, QFont, QPainter, QPalette
+from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QBoxLayout,
-    QButtonGroup,
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -57,10 +55,12 @@ from PySide6.QtWidgets import (
 from ...application.check_document import CheckDocument
 from ...application.check_items import (
     CheckItem,
+    MODEL_KINDS,
     ItemKind,
     counts_for_looked_at,
     first_unseen,
-    group_minor,
+    is_minor_correction,
+    minor_corrections,
     next_unseen,
 )
 from ...domain.proofreading.review import CHANGE_CATEGORIES
@@ -70,16 +70,14 @@ from . import _style
 from ._flow import FlowLayout
 from ._masking import Masking
 
-#: The key of the row that folds the spelling and punctuation changes; no item has it.
-GROUP_KEY = "minor"
-
-#: The filter that shows every row.
-FILTER_ALL = ""
-
 #: The filter that shows only the rows the teacher has not looked at yet.
 FILTER_UNSEEN = "unseen"
 
-#: Item data role that carries the :class:`_Row` of a list entry.
+#: The filters of the two kinds that have no category of their own.
+FILTER_UNCLEAR = "unclear"
+FILTER_LEFT_OUT = "left_out"
+
+#: Item data role that carries the :class:`CheckItem` of a list entry.
 _ROW_ROLE = Qt.ItemDataRole.UserRole + 1
 
 _ROW_HEIGHT = 24
@@ -101,6 +99,20 @@ _REPLACEABLE = frozenset(
     {ItemKind.CORRECTION, ItemKind.CHANGED, ItemKind.UNEXPLAINED, ItemKind.LEFT_OUT}
 )
 
+#: The badge of an item that is no change of the model: what kind of thing it is.
+_KIND_BADGES = {
+    ItemKind.UNCLEAR: check_txt.BADGE_UNCLEAR,
+    ItemKind.LEFT_OUT: check_txt.BADGE_LEFT_OUT,
+    ItemKind.OWN: check_txt.BADGE_OWN,
+    ItemKind.TAKEN_OUT: check_txt.BADGE_TAKEN_OUT,
+}
+
+#: The filter of every kind that has no category of its own.
+_KIND_FILTERS = {
+    ItemKind.UNCLEAR: FILTER_UNCLEAR,
+    ItemKind.LEFT_OUT: FILTER_LEFT_OUT,
+}
+
 #: How many characters of the sentence around a change the card shows on either side.
 _CONTEXT_CHARS = 60
 
@@ -111,73 +123,40 @@ _REPLACE_WIDTH = 90
 _SENTENCE_ENDS = ".!?\n"
 
 
-@dataclass(frozen=True)
-class _Row:
-    """One row of the list: an item, or the group of the spelling and punctuation changes."""
+def _filter_key(item: CheckItem) -> str:
+    """Return the filter *item* answers to: its category, or the kind it has no category for.
 
-    key: str
-    item: CheckItem | None = None
-    members: tuple[CheckItem, ...] = ()
-
-    @property
-    def is_group(self) -> bool:
-        """Whether this row folds several items."""
-        return self.item is None
-
-
-def _chip_category(item: CheckItem) -> str:
-    """Return the chip *item* is filed under: its category, or ``"other"`` for one the chips lack.
-
-    ``""`` for an item with no category (an unclear passage, a change of the teacher's own).
+    A change of the model without a category, or with one the boxes do not know, is filed under
+    ``"other"``; an item with neither — a change of the teacher's own — answers to no box at all.
     """
-    if not item.category:
-        return ""
-    return item.category if item.category in CHANGE_CATEGORIES else "other"
+    if item.kind in _KIND_FILTERS:
+        return _KIND_FILTERS[item.kind]
+    if item.category or item.kind in MODEL_KINDS:
+        return item.category if item.category in CHANGE_CATEGORIES else "other"
+    return ""
 
 
-def rows_of(items: Sequence[CheckItem]) -> tuple[_Row, ...]:
-    """Return the rows of *items*: one per item, with the minor ones folded into one row."""
-    minor = group_minor(items)
-    folded = len(minor) > 1
-    rows: list[_Row] = []
-    placed = False
-    for item in items:
-        if item.is_minor and folded:
-            if not placed:
-                rows.append(_Row(GROUP_KEY, members=minor))
-                rows.extend(_Row(member.key, item=member) for member in minor)
-                placed = True
-            continue
-        rows.append(_Row(item.key, item=item))
-    return tuple(rows)
-
-
-def _columns_of(row: _Row) -> tuple[str, str]:
+def _columns_of(item: CheckItem) -> tuple[str, str]:
     """Return the two columns of a row: the student's words and the corrected ones.
 
-    The second is empty where the row has no corrected wording of its own — the group row, an
-    unclear expression, a stretch the model left out — and the first then takes the whole width.
+    The second is empty where the item has no corrected wording of its own — an unclear
+    expression, a stretch the model left out — and the first then takes the whole width.
     """
-    if row.item is None:
-        return txt.minor_group_label(len(row.members)), ""
-    item = row.item
     if item.kind in (ItemKind.UNCLEAR, ItemKind.LEFT_OUT):
         return item.before, ""
     return item.before, item.after
 
 
-def _icon_of(row: _Row, *, expanded: bool, looked_at: frozenset[str]) -> str:
-    """Return the character in front of a row: the group's arrow, else whether it was looked at."""
-    if row.item is None:
-        return "\u25be" if expanded else "\u25b8"
-    return _style.icon(row.item.kind, looked_at=row.key in looked_at)
+def _icon_of(item: CheckItem, *, looked_at: frozenset[str]) -> str:
+    """Return the character in front of a row: whether the item was looked at."""
+    return _style.icon(item.kind, looked_at=item.key in looked_at)
 
 
-def _category_of(row: _Row) -> str:
-    """Return the category a row shows on the right, or ``""``."""
-    if row.item is None or not row.item.category:
-        return ""
-    return txt.category_label(row.item.category)
+def _category_of(item: CheckItem) -> str:
+    """Return the badge a row shows on the right: its category, or what kind of thing it is."""
+    if item.category or item.kind in MODEL_KINDS:
+        return txt.category_label(item.category)
+    return _KIND_BADGES.get(item.kind, "")
 
 
 def _words_in_text(item: CheckItem, corrected_plain: str) -> str:
@@ -193,18 +172,6 @@ def _words_in_text(item: CheckItem, corrected_plain: str) -> str:
     if not 0 <= start <= end <= len(corrected_plain):
         return item.after
     return corrected_plain[start:end]
-
-
-def _faded(colour: QColor, alpha: int) -> QColor:
-    """Return *colour* with *alpha*, so a looked-at row reads as done without disappearing."""
-    faded = QColor(colour)
-    faded.setAlpha(alpha)
-    return faded
-
-
-def _row_colour(colour: QColor, *, looked_at: bool) -> QColor:
-    """Return the colour a row's icon and words are drawn in: faded once it was looked at."""
-    return _faded(colour, _style.LOOKED_AT_ALPHA) if looked_at else QColor(colour)
 
 
 def _column_rects(rect: QRect, arrow_width: int) -> tuple[QRect, QRect, QRect]:
@@ -228,20 +195,19 @@ class _ItemDelegate(QStyledItemDelegate):
     """Draws one row: its icon, the student's words, the corrected ones, and the category badge.
 
     The two word columns are the same width in every row, so the student's words and the
-    correction line up down the list.  A row the teacher has looked at is drawn dimmed.
+    correction line up down the list.  A row the teacher has looked at is drawn in the theme's
+    secondary grey, and the chosen row in the theme's selection text, so both stay readable.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.expanded = False
-        """Whether the group row shows its items, which decides its arrow."""
         self.looked_at: frozenset[str] = frozenset()
-        """The keys the teacher has looked at, which decides the icon and the dimming."""
+        """The keys the teacher has looked at, which decides the icon and the colour."""
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         """Draw the row of *index*; a row without one falls back to the plain text."""
-        row: _Row | None = index.data(_ROW_ROLE)
-        if row is None:
+        item: CheckItem | None = index.data(_ROW_ROLE)
+        if item is None:
             super().paint(painter, option, index)
             return
         opt = QStyleOptionViewItem(option)
@@ -251,16 +217,16 @@ class _ItemDelegate(QStyledItemDelegate):
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         rect = opt.rect.adjusted(6, 0, -6, 0)
         metrics = opt.fontMetrics
-        text_colour = opt.palette.color(QPalette.ColorRole.Text)
-        looked_at = row.key in self.looked_at
+        looked_at = item.key in self.looked_at
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)
         painter.save()
         painter.setFont(QFont(opt.font))
-        painter.setPen(_row_colour(text_colour, looked_at=looked_at))
-        icon = _icon_of(row, expanded=self.expanded, looked_at=self.looked_at)
+        painter.setPen(_style.row_text(opt.palette, looked_at=looked_at, selected=selected))
+        icon = _icon_of(item, looked_at=self.looked_at)
         painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, icon)
         words = rect.adjusted(metrics.horizontalAdvance(icon) + 6, 0, 0, 0)
-        words = self._draw_badge(painter, words, metrics, row, looked_at=looked_at)
-        self._draw_words(painter, words, metrics, row)
+        words = self._draw_badge(painter, words, metrics, item)
+        self._draw_words(painter, words, metrics, item)
         painter.restore()
 
     def _draw_badge(
@@ -268,30 +234,27 @@ class _ItemDelegate(QStyledItemDelegate):
         painter: QPainter,
         rect: QRect,
         metrics,
-        row: _Row,
-        *,
-        looked_at: bool,
+        item: CheckItem,
     ) -> QRect:
-        """Draw the category badge at the right of *rect*; return what is left for the words."""
-        category = _category_of(row)
-        if not category or row.item is None:
+        """Draw the badge at the right of *rect*; return what is left for the words.
+
+        The badge keeps its own two colours, also on the chosen row: they are chosen to read
+        together, and the row's colour would not read on the badge's background.
+        """
+        category = _category_of(item)
+        if not category:
             return rect
         width = metrics.horizontalAdvance(category) + 10
         badge = QRect(rect.right() - width + 1, rect.top() + 3, width, rect.height() - 6)
-        look = _style.look(row.item)
-        painter.fillRect(
-            badge,
-            _faded(QColor(look.background), _style.BADGE_ALPHA)
-            if looked_at
-            else QColor(look.background),
-        )
-        painter.setPen(_row_colour(QColor(look.text), looked_at=looked_at))
+        background, text = _style.badge_colours(item)
+        painter.fillRect(badge, QColor(background))
+        painter.setPen(QColor(text))
         painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, category)
         return rect.adjusted(0, 0, -(width + 6), 0)
 
-    def _draw_words(self, painter: QPainter, rect: QRect, metrics, row: _Row) -> None:
+    def _draw_words(self, painter: QPainter, rect: QRect, metrics, item: CheckItem) -> None:
         """Draw the student's words and the corrected ones in two columns of the same width."""
-        before, after = _columns_of(row)
+        before, after = _columns_of(item)
         if not after:
             painter.drawText(
                 rect,
@@ -349,11 +312,8 @@ def _chip(text: str, colours: tuple[str, str]) -> str:
     )
 
 
-def _title_html(row: _Row, masking: Masking) -> str:
+def _title_html(item: CheckItem, masking: Masking) -> str:
     """Return the headline of the card: the words of the item, the model's words struck if gone."""
-    if row.item is None:
-        return html.escape(txt.minor_group_label(len(row.members)))
-    item = row.item
     before = html.escape(masking.mask(item.before))
     after = html.escape(masking.mask(item.after))
     if item.kind in (ItemKind.UNCLEAR, ItemKind.LEFT_OUT):
@@ -367,16 +327,14 @@ def _title_html(row: _Row, masking: Masking) -> str:
     return f"{before} \u2192 {after}"
 
 
-def _context_html(row: _Row, raw_plain: str, masking: Masking) -> str:
+def _context_html(item: CheckItem, raw_plain: str, masking: Masking) -> str:
     """Return the sentence around the item's words, with the student's words highlighted.
 
     The teacher sees what the change is about without looking for it in the text.  The sentence is
     cut a fixed number of characters around the words, so a long one does not push the explanation
     out of the card; the cut ends say so with an ellipsis.
     """
-    if row.item is None:
-        return ""
-    start, end = row.item.raw_span
+    start, end = item.raw_span
     if not raw_plain or not 0 <= start <= end <= len(raw_plain):
         return ""
     left, right = _context_window(raw_plain, start, end)
@@ -386,7 +344,7 @@ def _context_html(row: _Row, raw_plain: str, masking: Masking) -> str:
     words = masked[span[0] : span[1]]
     if not words:
         return html.escape(masked)
-    look = _style.look(row.item)
+    look = _style.look(item)
     highlight = (
         f'<span style="background-color:{look.background}; color:{look.text}; font-weight:bold;">'
         f"{html.escape(words)}</span>"
@@ -433,11 +391,8 @@ def _tags_of(item: CheckItem) -> tuple[str, ...]:
     return tuple(tags)
 
 
-def _body_html(row: _Row, masking: Masking) -> str:
+def _body_html(item: CheckItem, masking: Masking) -> str:
     """Return what the card says under the words: the category, the explanation and the notes."""
-    if row.item is None:
-        return f"<i>{html.escape(txt.MINOR_GROUP_NOTE)}</i>"
-    item = row.item
     if item.kind is ItemKind.LEFT_OUT:
         return html.escape(masking.mask(item.why))
     if item.kind is ItemKind.UNCLEAR:
@@ -453,8 +408,7 @@ def _body_html(row: _Row, masking: Masking) -> str:
         return "<br>".join(lines)
     lines = []
     if item.category:
-        look = _style.look(item)
-        lines.append(_chip(txt.category_label(item.category), (look.background, look.text)))
+        lines.append(_chip(txt.category_label(item.category), _style.badge_colours(item)))
     if item.explanation:
         lines.append(html.escape(masking.mask(item.explanation)))
     if item.kind is ItemKind.UNEXPLAINED:
@@ -517,6 +471,11 @@ class _Card(QFrame):
         self.put_back = QPushButton(txt.PUT_BACK)
         self.use_suggestion = QPushButton(txt.USE_SUGGESTION)
         self.take_out_all = QPushButton(txt.TAKE_OUT_ALL)
+        # The row keeps the width of *Take out all* while it is not shown, so the card is as wide
+        # for a correction as for a spelling change: the splitter never moves under the pointer.
+        wide = self.take_out_all.sizePolicy()
+        wide.setRetainSizeWhenHidden(True)
+        self.take_out_all.setSizePolicy(wide)
         self._buttons = (
             self.take_out,
             self.put_back,
@@ -548,7 +507,7 @@ class _Card(QFrame):
         self.replace.textChanged.connect(self._refresh_replace_ok)
         self.replace.returnPressed.connect(self._on_replace)
         self.replace_ok.clicked.connect(self._on_replace)
-        self.set_row(None, Masking(), editable=False)
+        self.set_item(None, Masking(), editable=False)
 
     def sizeHint(self) -> QSize:
         """Ask for five lines of text and the buttons, so the splitter opens the card that tall."""
@@ -580,20 +539,22 @@ class _Card(QFrame):
         self._body.setText(html.escape(text))
         self.setVisible(bool(text))
 
-    def set_row(
+    def set_item(
         self,
-        row: _Row | None,
+        item: CheckItem | None,
         masking: Masking,
         *,
         editable: bool,
         reason: str = "",
         raw_plain: str = "",
         corrected_plain: str = "",
+        minor_count: int = 0,
     ) -> None:
-        """Show *row*, or nothing; *editable* says whether its buttons may be pressed.
+        """Show *item*, or nothing; *editable* says whether its buttons may be pressed.
 
         *raw_plain* is the transcription the context line is taken from, *corrected_plain* the
-        text the replace field is filled from.
+        text the replace field is filled from, and *minor_count* how many spelling and punctuation
+        changes the document has, which the *Take out all* button names.
         """
         for button in self._buttons:
             button.setVisible(False)
@@ -601,7 +562,7 @@ class _Card(QFrame):
             button.setToolTip(reason)
         self._editable = editable
         self._hide_replace()
-        if row is None:
+        if item is None:
             self._key = ""
             self._title.clear()
             self._context.clear()
@@ -609,16 +570,17 @@ class _Card(QFrame):
             self.setVisible(False)
             return
         self.setVisible(True)
-        self._key = row.key
-        self._title.setText(_title_html(row, masking))
-        self._context.setText(_context_html(row, raw_plain, masking))
+        self._key = item.key
+        self._title.setText(_title_html(item, masking))
+        self._context.setText(_context_html(item, raw_plain, masking))
         self._context.setVisible(bool(self._context.text()))
-        self._body.setText(_body_html(row, masking))
-        for button, tooltip in self._buttons_of(row):
+        self._body.setText(_body_html(item, masking))
+        self.take_out_all.setText(txt.take_out_all_label(minor_count))
+        for button, tooltip in self._buttons_of(item, minor_count):
             button.setVisible(True)
             button.setToolTip(reason or tooltip)
-        if row.item is not None and row.item.kind in _REPLACEABLE:
-            self._show_replace(masking.mask(_words_in_text(row.item, corrected_plain)), reason)
+        if item.kind in _REPLACEABLE:
+            self._show_replace(masking.mask(_words_in_text(item, corrected_plain)), reason)
 
     def _show_replace(self, words: str, reason: str) -> None:
         """Offer the field that writes *words* instead, with the words the item has now."""
@@ -646,17 +608,23 @@ class _Card(QFrame):
         if self._editable and self._key and words:
             self.replace_requested.emit(self._key, words)
 
-    def _buttons_of(self, row: _Row) -> tuple[tuple[QPushButton, str], ...]:
-        """Return the buttons *row* offers, each with its tooltip."""
-        if row.item is None:
-            return ((self.take_out_all, txt.TAKE_OUT_ALL_TOOLTIP),)
-        kind = row.item.kind
-        if kind is ItemKind.TAKEN_OUT:
+    def _buttons_of(self, item: CheckItem, minor_count: int) -> tuple[tuple[QPushButton, str], ...]:
+        """Return the buttons *item* offers, each with its tooltip.
+
+        A spelling or punctuation change of the model offers *Take out all* beside its own
+        *Take out*, since that is where the teacher meets the run of them.
+        """
+        if item.kind is ItemKind.TAKEN_OUT:
             return ((self.put_back, txt.PUT_BACK_TOOLTIP),)
-        if kind is ItemKind.UNCLEAR:
+        if item.kind is ItemKind.UNCLEAR:
             return ((self.use_suggestion, txt.USE_SUGGESTION_TOOLTIP),)
-        if kind is ItemKind.LEFT_OUT:
+        if item.kind is ItemKind.LEFT_OUT:
             return ()  # only the replace field: there is no correction to take out
+        if is_minor_correction(item):
+            return (
+                (self.take_out, txt.TAKE_OUT_TOOLTIP),
+                (self.take_out_all, txt.take_out_all_tooltip(minor_count)),
+            )
         return ((self.take_out, txt.TAKE_OUT_TOOLTIP),)
 
 
@@ -666,7 +634,7 @@ class SidePanel(QWidget):
     item_chosen = Signal(str)
     """A row was selected: the key of its item."""
     item_shown = Signal(str)
-    """An item became the one the card shows: its key, or ``"minor"`` for the group row.
+    """An item became the one the card shows: its key.
 
     Emitted for the first item of a document too, and again when a reload keeps the same row:
     the window decides whether it is a key it has not recorded yet.
@@ -686,21 +654,18 @@ class SidePanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._rows: tuple[_Row, ...] = ()
+        self._rows: tuple[CheckItem, ...] = ()
         self._doc: CheckDocument | None = None
         self._masking = Masking()
         self._looked_at: frozenset[str] = frozenset()
-        self._folded = False
-        self._expanded = False
         self._choosing = False
         self._editable = True
         self._reason = ""
         self._note = ""
-        self._filter = FILTER_ALL
+        self._ticked: set[str] = set()
+        self._unseen = False
         self._card_split: tuple[int, ...] = ()
-        self._filter_buttons: dict[str, QPushButton] = {}
-        self._filter_group = QButtonGroup(self)
-        self._filter_group.setExclusive(True)
+        self._filter_boxes: dict[str, QCheckBox] = {}
         self._filter_row = QWidget()
         self._filter_layout = FlowLayout(self._filter_row, spacing=2)
 
@@ -771,32 +736,31 @@ class SidePanel(QWidget):
         return page
 
     def _build_filter_row(self) -> QWidget:
-        """Return the chips that narrow the list: everything, what is left, and each category."""
-        self._add_filter_button(FILTER_ALL, check_txt.FILTER_ALL, check_txt.FILTER_ALL_TIP)
-        self._add_filter_button(
+        """Return the boxes that narrow the list: what is left, each category, and each kind."""
+        self._add_filter_box(
             FILTER_UNSEEN,
             check_txt.FILTER_NOT_LOOKED_AT,
             check_txt.FILTER_NOT_LOOKED_AT_TIP,
         )
         for category in CHANGE_CATEGORIES:
-            self._add_filter_button(
+            self._add_filter_box(
                 category,
                 txt.category_label(category),
                 check_txt.FILTER_CATEGORY_TIP.format(category=txt.category_label(category)),
             )
-        self._filter_buttons[FILTER_ALL].setChecked(True)
+        self._add_filter_box(FILTER_UNCLEAR, check_txt.FILTER_UNCLEAR, check_txt.FILTER_UNCLEAR_TIP)
+        self._add_filter_box(
+            FILTER_LEFT_OUT, check_txt.FILTER_LEFT_OUT, check_txt.FILTER_LEFT_OUT_TIP
+        )
         return self._filter_row
 
-    def _add_filter_button(self, key: str, label: str, tip: str) -> None:
-        """Add one chip to the filter row; *key* is what it filters by."""
-        button = QPushButton(label)
-        button.setCheckable(True)
-        button.setFlat(True)
-        button.setToolTip(tip)
-        button.clicked.connect(lambda _checked=False, k=key: self.set_filter(k))
-        self._filter_group.addButton(button)
-        self._filter_buttons[key] = button
-        self._filter_layout.addWidget(button)
+    def _add_filter_box(self, key: str, label: str, tip: str) -> None:
+        """Add one box to the filter row; *key* is what it filters by."""
+        box = QCheckBox(label)
+        box.setToolTip(tip)
+        box.toggled.connect(lambda checked, k=key: self.set_filter(k, checked))
+        self._filter_boxes[key] = box
+        self._filter_layout.addWidget(box)
 
     def _build_content_page(self) -> QWidget:
         """Return the tab that shows the content review, read-only."""
@@ -844,11 +808,9 @@ class SidePanel(QWidget):
         self._doc = doc
         self._masking = masking
         self._looked_at = doc.work.looked_at
-        self._rows = rows_of(doc.items)
-        self._folded = len(group_minor(doc.items)) > 1
+        self._rows = doc.items
         if not same or not self._filter_has_items():
-            self._filter = FILTER_ALL
-            self._filter_buttons[FILTER_ALL].setChecked(True)
+            self._untick_filters()
         self._list.blockSignals(True)
         self._list.clear()
         for entry in self._rows:
@@ -857,7 +819,6 @@ class SidePanel(QWidget):
             item.setSizeHint(QSize(0, _ROW_HEIGHT))
             self._list.addItem(item)
         self._list.blockSignals(False)
-        self._set_expanded(self._expanded)
         self._delegate.looked_at = doc.work.looked_at
         self._refresh_filters()
         self._counts.setText(self._counts_text())
@@ -870,14 +831,14 @@ class SidePanel(QWidget):
 
     def choose_next(self) -> None:
         """Choose the next row the teacher has not looked at yet, from the top at the end."""
-        key = next_unseen(self._walk_keys(), self._looked_at, self.chosen_row)
+        key = next_unseen(self._walk_keys(), self._looked_at, self.chosen)
         if key:
             self.set_chosen(key)
 
     def set_chosen(self, key: str) -> None:
         """Select the row of *key*, if the list has it, without telling the page back.
 
-        A row the filter hides stays shown while it is the chosen one: the card and the list
+        A row the filters hide stays shown while it is the chosen one: the card and the list
         must name the same row.
         """
         index = self._row_index(key)
@@ -886,16 +847,24 @@ class SidePanel(QWidget):
         self._set_row_silently(index)
         self._apply_row_visibility(keep_chosen=True)
 
-    def set_filter(self, key: str) -> None:
-        """Show only the rows *key* names: everything, what is left, or one category.
+    def set_filter(self, key: str, ticked: bool = True) -> None:
+        """Tick or untick one filter; with nothing ticked the list shows every row.
 
-        The walk of *Next* follows the filter, so it stays inside what the teacher is looking at;
+        The walk of *Next* follows the filters, so it stays inside what the teacher is looking at;
         the counts above the list keep covering the whole document.
         """
-        if key not in self._filter_buttons:
+        box = self._filter_boxes.get(key)
+        if box is None:
             return
-        self._filter = key
-        self._filter_buttons[key].setChecked(True)
+        box.blockSignals(True)
+        box.setChecked(ticked)
+        box.blockSignals(False)
+        if key == FILTER_UNSEEN:
+            self._unseen = ticked
+        elif ticked:
+            self._ticked.add(key)
+        else:
+            self._ticked.discard(key)
         self._choose_first_visible()
         self._apply_row_visibility()
         self._refresh_next()
@@ -913,24 +882,25 @@ class SidePanel(QWidget):
     def set_note(self, text: str) -> None:
         """Say something in place of the card, e.g. that the marks could not be placed."""
         self._note = text
-        self._show_row(self._current_row())
+        self._show_item(self._current_item())
 
     def set_editable(self, editable: bool, *, reason: str = "") -> None:
         """Allow or refuse the card's actions; *reason* is the tooltip that says why not."""
         self._editable = editable
         self._reason = reason
-        self._show_row(self._current_row())
+        self._show_item(self._current_item())
 
-    def _show_row(self, row: _Row | None) -> None:
-        """Show *row* on the card, and give the card its height back when it comes back."""
+    def _show_item(self, item: CheckItem | None) -> None:
+        """Show *item* on the card, and give the card its height back when it comes back."""
         was_hidden = self._card.isHidden()
-        self._card.set_row(
-            row,
+        self._card.set_item(
+            item,
             self._masking,
             editable=self._editable,
             reason=self._reason,
             raw_plain=self._raw_plain(),
             corrected_plain=self._corrected_plain(),
+            minor_count=len(minor_corrections(self._rows)),
         )
         if self._note:
             self._card.set_note(self._note)
@@ -962,30 +932,29 @@ class SidePanel(QWidget):
         self._counts.clear()
         self._set_content("")
         self._refresh_filters()
-        self._show_row(None)
+        self._show_item(None)
         self._refresh_next()
 
     @property
     def chosen(self) -> str:
-        """The key of the chosen item, or ``""`` for the group row and for no choice."""
-        row = self._current_row()
-        return row.item.key if row is not None and row.item is not None else ""
-
-    @property
-    def chosen_row(self) -> str:
-        """The key of the chosen row — the group row included — or ``""`` for no choice."""
-        row = self._current_row()
-        return row.key if row is not None else ""
+        """The key of the chosen item, or ``""`` for no choice."""
+        item = self._current_item()
+        return item.key if item is not None else ""
 
     @property
     def row_count(self) -> int:
-        """How many rows the list has, the folded ones included."""
+        """How many rows the list has."""
         return len(self._rows)
 
     @property
-    def filter(self) -> str:
-        """What the list is narrowed to: everything, what is left, or one category."""
-        return self._filter
+    def ticked(self) -> frozenset[str]:
+        """The filters the teacher ticked; with none ticked the list shows every row."""
+        return frozenset(self._ticked)
+
+    @property
+    def unseen_only(self) -> bool:
+        """Whether *Not looked at* is ticked, which narrows whatever else is ticked."""
+        return self._unseen
 
     # ── The list ──────────────────────────────────────────────────────────
 
@@ -997,41 +966,37 @@ class SidePanel(QWidget):
         """Return the plain corrected text the card's replace field is filled from."""
         return self._doc.corrected_plain if self._doc is not None else ""
 
-    def _current_row(self) -> _Row | None:
-        """Return the row the list has selected, or ``None``."""
+    def _current_item(self) -> CheckItem | None:
+        """Return the item the list has selected, or ``None``."""
         index = self._list.currentRow()
         return self._rows[index] if 0 <= index < len(self._rows) else None
 
     def _on_row_changed(self, index: int) -> None:
         """Show the card of the selected row, and tell the page which item it is."""
-        row = self._rows[index] if 0 <= index < len(self._rows) else None
-        if row is not None and row.is_group:
-            self._set_expanded(True)
-        self._show_row(row)
+        item = self._rows[index] if 0 <= index < len(self._rows) else None
+        self._show_item(item)
         self._refresh_next()
-        if row is None:
+        if item is None:
             return
-        self.item_shown.emit(row.key)
-        if row.item is not None and not self._choosing:
-            self.item_chosen.emit(row.item.key)
+        self.item_shown.emit(item.key)
+        if not self._choosing:
+            self.item_chosen.emit(item.key)
 
     def _walk_keys(self) -> tuple[str, ...]:
         """Return the keys of the rows *Next* walks over, in list order.
 
-        Without a category filter these are the rows that count for looked-at.  A category
-        filter lists the folded minor changes one by one, so it walks those too.
+        These are the rows the boxes show that count for looked-at: the progress of a document is
+        measured in those, so *Next* never stops on a change of the teacher's own.
         """
-        by_category = self._filter not in (FILTER_ALL, FILTER_UNSEEN)
         return tuple(
-            row.key
-            for row in self._rows
-            if self._row_visible(row)
-            and (by_category or row.item is None or counts_for_looked_at(row.item))
+            item.key
+            for item in self._rows
+            if self._row_visible(item) and counts_for_looked_at(item)
         )
 
     def _refresh_next(self) -> None:
         """Let *Next* walk to the next row not looked at, and say when there is none left."""
-        left = bool(next_unseen(self._walk_keys(), self._looked_at, self.chosen_row))
+        left = bool(next_unseen(self._walk_keys(), self._looked_at, self.chosen))
         self._next_button.setEnabled(left)
         self._next_button.setText(txt.NEXT if left else txt.ALL_LOOKED_AT)
 
@@ -1044,18 +1009,15 @@ class SidePanel(QWidget):
         if chosen and self._row_index(chosen) is not None:
             self.set_chosen(chosen)
             return
-        if not chosen and 0 <= row < len(self._rows) and self._rows[row].is_group:
-            self._set_row_silently(row)  # the folded group stays the row that is open
-            return
-        index = self._nearest_item_row(max(row, 0))
+        index = self._nearest_shown(max(row, 0))
         if index is None:
-            self._show_row(None)
+            self._show_item(None)
             return
         self._set_row_silently(index)
 
     def _row_index(self, key: str) -> int | None:
         """Return the index of the row of *key*, or ``None`` when the list has no such row."""
-        return next((index for index, row in enumerate(self._rows) if row.key == key), None)
+        return next((index for index, item in enumerate(self._rows) if item.key == key), None)
 
     def _set_row_silently(self, index: int) -> None:
         """Select the row at *index* without telling the page."""
@@ -1065,23 +1027,15 @@ class SidePanel(QWidget):
         finally:
             self._choosing = False
 
-    def _nearest_item_row(self, row: int) -> int | None:
-        """Return the first shown row of an item at or after *row*, else the last one before it."""
+    def _nearest_shown(self, row: int) -> int | None:
+        """Return the first shown row at or after *row*, else the last one before it."""
         indices = [
-            index
-            for index, entry in enumerate(self._rows)
-            if entry.item is not None and not self._list.item(index).isHidden()
+            index for index in range(len(self._rows)) if not self._list.item(index).isHidden()
         ]
         if not indices:
             return None
         after = [index for index in indices if index >= row]
         return after[0] if after else indices[-1]
-
-    def _set_expanded(self, expanded: bool) -> None:
-        """Open or close the folded spelling and punctuation changes."""
-        self._expanded = expanded
-        self._delegate.expanded = expanded
-        self._apply_row_visibility(keep_chosen=True)
 
     def _request(self, signal: SignalInstance) -> None:
         """Ask the page for the action of the chosen item."""
@@ -1091,73 +1045,85 @@ class SidePanel(QWidget):
 
     # ── The filter ────────────────────────────────────────────────────────
 
-    def _row_visible(self, row: _Row) -> bool:
-        """Whether the filter and the fold show *row*."""
-        if self._filter == FILTER_ALL:
-            return not self._folded_away(row)
-        if self._filter == FILTER_UNSEEN:
-            return (
-                not self._folded_away(row)
-                and (row.item is None or counts_for_looked_at(row.item))
-                and row.key not in self._looked_at
-            )
-        # A category filter shows the folded changes one by one: the list is short already.
-        return row.item is not None and _chip_category(row.item) == self._filter
+    def _row_visible(self, item: CheckItem) -> bool:
+        """Whether the boxes show *item*: its category or kind is ticked, and it is not looked at.
+
+        Nothing ticked shows every row.  *Not looked at* narrows whatever else is ticked, and a
+        row that does not count for looked-at — a change of the teacher's own — is never one of
+        those.
+        """
+        if self._ticked and _filter_key(item) not in self._ticked:
+            return False
+        if not self._unseen:
+            return True
+        return counts_for_looked_at(item) and item.key not in self._looked_at
 
     def _filter_has_items(self) -> bool:
-        """Whether the filter still has something to show: a category the document has."""
-        if self._filter in (FILTER_ALL, FILTER_UNSEEN):
+        """Whether the ticked boxes still have something to show in this document."""
+        if not self._ticked:
             return True
-        return any(_chip_category(item) == self._filter for item in self._doc_items())
+        return any(_filter_key(item) in self._ticked for item in self._doc_items())
 
     def _doc_items(self) -> tuple[CheckItem, ...]:
         """Return the items of the open document."""
         return self._doc.items if self._doc is not None else ()
 
-    def _folded_away(self, row: _Row) -> bool:
-        """Whether the fold hides *row*: a minor change while the group row is closed."""
-        return row.item is not None and row.item.is_minor and self._folded and not self._expanded
-
     def _apply_row_visibility(self, *, keep_chosen: bool = False) -> None:
-        """Show the rows the filter and the fold let through, and hide the others."""
+        """Show the rows the boxes let through, and hide the others."""
         chosen = self._list.currentRow()
-        for index, row in enumerate(self._rows):
-            hidden = not self._row_visible(row) and not (keep_chosen and index == chosen)
+        for index, item in enumerate(self._rows):
+            hidden = not self._row_visible(item) and not (keep_chosen and index == chosen)
             self._list.item(index).setHidden(hidden)
         self._list.viewport().update()
 
     def _choose_first_visible(self) -> None:
-        """Choose the first row the filter shows when the chosen one is hidden."""
+        """Choose the first row the boxes show when the chosen one is hidden."""
         index = self._list.currentRow()
         if 0 <= index < len(self._rows) and self._row_visible(self._rows[index]):
             return
         first = next(
-            (index for index, row in enumerate(self._rows) if self._row_visible(row)),
+            (index for index, item in enumerate(self._rows) if self._row_visible(item)),
             None,
         )
         if first is None:
-            self._show_row(None)
+            self._show_item(None)
             return
         self._set_row_silently(first)
 
     def _refresh_filters(self) -> None:
-        """Write the count on every chip, and hide the categories this document does not have."""
-        counts = Counter(_chip_category(item) for item in self._doc_items() if item.category)
+        """Write the count on every box, and hide the ones this document has nothing for."""
+        counts = Counter(_filter_key(item) for item in self._doc_items())
         left = sum(
             1
-            for row in self._rows
-            if (row.item is None or counts_for_looked_at(row.item))
-            and row.key not in self._looked_at
+            for item in self._rows
+            if counts_for_looked_at(item) and item.key not in self._looked_at
         )
-        self._filter_buttons[FILTER_ALL].setText(check_txt.FILTER_ALL)
-        self._filter_buttons[FILTER_UNSEEN].setText(
+        self._filter_boxes[FILTER_UNSEEN].setText(
             check_txt.filter_label(check_txt.FILTER_NOT_LOOKED_AT, left)
         )
         for category in CHANGE_CATEGORIES:
-            count = counts.get(category, 0)
-            button = self._filter_buttons[category]
-            button.setText(check_txt.filter_label(txt.category_label(category), count))
-            button.setVisible(bool(count))
+            self._set_filter_count(category, counts.get(category, 0), txt.category_label(category))
+        self._set_filter_count(
+            FILTER_UNCLEAR, counts.get(FILTER_UNCLEAR, 0), check_txt.FILTER_UNCLEAR
+        )
+        self._set_filter_count(
+            FILTER_LEFT_OUT, counts.get(FILTER_LEFT_OUT, 0), check_txt.FILTER_LEFT_OUT
+        )
+
+    def _set_filter_count(self, key: str, count: int, label: str) -> None:
+        """Write *count* on the box of *key*, and hide it when the document has none."""
+        box = self._filter_boxes[key]
+        box.setText(check_txt.filter_label(label, count))
+        box.setVisible(bool(count))
+
+    def _untick_filters(self) -> None:
+        """Untick every box, so the list shows the whole document again."""
+        self._ticked.clear()
+        self._unseen = False
+        for box in self._filter_boxes.values():
+            box.blockSignals(True)
+            box.setChecked(False)
+            box.blockSignals(False)
 
     # ── The footer and the content review ─────────────────────────────────
 

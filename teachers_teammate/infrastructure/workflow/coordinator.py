@@ -18,6 +18,9 @@ _logger = logging.getLogger(__name__)
 ProcessFileFn = Callable[[Path], ProcessingResult]
 CleanupFn = Callable[[], None]
 
+UNEXPECTED_ERROR_MESSAGE = "An unexpected error occurred; the file was not processed."
+"""What a file says that ended on an error no stage expected; the traceback goes to the log."""
+
 
 def run_files(
     files: list[Path],
@@ -36,6 +39,10 @@ def run_files(
     processed finishes completely.  *stop_event* ("Stop now") also makes the file being
     processed stop at its next step (see ``FileProcessor``); both leave the files that never
     started in ``not_started``.
+
+    One file never ends the run: an error no stage expected fails that file alone, with its
+    traceback in the log, and the next file runs.  A stop and an interrupt are not such an
+    error and are left to the layers above.
     """
     reporter = reporter or StdoutReporter()
     total = len(files)
@@ -56,7 +63,7 @@ def run_files(
             reporter.status(f"[{idx}/{total}] Processing: {file.name}")
             if on_file_started:
                 on_file_started(source_id, file.name, idx, total)
-            result = process_file(file)
+            result = _process_one(process_file, file)
             outcome = _outcome(source_id, file.name, result)
             if on_file_done:
                 on_file_done(outcome)
@@ -86,6 +93,20 @@ def run_files(
         stopped=tuple(stopped),
         not_started=tuple(not_started),
     )
+
+
+def _process_one(process_file: ProcessFileFn, file: Path) -> ProcessingResult:
+    """Return what *process_file* says about *file*, or a failure result for an unexpected error.
+
+    The safety net of the run: whatever a stage lets escape becomes this one file's failure, so
+    the files around it are processed and saved all the same.  ``KeyboardInterrupt`` and
+    ``SystemExit`` derive from ``BaseException`` and reach the caller as they should.
+    """
+    try:
+        return process_file(file)
+    except Exception:
+        _logger.exception("Unexpected error while processing %s", file.name)
+        return ProcessingResult(False, UNEXPECTED_ERROR_MESSAGE, "", "", "", "")
 
 
 def _outcome(source_id: str, name: str, result: ProcessingResult) -> FileOutcome:

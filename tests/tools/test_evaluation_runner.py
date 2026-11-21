@@ -16,6 +16,7 @@ import pytest
 
 from teachers_teammate.domain.model_catalog import RequestProfile
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
+from teachers_teammate.exceptions import StageError, StageErrorKind
 from teachers_teammate.interfaces import Corrector
 from tools.evaluation.core.modes import (
     ALL_STEPS,
@@ -674,6 +675,22 @@ def test_the_warm_up_is_not_scored(tmp_path: Path) -> None:
     answers = reader.read_run(_runs(tmp_path)[0]).answers
     assert [answer.text for answer in answers] == ["de/de-01", "de/de-02"]
     assert len(answers[0].requests) == 1
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_warm_up_that_fails_does_not_stop_the_run() -> None:
+    """
+    Given  a corrector whose first request never reaches the model
+    When   the warm-up is sent
+    Then   nothing is raised: the first scored text sends the same request, and its row is where
+           the failure is recorded
+    """
+
+    class _Unreachable(Corrector):
+        def correct(self, raw_text, language, *, text_format="plain") -> CorrectionOutcome:
+            raise StageError("no server", kind=StageErrorKind.PROVIDER, stage="correction")
+
+    runner._warm_up(_Unreachable())
 
 
 @pytest.mark.use_case("Model_Eval_Measure")

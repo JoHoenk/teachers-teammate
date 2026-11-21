@@ -93,8 +93,10 @@ class CorrectionOutcome:
     review: CorrectionReview | None = None
     warning: str | None = None
     failed: bool = False
-    """``True`` when the provider call failed and *text* is the unchanged source: such an
-    outcome is reported but never stored as a finished correction."""
+    """``True`` when the model answered unusably (or a tool's one-request corrector failed) and
+    *text* is the unchanged source: such an outcome is reported but never stored as a finished
+    correction.  A request that never reached the model is not an outcome but a
+    :exc:`~teachers_teammate.exceptions.StageError`."""
     left_out: int = 0
     """How many stretches of the text the model left out and the app put back.
 

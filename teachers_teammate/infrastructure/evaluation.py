@@ -21,14 +21,24 @@ from ..domain.context_budget import (
     EVALUATION_NUM_CTX_CAP,
     ContextBudget,
 )
+from ..domain.evaluation import EvaluationOutcome
 from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
 from ..interfaces import Evaluator
-from ._llm_invoke import invoke_langchain_chain, invoke_ollama_chat, tidy_answer
+from ._llm_invoke import InvokeAnswer, invoke_langchain_chain, invoke_ollama_chat, tidy_answer
 
 TOO_LONG_FOR_REVIEW_WARNING = "The text is too long for a content review with a local model."
 """Warning of a content review whose text does not fit the window (its own sentence: the
 proofreading warning is about a partly corrected text, which a review does not produce)."""
+
+
+def _outcome(answer: InvokeAnswer) -> EvaluationOutcome:
+    """Return the review *answer* carries, with the warning of a request that did not answer.
+
+    A review is optional: one that could not be written is reported as a warning on the file,
+    and the proofreading it was asked about is saved all the same.
+    """
+    return EvaluationOutcome(text=answer.text, warning=answer.warning)
 
 
 def _tidy_review(answer: str) -> str:
@@ -47,7 +57,7 @@ class LangChainEvaluator(Evaluator):
 
     def evaluate(
         self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
-    ) -> tuple[str, str | None]:
+    ) -> EvaluationOutcome:
         result = invoke_langchain_chain(
             self._llm,
             system=with_notation_hint(self._prompt, text_format, task="evaluation"),
@@ -56,7 +66,7 @@ class LangChainEvaluator(Evaluator):
             fallback="",
             failure_prefix="Evaluation failed",
         )
-        return tidy_answer(result, _tidy_review)
+        return _outcome(tidy_answer(result, _tidy_review))
 
 
 class NativeOllamaEvaluator(Evaluator):
@@ -105,7 +115,7 @@ class NativeOllamaEvaluator(Evaluator):
 
     def evaluate(
         self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
-    ) -> tuple[str, str | None]:
+    ) -> EvaluationOutcome:
         result = invoke_ollama_chat(
             self._client,
             model=self._model,
@@ -121,4 +131,4 @@ class NativeOllamaEvaluator(Evaluator):
             answer_tokens=EVALUATION_ANSWER_TOKENS,
             truncated_warning=TOO_LONG_FOR_REVIEW_WARNING,
         )
-        return tidy_answer(result, _tidy_review)
+        return _outcome(tidy_answer(result, _tidy_review))

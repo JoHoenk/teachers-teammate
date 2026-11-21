@@ -20,6 +20,7 @@ _DOMAIN_SRCS = [
     "domain/context_budget.py",
     "domain/correction_prompts.py",
     "domain/data_location.py",
+    "domain/evaluation.py",
     "domain/formatted_text.py",
     "domain/freshness.py",
     "domain/language.py",

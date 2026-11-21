@@ -24,6 +24,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from teachers_teammate.exceptions import StageError
+
 from ..core import axes
 from ..core.formats import FormatError
 from ..core.modes import Exchange, Setup, Step, setup_label
@@ -39,6 +41,7 @@ from .progress import Progress
 
 if TYPE_CHECKING:
     from teachers_teammate.domain.model_catalog import RequestProfile
+    from teachers_teammate.interfaces import Corrector
 
 WARM_UP_TEXT = "Das ist ein Test."
 """What the unscored first request sends: short, so it costs next to nothing but loads the model."""
@@ -513,9 +516,7 @@ def _run_session(
     warm_up = factory(item.model, item.temperature)
     unreachable = False
     try:
-        preparation = measured.prepare(
-            lambda: warm_up.correct(WARM_UP_TEXT, "German"), isolate=matrix.isolate
-        )
+        preparation = measured.prepare(lambda: _warm_up(warm_up), isolate=matrix.isolate)
         if not item.path.exists():
             writer.start_run(item.path, RunFile(header=header))
         writer.append_session(
@@ -541,6 +542,18 @@ def _run_session(
         # Unloading a server that was just found dead would raise its own error and replace the
         # "server unreachable" message the caller needs.  The sampler is still stopped.
         measured.finish(unload=matrix.isolate and not unreachable)
+
+
+def _warm_up(corrector: Corrector) -> None:
+    """Load the model with one request that is not scored.
+
+    A warm-up that fails is not reported: the first scored text sends the same request, and its
+    row in the run file is where a failure belongs.
+    """
+    try:
+        corrector.correct(WARM_UP_TEXT, "German")
+    except StageError:
+        pass
 
 
 __all__ = [

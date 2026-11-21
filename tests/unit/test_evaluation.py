@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from teachers_teammate.domain.evaluation import EvaluationOutcome
 from teachers_teammate.infrastructure.evaluation import LangChainEvaluator
 
 
@@ -39,15 +40,15 @@ def test_langchain_evaluator_returns_chain_output(monkeypatch) -> None:
     evaluator = LangChainEvaluator(llm=object(), prompt="sys")  # ty: ignore[invalid-argument-type]  # test passes a stub in place of a BaseChatModel
     result = evaluator.evaluate("corrected", "English")
 
-    assert result == ("English::corrected", None)
+    assert result == EvaluationOutcome(text="English::corrected")
 
 
 @pytest.mark.unit
-def test_langchain_evaluator_returns_empty_on_exception(monkeypatch) -> None:
+def test_langchain_evaluator_returns_a_warning_on_exception(monkeypatch) -> None:
     """
     Given  a LangChainEvaluator whose chain invocation raises
     When   evaluate() is called
-    Then   an empty string is returned and a warning message is in the result
+    Then   the outcome has no text and a warning that names the reason: the review is optional
     """
     monkeypatch.setattr(
         "langchain_core.prompts.ChatPromptTemplate.from_messages",
@@ -56,11 +57,12 @@ def test_langchain_evaluator_returns_empty_on_exception(monkeypatch) -> None:
     monkeypatch.setattr("langchain_core.output_parsers.StrOutputParser", lambda: object())
 
     evaluator = LangChainEvaluator(llm=object(), prompt="sys")  # ty: ignore[invalid-argument-type]  # test passes a stub in place of a BaseChatModel
-    result_text, warning = evaluator.evaluate("corrected", "English")
 
-    assert result_text == ""
-    assert warning is not None
-    assert "Evaluation failed" in warning
+    outcome = evaluator.evaluate("corrected", "English")
+
+    assert outcome.text == ""
+    assert outcome.warning is not None
+    assert "Evaluation failed" in outcome.warning
 
 
 @pytest.mark.unit
@@ -104,10 +106,10 @@ def test_native_ollama_evaluator_passes_temperature_in_options(mocker) -> None:
     client = OllamaClient("http://localhost:11434")
     evaluator = NativeOllamaEvaluator(model="m", client=client, temperature=0.4)
 
-    result, warning = evaluator.evaluate("corrected", "English")
+    outcome = evaluator.evaluate("corrected", "English")
 
-    assert result == "eval result"
-    assert warning is None
+    assert outcome.text == "eval result"
+    assert outcome.warning is None
     call_kwargs = mock_chat.call_args.kwargs
     assert call_kwargs["options"]["temperature"] == 0.4
 
@@ -174,7 +176,7 @@ def test_evaluator_strips_reasoning_and_a_code_fence_from_the_review(mocker) -> 
     )
     evaluator = NativeOllamaEvaluator(model="m", client=OllamaClient("http://localhost:11434"))
 
-    assert evaluator.evaluate("text", "English") == ("**Good** work", None)
+    assert evaluator.evaluate("text", "English") == EvaluationOutcome(text="**Good** work")
 
 
 # ── fits(): the same limit evaluate() enforces ─────────────────────────────
@@ -214,5 +216,5 @@ def test_fits_agrees_with_the_too_long_warning_of_evaluate(mocker) -> None:
 
     assert evaluator.fits(inside, "English")
     assert not evaluator.fits(outside, "English")
-    assert evaluator.evaluate(inside, "English")[1] is None
-    assert evaluator.evaluate(outside, "English")[1] == TOO_LONG_FOR_REVIEW_WARNING
+    assert evaluator.evaluate(inside, "English").warning is None
+    assert evaluator.evaluate(outside, "English").warning == TOO_LONG_FOR_REVIEW_WARNING

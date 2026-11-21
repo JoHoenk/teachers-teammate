@@ -23,12 +23,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.domain.run_summary import FileStatus
-from teachers_teammate.domain.setting_values import PreprocessMethod
+from teachers_teammate.domain.evaluation import EvaluationOutcome
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
-from teachers_teammate.exceptions import OCRError, RunStoppedError
+from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
+from teachers_teammate.domain.setting_values import PreprocessMethod
+from teachers_teammate.exceptions import OCRError, RunStoppedError, StageError, StageErrorKind
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
-from teachers_teammate.interfaces import ProgressCallbacks
+from teachers_teammate.interfaces import AnonymizationMap, Anonymizer, Corrector, ProgressCallbacks
 from teachers_teammate.infrastructure.pipeline import (
     OCRPipeline,
     PipelineDependencies,
@@ -277,6 +278,76 @@ def test_pipeline_run_returns_1_when_any_file_fails(tmp_path: Path) -> None:
         rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
     assert rc == 1
+
+
+@pytest.mark.use_case("Batch_OCR_Processing")
+def test_each_failing_stage_fails_its_own_file_and_the_run_goes_on(tmp_path: Path) -> None:
+    """
+    Given  three images whose reading, proofreading and anonymization fail in turn
+    When   OCRPipeline.run() is called
+    Then   every file failed with the sentence of its own stage, and every file was attempted
+    """
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="ppocr",
+        correction_enabled=True,
+        anonymization_enabled=True,
+        docx_enabled=False,
+        correction_provider="openai",
+        preprocess_method="none",
+    )
+    # In the order they are read: anonymize.png, proofread.png, read.png.
+    _place_image(cfg.input_dir, "anonymize.png")
+    _place_image(cfg.input_dir, "proofread.png")
+    _place_image(cfg.input_dir, "read.png")
+
+    mock_ocr = MagicMock()
+    mock_ocr.process_image.side_effect = ["names here", "prose", OCRError("model crashed")]
+
+    class _FailingCorrector(Corrector):
+        """A provider that does not answer at all."""
+
+        def correct(self, raw_text, language, *, text_format="plain") -> CorrectionOutcome:
+            raise StageError(
+                "The model did not answer.", kind=StageErrorKind.PROVIDER, stage="correction"
+            )
+
+    class _FailingAnonymizer(Anonymizer):
+        """A name model that cannot be loaded, for the one text that has names in it."""
+
+        def anonymize(self, text: str) -> tuple[str, AnonymizationMap]:
+            if "names" in text:
+                raise RuntimeError("no name model")
+            return text, {}
+
+        def restore(self, text: str, mapping: AnonymizationMap) -> str:
+            return text
+
+    outcomes: list[FileOutcome] = []
+    with (
+        patch(
+            "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
+            return_value=mock_ocr,
+        ),
+        patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
+        patch.object(
+            StageBuilder,
+            "build_correction_and_anonymizer",
+            return_value=(_FailingCorrector(), _FailingAnonymizer()),
+        ),
+    ):
+        summary = OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            progress=ProgressCallbacks(on_file_done=outcomes.append),
+        ).run()
+
+    assert summary.failed == ("anonymize.png", "proofread.png", "read.png")
+    assert [outcome.status for outcome in outcomes] == [FileStatus.FAILED] * 3
+    reasons = {outcome.name: outcome.error for outcome in outcomes}
+    assert reasons["read.png"] == "OCR failed (image): model crashed"
+    assert reasons["proofread.png"] == "The model did not answer."
+    assert reasons["anonymize.png"] == "Personal info removal failed: no name model"
 
 
 @pytest.mark.use_case("Config_Aware_Cache_Reuse")
@@ -1637,7 +1708,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
     first_corrector = MagicMock()
     first_corrector.correct.return_value = CorrectionOutcome("corrected text")
     first_evaluator = MagicMock()
-    first_evaluator.evaluate.return_value = ("eval-v1", None)
+    first_evaluator.evaluate.return_value = EvaluationOutcome("eval-v1")
 
     with (
         patch(
@@ -1661,7 +1732,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
     second_corrector = MagicMock()
     second_corrector.correct.side_effect = AssertionError("correction should be reused from cache")
     second_evaluator = MagicMock()
-    second_evaluator.evaluate.return_value = ("eval-v2", None)
+    second_evaluator.evaluate.return_value = EvaluationOutcome("eval-v2")
 
     with (
         patch(
@@ -1712,7 +1783,7 @@ def test_pipeline_run_with_different_providers_per_stage_produces_full_state(
     mock_corrector = MagicMock()
     mock_corrector.correct.return_value = CorrectionOutcome("corrected text")
     mock_evaluator = MagicMock()
-    mock_evaluator.evaluate.return_value = ("quality: good", None)
+    mock_evaluator.evaluate.return_value = EvaluationOutcome("quality: good")
 
     with (
         patch(

@@ -24,7 +24,7 @@ def cut_off() -> PortAnswer:
 
 
 def transport(
-    error: str = "Correction failed (connection refused); keeping original text.",
+    error: str = "Correction failed (connection refused).",
 ) -> PortAnswer:
     """Return a request that never reached the model."""
     return PortAnswer(failure="transport", error=error)

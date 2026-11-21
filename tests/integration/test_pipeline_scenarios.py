@@ -15,6 +15,7 @@ import pytest
 from docx import Document
 
 from teachers_teammate.domain.anonymization import restore
+from teachers_teammate.domain.evaluation import EvaluationOutcome
 from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote, fits
@@ -102,7 +103,7 @@ def test_evaluation_stage_runs_and_persists(tmp_path: Path) -> None:
     corrector = MagicMock()
     corrector.correct.return_value = CorrectionOutcome("corrected answer")
     evaluator = MagicMock()
-    evaluator.evaluate.return_value = ("Grade: A. Well done.", None)
+    evaluator.evaluate.return_value = EvaluationOutcome("Grade: A. Well done.")
     build_llm_patch, corrector_patch = _patch_correction(corrector)
 
     with (

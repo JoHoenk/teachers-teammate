@@ -35,9 +35,13 @@ from ...domain.teacher_work import (
 from ...exceptions import (
     FILE_GONE_MESSAGE,
     RECOGNITION_OFF_MESSAGE,
+    AnonymizerError,
+    FileSkipped,
     PipelineInputError,
     RecognitionSwitchedOffError,
     RunStoppedError,
+    StageError,
+    StageErrorKind,
     stop_requested,
 )
 from ...interfaces import (
@@ -67,14 +71,18 @@ _logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ProcessingResult:
-    """Result of processing a single input file through all pipeline stages."""
+    """Result of processing a single input file through all pipeline stages.
+
+    A saved file carries its texts (the run counts the changes of its proofreading); a file that
+    failed, was left out or was stopped carries the sentence a teacher reads and nothing else.
+    """
 
     ok: bool
     message: str
-    preview_img: str
-    raw_text: str
-    correction_text: str
-    evaluation_text: str
+    preview_img: str = ""
+    raw_text: str = ""
+    correction_text: str = ""
+    evaluation_text: str = ""
     warnings: tuple[str, ...] = ()
     text_format: TextFormat = "plain"
     """Notation of ``raw_text`` and ``correction_text`` (``"plain"`` or ``"markdown"``)."""
@@ -149,15 +157,19 @@ class FileProcessorConfig:
     when nothing measures the run (a test, a tool)."""
 
 
-class _StageAbort(Exception):
-    """Raised by stage helpers to short-circuit the pipeline with a ready result."""
+class _Stopped(Exception):
+    """Ends this file because the teacher pressed "Stop now"; it carries the result to report.
+
+    Not a failure and not an error: the steps that were done are stored, and the next run picks
+    them up.
+    """
 
     def __init__(self, result: ProcessingResult) -> None:
         super().__init__()
         self.result = result
 
 
-def _stopped_abort(
+def _stopped_result(
     message: str,
     stage: StageName,
     *,
@@ -167,20 +179,19 @@ def _stopped_abort(
     text_format: TextFormat = "plain",
     correction_review: CorrectionReview | None = None,
     correction_warning: str = "",
-) -> _StageAbort:
-    """Return the abort that ends a file because the run was stopped.
+) -> _Stopped:
+    """Return the stop that ends a file at *stage*.
 
     It carries only what is already stored (the texts, and the review and warning that belong
     to a stored correction), so the row shows what the next run reuses.
     """
-    return _StageAbort(
+    return _Stopped(
         ProcessingResult(
             False,
             message,
-            preview_img,
-            raw_text,
-            correction_text,
-            "",
+            preview_img=preview_img,
+            raw_text=raw_text,
+            correction_text=correction_text,
             text_format=text_format,
             correction_review=correction_review,
             correction_warning=correction_warning,
@@ -193,14 +204,14 @@ def _stopped_abort(
 class _LazyAnonymization:
     """The anonymized extracted text of one file: computed on the first call, then reused."""
 
-    def __init__(self, compute: Callable[[], tuple[str, AnonymizationMap]]) -> None:
+    def __init__(self, compute: Callable[[str], tuple[str, AnonymizationMap]]) -> None:
         self._compute = compute
         #: ``(text, mapping)`` once it was computed, else ``None``.
         self.result: tuple[str, AnonymizationMap] | None = None
 
-    def __call__(self) -> tuple[str, AnonymizationMap]:
+    def __call__(self, stage: str = "") -> tuple[str, AnonymizationMap]:
         if self.result is None:
-            self.result = self._compute()
+            self.result = self._compute(stage)
         return self.result
 
 
@@ -242,6 +253,12 @@ class FileProcessor:
         Every stage reads the texts the document has *now*: the teacher's transcription where
         they fixed or checked it, their corrections where they apply to the stored answer.
         The machine's own texts stay in the cache untouched.
+
+        One failure contract: a stage that could not do its work raises
+        :exc:`~teachers_teammate.exceptions.StageError`, which ends this file with the sentence a
+        teacher reads — the stages before it keep what they stored, and the next file runs.  A
+        file that is left out (:exc:`~teachers_teammate.exceptions.FileSkipped`) and one the
+        teacher stopped (:class:`_Stopped`) are neither a success nor a failure.
         """
         try:
             ctx = self._prepare_cache(file)
@@ -251,7 +268,7 @@ class FileProcessor:
             # The extracted text is anonymized once, and only when something asks for it: a
             # proofreading that is not served from the cache.  Without proofreading nothing
             # else would ask, so it runs here to fill the session cache the previews read.
-            anonymized = self._lazy_personal_info_removal(texts.transcription, preview_img)
+            anonymized = self._lazy_personal_info_removal(texts.transcription)
             if self._correction is None and self._anonymizer is not None and not self._stopping():
                 anonymized()
 
@@ -268,26 +285,34 @@ class FileProcessor:
                 stored_review=(review, "; ".join(correction_warnings)),
             )
             all_warnings = tuple(correction_warnings + eval_warnings)
+
+            # Only an anonymizer that also writes the anonymized text file can reuse the pre-pass.
+            done = anonymized.result
+            reused = (
+                done[0] if done is not None and self._text_anonymizer is self._anonymizer else None
+            )
+            result = self._write_outputs(
+                file,
+                _OutputTexts(texts.transcription, texts.corrected, evaluation_text),
+                preview_img,
+                source_image,
+                all_warnings,
+                text_format=texts.transcription_format,
+                review=review,
+                anonymized_raw=reused,
+            )
         except RunStoppedError:
             # A cancelled request that no stage turned into a result itself: nothing of that
             # step was stored, and the steps before it already are.
-            return ProcessingResult(False, STOPPED_GENERIC, "", "", "", "", stopped=True)
-        except _StageAbort as abort:
-            return abort.result
-
-        # Only an anonymizer that also writes the anonymized text file can reuse the pre-pass.
-        done = anonymized.result
-        reused = done[0] if done is not None and self._text_anonymizer is self._anonymizer else None
-        result = self._write_outputs(
-            file,
-            _OutputTexts(texts.transcription, texts.corrected, evaluation_text),
-            preview_img,
-            source_image,
-            all_warnings,
-            text_format=texts.transcription_format,
-            review=review,
-            anonymized_raw=reused,
-        )
+            return ProcessingResult(False, STOPPED_GENERIC, stopped=True)
+        except _Stopped as stopped:
+            return stopped.result
+        except FileSkipped as left_out:
+            return ProcessingResult(False, str(left_out), skipped=True)
+        except StageError as exc:
+            self._finish_sample(usable=False)  # the requests of a failed step say nothing
+            _logger.error("%s stage failed (%s): %s", exc.stage or "pipeline", exc.kind, exc)
+            return ProcessingResult(False, str(exc))
         return replace(result, correction_warning="; ".join(correction_warnings))
 
     # ── Stage helpers ─────────────────────────────────────────────────────
@@ -303,11 +328,9 @@ class FileProcessor:
         except OSError as exc:
             if isinstance(exc, FileNotFoundError) and not file.exists():
                 self._reporter.status(f"       → Skipped: {FILE_GONE_MESSAGE}")
-                raise _StageAbort(
-                    ProcessingResult(False, FILE_GONE_MESSAGE, "", "", "", "", skipped=True)
-                ) from exc
-            raise _StageAbort(
-                ProcessingResult(False, f"Could not read input file: {exc}", "", "", "", "")
+                raise FileSkipped(FILE_GONE_MESSAGE) from exc
+            raise StageError(
+                f"Could not read input file: {exc}", kind=StageErrorKind.STORAGE
             ) from exc
 
     def _run_preprocess_or_cache(
@@ -374,12 +397,10 @@ class FileProcessor:
                 prepared = self._preprocess_service.preprocess_input(file, allow_images=False)
         except RecognitionSwitchedOffError as exc:
             self._reporter.status(f"       → Skipped: {RECOGNITION_OFF_MESSAGE}")
-            raise _StageAbort(
-                ProcessingResult(False, str(exc), "", "", "", "", skipped=True)
-            ) from exc
+            raise FileSkipped(str(exc)) from exc
         except (OSError, ValueError, RuntimeError, PipelineInputError) as exc:
-            raise _StageAbort(
-                ProcessingResult(False, f"Preprocessing failed: {exc}", "", "", "", "")
+            raise StageError(
+                f"Preprocessing failed: {exc}", kind=StageErrorKind.PREPROCESSING
             ) from exc
 
         ocr_inputs, prep_steps, source_image = (
@@ -413,10 +434,8 @@ class FileProcessor:
                     pages=pages,
                 )
             except OSError as exc:
-                raise _StageAbort(
-                    ProcessingResult(
-                        False, f"Could not persist preview image: {exc}", "", "", "", ""
-                    )
+                raise StageError(
+                    f"Could not persist preview image: {exc}", kind=StageErrorKind.STORAGE
                 ) from exc
 
         if not ocr_inputs:
@@ -434,14 +453,14 @@ class FileProcessor:
             reading = None  # the file carries its own text; nothing of the teacher's is read in
 
         if self._stopping() and prepared.raw_text_hint is None:
-            raise _stopped_abort(STOPPED_BEFORE_RECOGNITION, "ocr", preview_img=preview_img)
+            raise _stopped_result(STOPPED_BEFORE_RECOGNITION, "ocr", preview_img=preview_img)
 
         try:
             raw_text, ctx = self._run_ocr(
                 file, ocr_inputs, prepared, preview_img, source_image, ctx, reading=reading
             )
         except RunStoppedError as exc:
-            raise _stopped_abort(
+            raise _stopped_result(
                 STOPPED_BEFORE_RECOGNITION, "ocr", preview_img=preview_img
             ) from exc
         return raw_text, preview_img, source_image, ctx
@@ -510,11 +529,9 @@ class FileProcessor:
             def page_done(text: str) -> None:
                 self._finish_sample(words=len(text.split()))
 
-            page_texts, ocr_err = self._ocr_stage_service.run_pages(
+            page_texts = self._ocr_stage_service.run_pages(
                 ocr_inputs, self._language, on_page=page_started, on_page_done=page_done
             )
-            if ocr_err:
-                raise _StageAbort(ProcessingResult(False, ocr_err, preview_img, "", "", ""))
             page_count = len(page_texts)
             if self._postprocessor is not None:
                 processed = self._postprocessor.process_pages(page_texts)
@@ -524,8 +541,8 @@ class FileProcessor:
                 raw_text = join_labelled_pages(page_texts)
 
         if not raw_text:
-            raise _StageAbort(
-                ProcessingResult(False, "Empty response from OCR model.", preview_img, "", "", "")
+            raise StageError(
+                "Empty response from OCR model.", kind=StageErrorKind.ENGINE, stage="ocr"
             )
 
         try:
@@ -538,10 +555,8 @@ class FileProcessor:
                 raw_text_format=raw_text_format,
             )
         except OSError as exc:
-            raise _StageAbort(
-                ProcessingResult(
-                    False, f"Could not persist OCR cache state: {exc}", preview_img, "", "", ""
-                )
+            raise StageError(
+                f"Could not persist OCR cache state: {exc}", kind=StageErrorKind.STORAGE
             ) from exc
 
         if raw_text_hint is None:
@@ -551,67 +566,46 @@ class FileProcessor:
 
         return raw_text, ctx
 
-    def _lazy_personal_info_removal(self, text: str, preview_img: str) -> _LazyAnonymization:
+    def _lazy_personal_info_removal(self, text: str) -> _LazyAnonymization:
         """Return a callable that hides personal data in the extracted *text* once.
 
         Nothing runs until it is called.  A failing anonymizer (spaCy missing, a text over its
         length limit, …) ends this file with a message instead of the whole run.
         """
+        return _LazyAnonymization(lambda stage: self._hide_personal_info(text, stage=stage))
 
-        def remove() -> tuple[str, AnonymizationMap]:
-            if self._anonymizer is None:
-                return text, {}
-            try:
-                anonymized, anon_map = self._anonymizer.anonymize(text)
-            except Exception as exc:  # spaCy errors vary; report them per file
-                raise _StageAbort(
-                    ProcessingResult(
-                        False,
-                        f"Personal info removal failed: {exc}",
-                        preview_img,
-                        text,
-                        "",
-                        "",
-                    )
-                ) from exc
-            self._reporter.status(f"       → Personal info removed ({len(anon_map)} items)")
-            return anonymized, anon_map
+    def _hide_personal_info(
+        self, text: str, *, stage: str = "", before_model: bool = False
+    ) -> tuple[str, AnonymizationMap]:
+        """Hide personal data in *text* before a model sees it (no-op without an anonymizer).
 
-        return _LazyAnonymization(remove)
+        *stage* names the stage a failure belongs to; *before_model* is the pass made for one
+        request of its own (the review) rather than the one the proofreading shares.
 
-    def _anonymize_for(self, stage: str, text: str) -> tuple[str, AnonymizationMap]:
-        """Hide personal data in *text* before an LLM *stage* sees it (no-op without anonymiser)."""
+        The one place that calls the anonymizer, so every call — the pass the proofreading uses,
+        the one before the content review and the one before the anonymized text file — ends a
+        failing file the same way instead of ending the run.
+        """
         if self._anonymizer is None:
             return text, {}
-        anonymized, anon_map = self._anonymizer.anonymize(text)
-        self._reporter.status(f"       → PII anonymized before {stage}")
+        try:
+            anonymized, anon_map = self._anonymizer.anonymize(text)
+        except Exception as exc:  # spaCy and name-model errors vary; report them per file
+            raise AnonymizerError(f"Personal info removal failed: {exc}", stage=stage) from exc
+        if before_model:
+            self._reporter.status(f"       → PII anonymized before {stage}")
+        else:
+            self._reporter.status(f"       → Personal info removed ({len(anon_map)} items)")
         return anonymized, anon_map
 
-    def _restore_pii(
-        self,
-        text: str,
-        anon_map: AnonymizationMap,
-        *,
-        preview_img: str,
-        raw_text: str,
-        correction_text: str = "",
-    ) -> str:
-        """Put the real personal data back into *text*; abort the file when that fails."""
+    def _restore_pii(self, text: str, anon_map: AnonymizationMap, *, stage: str = "") -> str:
+        """Put the real personal data back into *text*; end the file when that fails."""
         if not (anon_map and text and self._anonymizer is not None):
             return text
         try:
             return self._anonymizer.restore(text, anon_map)
         except (ValueError, KeyError) as exc:
-            raise _StageAbort(
-                ProcessingResult(
-                    False,
-                    f"PII restore failed: {exc}",
-                    preview_img,
-                    raw_text,
-                    correction_text,
-                    "",
-                )
-            ) from exc
+            raise AnonymizerError(f"PII restore failed: {exc}", stage=stage) from exc
 
     def _run_correction_or_cache(
         self,
@@ -644,8 +638,8 @@ class FileProcessor:
 
         text_format = texts.transcription_format
 
-        def stopped() -> _StageAbort:
-            return _stopped_abort(
+        def stopped() -> _Stopped:
+            return _stopped_result(
                 STOPPED_BEFORE_PROOFREADING,
                 "correction",
                 preview_img=preview_img,
@@ -658,7 +652,7 @@ class FileProcessor:
             raise stopped()
         self._reporter.status("       → Running correction...")
         self._notify_stage(file, PROGRESS_STAGE_CORRECTION)
-        text_for_correction, anon_map = anonymized()
+        text_for_correction, anon_map = anonymized("correction")
 
         # A text that goes out in several pieces cannot be changed across a piece boundary;
         # say so before the requests start, so the teacher knows what to expect.
@@ -683,12 +677,7 @@ class FileProcessor:
             mode="exchange" if outcome.review is not None else "text",
             usable=not (outcome.failed or outcome.fell_back),
         )
-        corrected_text = self._restore_pii(
-            outcome.text or "",
-            anon_map,
-            preview_img=preview_img,
-            raw_text=texts.transcription,
-        )
+        corrected_text = self._restore_pii(outcome.text or "", anon_map, stage="correction")
         review, unmatched = self._restore_review_pii(
             outcome.review,
             anon_map,
@@ -701,7 +690,7 @@ class FileProcessor:
         if unmatched:
             corr_warnings.append(REVIEW_UNMATCHED)
 
-        # A failed call returns the unchanged source; caching it would present that as a finished
+        # A failed outcome is the unchanged source; caching it would present that as a finished
         # correction and the next run would never try again.  (A corrections-only fallback
         # *is* stored: the model answered, and asking it for explanations again would repeat
         # the failed requests.)
@@ -808,8 +797,8 @@ class FileProcessor:
         stored = ctx.state.correction_done
         review, review_warning = stored_review
 
-        def stopped() -> _StageAbort:
-            return _stopped_abort(
+        def stopped() -> _Stopped:
+            return _stopped_result(
                 STOPPED_BEFORE_REVIEW,
                 "evaluation",
                 preview_img=preview_img,
@@ -826,25 +815,23 @@ class FileProcessor:
         self._reporter.status("       → Running evaluation...")
         # The proofread text has its real names back, so hide them again: the review may
         # run on an online service just like proofreading.
-        text_for_evaluation, anon_map = self._anonymize_for("evaluation", correction_text)
+        text_for_evaluation, anon_map = self._hide_personal_info(
+            correction_text, stage="evaluation", before_model=True
+        )
         if self._stopping():
             raise stopped()
         self._begin_sample(SpeedStep.REVIEW)
         try:
-            eval_text, eval_warning = self._evaluation.evaluate(
+            evaluation = self._evaluation.evaluate(
                 text_for_evaluation, self._language, text_format=texts.transcription_format
             )
         except RunStoppedError as exc:
             raise stopped() from exc
-        self._finish_sample(words=len(text_for_evaluation.split()), usable=not eval_warning)
-        eval_text = self._restore_pii(
-            eval_text or "",
-            anon_map,
-            preview_img=preview_img,
-            raw_text=texts.transcription,
-            correction_text=correction_text,
+        self._finish_sample(
+            words=len(text_for_evaluation.split()), usable=evaluation.warning is None
         )
-        eval_warnings: list[str] = [eval_warning] if eval_warning else []
+        eval_text = self._restore_pii(evaluation.text or "", anon_map, stage="evaluation")
+        eval_warnings: list[str] = [evaluation.warning] if evaluation.warning else []
         if eval_text:
             try:
                 self._cache_service.record_evaluation(
@@ -917,23 +904,14 @@ class FileProcessor:
         review: CorrectionReview | None = None,
         anonymized_raw: str | None = None,
     ) -> ProcessingResult:
-        def failed(message: str) -> ProcessingResult:
-            return ProcessingResult(
-                False,
-                message,
-                preview_img,
-                texts.raw,
-                texts.corrected,
-                texts.evaluation,
-                text_format=text_format,
-                correction_review=review,
-            )
+        def failed(message: str) -> StageError:
+            return StageError(message, kind=StageErrorKind.OUTPUT)
 
         targets = self._planned_outputs(file)
         try:
             self._claim_outputs(file, targets)
         except ValueError as exc:
-            return failed(f"Output files not saved: {exc}")
+            raise failed(f"Output files not saved: {exc}") from exc
 
         saved: list[str] = []
         try:
@@ -950,21 +928,21 @@ class FileProcessor:
                     review=review,
                 )
                 saved.append(self._shown(docx_file))
-        except Exception as exc:  # noqa: BLE001  # python-docx / PIL errors vary widely; surface message without crashing
-            return failed(f"DOCX creation failed: {exc}")
+        except Exception as exc:  # python-docx / PIL errors vary widely; surface the message
+            raise failed(f"DOCX creation failed: {exc}") from exc
         try:
             self._write_text_files(targets, texts.raw, text_format, saved, anonymized_raw)
-        except Exception as exc:  # noqa: BLE001  # NER / file-system errors vary; surface message without crashing
+        except Exception as exc:  # NER / file-system errors vary; surface the message
             already = f" (already saved: {', '.join(saved)})" if saved else ""
-            return failed(f"Text file creation failed: {exc}{already}")
+            raise failed(f"Text file creation failed: {exc}{already}") from exc
         return ProcessingResult(
             True,
             ", ".join(saved) or "results cached (no output files)",
-            preview_img,
-            texts.raw,
-            texts.corrected,
-            texts.evaluation,
-            warnings,
+            preview_img=preview_img,
+            raw_text=texts.raw,
+            correction_text=texts.corrected,
+            evaluation_text=texts.evaluation,
+            warnings=warnings,
             text_format=text_format,
             correction_review=review,
         )

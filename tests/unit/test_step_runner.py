@@ -196,7 +196,7 @@ def test_a_transport_error_ends_the_step() -> None:
 
     assert outcome.value is None
     assert outcome.failure == "transport"
-    assert outcome.error == "Correction failed (connection refused); keeping original text."
+    assert outcome.error == "Correction failed (connection refused)."
     assert len(port.requests) == 1
 
 

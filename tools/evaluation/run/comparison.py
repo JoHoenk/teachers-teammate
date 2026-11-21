@@ -18,6 +18,9 @@ from collections.abc import Callable, Iterator, Sequence
 import time
 from typing import TYPE_CHECKING, Protocol
 
+from teachers_teammate.domain.proofreading.result import CorrectionOutcome
+from teachers_teammate.exceptions import StageError
+
 from ..core.languages import LANGUAGE_NAMES
 from ..core.performance import Performance
 from ..core.records import Answer, text_id
@@ -106,16 +109,26 @@ class WritingModelComparison:
         if self._instrumentation is not None:
             self._instrumentation.begin()
         started = self._clock()
-        outcome = corrector.correct(record.source, language)
+        failure = ""
+        try:
+            outcome = corrector.correct(record.source, language)
+        except StageError as exc:
+            # A proofreading that did not happen is a row in the run file, not the end of the
+            # run: the answer keeps the source and says what the stage reported.
+            outcome, failure = CorrectionOutcome(text=record.source), str(exc)
+        if outcome.failed and not failure:
+            # The tools' own single-request correctors report a failed call in the outcome
+            # instead of raising it.
+            failure = outcome.warning or ""
         seconds = self._clock() - started
         performance = self._instrumentation.end() if self._instrumentation is not None else None
         return Answer(
             text=key,
             text_sha256=record.text_sha256,
             output=outcome.text,
-            failed=outcome.failed,
+            failed=bool(failure) or outcome.failed,
             fallback=outcome.fell_back,
-            warning=outcome.warning or "",
+            warning=failure or outcome.warning or "",
             left_out=outcome.left_out,
             review=outcome.review,
             requests=performance.requests if performance is not None else (),

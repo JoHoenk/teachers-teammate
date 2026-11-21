@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, call
@@ -17,6 +18,7 @@ from teachers_teammate.domain.proofreading.review import (
 )
 from teachers_teammate.domain.run_summary import RunStatus, RunSummary
 from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
+from teachers_teammate.exceptions import UNEXPECTED_ERROR_MESSAGE
 from teachers_teammate.infrastructure.workflow.coordinator import run_files
 from teachers_teammate.infrastructure.workflow.file_processor import ProcessingResult
 
@@ -74,6 +76,55 @@ def test_run_files_one_failure(tmp_path: Path) -> None:
     assert "ok.png" in summary.succeeded
     assert "bad.png" in summary.failed
     assert summary.exit_code == 1
+
+
+def test_run_files_an_unexpected_error_fails_only_its_file(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    Given  three files and process_file raising a ValueError for the second
+    When   run_files is called
+    Then   files one and three are saved, the second is failed, and the traceback is logged
+    """
+    files = [tmp_path / f"{name}.png" for name in ("one", "two", "three")]
+
+    def process(path: Path) -> ProcessingResult:
+        if path == files[1]:
+            raise ValueError("the stage broke")
+        return _success(path)
+
+    done: list[FileOutcome] = []
+    with caplog.at_level(logging.ERROR):
+        summary = run_files(
+            files, process_file=process, cleanup_tmp=MagicMock(), on_file_done=done.append
+        )
+
+    assert summary.succeeded == ("one.png", "three.png")
+    assert summary.failed == ("two.png",)
+    assert [event.status for event in done] == [
+        FileStatus.SAVED,
+        FileStatus.FAILED,
+        FileStatus.SAVED,
+    ]
+    assert done[1].error == UNEXPECTED_ERROR_MESSAGE
+    assert any("the stage broke" in line for line in caplog.text.splitlines())
+
+
+@pytest.mark.parametrize("control", [KeyboardInterrupt, SystemExit])
+def test_run_files_leaves_a_control_exception_to_the_caller(
+    tmp_path: Path, control: type[BaseException]
+) -> None:
+    """
+    Given  a process_file function that raises an interrupt or a SystemExit
+    When   run_files is called
+    Then   the exception reaches the caller: it is not one file's failure
+    """
+
+    def process(_path: Path) -> ProcessingResult:
+        raise control
+
+    with pytest.raises(control):
+        run_files([tmp_path / "a.png"], process_file=process, cleanup_tmp=MagicMock())
 
 
 def test_run_files_a_skipped_file_is_neither_succeeded_nor_failed(tmp_path: Path) -> None:

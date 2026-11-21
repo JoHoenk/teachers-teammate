@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from teachers_teammate.exceptions import StageError, StageErrorKind
 from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 from teachers_teammate.infrastructure.stage_builder import PipelineComponentFactory, StageBuilder
@@ -269,17 +270,18 @@ def test_a_correct_only_file_whose_step_one_failed_keeps_its_failure() -> None:
     """
     Given  the exchange built to send step one only, and a server that does not answer
     When   a text is proofread
-    Then   the file fails with its warning and keeps the source, as in the full exchange
+    Then   the proofreading fails with its reason, as in the full exchange
     """
     corrector = app_corrector_factory(
         _OneStepClient(fail=True), timeout=5.0, exchange=Exchange.TEXT_FIRST, steps=(Step.CORRECT,)
     )("gemma4:e4b", 0.2)
 
-    outcome = corrector.correct("Ich habe ein Hund.", "German")
+    with pytest.raises(StageError) as raised:
+        corrector.correct("Ich habe ein Hund.", "German")
 
-    assert outcome.failed
-    assert outcome.text == "Ich habe ein Hund."
-    assert outcome.warning
+    assert raised.value.kind == StageErrorKind.PROVIDER
+    assert raised.value.stage == "correction"
+    assert "no server" in str(raised.value)
 
 
 @pytest.mark.use_case("Model_Eval_Comparison")

@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 from docx import Document
 import pytest
 
+from teachers_teammate.domain.evaluation import EvaluationOutcome
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.teacher_work import (
     TeacherWork,
@@ -316,7 +317,7 @@ def test_the_outputs_carry_the_teachers_texts(tmp_path: Path) -> None:
 
     corrector.reset_mock()
     evaluator = MagicMock()
-    evaluator.evaluate.return_value = ("Grade: A", None)
+    evaluator.evaluate.return_value = EvaluationOutcome("Grade: A")
     written = _proofreading_config(
         tmp_path,
         docx_enabled=True,

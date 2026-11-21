@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from teachers_teammate.domain.proofreading.review import align, fits
+from teachers_teammate.exceptions import StageError, StageErrorKind
 from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
 from teachers_teammate.infrastructure.proofreading.corrector import (
     ExchangeCorrector,
@@ -68,18 +71,33 @@ def test_the_review_of_an_exchange_is_the_edit_based_review_of_the_exchange() ->
     ]
 
 
-def test_a_failed_exchange_keeps_the_source_and_says_why() -> None:
+def test_a_failed_exchange_raises_the_failure_of_the_stage() -> None:
     """
     Given  a server that cannot be reached
     When   the corrector proofreads a text
-    Then   the outcome is a failure that keeps the source text and carries the warning
+    Then   the proofreading stage fails with its reason instead of a half-corrected outcome
     """
-    outcome = _corrector(transport("no server")).correct(SOURCE, "German")
+    with pytest.raises(StageError) as raised:
+        _corrector(transport("no server")).correct(SOURCE, "German")
+
+    assert raised.value.kind == StageErrorKind.PROVIDER
+    assert raised.value.stage == "correction"
+    assert "no server" in str(raised.value)
+
+
+def test_an_unusable_answer_is_an_outcome_that_keeps_the_source() -> None:
+    """
+    Given  a model that answers with nothing at all (the request itself went through)
+    When   the corrector proofreads a text
+    Then   the outcome is failed, keeps the source and says why: the file is still written, but
+           the source is never stored as a finished proofreading
+    """
+    outcome = _corrector(answer("")).correct(SOURCE, "German")
 
     assert outcome.failed is True
     assert outcome.text == SOURCE
     assert outcome.review is None
-    assert "no server" in (outcome.warning or "")
+    assert outcome.warning
 
 
 def test_a_long_text_is_split_by_the_budget_of_the_exchange() -> None:
@@ -152,8 +170,6 @@ def test_a_stop_during_the_explanations_reaches_the_caller() -> None:
     When   the corrector proofreads the text
     Then   RunStoppedError reaches the caller, so the file is stopped and nothing is stored
     """
-    import pytest  # noqa: PLC0415
-
     from teachers_teammate.exceptions import RunStoppedError  # noqa: PLC0415
 
     class _StoppingPort(FakePort):

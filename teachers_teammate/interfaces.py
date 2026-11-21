@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
 
+from .domain.evaluation import EvaluationOutcome
 from .domain.formatted_text import FormattedDocument, TextFormat
 from .domain.ollama_discovery import WaitDetail
 from .domain.proofreading.result import CorrectionOutcome
@@ -217,9 +218,14 @@ class Corrector(ABC):
         """Return the proofreading result: corrected text, review and warning.
 
         On success, :attr:`CorrectionOutcome.review` holds the per-change explanations and
-        the unclear expressions; it is ``None`` in corrections-only mode.  On recoverable
-        failure (e.g. LLM error), the outcome keeps *raw_text* and carries a warning, so the
-        caller can surface the warning without failing the file.
+        the unclear expressions; it is ``None`` in corrections-only mode.  A partial answer — a
+        corrections-only fallback, a piece whose explanations are missing — is a result whose
+        :attr:`CorrectionOutcome.warning` says so.  An answer that cannot be used is an outcome
+        with :attr:`CorrectionOutcome.failed` set: the unchanged text and the reason.
+
+        Raises:
+            :exc:`~teachers_teammate.exceptions.StageError`: when a request never reached the
+                model, so no proofread text exists.  The caller ends the file.
 
         Args:
             raw_text: Text to proofread.
@@ -267,12 +273,10 @@ class Evaluator(ABC):
     @abstractmethod
     def evaluate(
         self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
-    ) -> tuple[str, str | None]:
-        """Return ``(evaluation_report, warning_or_none)``.
+    ) -> EvaluationOutcome:
+        """Return the review, with a warning when it could not be written or cover the whole text.
 
-        On success, return ``(report, None)``.
-        On recoverable failure, return ``("", warning_message)``
-        so the caller can surface the warning without failing the file.
+        A review that failed has no text and a warning: the file is saved all the same.
 
         Args:
             corrected_text: The corrected text to assess.
@@ -280,7 +284,7 @@ class Evaluator(ABC):
             text_format: Notation of *corrected_text* (see :meth:`Corrector.correct`).
 
         Returns:
-            Tuple of quality report string (or empty) and an optional warning string.
+            An :class:`~teachers_teammate.domain.evaluation.EvaluationOutcome`.
         """
 
 

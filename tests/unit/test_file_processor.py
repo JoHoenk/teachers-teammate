@@ -14,6 +14,7 @@ import pytest
 
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.evaluation import EvaluationOutcome
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.domain.performance_estimate import SpeedStep
@@ -30,7 +31,12 @@ from teachers_teammate.infrastructure.speed_store import RunSample, SampleKey
 from teachers_teammate.infrastructure.state_repository import DocumentState
 from teachers_teammate.infrastructure.workflow.cache_service import CacheContext
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
-from teachers_teammate.exceptions import FILE_GONE_MESSAGE, RunStoppedError
+from teachers_teammate.exceptions import (
+    FILE_GONE_MESSAGE,
+    RunStoppedError,
+    StageError,
+    StageErrorKind,
+)
 from teachers_teammate.infrastructure.workflow.file_processor import (
     REVIEW_UNMATCHED,
     STOPPED_BEFORE_PROOFREADING,
@@ -55,9 +61,7 @@ class _StubReturns:
     preprocess_return: (
         tuple[list[Path], list[str], Path | None, str | None] | PreparedInput | None
     ) = None
-    ocr_return: tuple[list[str], str | None] = field(
-        default_factory=lambda: (["extracted text"], None)
-    )
+    ocr_return: list[str] = field(default_factory=lambda: ["extracted text"])
 
 
 def _make_state(
@@ -468,17 +472,17 @@ def test_stop_after_ocr_skips_proofreading_and_keeps_the_text(tmp_path: Path) ->
 
 def test_a_failed_proofreading_is_a_failure_even_when_stop_was_pressed(tmp_path: Path) -> None:
     """
-    Given  a corrector whose call fails for its own reason while "Stop now" was pressed
+    Given  a corrector that fails for its own reason while "Stop now" was pressed
     When   process() is called
     Then   the failure is not turned into a stop (only RunStoppedError says the stop cut the
-           request off), and the unchanged source is not stored as a correction
+           request off), and nothing is stored as a correction
     """
     stop = threading.Event()
     corrector = MagicMock()
 
     def correct(*_args: object, **_kwargs: object) -> CorrectionOutcome:
         stop.set()
-        return CorrectionOutcome("raw", None, "Correction failed", failed=True)
+        raise StageError("Correction failed", kind=StageErrorKind.PROVIDER, stage="correction")
 
     corrector.correct.side_effect = correct
     fp, cache_svc, _, _ = _make_processor(tmp_path, stop_event=stop, corrector=corrector)
@@ -486,7 +490,8 @@ def test_a_failed_proofreading_is_a_failure_even_when_stop_was_pressed(tmp_path:
     result = fp.process(tmp_path / "doc.png")
 
     assert result.stopped is False
-    assert result.correction_warning == "Correction failed"
+    assert result.ok is False
+    assert result.message == "Correction failed"
     cache_svc.record_correction.assert_not_called()
 
 
@@ -610,9 +615,9 @@ def test_a_stop_before_proofreading_does_not_wait_for_the_anonymizer(tmp_path: P
         tmp_path, stop_event=stop, corrector=corrector, anonymizer=anonymizer
     )
 
-    def read(*_args: object, **_kwargs: object) -> tuple[list[str], None]:
+    def read(*_args: object, **_kwargs: object) -> list[str]:
         stop.set()
-        return ["extracted text"], None
+        return ["extracted text"]
 
     ocr.run_pages.side_effect = read
 
@@ -659,7 +664,7 @@ def test_the_anonymizer_pre_pass_is_skipped_when_stopping(tmp_path: Path) -> Non
     stop = threading.Event()
     anonymizer = MagicMock()
     fp, _, _, ocr = _make_processor(tmp_path, stop_event=stop, anonymizer=anonymizer)
-    ocr.run_pages.side_effect = lambda *_a, **_k: (stop.set(), (["text"], None))[1]
+    ocr.run_pages.side_effect = lambda *_a, **_k: (stop.set(), ["text"])[1]
 
     fp.process(tmp_path / "doc.png")
 
@@ -730,7 +735,7 @@ def test_pdf_text_layer_fallback_reports_reason_before_ocr(tmp_path: Path) -> No
     )
     fp, _, _, ocr_svc = _make_processor(
         tmp_path,
-        returns=_StubReturns(preprocess_return=prepared, ocr_return=(["scanned"], None)),
+        returns=_StubReturns(preprocess_return=prepared, ocr_return=["scanned"]),
         reporter=reporter,
     )
 
@@ -752,9 +757,7 @@ def test_fresh_ocr_single_page(tmp_path: Path) -> None:
     Then   raw_text equals the single-page text without any page prefix
     """
     file = tmp_path / "doc.png"
-    fp, _, _, _ = _make_processor(
-        tmp_path, returns=_StubReturns(ocr_return=(["hello world"], None))
-    )
+    fp, _, _, _ = _make_processor(tmp_path, returns=_StubReturns(ocr_return=["hello world"]))
 
     result = fp.process(file)
 
@@ -770,9 +773,7 @@ def test_fresh_ocr_multi_page_joins_with_prefix(tmp_path: Path) -> None:
     Then   raw_text contains 'Page 1:' and 'Page 2:' prefixes
     """
     file = tmp_path / "doc.png"
-    fp, _, _, _ = _make_processor(
-        tmp_path, returns=_StubReturns(ocr_return=(["first", "second"], None))
-    )
+    fp, _, _, _ = _make_processor(tmp_path, returns=_StubReturns(ocr_return=["first", "second"]))
 
     result = fp.process(file)
 
@@ -785,13 +786,14 @@ def test_fresh_ocr_multi_page_joins_with_prefix(tmp_path: Path) -> None:
 
 def test_fresh_ocr_error_returns_false(tmp_path: Path) -> None:
     """
-    Given  ocr_stage_service.run_pages returns an error string
+    Given  ocr_stage_service.run_pages raises the failure of the reading stage
     When   process() is called
-    Then   result is (False, error_msg, preview_img, '', '', '')
+    Then   the file fails with that sentence and carries no texts
     """
     file = tmp_path / "doc.png"
-    fp, _, _, _ = _make_processor(
-        tmp_path, returns=_StubReturns(ocr_return=([], "OCR model timed out"))
+    fp, _, _, ocr_svc = _make_processor(tmp_path)
+    ocr_svc.run_pages.side_effect = StageError(
+        "OCR model timed out", kind=StageErrorKind.ENGINE, stage="ocr"
     )
 
     result = fp.process(file)
@@ -808,7 +810,7 @@ def test_empty_ocr_response_returns_false(tmp_path: Path) -> None:
     Then   result is (False, 'Empty response from OCR model.', ...)
     """
     file = tmp_path / "doc.png"
-    fp, _, _, _ = _make_processor(tmp_path, returns=_StubReturns(ocr_return=([""], None)))
+    fp, _, _, _ = _make_processor(tmp_path, returns=_StubReturns(ocr_return=[""]))
 
     result = fp.process(file)
 
@@ -967,7 +969,7 @@ def test_evaluation_never_sees_real_names_when_anonymizing(tmp_path: Path) -> No
     corrector = MagicMock()
     corrector.correct.return_value = CorrectionOutcome("Anna Weber wrote this.")
     evaluator = MagicMock()
-    evaluator.evaluate.return_value = ("[PERSON_1] writes clearly.", None)
+    evaluator.evaluate.return_value = EvaluationOutcome("[PERSON_1] writes clearly.", None)
     anonymizer = MagicMock()
     anonymizer.anonymize.side_effect = lambda text: (
         text.replace("Anna Weber", "[PERSON_1]"),
@@ -996,13 +998,12 @@ def test_failed_restore_after_evaluation_is_a_clean_failure(tmp_path: Path) -> N
     """
     Given  anonymization is on and restoring names into the review fails
     When   process() runs the content review
-    Then   the file fails with a "PII restore failed" result (keeping the proofread text)
-           instead of an unhandled exception
+    Then   the file fails with a "PII restore failed" sentence and carries no text
     """
     corrector = MagicMock()
     corrector.correct.return_value = CorrectionOutcome("Anna Weber wrote this.")
     evaluator = MagicMock()
-    evaluator.evaluate.return_value = ("[PERSON_1] writes clearly.", None)
+    evaluator.evaluate.return_value = EvaluationOutcome("[PERSON_1] writes clearly.", None)
     anonymizer = MagicMock()
     anonymizer.anonymize.side_effect = lambda text: (
         text.replace("Anna Weber", "[PERSON_1]"),
@@ -1025,7 +1026,7 @@ def test_failed_restore_after_evaluation_is_a_clean_failure(tmp_path: Path) -> N
 
     assert result.ok is False
     assert "PII restore failed" in result.message
-    assert result.correction_text == "Anna Weber wrote this."
+    assert result.correction_text == result.evaluation_text == ""
 
 
 @pytest.mark.use_case("Automatic_Content_Evaluation")
@@ -1038,7 +1039,7 @@ def test_evaluation_text_is_unchanged_without_anonymizer(tmp_path: Path) -> None
     corrector = MagicMock()
     corrector.correct.return_value = CorrectionOutcome("Anna Weber wrote this.")
     evaluator = MagicMock()
-    evaluator.evaluate.return_value = ("fine", None)
+    evaluator.evaluate.return_value = EvaluationOutcome("fine", None)
     fp, _, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=evaluator)
 
     fp.process(tmp_path / "doc.png")
@@ -1068,7 +1069,7 @@ def test_the_text_that_was_sent_is_stored_with_the_proofreading(tmp_path: Path) 
     )
     fp, cache, _, _ = _make_processor(
         tmp_path,
-        returns=_StubReturns(ocr_return=(["Anna Weber wrote this."], None)),
+        returns=_StubReturns(ocr_return=["Anna Weber wrote this."]),
         corrector=corrector,
         anonymizer=anonymizer,
     )
@@ -1090,7 +1091,7 @@ def test_nothing_is_copied_when_names_went_as_written(tmp_path: Path) -> None:
     corrector = MagicMock()
     corrector.correct.return_value = CorrectionOutcome("corrected")
     evaluator = MagicMock()
-    evaluator.evaluate.return_value = ("fine", None)
+    evaluator.evaluate.return_value = EvaluationOutcome("fine", None)
     fp, cache, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=evaluator)
 
     fp.process(tmp_path / "doc.png")
@@ -1110,7 +1111,7 @@ def test_the_review_records_how_many_names_were_hidden(tmp_path: Path) -> None:
     corrector = MagicMock()
     corrector.correct.return_value = CorrectionOutcome("Anna Weber and Ben wrote this.")
     evaluator = MagicMock()
-    evaluator.evaluate.return_value = ("fine", None)
+    evaluator.evaluate.return_value = EvaluationOutcome("fine", None)
     anonymizer = MagicMock()
     anonymizer.anonymize.side_effect = lambda text: (
         text.replace("Anna Weber", "[PERSON_1]").replace("Ben", "[PERSON_2]"),
@@ -1136,7 +1137,7 @@ def test_fresh_evaluation_calls_evaluator(tmp_path: Path) -> None:
     corrector = MagicMock()
     corrector.correct.return_value = CorrectionOutcome("corrected text")
     evaluator = MagicMock()
-    evaluator.evaluate.return_value = ("quality: high", None)
+    evaluator.evaluate.return_value = EvaluationOutcome("quality: high", None)
     file = tmp_path / "doc.png"
 
     fp, _, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=evaluator)
@@ -1274,7 +1275,7 @@ def test_evaluation_record_oserror_is_nonfatal(tmp_path: Path) -> None:
     corrector = MagicMock()
     corrector.correct.return_value = CorrectionOutcome("corrected")
     evaluator = MagicMock()
-    evaluator.evaluate.return_value = ("quality: good", None)
+    evaluator.evaluate.return_value = EvaluationOutcome("quality: good", None)
     file = tmp_path / "doc.png"
     fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=evaluator)
     cache_svc.record_evaluation.side_effect = OSError("disk full")
@@ -1305,7 +1306,7 @@ def test_no_doc_creator_returns_results_cached_message(tmp_path: Path) -> None:
     )
 
     ocr_svc = MagicMock()
-    ocr_svc.run_pages.return_value = (["text"], None)
+    ocr_svc.run_pages.return_value = ["text"]
 
     (tmp_path / "output").mkdir(parents=True, exist_ok=True)
     cfg = FileProcessorConfig(
@@ -1385,7 +1386,7 @@ def test_text_files_plain_and_anonymized(tmp_path: Path) -> None:
     file = tmp_path / "essay.png"
     fp, _, _, _ = _make_processor(
         tmp_path,
-        returns=_StubReturns(ocr_return=(["Anna wrote this"], None)),
+        returns=_StubReturns(ocr_return=["Anna wrote this"]),
         write_text=True,
         text_anonymizer=anonymizer,
     )
@@ -1589,7 +1590,7 @@ def _image_returns(
         preprocess_return=PreparedInput(
             page_paths, steps, raw, None, None, None, (), tuple(originals)
         ),
-        ocr_return=(ocr_pages or ["text"] * pages, None),
+        ocr_return=ocr_pages or ["text"] * pages,
     )
 
 
@@ -1730,7 +1731,7 @@ def test_process_multi_page_passes_page_progress_callback(tmp_path: Path) -> Non
                 on_page(i + 1, len(inputs))
             if on_page_done is not None:
                 on_page_done("page text")
-        return ["a", "b"], None
+        return ["a", "b"]
 
     ocr_svc.run_pages.side_effect = _run_pages
 
@@ -1758,7 +1759,7 @@ def test_process_single_page_logs_no_page_number(tmp_path: Path) -> None:
                 on_page(i + 1, len(inputs))
             if on_page_done is not None:
                 on_page_done("page text")
-        return ["a"], None
+        return ["a"]
 
     ocr_svc.run_pages.side_effect = _run_pages
 
@@ -1842,7 +1843,7 @@ def test_postprocessed_ocr_text_and_format_are_recorded(tmp_path: Path) -> None:
     ctx = _markdown_ctx()
     fp, cache_svc, _, _ = _make_processor(
         tmp_path,
-        returns=_StubReturns(cache_ctx=ctx, ocr_return=(["<del>a</del> b"], None)),
+        returns=_StubReturns(cache_ctx=ctx, ocr_return=["<del>a</del> b"]),
         postprocessor=postprocessor,
     )
 
@@ -1883,9 +1884,7 @@ def test_without_postprocessor_pages_are_joined_as_before(tmp_path: Path) -> Non
     When   process() is called
     Then   the pages are joined with "Page N:" labels and recorded as plain text
     """
-    fp, cache_svc, _, _ = _make_processor(
-        tmp_path, returns=_StubReturns(ocr_return=(["one", "two"], None))
-    )
+    fp, cache_svc, _, _ = _make_processor(tmp_path, returns=_StubReturns(ocr_return=["one", "two"]))
 
     result = fp.process(tmp_path / "doc.pdf")
 
@@ -1903,7 +1902,7 @@ def test_markdown_text_format_reaches_corrector_evaluator_and_docx(tmp_path: Pat
     corrector = MagicMock()
     corrector.correct.return_value = CorrectionOutcome("~~a~~ b!")
     evaluator = MagicMock()
-    evaluator.evaluate.return_value = ("fine", None)
+    evaluator.evaluate.return_value = EvaluationOutcome("fine", None)
     doc_creator = MagicMock()
     fp, cache_svc, _, _ = _make_processor(
         tmp_path,
@@ -1974,7 +1973,7 @@ def _anonymizing_review_processor(tmp_path: Path, restore):
     anonymizer.restore.side_effect = restore
     return _make_processor(
         tmp_path,
-        returns=_StubReturns(ocr_return=(["Anna have gone."], None)),
+        returns=_StubReturns(ocr_return=["Anna have gone."]),
         corrector=corrector,
         anonymizer=anonymizer,
     )
@@ -2069,23 +2068,90 @@ def test_a_review_that_does_not_fit_the_restored_text_is_dropped_and_says_so(
     assert cache.record_correction.call_args.kwargs["correction_review"] is None
 
 
-def test_failed_correction_is_reported_but_not_stored_as_done(tmp_path: Path) -> None:
+def test_failed_correction_fails_the_file_and_stores_nothing(tmp_path: Path) -> None:
     """
-    Given  a corrector whose provider call failed and returned the unchanged source
+    Given  a corrector whose provider call failed
     When   process() is called
-    Then   the warning is shown, but nothing is recorded as a finished correction, so the
-           next run asks the model again
+    Then   the file fails with the reason the stage gave, and nothing is recorded as a finished
+           correction, so the next run asks the model again
     """
     corrector = MagicMock()
-    corrector.correct.return_value = CorrectionOutcome(
-        "raw", None, "Correction failed", failed=True
+    corrector.correct.side_effect = StageError(
+        "Correction failed", kind=StageErrorKind.PROVIDER, stage="correction"
     )
     fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector)
 
     result = fp.process(tmp_path / "doc.png")
 
-    assert result.correction_warning == "Correction failed"
+    assert result.ok is False
+    assert result.message == "Correction failed"
+    assert result.correction_text == ""
     cache_svc.record_correction.assert_not_called()
+
+
+def test_an_unusable_proofreading_saves_the_file_but_stores_no_correction(tmp_path: Path) -> None:
+    """
+    Given  a corrector whose answer was unusable (a failed outcome with the unchanged source)
+    When   process() is called
+    Then   the file is saved with the reason as a warning, and the source is not recorded as a
+           finished correction, so the next run asks the model again
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome(
+        "extracted text",
+        None,
+        "The model added text of its own; keeping original text.",
+        failed=True,
+    )
+    fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector)
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    assert "The model added text of its own; keeping original text." in result.warnings
+    cache_svc.record_correction.assert_not_called()
+
+
+def test_a_failed_review_saves_the_file_with_a_warning(tmp_path: Path) -> None:
+    """
+    Given  a proofread text and an evaluator whose request did not answer
+    When   process() is called
+    Then   the file is saved with the proofreading, the reason is a warning, and no review is stored
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("corrected text")
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = EvaluationOutcome("", "Evaluation failed (no server).")
+    fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=evaluator)
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    assert result.correction_text == "corrected text"
+    assert result.evaluation_text == ""
+    assert "Evaluation failed (no server)." in result.warnings
+    cache_svc.record_evaluation.assert_not_called()
+
+
+def test_the_log_names_how_many_items_were_hidden_before_proofreading(tmp_path: Path) -> None:
+    """
+    Given  "Remove personal info" on and a corrector
+    When   process() runs
+    Then   the log names how many items were hidden, as it does without a corrector
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
+    anonymizer.restore.side_effect = lambda text, _mapping: text
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("[PERSON_1] wrote.")
+    reporter = _ListReporter()
+    fp, *_ = _make_processor(
+        tmp_path, corrector=corrector, anonymizer=anonymizer, reporter=reporter
+    )
+
+    fp.process(tmp_path / "essay.png")
+
+    assert "→ Personal info removed (1 items)" in reporter.lines
 
 
 def test_anonymizer_runs_without_proofreading(tmp_path: Path) -> None:
@@ -2406,7 +2472,7 @@ def test_a_failed_correction_gives_no_sample(tmp_path: Path) -> None:
 
     def correct(_text: str, _language: str, *, text_format: TextFormat = "plain") -> object:
         collector.record("gemma4:e4b", _stats())
-        return CorrectionOutcome("raw", None, "boom", failed=True)
+        raise StageError("boom", kind=StageErrorKind.PROVIDER, stage="correction")
 
     corrector.correct.side_effect = correct
     fp, _cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector, stats=collector)
@@ -2414,6 +2480,7 @@ def test_a_failed_correction_gives_no_sample(tmp_path: Path) -> None:
     fp.process(tmp_path / "doc.png")
 
     assert samples == []
+    assert collector.finish(words=1) is None, "the failed step is not left open for the next file"
 
 
 def test_a_sample_that_cannot_be_saved_does_not_fail_the_file(tmp_path: Path) -> None:
@@ -2519,7 +2586,7 @@ def test_the_exchange_sends_placeholders_and_stores_the_real_names(tmp_path: Pat
     collector = _collector(samples)
     fp, cache_svc, _, _ = _make_processor(
         tmp_path,
-        returns=_StubReturns(ocr_return=([_RAW], None)),
+        returns=_StubReturns(ocr_return=[_RAW]),
         corrector=_MeasuredCorrector(_exchange_corrector(port), collector),
         anonymizer=_hiding_anonymizer(),
         stats=collector,
@@ -2551,7 +2618,7 @@ def test_corrections_only_sends_one_request_and_is_stored_as_text(tmp_path: Path
     collector = _collector(samples)
     fp, cache_svc, _, _ = _make_processor(
         tmp_path,
-        returns=_StubReturns(ocr_return=([_RAW], None)),
+        returns=_StubReturns(ocr_return=[_RAW]),
         corrector=_MeasuredCorrector(_exchange_corrector(port, corrections_only=True), collector),
         anonymizer=_hiding_anonymizer(),
         stats=collector,
@@ -2585,7 +2652,7 @@ def test_a_stop_during_step_two_leaves_the_file_stopped_and_stores_nothing(tmp_p
     port = _StoppingPort(answer(_CORRECTED))
     fp, cache_svc, _, _ = _make_processor(
         tmp_path,
-        returns=_StubReturns(ocr_return=([_RAW], None)),
+        returns=_StubReturns(ocr_return=[_RAW]),
         corrector=_exchange_corrector(port),
     )
 

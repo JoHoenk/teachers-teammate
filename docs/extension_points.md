@@ -8,6 +8,10 @@ repository root and are not repeated here; the longer explanations are in {doc}`
 ## New pipeline stage
 
 Add ABC to `interfaces.py`, implement in `infrastructure/`, route through `FileProcessor`.
+A stage that cannot do its work raises `StageError` with its `kind` and `stage`
+(`exceptions.py`); `FileProcessor.process()` has the one `except` that turns it into a `FAILED`
+file. What a stage produced with a remark is an outcome, not an exception. See
+{doc}`development` → "One error contract".
 
 ## New LLM provider
 

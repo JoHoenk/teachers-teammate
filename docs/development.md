@@ -981,8 +981,8 @@ Rules that keep a stop honest:
   warning (any other error still becomes one, and is a failure even when Stop now was pressed
   at the same moment); a new wrapper that catches every exception must do the same.
   `FileProcessor` checks the event between steps (`_stopping()`) and **before** a slow
-  anonymization pass, and the steps raise `_stopped_abort(message, stage, ...)` themselves.
-  The abort carries the stage (`ProcessingResult.stopped_stage`, one of `ocr`, `correction`,
+  anonymization pass, and the steps raise `_stopped_result(message, stage, ...)` themselves.
+  The stop carries the stage (`ProcessingResult.stopped_stage`, one of `ocr`, `correction`,
   `evaluation`), so the results table marks the cut-short cell even for the review, which
   has no "running" mark; it also carries the stored correction's review and warning.
 * **Without a later step nothing is "stopped".**  A recognition-only run whose text is stored
@@ -2783,14 +2783,16 @@ edit.
 
 **Failures** (`infrastructure/_llm_invoke.py:StructuredResult`). A schema-bound request
 ends as success or as one of three failures. `transport`: the provider call raised; the
-source text is kept and the warning is the complete "Correction failed (…)" sentence.
+message is the complete "Correction failed (…)." sentence, and it becomes the `StageError` that
+ends the file.
 `unsupported`: the model or provider cannot bind a schema at all; no repair is attempted.
 `invalid`: it answered, but not in the schema. An invalid answer with some text gets one
 repair request that quotes the validation error. Unsupported, invalid-and-empty and
 still-invalid answers all end in the corrections-only fallback for that file, with the
 fixed fallback warning; the raw validation error is only ever sent back to the model.
-A `transport` failure sets `CorrectionOutcome.failed`, and `FileProcessor` then does not store
-the unchanged source as a finished correction; a corrections-only fallback is stored. An
+A `transport` failure raises a `StageError` for that file; a step ① answer that cannot be used
+is a `failed` outcome, so the unchanged source is never stored as a finished correction either;
+a corrections-only fallback is an outcome and is stored. An
 Ollama server that answers the `format` request with HTTP 400/422 counts as `unsupported`
 (`OCRError.status_code`), not as a network failure.
 
@@ -2953,13 +2955,17 @@ re-exported from the package root for convenience.
 
 | Exception | Base | Raised by |
 |---|---|---|
-| `OCRError` | `Exception` | OCR processor implementations |
+| `PipelineError` | `Exception` | base of every failure that ends one file |
+| `StageError` | `PipelineError` | any stage that could not do its work (also `kind` + `stage`) |
+| `FileSkipped` | `PipelineError` | a file left out on purpose (recognition off, file gone) |
+| `OCRError` | `StageError` | OCR processor implementations |
 | `ConfigFileNotFoundError` | `FileNotFoundError` | `storage_root.resolve_config_path` |
 | `ConfigFileParseError` | `ValueError` | `config._read_toml` |
 | `StorageResolutionError` | `RuntimeError` | `storage_root.resolve_storage_root` |
 | `ProviderNotAvailableError` | `RuntimeError` | provider modules, `ocr_processor`, `stage_builder` |
 | `OllamaConnectionError` | `RuntimeError` | `ollama_utils.check_model` |
 | `ResponseTruncatedError` | `OCRError` | `ollama_utils.OllamaClient.chat` |
+| `AnonymizerError` | `StageError` | `file_processor._hide_personal_info`, `._restore_pii` |
 | `PipelineInputError` | `ValueError` | `input_provider_factory`, `preprocess_service` |
 
 Inheriting from the appropriate built-in (`ValueError` for bad input,
@@ -2967,25 +2973,44 @@ Inheriting from the appropriate built-in (`ValueError` for bad input,
 files) lets callers that do not import the custom class still fall through to a
 sensible `except` branch.
 
-### Soft failures and per-file warnings
+### One error contract: no answer is an exception, a remark is an outcome
 
-`Corrector.correct()` returns a `CorrectionOutcome` (`domain/proofreading/result.py`): the text,
-the review (`None` in corrections-only mode), an optional warning, and the flags `failed`,
-`fell_back` and `left_out`.  `Evaluator.evaluate()` returns `(report, warning_or_None)`.
-Implementations never raise on LLM communication errors: a corrector keeps the source text and
-sets the warning, an evaluator returns `("", warning)`.  `FileProcessor` collects every warning
-into `ProcessingResult.warnings` so the application layer can surface them without interrupting
-the batch run.
+A stage that could not do its work raises a `StageError`; one that did work returns it, with a
+remark when the result is not what it could be.  Nothing returns `(value, error)`.  The exception
+carries the sentence a teacher reads in `str(exc)`, what failed in `kind` (`StageErrorKind`:
+`engine`, `provider`, `anonymizer`, `preprocessing`, `storage`, `output`; it goes to the log) and
+where in `stage` (`"ocr"`, `"correction"`, `"evaluation"`, or empty outside those three).
+`FileProcessor.process()` handles it in one `except`, so a failure always ends the same way: the
+file is `FAILED`, carries that sentence and no texts, what the stages before it stored stays
+stored, and the next file runs.
+
+What a stage *did* produce is an outcome:
+
+- `Corrector.correct()` returns a `CorrectionOutcome` (`domain/proofreading/result.py`): the
+  text, the review (`None` in corrections-only mode), an optional warning, and the flags
+  `failed`, `fell_back` and `left_out`.  A corrections-only fallback or a partial review is an
+  outcome with a warning.  An answer that cannot be used (the model added or dropped text, or
+  answered with a remark around it) is an outcome with `failed`: the unchanged source and the
+  reason; the file is saved with that warning and the source is never stored as a finished
+  proofreading.  Only a request that never reached the model raises `StageError`, because there
+  was no answer to judge and a retry would meet the same server.
+- `Evaluator.evaluate()` returns an `EvaluationOutcome` (`domain/evaluation.py`): the report and
+  an optional warning.  The review is optional, so a request that did not answer is a warning
+  with no text, and the file is saved with its proofreading.
+
+`FileProcessor` collects the warnings into `ProcessingResult.warnings` so the application layer
+can surface them without interrupting the batch run.  A stop is neither: `RunStoppedError` and
+`_Stopped` leave the file `stopped`, and `FileSkipped` leaves it *skipped*.
 
 ```python
 # interfaces.py (simplified)
 class Corrector(ABC):
     def correct(self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
-                ) -> CorrectionOutcome: ...
+                ) -> CorrectionOutcome: ...   # raises StageError: no request got through
 
 class Evaluator(ABC):
     def evaluate(self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
-                 ) -> tuple[str, str | None]: ...
+                 ) -> EvaluationOutcome: ...
 ```
 
 **A truncated answer is never used.** Ollama has two ways of running out of context, and only
@@ -3130,9 +3155,10 @@ and reports "too long". A fence that is never closed is no code block (stray OCR
 cut like any other text. A table or list without blank lines is one paragraph, so it stays whole
 as long as it fits, and is cut at line breaks when it does not.
 
-Failure is all-or-nothing: **any piece failed → the whole file fails** and keeps the original text
-(`CHUNK_FAILURE`), because a half-corrected file must never be cached. The pieces after the failed
-one are not sent (their answers would be discarded, and each would wait out the timeout on an
+Failure is all-or-nothing: **any piece failed → the whole text has no proofreading**, because a half-corrected
+file must never be cached: a `failed` outcome keeps the original text (`CHUNK_FAILURE` when the
+piece gave no reason), and the `StageError` of a piece goes up unchanged. The pieces after the
+failed one are not sent (their answers would be discarded, and each would wait out the timeout on an
 unreachable server). A piece that fell back to
 text mode does not fail the file; it costs the explanations of that piece and the merged result
 says `MISSING_REVIEW_WARNING` (*"Explanations are missing for part of the text."*). Chunking is

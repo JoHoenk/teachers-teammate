@@ -17,6 +17,7 @@ from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
+from teachers_teammate.exceptions import StageError, StageErrorKind
 from teachers_teammate.infrastructure.proofreading.chunking import (
     MISSING_REVIEW_WARNING,
     ChunkingCorrector,
@@ -302,6 +303,50 @@ def test_a_piece_that_fell_back_flags_the_answer_although_the_warnings_are_joine
     assert MISSING_REVIEW_WARNING in answer.warning, "the warnings of the pieces are joined"
     assert answer.fallback is True
     assert answer.failed is False
+
+
+@pytest.mark.use_case("Model_Eval_Comparison")
+def test_a_failed_piece_of_a_long_text_fails_the_answer() -> None:
+    """
+    Given  a long text whose pieces are proofread by a corrector that reports a failed outcome
+    When   the comparison runs
+    Then   the answer is failed and keeps the source, so a half-corrected text is never scored
+    """
+    corrector = ChunkingCorrector(
+        _BudgetedCorrector("x", max_chars=20, failed=True, warning="Correction failed.")
+    )
+
+    answer = _single(_comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2))
+
+    assert answer.failed is True
+    assert answer.output == _RECORD.source
+    assert answer.warning == "Correction failed."
+
+
+class _Unreachable(Corrector):
+    """A corrector whose request never reaches the model."""
+
+    def correct(
+        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> CorrectionOutcome:
+        """Raise the failure of the proofreading stage."""
+        raise StageError("no server", kind=StageErrorKind.PROVIDER, stage="correction")
+
+
+@pytest.mark.use_case("Model_Eval_Comparison")
+def test_a_stage_error_is_a_failed_answer_and_not_the_end_of_the_run() -> None:
+    """
+    Given  a corrector that raises the failure of the proofreading stage
+    When   the comparison runs
+    Then   the answer is failed, keeps the source and carries what the stage said
+    """
+    answer = _single(
+        _comparison(_Unreachable()).run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    )
+
+    assert answer.failed is True
+    assert answer.output == _RECORD.source
+    assert answer.warning == "no server"
 
 
 class _Instrument:

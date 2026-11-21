@@ -24,11 +24,33 @@ hide FileNotFoundError members
 ' ── application exceptions ──────────────────────────────────────────
 package "teachers_teammate.exceptions" {
 
+  class PipelineError {
+    ends one file, not the run
+  }
+
+  class StageError {
+    stage: str
+    kind: StageErrorKind
+    ..
+    str(exc) is the sentence
+    a teacher reads
+  }
+
+  class FileSkipped {
+    left out on purpose:
+    nothing failed
+  }
+
   class OCRError {
     args[0]: human-readable message
     ..
     Raised by OCRProcessor impls
     on text extraction failure
+  }
+
+  class AnonymizerError {
+    Hiding or restoring
+    personal data failed
   }
 
   class ConfigFileNotFoundError {
@@ -67,7 +89,11 @@ package "teachers_teammate.exceptions" {
 }
 
 ' ── inheritance ──────────────────────────────────────────────────────
-Exception          <|-- OCRError
+Exception          <|-- PipelineError
+PipelineError      <|-- StageError
+PipelineError      <|-- FileSkipped
+StageError         <|-- OCRError
+StageError         <|-- AnonymizerError
 Exception          <|-- RuntimeError
 Exception          <|-- ValueError
 Exception          <|-- FileNotFoundError
@@ -83,6 +109,13 @@ note right of OCRError
   Raised by:
   OllamaClient, PpOcrProcessor
   (the built-in reader)
+end note
+
+note right of StageError
+  Raised by every stage that
+  could not do its work;
+  FileProcessor turns it into
+  one FAILED file
 end note
 
 note right of ProviderNotAvailableError

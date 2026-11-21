@@ -95,12 +95,12 @@ def test_setup_assistant_check_is_listed_in_both_modes(tmp_path: Path, monkeypat
 
 def test_setup_assistant_check_names_a_service_failure(tmp_path: Path, monkeypatch) -> None:
     """Given a service whose plan_setup raises, When the smoke test runs, Then the line names it."""
-    from teachers_teammate.application.service import ProcessingApplicationService  # noqa: PLC0415
+    from teachers_teammate.application.setup_plan import SetupService  # noqa: PLC0415
 
     def boom(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("no plan today")
 
-    monkeypatch.setattr(ProcessingApplicationService, "plan_setup", boom)
+    monkeypatch.setattr(SetupService, "plan_setup", boom)
     monkeypatch.setattr(
         frozen_modes,
         "_checks",
@@ -161,7 +161,7 @@ def test_setup_assistant_check_notices_a_bundle_without_its_page_models(
 
 def test_setup_assistant_check_leaves_the_environment_as_it_found_it(monkeypatch) -> None:
     """Given no temporary folder and no Qt platform, When the check runs and fails, Then both are back."""
-    from teachers_teammate.application.service import ProcessingApplicationService  # noqa: PLC0415
+    from teachers_teammate.application.setup_plan import SetupService  # noqa: PLC0415
 
     watched = ("QT_QPA_PLATFORM", "TEACHERS_TEAMMATE_TMPDIR")
     for name in watched:
@@ -174,7 +174,7 @@ def test_setup_assistant_check_leaves_the_environment_as_it_found_it(monkeypatch
     def boom(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("no plan today")
 
-    monkeypatch.setattr(ProcessingApplicationService, "plan_setup", boom)
+    monkeypatch.setattr(SetupService, "plan_setup", boom)
     with pytest.raises(RuntimeError):
         frozen_modes._check_setup_assistant()
 

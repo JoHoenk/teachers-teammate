@@ -14,26 +14,13 @@ presentation only; every query is delegated to the injected service, described b
 from __future__ import annotations
 
 import atexit
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 import html
-from pathlib import Path
-import threading
-from typing import Protocol
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QComboBox, QProgressBar, QWidget
 
-from ..domain.data_location import StageLocation
-from ..domain.formatted_text import TextFormat
-from ..domain.model_catalog import (
-    HardwareDetection,
-    HardwareProfile,
-    ModelCategory,
-    ModelRating,
-    ModelUses,
-)
 from ..domain.model_listing import ModelGroup, ModelListing
-from ..domain.performance_estimate import TimeRange
 from ._model_wording import models_from_text
 
 # ── busy bar ──────────────────────────────────────────────────────────────────
@@ -51,95 +38,6 @@ class _BusyIndicator(QProgressBar):
 
 
 # ── the service the widgets query ─────────────────────────────────────────────
-
-
-class _SettingsAppService(Protocol):
-    def list_providers(self) -> list[str]: ...
-
-    def list_ocr_engines(self) -> list[str]: ...
-
-    def reader_installed(self) -> bool: ...
-
-    def models_dir(self) -> Path: ...
-
-    def download_reader(
-        self,
-        on_progress: Callable[[int, int], None] | None = None,
-        cancel: threading.Event | None = None,
-    ) -> None: ...
-
-    def page_models_installed(self) -> bool: ...
-
-    def download_page_models(
-        self,
-        on_progress: Callable[[int, int], None] | None = None,
-        cancel: threading.Event | None = None,
-    ) -> None: ...
-
-    def get_provider_info(self, provider: str) -> dict: ...
-
-    def provider_key_missing(self, provider: str) -> bool: ...
-
-    def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]: ...
-
-    def list_ocr_models(self, base_url: str = "") -> list[str]: ...
-
-    def list_provider_models_checked(
-        self, provider: str, *, base_url: str = ""
-    ) -> ModelListing: ...
-
-    def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None: ...
-
-    def get_cached_listing(self, provider: str, *, base_url: str = "") -> ModelListing | None: ...
-
-    def invalidate_model_cache(self, provider: str, base_url: str = "") -> None: ...
-
-    def is_module_importable(self, module: str) -> bool: ...
-
-    def missing_provider_package(self, provider: str) -> str | None: ...
-
-    def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str: ...
-
-    def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection: ...
-
-    def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection: ...
-
-    def available_memory_gb(self) -> float | None: ...
-
-    def classify_ollama_models(
-        self, tags: list[str], ollama_url: str, *, cached_only: bool = False
-    ) -> dict[str, ModelUses | None]: ...
-
-    def rate_ollama_models(
-        self,
-        tags: list[str],
-        task: ModelCategory,
-        profile: HardwareProfile,
-        ollama_url: str,
-        *,
-        cached_only: bool = False,
-        system_memory_gb: float | None = None,
-        card_gb: float | None = None,
-    ) -> list[ModelRating]: ...
-
-    def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation: ...
-
-    def describe_ocr_refusal(self, engine: str, model: str, ollama_url: str) -> str: ...
-
-    def describe_llm_location(
-        self, provider: str, model: str, ollama_url: str
-    ) -> StageLocation: ...
-
-    def default_model_for_task(self, provider: str, task: str) -> str: ...
-
-    def speed_page_times(
-        self,
-        tags: Sequence[str],
-        category: ModelCategory,
-        ollama_url: str,
-        *,
-        hardware: HardwareDetection | None = None,
-    ) -> dict[str, TimeRange]: ...
 
 
 # ── background threads ────────────────────────────────────────────────────────

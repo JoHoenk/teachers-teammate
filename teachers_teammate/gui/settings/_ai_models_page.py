@@ -270,7 +270,7 @@ class AiModelsPage(SettingsPageBase):
         try:
             self._load_ocr(values)
             self._shared.load(values)
-            ticked = review_has_own_model(values, self._app_service.effective_model)
+            ticked = review_has_own_model(values, self._app_service.providers.effective_model)
             self._set_override(ticked)
             if ticked:
                 self._review.load(values)
@@ -318,7 +318,7 @@ class AiModelsPage(SettingsPageBase):
         day: an empty proofreading model is written out as its proofreading default.
         """
         provider, model = self._shared.choice()
-        return provider, self._app_service.effective_model(provider, model, "correction")
+        return provider, self._app_service.providers.effective_model(provider, model, "correction")
 
     def owned_keys(self) -> frozenset[str]:
         return frozenset((*_OCR_KEYS, *_PROOFREADING_KEYS, *_REVIEW_KEYS, "proofreading_context"))
@@ -501,7 +501,7 @@ class AiModelsPage(SettingsPageBase):
             return
         detection = self._computer_box.selector.resolved()
         card_gb = detection.card_gb if detection is not None else None
-        choice = self._app_service.context_choice(self._live_settings(), card_gb)
+        choice = self._app_service.recommendations.context_choice(self._live_settings(), card_gb)
         if choice.applies:
             index = self._context_combo.findData("auto")
             self._context_combo.setItemText(index, txt.context_auto_review(choice.auto_review))
@@ -515,7 +515,7 @@ class AiModelsPage(SettingsPageBase):
         The application layer answers, from the choices as they are now and the steps the main
         window has switched on (nothing is sent by a proofreading that is off).
         """
-        return self._app_service.sends_text_online(
+        return self._app_service.providers.sends_text_online(
             {**self._context.settings, **self._live_settings(), "ollama_url": self._ollama_url}
         )
 
@@ -561,7 +561,11 @@ class AiModelsPage(SettingsPageBase):
         if state is PrivacyLineState.NEEDS_DETECTION:
             # The model of the document language is ticked there, as the main window's button does.
             language = self._context.language
-            model = self._app_service.spacy_model_for_language(language) if language else ""
+            model = (
+                self._app_service.anonymization.spacy_model_for_language(language)
+                if language
+                else ""
+            )
             self._navigate(
                 SettingsPage.ADDONS,
                 _page.FOCUS_NAME_DETECTION,
@@ -587,7 +591,7 @@ class AiModelsPage(SettingsPageBase):
                 self._refresh_privacy_line()
 
         self._availability_task.submit(
-            lambda: self._app_service.anonymizer_available(
+            lambda: self._app_service.anonymization.anonymizer_available(
                 language, self._context.anonymizer_config
             ),
             done,

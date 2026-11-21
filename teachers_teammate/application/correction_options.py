@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 
-from ..config import DEFAULTS
+from ..config import DEFAULTS, Config
+from ..domain.formatted_text import TextFormat
+from ..domain.notation import with_notation_hint
 from ..domain.prompt_text import migrate_saved_default
 
 #: What each step of the proofreading exchange is called where a teacher reads it.
@@ -18,6 +20,30 @@ PROMPT_STEP_TITLES: dict[str, str] = {
 def prompt_step_title(step: str) -> str:
     """Return the teacher-facing name of a proofreading step."""
     return PROMPT_STEP_TITLES.get(step, step)
+
+
+def proofreading_prompts(config: Config) -> tuple[tuple[str, str], ...]:
+    """Return ``(step title, system prompt)`` for the steps this config sends.
+
+    Taken from the exchange itself, so the *Options…* dialog and *What is sent* show the
+    requests a run really makes and cannot drift from them.  *Corrections only* leaves
+    step ① alone; a model without the unclear check leaves step ③ out.
+    """
+    from ..infrastructure.proofreading.corrector import exchange_prompts  # noqa: PLC0415
+
+    steps = exchange_prompts(
+        config.correction_profile,
+        corrections_only=config.correction_output == "text",
+    )
+    return tuple((prompt_step_title(step), text) for step, text in steps)
+
+
+def evaluation_fixed_instructions(text_format: TextFormat = "plain") -> str:
+    """Return what the app appends to an evaluation prompt: the notation hint, if any.
+
+    Markdown is the only format with a hint, so for plain text this is ``""``.
+    """
+    return with_notation_hint("", text_format, task="evaluation").strip()
 
 
 def review_has_own_model(

@@ -14,7 +14,8 @@ from collections.abc import Callable
 import pytest
 from PySide6.QtWidgets import QWidget
 
-from teachers_teammate.application.service import AnonymizerConfig, ProcessingApplicationService
+from teachers_teammate.application.composition import build_app_services
+from teachers_teammate.application.service import AnonymizerConfig
 from teachers_teammate.gui._addon_installer_dialog import AddonInstallerDialog, ReaderDownloadDialog
 from teachers_teammate.gui._anonymizer_config_widget import AnonymizerConfigWidget
 from teachers_teammate.gui._chart_widget import ChartWidget
@@ -35,6 +36,7 @@ from teachers_teammate.gui.benchmark.composition import build_benchmark_window
 from teachers_teammate.gui.composition import build_main_window
 from teachers_teammate.gui.settings import SettingsPage, SettingsWindow
 
+from ._service_stubs import services_of
 from ._gui_harness import (
     FakeGuiService,
     exercise_lifecycle,
@@ -55,15 +57,13 @@ WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
         )
         for page in SettingsPage
     ],
-    # AnonymizerConfigWidget types app_service as the concrete service, so use a real one.
+    # AnonymizerConfigWidget types app_service as the concrete services, so use real ones.
     (
         "anonymizer",
-        lambda: AnonymizerConfigWidget(
-            "English", AnonymizerConfig(), ProcessingApplicationService()
-        ),
+        lambda: AnonymizerConfigWidget("English", AnonymizerConfig(), build_app_services()),
     ),
     ("addon_installer", lambda: AddonInstallerDialog("privacy", service=_FAKE)),
-    ("reader_download", lambda: ReaderDownloadDialog(_FAKE)),
+    ("reader_download", lambda: ReaderDownloadDialog(services_of(_FAKE))),
     ("about", lambda: AboutDialog()),
     ("help", lambda: HelpDialog()),
     ("licenses", lambda: ThirdPartyLicensesDialog()),
@@ -74,10 +74,10 @@ WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
     ("diff_widget", lambda: DiffWidget()),
     ("log_widget", lambda: LogWidget()),
     ("chart_widget", lambda: ChartWidget()),
-    ("system_stats", lambda: SystemStatsWidget()),
-    ("system_monitor", lambda: SystemMonitorWindow()),
+    ("system_stats", lambda: SystemStatsWidget(lambda: None)),
+    ("system_monitor", lambda: SystemMonitorWindow(lambda: None)),
     ("collapsible", lambda: CollapsibleSection("Section")),
-    ("ocr_config_selector", lambda: OcrConfigSelector(app_service=_FAKE)),
+    ("ocr_config_selector", lambda: OcrConfigSelector(app_service=services_of(_FAKE))),
     ("compare_view", lambda: CompareView()),
     ("runs_list", lambda: RunsList()),
 ]

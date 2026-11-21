@@ -15,14 +15,13 @@ classified the models, so the GUI thread cannot block on network requests.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Protocol
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QWidget
 
+from ..application.composition import AppServices
 from ..domain.model_catalog import (
-    HardwareDetection,
     HardwareProfile,
     ModelCategory,
     ModelRating,
@@ -84,29 +83,6 @@ _GROUP: dict[Suitability, int] = {
 }
 
 
-class _GuidanceService(Protocol):
-    def rate_ollama_models(
-        self,
-        tags: list[str],
-        task: ModelCategory,
-        profile: HardwareProfile,
-        ollama_url: str,
-        *,
-        cached_only: bool = False,
-        system_memory_gb: float | None = None,
-        card_gb: float | None = None,
-    ) -> list[ModelRating]: ...
-
-    def speed_page_times(
-        self,
-        tags: Sequence[str],
-        category: ModelCategory,
-        ollama_url: str,
-        *,
-        hardware: HardwareDetection | None = None,
-    ) -> dict[str, TimeRange]: ...
-
-
 class OllamaModelGuidance(QWidget):
     """Hint line + "Use best choice" button for an Ollama model combo."""
 
@@ -114,7 +90,7 @@ class OllamaModelGuidance(QWidget):
         self,
         *,
         combo: QComboBox,
-        app_service: _GuidanceService,
+        app_service: AppServices,
         category: ModelCategory,
         profile_selector: HardwareProfileSelector,
         ollama_url: str = "",
@@ -168,7 +144,7 @@ class OllamaModelGuidance(QWidget):
         self._models = list(models)
         self._installed = {normalize_tag(tag): tag for tag in self._models}
         self._rate(self._models)
-        self._page_times = self._service.speed_page_times(
+        self._page_times = self._service.speeds.page_times(
             self._models, self._category, self._ollama_url, hardware=self._selector.resolved()
         )
         previous = self._combo.currentText()
@@ -221,7 +197,7 @@ class OllamaModelGuidance(QWidget):
 
     def _rate(self, tags: list[str]) -> None:
         """(Re-)rate *tags* for the active profile; cache hits only, no network."""
-        ratings = self._service.rate_ollama_models(
+        ratings = self._service.recommendations.rate_ollama_models(
             tags,
             self._category,
             self.active_profile(),
@@ -236,7 +212,7 @@ class OllamaModelGuidance(QWidget):
         """Return the rating of *tag*, rating a typed, not-listed tag on demand."""
         rating = self._ratings.get(tag)
         if rating is None:
-            rating = self._service.rate_ollama_models(
+            rating = self._service.recommendations.rate_ollama_models(
                 [tag],
                 self._category,
                 self.active_profile(),

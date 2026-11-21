@@ -18,17 +18,21 @@ Three rules shape it:
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol
 from urllib.parse import urlparse
 
 from PySide6.QtCore import QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QHideEvent, QShowEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from ..application.service import OllamaStatus
-from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, OllamaState, ServerKind
-from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
-from ..infrastructure.ollama_utils import is_local_ollama_url
+from ..application.composition import AppServices
+from ..application.ollama_server import OllamaStatus
+from ..domain.ollama_discovery import (
+    OLLAMA_DOWNLOAD_URL,
+    DiscoveredServer,
+    DiscoveryScope,
+    OllamaState,
+    ServerKind,
+)
 from ..texts.servers import card_found
 from . import _user_text as txt
 from ._background import LatestTask, run_in_background
@@ -55,16 +59,6 @@ GET_OLLAMA = "Get Ollama…"
 CHECK_AGAIN = "Check again"
 
 
-class _OllamaService(Protocol):
-    """What the line asks the application service; the facade methods are the only ones."""
-
-    def ollama_status(self, url: str) -> OllamaStatus: ...
-
-    def discover_ollama_servers(self, scope: DiscoveryScope) -> list[DiscoveredServer]: ...
-
-    def start_ollama(self) -> None: ...
-
-
 class OllamaStatusLine(QWidget):
     """One line and up to two buttons: whether Ollama answers, and what to do about it."""
 
@@ -74,7 +68,7 @@ class OllamaStatusLine(QWidget):
     def __init__(
         self,
         *,
-        app_service: _OllamaService,
+        app_service: AppServices,
         url: str = "",
         parent: QWidget | None = None,
     ) -> None:
@@ -179,7 +173,7 @@ class OllamaStatusLine(QWidget):
 
     def _interval_ms(self) -> int:
         """Return how often to ask: often on this computer, rarely on a server elsewhere."""
-        local = is_local_ollama_url(self._url, include_wsl_host=True)
+        local = self._service.ollama.is_local(self._url, include_wsl_host=True)
         return LOCAL_INTERVAL_MS if local else REMOTE_INTERVAL_MS
 
     def _check(self) -> None:
@@ -188,7 +182,7 @@ class OllamaStatusLine(QWidget):
         if not url:
             return
         self._timer.setInterval(self._interval_ms())
-        self._task.submit(lambda: self._service.ollama_status(url), self._on_status)
+        self._task.submit(lambda: self._service.ollama.ollama_status(url), self._on_status)
 
     def _on_status(self, result: object, error: BaseException | None) -> None:
         if error is not None or not isinstance(result, OllamaStatus):
@@ -209,7 +203,7 @@ class OllamaStatusLine(QWidget):
             return
         self._searched_for = url
         self._search_task.submit(
-            lambda: self._service.discover_ollama_servers(DiscoveryScope.THIS_COMPUTER),
+            lambda: self._service.ollama.discover_ollama_servers(DiscoveryScope.THIS_COMPUTER),
             lambda result, error: self._on_search_done(url, result, error),
         )
 
@@ -232,7 +226,7 @@ class OllamaStatusLine(QWidget):
         if status is not None and status.state is OllamaState.RUNNING:
             self._card.show_server(
                 url=self._url,
-                kind=_kind_of(self._url),
+                kind=_kind_of(self._url, self._service),
                 version=status.version,
                 model_count=status.model_count,
                 offer_use=False,
@@ -294,7 +288,7 @@ class OllamaStatusLine(QWidget):
     def _start_ollama(self) -> None:
         """Start the installed Ollama, then look again once it has had time to come up."""
         self._start_error = ""
-        run_in_background(self._service.start_ollama, self._on_start_done)
+        run_in_background(self._service.ollama.start_ollama, self._on_start_done)
 
     def _on_start_done(self, _result: object, error: BaseException | None) -> None:
         """Look again once the program had time to come up, or say why it did not start."""
@@ -305,11 +299,11 @@ class OllamaStatusLine(QWidget):
         QTimer.singleShot(START_GRACE_MS, self._check)
 
 
-def _kind_of(url: str) -> ServerKind:
+def _kind_of(url: str, service: AppServices) -> ServerKind:
     """Return whose computer *url* is on: this one, the Windows PC behind WSL, or another."""
-    if is_local_ollama_url(url):
+    if service.ollama.is_local(url):
         return ServerKind.THIS_COMPUTER
-    if is_local_ollama_url(url, include_wsl_host=True):
+    if service.ollama.is_local(url, include_wsl_host=True):
         return ServerKind.WINDOWS_HOST
     return ServerKind.NETWORK
 

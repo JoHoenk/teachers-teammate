@@ -1,7 +1,7 @@
 """Plain-language "where is my data processed?" widgets.
 
 Presentation only: the places come from the application service
-(:meth:`~teachers_teammate.application.service.ProcessingApplicationService.describe_data_flow`),
+(:meth:`~teachers_teammate.application.data_flow.DataFlowService.describe_data_flow`),
 so the colours and wording here never decide anything.
 """
 

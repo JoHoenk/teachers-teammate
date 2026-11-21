@@ -14,8 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.formatting import TextFormatter
-from ...domain.benchmark import PairComparison
-from ...infrastructure.benchmark.run_store import StoredRun
+from ...domain.benchmark import PairComparison, StoredRunView
 from .._diff_widget import DiffWidget
 from .._formatted_text import render_html
 from .._image_utils import load_pixmap
@@ -80,7 +79,7 @@ class CompareView(QWidget):
         self._similarity.setText("Select run A and run B to compare.")
 
     def show_comparison(
-        self, run_a: StoredRun, run_b: StoredRun, comparison: PairComparison
+        self, run_a: StoredRunView, run_b: StoredRunView, comparison: PairComparison
     ) -> None:
         """Display two runs side-by-side with their diff and similarity score."""
         self._show_text(self._text_a, run_a)
@@ -97,7 +96,7 @@ class CompareView(QWidget):
             f"B: {comparison.stats_b.words} words / {comparison.stats_b.chars} chars"
         )
 
-    def _show_text(self, editor: QTextEdit, run: StoredRun) -> None:
+    def _show_text(self, editor: QTextEdit, run: StoredRunView) -> None:
         """Show *run*'s text: Markdown formatted, plain text verbatim."""
         if self._formatter.normalize(run.raw_text_format) == "markdown":
             doc = self._formatter.document(run.raw_text, run.raw_text_format)

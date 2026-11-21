@@ -11,6 +11,7 @@ from teachers_teammate.domain.model_catalog import (
 )
 from teachers_teammate.gui._hardware_profile_selector import HardwareProfileSelector
 from teachers_teammate.gui._model_wording import detection_status_text
+from ._service_stubs import services_of
 
 
 class _StubService:
@@ -123,7 +124,7 @@ def test_status_label_shows_gpu_detected_text_after_detection(qtbot, stub_servic
     When   detection finishes
     Then   the status label shows the GPU_DETECTED text
     """
-    widget = HardwareProfileSelector(app_service=stub_service)
+    widget = HardwareProfileSelector(app_service=services_of(stub_service))
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000):
         pass
@@ -137,7 +138,7 @@ def test_combo_change_emits_setting_changed_with_internal_value(qtbot, stub_serv
     When   the user picks "Graphics card with 16 GB memory or more"
     Then   setting_changed emits the internal value "16gb"
     """
-    widget = HardwareProfileSelector(app_service=stub_service)
+    widget = HardwareProfileSelector(app_service=services_of(stub_service))
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.setting_changed, timeout=5000) as blocker:
         widget._combo.setCurrentText("Graphics card with 16 GB memory or more")
@@ -152,7 +153,7 @@ def test_detect_again_calls_detect_hardware_with_refresh(qtbot, stub_service) ->
     When   the "Detect again" link is activated
     Then   detect_hardware runs with refresh=True
     """
-    widget = HardwareProfileSelector(app_service=stub_service)
+    widget = HardwareProfileSelector(app_service=services_of(stub_service))
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000):
         pass
@@ -171,7 +172,7 @@ def test_manual_choice_resolves_without_detection(qtbot, stub_service) -> None:
     When   resolution finishes
     Then   the detection is MANUAL with the chosen profile and no detection ran
     """
-    widget = HardwareProfileSelector(app_service=stub_service, setting="cpu")
+    widget = HardwareProfileSelector(app_service=services_of(stub_service), setting="cpu")
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000) as blocker:
         pass
@@ -197,7 +198,7 @@ def test_the_status_line_names_the_memory_free_right_now(qtbot, stub_service) ->
         profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=16.0
     )
     stub_service.free_memory_gb = 9.0
-    widget = HardwareProfileSelector(app_service=stub_service)
+    widget = HardwareProfileSelector(app_service=services_of(stub_service))
     qtbot.addWidget(widget)
 
     widget.show()
@@ -222,7 +223,7 @@ def test_a_remote_server_shows_no_free_memory(qtbot, stub_service) -> None:
         profile="8gb", reason=DetectionReason.REMOTE_SERVER, host="gpu-box.lan"
     )
     stub_service.free_memory_gb = 9.0
-    widget = HardwareProfileSelector(app_service=stub_service)
+    widget = HardwareProfileSelector(app_service=services_of(stub_service))
     qtbot.addWidget(widget)
 
     widget.show()
@@ -243,7 +244,7 @@ def test_the_free_memory_is_not_part_of_the_detection(qtbot, stub_service) -> No
         profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=16.0
     )
     stub_service.free_memory_gb = 9.0
-    widget = HardwareProfileSelector(app_service=stub_service)
+    widget = HardwareProfileSelector(app_service=services_of(stub_service))
     qtbot.addWidget(widget)
     widget.show()
     qtbot.waitUntil(lambda: "free right now" in widget._status_lbl.text(), timeout=5000)
@@ -265,7 +266,7 @@ def test_read_only_variant_shows_suggestions_label(qtbot, stub_service) -> None:
     When   it is created
     Then   it has no combo box and shows "Models are suggested for: …"
     """
-    widget = HardwareProfileSelector(app_service=stub_service, read_only=True)
+    widget = HardwareProfileSelector(app_service=services_of(stub_service), read_only=True)
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000):
         pass
@@ -297,7 +298,7 @@ def test_closing_while_detection_runs_is_harmless(qtbot) -> None:
             assert gate.wait(timeout=5)
             return super().detect_hardware(ollama_url, refresh=refresh)
 
-    widget = HardwareProfileSelector(app_service=_SlowService(_GPU_DETECTED))
+    widget = HardwareProfileSelector(app_service=services_of(_SlowService(_GPU_DETECTED)))
     widget.resolved_changed.connect(resolved.append)
     widget.deleteLater()
     qtbot.wait(50)  # processes the deferred delete
@@ -315,7 +316,7 @@ def test_same_url_does_not_trigger_a_new_resolution(qtbot, stub_service) -> None
     When   set_ollama_url is called with the URL it already has
     Then   no further detection is requested
     """
-    widget = HardwareProfileSelector(app_service=stub_service)
+    widget = HardwareProfileSelector(app_service=services_of(stub_service))
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000):
         pass
@@ -332,7 +333,7 @@ def test_manual_choice_ignores_url_changes(qtbot, stub_service) -> None:
     When   the Ollama URL changes
     Then   no detection runs — a concrete choice does not depend on the server
     """
-    widget = HardwareProfileSelector(app_service=stub_service, setting="cpu")
+    widget = HardwareProfileSelector(app_service=services_of(stub_service), setting="cpu")
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000):
         pass
@@ -348,7 +349,7 @@ def test_refresh_status_resolves_again_without_probing_again(qtbot, stub_service
     When   refresh_status() is called (the probe was repeated elsewhere)
     Then   the profile is resolved again from the shared probe — refresh stays False
     """
-    widget = HardwareProfileSelector(app_service=stub_service)
+    widget = HardwareProfileSelector(app_service=services_of(stub_service))
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000):
         pass
@@ -378,7 +379,7 @@ def test_a_failed_check_is_said_and_logged_not_shown_as_no_suggestion(
         def detect_hardware(self, ollama_url: str, *, refresh: bool = False):
             raise RuntimeError("nvidia-smi exploded")
 
-    widget = HardwareProfileSelector(app_service=_Failing(_GPU_DETECTED))
+    widget = HardwareProfileSelector(app_service=services_of(_Failing(_GPU_DETECTED)))
     qtbot.addWidget(widget)
     with (
         caplog.at_level(logging.WARNING),
@@ -406,7 +407,7 @@ def test_a_chosen_profile_is_resolved_through_the_service_and_keeps_the_memory(
            still rates models too big for the card by it), and no graphics probe ran
     """
     stub_service.manual_memory_gb = 32.0
-    widget = HardwareProfileSelector(app_service=stub_service, setting="8gb")
+    widget = HardwareProfileSelector(app_service=services_of(stub_service), setting="8gb")
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000) as blocker:
         pass

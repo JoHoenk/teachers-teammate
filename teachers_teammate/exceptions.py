@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 import threading
 
 
@@ -167,3 +168,31 @@ class RecognitionSwitchedOffError(PipelineInputError):
 
     def __init__(self, name: str = "") -> None:
         super().__init__(f"{name}: {RECOGNITION_OFF_MESSAGE}" if name else RECOGNITION_OFF_MESSAGE)
+
+
+class InstallFailure(StrEnum):
+    """Why an install failed.  The GUI turns each into a sentence (``texts`` owns the wording)."""
+
+    DISK_FULL = "disk_full"
+    FILE_IN_USE = "file_in_use"
+    OFFLINE = "offline"
+    NO_VERSION = "no_version"
+    MERGE_FAILED = "merge_failed"
+    INSTALL_FAILED = "install_failed"
+    DOWNLOAD_FAILED = "download_failed"
+
+
+class AddonInstallError(RuntimeError):
+    """An add-on install failed for a known *reason*; ``str()`` is for the log, not a teacher."""
+
+    def __init__(self, reason: InstallFailure) -> None:
+        super().__init__(reason.value)
+        self.reason = reason
+
+
+class AddonUpdateError(RuntimeError):
+    """Updating the add-ons failed for some of them; *errors* pairs a requirement with its error."""
+
+    def __init__(self, errors: list[tuple[str, RuntimeError]]) -> None:
+        super().__init__("; ".join(f"{requirement}: {error}" for requirement, error in errors))
+        self.errors = errors

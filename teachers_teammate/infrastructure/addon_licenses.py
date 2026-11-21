@@ -44,9 +44,3 @@ def _licenses() -> dict[str, str]:
 def addon_license(package: str) -> str | None:
     """Return the license of an add-on's package, or ``None`` when the list does not know it."""
     return _licenses().get(package.strip().lower())
-
-
-def license_tooltip(package: str) -> str:
-    """Return the tooltip of an add-on's row: its license, or nothing when it is unknown."""
-    license_text = addon_license(package)
-    return f"License: {license_text}" if license_text else ""

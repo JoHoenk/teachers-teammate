@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import html
 import os
-from typing import Protocol
 from urllib.parse import urlparse
 
 from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
@@ -33,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...application.composition import AppServices
 from ...texts import dialogs as dlg
 from ...texts.settings import PAGE_AI_MODELS
 from .. import _dialogs
@@ -73,14 +73,6 @@ KEY_LINE_GET_KEY = "Get a key at {link}."
 COMMIT_DELAY_MS = 800
 
 
-class _KeyService(Protocol):
-    def list_providers(self) -> list[str]: ...
-
-    def get_provider_info(self, provider: str) -> dict: ...
-
-    def invalidate_model_cache(self, provider: str, base_url: str = "") -> None: ...
-
-
 class ApiKeyDrafts(QObject):
     """The API keys as edited in the open Settings window, shared by every page.
 
@@ -94,7 +86,7 @@ class ApiKeyDrafts(QObject):
 
     def __init__(
         self,
-        app_service: _KeyService,
+        app_service: AppServices,
         *,
         store: CredentialStore | None = None,
         parent: QObject | None = None,
@@ -115,8 +107,8 @@ class ApiKeyDrafts(QObject):
     def titles(self) -> dict[str, str]:
         """Return ``{env_key: title}``: providers that share one key (Mistral, Mistral EU) share a title."""
         names: dict[str, list[str]] = {}
-        for provider in self._app_service.list_providers():
-            info = self._app_service.get_provider_info(provider)
+        for provider in self._app_service.providers.list_providers():
+            info = self._app_service.providers.get_provider_info(provider)
             env_key: str = info.get("env_key", "")
             if env_key:
                 names.setdefault(env_key, []).append(str(info.get("display_name", provider)))
@@ -124,7 +116,7 @@ class ApiKeyDrafts(QObject):
 
     def env_key_of(self, provider: str) -> str:
         """Return the environment variable *provider* reads its key from (``""`` = needs none)."""
-        info = self._app_service.get_provider_info(provider)
+        info = self._app_service.providers.get_provider_info(provider)
         if not info.get("needs_api_key"):
             return ""
         return str(info.get("env_key", ""))
@@ -133,14 +125,14 @@ class ApiKeyDrafts(QObject):
         """Return the providers that read their key from *env_key* (Mistral and Mistral EU share)."""
         return [
             provider
-            for provider in self._app_service.list_providers()
-            if self._app_service.get_provider_info(provider).get("env_key") == env_key
+            for provider in self._app_service.providers.list_providers()
+            if self._app_service.providers.get_provider_info(provider).get("env_key") == env_key
         ]
 
     def key_url_of(self, env_key: str) -> str:
         """Return the page where a key for *env_key* is created (``""`` when no provider says)."""
-        for provider in self._app_service.list_providers():
-            info = self._app_service.get_provider_info(provider)
+        for provider in self._app_service.providers.list_providers():
+            info = self._app_service.providers.get_provider_info(provider)
             if info.get("env_key") == env_key and info.get("key_url"):
                 return str(info["key_url"])
         return ""
@@ -265,7 +257,7 @@ def store_key_drafts(drafts: ApiKeyDrafts, parent: QWidget | None = None) -> Non
     _dialogs.notify(parent, dlg.key_not_in_keychain(services))
 
 
-def discard_key_drafts(drafts: ApiKeyDrafts, app_service: _KeyService) -> None:
+def discard_key_drafts(drafts: ApiKeyDrafts, app_service: AppServices) -> None:
     """Put the environment back and forget the model lists fetched with the discarded keys.
 
     A list fetched with a key that is no longer in use says nothing about the next one, so it
@@ -273,7 +265,7 @@ def discard_key_drafts(drafts: ApiKeyDrafts, app_service: _KeyService) -> None:
     """
     for env_key in drafts.discard():
         for provider in drafts.providers_of(env_key):
-            app_service.invalidate_model_cache(provider, "")
+            app_service.providers.invalidate_model_cache(provider, "")
 
 
 class ApiKeyRow(QWidget):
@@ -430,7 +422,7 @@ class CredentialsGroup(QGroupBox):
 
     def __init__(
         self,
-        app_service: _KeyService,
+        app_service: AppServices,
         parent: QWidget | None = None,
         *,
         drafts: ApiKeyDrafts | None = None,

@@ -33,6 +33,7 @@ import subprocess
 import sys
 from typing import Any
 
+from ..domain.model_catalog import GpuUsage as GpuUsage  # noqa: PLC0414
 from .subprocess_utils import no_console_window_kwargs
 
 _logger = logging.getLogger(__name__)
@@ -44,18 +45,6 @@ class GpuInfo:
     name: str
     #: Dedicated graphics memory in MB, or None when it could not be read.
     vram_mb: int | None = None
-
-
-@dataclass
-class GpuUsage:
-    """How busy one graphics card is right now, and how much of its memory it uses."""
-
-    #: Share of the card's computing units in use, 0 to 100.
-    busy_percent: int
-    #: Dedicated graphics memory in use, in MB, or None when it could not be read.
-    vram_used_mb: int | None = None
-    #: Dedicated graphics memory in total, in MB, or None when it could not be read.
-    vram_total_mb: int | None = None
 
 
 _VENDOR_IDS = {0x10DE: "nvidia", 0x1002: "amd"}

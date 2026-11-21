@@ -21,14 +21,17 @@ Interfaces:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
 
 from .domain.formatted_text import FormattedDocument, TextFormat
+from .domain.ollama_discovery import WaitDetail
 from .domain.proofreading.result import CorrectionOutcome
 from .domain.proofreading.review import CorrectionReview
+from .domain.run_summary import FileOutcome, KeepAwakeState
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -370,3 +373,72 @@ class SleepBlocker(ABC):
             computer that cannot be kept awake yields ``False`` and the job runs anyway.  Each
             call makes its own request, so overlapping holds need no counting.
         """
+
+
+# ── The run's narrative: what the pipeline reports, and to whom ─────────────
+
+OnFileStartedFn = Callable[[str, str, int, int], None]  # (source_id, name, idx, total)
+OnStageStartedFn = Callable[[str, str], None]  # (source_id, stage)
+OnOcrDoneFn = Callable[[str, str], None]  # (source_id, name)
+OnStageDetailFn = Callable[[str, WaitDetail], None]  # (source_id, what the server is doing)
+OnFirstTokenFn = Callable[[str], None]  # (source_id)
+OnFileDoneFn = Callable[[FileOutcome], None]
+
+
+@runtime_checkable
+class Reporter(Protocol):
+    """Sink for the pipeline's progress narrative, its warnings and its errors."""
+
+    def status(self, line: str) -> None:
+        """Report a normal progress line."""
+
+    def warn(self, line: str) -> None:
+        """Report an advisory/warning line."""
+
+    def error(self, line: str) -> None:
+        """Report a line about something that went wrong."""
+
+
+class CallbackReporter:
+    """Routes every line (status and warning alike) to a single callback.
+
+    Used by the GUI worker to feed both progress and warnings into the log pane.
+    """
+
+    def __init__(self, sink: Callable[[str], None]) -> None:
+        self._sink = sink
+
+    def status(self, line: str) -> None:
+        self._sink(line)
+
+    def warn(self, line: str) -> None:
+        self._sink(line)
+
+    def error(self, line: str) -> None:
+        self._sink(f"ERROR: {line}")
+
+
+@dataclass(frozen=True)
+class ProgressCallbacks:
+    """Structured per-file progress hooks for adapters (GUI); every hook is optional.
+
+    ``on_file_started(source_id, name, idx, total)`` fires at the start of each file.
+    ``on_stage_started(source_id, stage)`` fires when a file enters the ``"preprocessing"``,
+    ``"ocr"`` or ``"correction"`` stage (not when that stage is served from the cache).
+    ``on_ocr_done(source_id, name)`` fires after OCR, before correction.
+    ``on_file_done(outcome)`` fires with a :class:`FileOutcome` after a file completes
+    (saved, failed, skipped or stopped).
+    ``on_keep_awake(state)`` fires once at the start of a run with a
+    :class:`~teachers_teammate.domain.run_summary.KeepAwakeState`.
+    ``on_stage_detail(source_id, detail)`` fires while a request to Ollama has no answer yet,
+    with what the server is doing instead.  ``on_first_token(source_id)`` fires when the model
+    begins answering, which is where the run's clock starts.
+    """
+
+    on_file_started: OnFileStartedFn | None = None
+    on_stage_started: OnStageStartedFn | None = None
+    on_ocr_done: OnOcrDoneFn | None = None
+    on_file_done: OnFileDoneFn | None = None
+    on_keep_awake: Callable[[KeepAwakeState], None] | None = None
+    on_stage_detail: OnStageDetailFn | None = None
+    on_first_token: OnFirstTokenFn | None = None

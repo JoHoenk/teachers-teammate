@@ -21,8 +21,12 @@ from ..domain.data_location import (
 )
 from ..domain.local_models import PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
 from ..domain.proofreading.review import CHANGE_CATEGORIES
-from ..exceptions import RECOGNITION_OFF_MESSAGE
-from ..infrastructure.addon_manager import AddonInstallError, AddonUpdateError, InstallFailure
+from ..exceptions import (
+    RECOGNITION_OFF_MESSAGE,
+    AddonInstallError,
+    AddonUpdateError,
+    InstallFailure,
+)
 from ..texts.settings import PAGE_AI_MODELS, WHERE_ADDONS, WHERE_AI_MODELS
 
 # ── The review's wording ──────────────────────────────────────────────────────

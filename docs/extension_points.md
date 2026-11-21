@@ -23,8 +23,10 @@ it). It exposes `create(model, **kwargs) -> BaseChatModel` and a `PROVIDER_INFO`
 
 ## Anonymization (who runs spaCy)
 
-`ProcessingApplicationService.build_cached_anonymizer()` wraps the per-settings `SpacyAnonymizer`
-in a `CachedAnonymizer`; `run_selected()` puts it into the run's `PipelineComponentFactory`.
+`AnonymizationService.build_cached_anonymizer()` (`application/anonymization.py`) wraps the
+per-settings `SpacyAnonymizer` in a `CachedAnonymizer`; `run_selected()` puts it into the run's
+`PipelineComponentFactory`.
+
 Never build a `SpacyAnonymizer` per file or per run: a second spaCy pass makes a run disagree
 with the previews.
 
@@ -128,8 +130,8 @@ pip call goes through `pip_policy_arguments()` (`--only-binary :all:`, `-c addon
 = the bundle's versions, written by `tools/build/addon_constraints.py`). After an app update
 `outdated_shared_packages()` / `foreign_python_packages()` keep stale folders **off**
 `sys.path`; `IssueKind.ADDONS_OUTDATED` and the Add-ons banner offer **Update add-ons**
-(`ProcessingApplicationService.update_addons()`). Every entry point calls
-`inject_addon_packages_dir()` (`application/composition.py`) first. A new add-on = its requirement
+(`AddonService.update_addons()`). Every entry point calls
+`application/composition.inject_addon_packages_dir()` first. A new add-on = its requirement
 in `_ADDON_PACKAGES`; `tools/build/check_addon_resolution.py` (CI) proves it fits the bundle.
 See {doc}`development` → "The bundle's constraints and add-ons after an app update"
 

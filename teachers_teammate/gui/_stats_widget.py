@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
@@ -13,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..infrastructure.gpu_detector import GpuUsage, read_gpu_usage
+from ..domain.model_catalog import GpuUsage
 from ._background import run_in_background
 
 try:
@@ -35,8 +37,11 @@ class SystemStatsWidget(QGroupBox):
     computer without a card the app can read simply shows CPU and RAM.
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, read_gpu_usage: Callable[[], GpuUsage | None], parent: QWidget | None = None
+    ) -> None:
         super().__init__("System Stats", parent)
+        self._read_gpu_usage = read_gpu_usage
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(6, 8, 6, 6)
         self._layout.setSpacing(3)
@@ -117,7 +122,7 @@ class SystemStatsWidget(QGroupBox):
         if self._gpu_read_pending:
             return
         self._gpu_read_pending = True
-        run_in_background(read_gpu_usage, self._on_gpu_usage, owner=self)
+        run_in_background(self._read_gpu_usage, self._on_gpu_usage, owner=self)
 
     def _on_gpu_usage(self, result: object, error: BaseException | None) -> None:
         """Show the card's load (GUI thread); the first reading creates the GPU rows."""

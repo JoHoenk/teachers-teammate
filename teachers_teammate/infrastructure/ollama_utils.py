@@ -7,8 +7,7 @@ connection-check threads use the same code path.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, field, replace
-from enum import StrEnum
+from dataclasses import dataclass, replace
 import functools
 import ipaddress
 import logging
@@ -23,7 +22,11 @@ from ..domain.context_budget import (
     ContextBudget,
     answers_with_the_same_text,
 )
+from ..domain.model_catalog import LoadedModel as LoadedModel  # noqa: PLC0414
+from ..domain.model_catalog import ServerFacts as ServerFacts  # noqa: PLC0414
 from ..domain.model_catalog import normalize_tag
+from ..domain.ollama_discovery import WaitDetail as WaitDetail  # noqa: PLC0414
+from ..domain.ollama_discovery import WaitKind as WaitKind  # noqa: PLC0414
 from ..exceptions import OllamaConnectionError, RunStoppedError, stop_requested
 from .reporting import Reporter, StdoutReporter
 from .wsl import windows_host_addresses
@@ -532,89 +535,6 @@ def _http_json(url: str, timeout: float) -> dict:
 
     with urllib.request.urlopen(url, timeout=timeout) as answer:
         return json.loads(answer.read().decode("utf-8") or "{}")
-
-
-@dataclass(frozen=True)
-class LoadedModel:
-    """A model the server holds in memory, with how much of it sits on the graphics card."""
-
-    name: str
-    size_bytes: int
-    """Memory the model takes in total, on the card and in main memory together."""
-    size_vram_bytes: int
-    """The part of it on the graphics card."""
-    context_length: int = 0
-    expires_at: str = ""
-    """When the server will unload it; it moves on every poll while the model is generating."""
-
-    @property
-    def on_card_share(self) -> float:
-        """Return the share (0 to 1) of the model that sits on the card."""
-        return self.size_vram_bytes / self.size_bytes if self.size_bytes else 0.0
-
-
-@dataclass(frozen=True)
-class ServerFacts:
-    """What the server says about itself: its version, the model digests, what is loaded.
-
-    The version and the digests are what makes a stored measurement go out of date: a tag is a
-    name that can be re-pointed, and Ollama counts tokens differently between versions.
-    """
-
-    version: str = ""
-    """The server's version; ``""`` when it did not say."""
-    digests: Mapping[str, str] = field(default_factory=dict)
-    """``{tag: digest}`` of the installed models."""
-    loaded: tuple[LoadedModel, ...] = ()
-    """The models the server held in memory when it was asked."""
-
-    def digest_of(self, tag: str) -> str:
-        """Return the digest of *tag*, or ``""`` when the server did not report one."""
-        wanted = normalize_tag(tag)
-        for name, digest in self.digests.items():
-            if normalize_tag(name) == wanted:
-                return digest
-        return ""
-
-    def loaded_names(self) -> tuple[str, ...]:
-        """Return the names of the models the server held in memory."""
-        return tuple(model.name for model in self.loaded)
-
-    def loaded_model(self, tag: str) -> LoadedModel | None:
-        """Return the loaded model named *tag*, or ``None`` when it is not loaded."""
-        wanted = normalize_tag(tag)
-        for model in self.loaded:
-            if normalize_tag(model.name) == wanted:
-                return model
-        return None
-
-
-class WaitKind(StrEnum):
-    """Why a request to Ollama has no answer yet."""
-
-    NONE = ""
-    """It has one, or the model is in memory and reading the text."""
-    BUSY = "busy"
-    """Another model is still generating, so this request is queued behind it."""
-    LOADING = "loading"
-    """The model asked for is not in memory yet."""
-    QUEUED = "queued"
-    """Another model is in the way before the run even starts."""
-
-
-@dataclass(frozen=True)
-class WaitDetail:
-    """What to tell the teacher about a request that has no answer yet."""
-
-    kind: WaitKind = WaitKind.NONE
-    model: str = ""
-    """The model the request is for."""
-    other: str = ""
-    """The model in the way: generating, or loaded while this one is not."""
-
-    def __bool__(self) -> bool:
-        """Whether there is anything to say."""
-        return self.kind is not WaitKind.NONE
 
 
 @dataclass(frozen=True)

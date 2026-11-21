@@ -1038,7 +1038,7 @@ def test_the_install_items_are_named_like_the_service_status_keys() -> None:
     When   the item names and the service's keys are compared
     Then   they are the same strings, and the bundled key is the item's key behind one prefix
     """
-    from teachers_teammate.application.service import (  # noqa: PLC0415
+    from teachers_teammate.application.addons import (  # noqa: PLC0415
         PAGE_MODELS_STATUS_KEY,
         READER_STATUS_KEY,
         bundled_status_key,
@@ -1420,9 +1420,9 @@ def fake_ollama() -> Iterator[FakeOllama]:
 
 
 def _real_service():
-    from teachers_teammate.application.service import ProcessingApplicationService  # noqa: PLC0415
+    from teachers_teammate.application.composition import build_app_services  # noqa: PLC0415
 
-    return ProcessingApplicationService()
+    return build_app_services()
 
 
 @pytest.mark.use_case("Model_Category_Guidance")

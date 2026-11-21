@@ -132,7 +132,8 @@ class SpeedChoices:
         Args:
             settings: The flat settings dict (``ocr.toml`` key names).
             effective_model: Resolves a provider and a possibly empty model to the model a run
-                uses; :meth:`ProcessingApplicationService.effective_model` is the one.
+                uses; :meth:`~teachers_teammate.application.providers.ProviderService.effective_model`
+                is the one.
         """
         ocr = OcrConfig.from_settings(settings)
         return cls._of(
@@ -335,6 +336,7 @@ class SpeedEstimateService:
     def __init__(
         self,
         *,
+        effective_model: Callable[[str, str, str], str],
         store: SpeedStore | None = None,
         samples: SampleStore | None = None,
         probe_factory: Callable[..., PerformanceProbe] | None = None,
@@ -343,18 +345,40 @@ class SpeedEstimateService:
         """Create the service.
 
         Args:
+            effective_model: ``(provider, model, task)`` → the model a run would use;
+                :meth:`choices` and :meth:`choices_for_config` need it, so the page tests what a
+                run would use rather than what an empty field happens to mean.
             store: Where measurements live; the default store under the storage root.
             samples: Where the samples of real runs live; the default store under the storage
                 root.
             probe_factory: Builds the probe; a test replaces it.
             client_factory: Builds the Ollama client for a URL and a cancel event; a test replaces it.
         """
+        self._effective_model = effective_model
         self._store = store or SpeedStore()
         self._samples = samples or SampleStore()
         self._probe_factory = probe_factory or PerformanceProbe
         self._client_factory = client_factory
         self._lock = threading.RLock()
         self._facts: dict[str, ServerFacts] = {}
+
+    # ── what the page measures ─────────────────────────────────────────────
+
+    def choices(self, settings: Mapping[str, object]) -> SpeedChoices:
+        """Return the models *settings* name, as the speed test and the estimate need them.
+
+        The models are resolved the way a run resolves them, so the page tests what a run would
+        use rather than what an empty field happens to mean.
+        """
+        return SpeedChoices.from_settings(settings, effective_model=self._effective_model)
+
+    def choices_for_config(self, config: Config) -> SpeedChoices:
+        """Return the models a run with *config* uses: only the steps that run, on Ollama.
+
+        What the time left of a run is worked out from, so a run that only reads the text, or
+        proofreads without a content review, is not charged for the steps it skips.
+        """
+        return SpeedChoices.from_config(config, effective_model=self._effective_model)
 
     # ── server facts ───────────────────────────────────────────────────────
 

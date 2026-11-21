@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from teachers_teammate.application.queue import QueueRow, StageState
+from teachers_teammate.application.anonymization import AnonymizationService
 from teachers_teammate.application.service import ProcessingApplicationService
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui import _user_text as txt
@@ -161,7 +162,7 @@ def main_window(qtbot, monkeypatch, settings) -> MainWindow:
     """A window whose View setting lives in memory and whose service can hide names."""
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
-        ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
+        AnonymizationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
@@ -289,18 +290,18 @@ def test_the_privacy_checkbox_reflects_a_stored_choice(qtbot, monkeypatch, setti
     settings.setValue(DISPLAY_ANONYMIZED_KEY, "no")
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
-        ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
+        AnonymizationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
-    page = _privacy_page(qtbot, win)
+    page = _privacy_page(qtbot, win, monkeypatch)
 
     assert not page.hide_personal_checkbox().isChecked()
 
 
 @pytest.mark.gui
-def test_the_eye_button_and_the_privacy_page_stay_in_step(qtbot, main_window) -> None:
+def test_the_eye_button_and_the_privacy_page_stay_in_step(qtbot, main_window, monkeypatch) -> None:
     """
     Given  a window whose names are hidden
     When   the eye button shows them
@@ -308,20 +309,18 @@ def test_the_eye_button_and_the_privacy_page_stay_in_step(qtbot, main_window) ->
     """
     main_window._check._hide_names_box.click()
 
-    page = _privacy_page(qtbot, main_window)
+    page = _privacy_page(qtbot, main_window, monkeypatch)
 
     assert not page.hide_personal_checkbox().isChecked()
 
 
-def _privacy_page(qtbot, win: MainWindow) -> PrivacyPage:
+def _privacy_page(qtbot, win: MainWindow, monkeypatch: pytest.MonkeyPatch) -> PrivacyPage:
     """Return the Privacy page for *win*'s current state (not shown, no spaCy discovery)."""
-    from unittest.mock import patch  # noqa: PLC0415
-
-    with patch(
-        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
-    ) as service:
-        service.return_value.list_installed_spacy_models.return_value = []
-        page = PrivacyPage(win._settings_context())
+    context = win._settings_context()
+    monkeypatch.setattr(
+        context.app_service.anonymization, "list_installed_spacy_models", lambda: []
+    )  # no spaCy here
+    page = PrivacyPage(context)
     qtbot.addWidget(page)
     page.shutdown()
     return page
@@ -342,7 +341,7 @@ def test_the_eye_button_says_while_the_names_are_being_hidden(
         release.wait(5)
         return ANONYMIZED, MAPPING
 
-    monkeypatch.setattr(ProcessingApplicationService, "anonymize_preview", _slow_anonymize)
+    monkeypatch.setattr(AnonymizationService, "anonymize_preview", _slow_anonymize)
     main_window.show()
     _open_document(main_window, monkeypatch, tmp_path, RAW)
     box = main_window._check._hide_names_box
@@ -369,7 +368,7 @@ def test_the_eye_button_makes_the_texts_editable(
     Then   the texts are editable and the menu entry and setting follow
     """
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        AnonymizationService,
         "anonymize_preview",
         lambda _self, _text, _language, _config=None: (ANONYMIZED, MAPPING),
     )
@@ -411,7 +410,7 @@ def test_a_stored_choice_to_show_the_names_is_kept(qtbot, monkeypatch, settings)
     settings.setValue(DISPLAY_ANONYMIZED_KEY, "no")
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
-        ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
+        AnonymizationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
 
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
@@ -431,7 +430,7 @@ def test_the_setting_is_restored_from_the_last_session(qtbot, monkeypatch, setti
     settings.setValue(DISPLAY_ANONYMIZED_KEY, "yes")
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
-        ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
+        AnonymizationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
 
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
@@ -452,7 +451,7 @@ def test_the_string_language_without_spacy_disables_the_choice(
     """
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        AnonymizationService,
         "anonymizer_available",
         lambda self, _lang, _config=None: False,
     )
@@ -461,7 +460,7 @@ def test_the_string_language_without_spacy_disables_the_choice(
     qtbot.addWidget(win)
 
     assert not win._check._hide_names_box.isEnabled()
-    page = _privacy_page(qtbot, win)
+    page = _privacy_page(qtbot, win, monkeypatch)
     checkbox = page.hide_personal_checkbox()
     assert not checkbox.isEnabled()
     assert not checkbox.isChecked()
@@ -482,7 +481,7 @@ def test_the_placeholders_arrive_from_the_service(main_window, monkeypatch, tmp_
         calls.append((text, language))
         return ANONYMIZED, MAPPING
 
-    monkeypatch.setattr(ProcessingApplicationService, "anonymize_preview", _fake_anonymize)
+    monkeypatch.setattr(AnonymizationService, "anonymize_preview", _fake_anonymize)
     _open_document(main_window, monkeypatch, tmp_path, RAW, CORRECTED)
     main_window._apply_display_anonymized(True)
 
@@ -511,7 +510,7 @@ def test_changing_the_language_updates_the_privacy_availability(main_window, mon
     Then   the choice is disabled for it, and enabled again for English
     """
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        AnonymizationService,
         "anonymizer_available",
         lambda self, language, _config=None: language == "English",
     )
@@ -540,7 +539,7 @@ def test_a_finished_download_enables_the_setting(main_window, monkeypatch) -> No
     """
     installed = {"yes": False}
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        AnonymizationService,
         "anonymizer_available",
         lambda self, _l, _config=None: installed["yes"],
     )
@@ -567,7 +566,7 @@ def test_a_round_of_installs_that_outlives_its_window_enables_the_setting(
 
     installed = {"yes": False}
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        AnonymizationService,
         "anonymizer_available",
         lambda self, _l, _config=None: installed["yes"],
     )
@@ -599,7 +598,7 @@ def test_only_the_newest_anonymization_reaches_the_page(
             return ANONYMIZED, MAPPING
         return "[PERSON_1] ist hier.", {"[PERSON_1]": "Clara West"}
 
-    monkeypatch.setattr(ProcessingApplicationService, "anonymize_preview", _fake_anonymize)
+    monkeypatch.setattr(AnonymizationService, "anonymize_preview", _fake_anonymize)
     _open_document(main_window, monkeypatch, tmp_path, RAW)
     main_window._apply_display_anonymized(True)
     _open_document(main_window, monkeypatch, tmp_path, "Clara West ist hier.")

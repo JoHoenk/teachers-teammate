@@ -21,6 +21,7 @@ def _make_dialog(qtbot, config=None, app_service=None, sample_text=""):
     once, so tests are deterministic.
     """
     svc = app_service or MagicMock()
+    svc.anonymization = svc
     svc.list_installed_spacy_models.return_value = []
     cfg = config if config is not None else AnonymizerConfig()
     dlg = AnonymizerConfigWidget("English", cfg, svc, sample_text=sample_text)
@@ -160,6 +161,7 @@ def test_dialog_secondary_model_combo_selects_installed_model(qtbot) -> None:
     cfg = AnonymizerConfig(secondary_model="xx_ent_wiki_sm")
 
     svc = MagicMock()
+    svc.anonymization = svc
     svc.list_installed_spacy_models.return_value = installed
     dlg = AnonymizerConfigWidget("English", cfg, svc)
     dlg._spacy_fetch_thread.quit()
@@ -181,6 +183,7 @@ def test_dialog_secondary_model_falls_back_to_none_when_not_installed(qtbot) -> 
     cfg = AnonymizerConfig(secondary_model="missing_model_sm")
 
     svc = MagicMock()
+    svc.anonymization = svc
     svc.list_installed_spacy_models.return_value = []
     dlg = AnonymizerConfigWidget("English", cfg, svc)
     dlg._spacy_fetch_thread.quit()
@@ -232,7 +235,7 @@ def test_dialog_secondary_auto_entry_says_none_for_the_same_language(qtbot) -> N
     """
     dlg = _make_dialog(qtbot)
     # English document, English system: the primary model already covers it.
-    dlg._app_service.spacy_model_for_language.return_value = "en_core_web_sm"
+    dlg._app_service.anonymization.spacy_model_for_language.return_value = "en_core_web_sm"
     with patch.object(AnonymizerConfigWidget, "_system_spacy_model", return_value="en_core_web_sm"):
         dlg._on_spacy_models_fetched(["en_core_web_sm"])
 
@@ -309,6 +312,7 @@ def test_dialog_anonymizer_config_property(qtbot) -> None:
     cfg = AnonymizerConfig(secondary_model="xx_ent_wiki_sm", patterns=(("ID", r"\d+"),))
 
     svc = MagicMock()
+    svc.anonymization = svc
     svc.list_installed_spacy_models.return_value = installed
     dlg = AnonymizerConfigWidget("English", cfg, svc)
     dlg._spacy_fetch_thread.quit()
@@ -381,6 +385,7 @@ def test_dialog_combos_disabled_while_loading(qtbot) -> None:
     Then   both model combos are disabled (showing the loading placeholder)
     """
     svc = MagicMock()
+    svc.anonymization = svc
     svc.list_installed_spacy_models.return_value = []
     cfg = AnonymizerConfig()
     # Do NOT call _on_spacy_models_fetched — simulate thread still running
@@ -504,6 +509,7 @@ def test_dialog_run_preview_populates_output_and_mapping(qtbot) -> None:
     Then   the output box and mapping table reflect the result
     """
     svc = MagicMock()
+    svc.anonymization = svc
     svc.anonymize_preview.return_value = ("Dear <NAME_0>", {"<NAME_0>": "Alice"})
     dlg = _make_dialog(qtbot, app_service=svc)
     dlg._sample_input.setPlainText("Dear Alice")
@@ -520,6 +526,7 @@ def test_dialog_run_preview_populates_output_and_mapping(qtbot) -> None:
 def test_dialog_run_preview_empty_input_is_noop(qtbot) -> None:
     """Given blank sample input / When _run_preview runs / Then the service is not called."""
     svc = MagicMock()
+    svc.anonymization = svc
     dlg = _make_dialog(qtbot, app_service=svc)
     dlg._sample_input.setPlainText("   ")
 
@@ -536,6 +543,7 @@ def test_dialog_run_preview_shows_spacy_missing_on_import_error(qtbot) -> None:
     Then   the shared spaCy-missing message is shown
     """
     svc = MagicMock()
+    svc.anonymization = svc
     svc.anonymize_preview.side_effect = ImportError("no spacy")
     dlg = _make_dialog(qtbot, app_service=svc)
     dlg._sample_input.setPlainText("Dear Alice")
@@ -553,6 +561,7 @@ def test_dialog_run_preview_auto_opens_download_on_oserror(qtbot) -> None:
     Then   _open_download_dialog is called with the needed model name
     """
     svc = MagicMock()
+    svc.anonymization = svc
     svc.anonymize_preview.side_effect = OSError("model missing")
     svc.spacy_model_for_language.return_value = "en_core_web_sm"
     dlg = _make_dialog(qtbot, app_service=svc)
@@ -578,6 +587,7 @@ def test_dialog_run_preview_shows_text_error_when_not_available(qtbot) -> None:
     Then   a text error is shown (no dialog opened)
     """
     svc = MagicMock()
+    svc.anonymization = svc
     svc.anonymize_preview.side_effect = OSError("model missing")
     svc.spacy_model_for_language.return_value = "en_core_web_sm"
     dlg = _make_dialog(qtbot, app_service=svc)
@@ -607,6 +617,8 @@ def test_dialog_on_download_model_warns_when_addon_missing(qtbot) -> None:
     Then   the notice that spaCy is missing is shown and no download dialog opens
     """
     svc = MagicMock()
+    svc.anonymization = svc
+    svc.addons = svc
     svc.is_addon_available.return_value = False
     dlg = _make_dialog(qtbot, app_service=svc)
     shown: list[Notice] = []
@@ -625,7 +637,7 @@ def test_dialog_on_model_downloaded_refreshes_combos(qtbot) -> None:
     Then   both secondary and primary combos are refreshed
     """
     dlg = _make_dialog(qtbot)
-    dlg._app_service.list_installed_spacy_models.return_value = ["xx_ent_wiki_sm"]
+    dlg._app_service.anonymization.list_installed_spacy_models.return_value = ["xx_ent_wiki_sm"]
 
     dlg._on_model_downloaded("xx_ent_wiki_sm")
     dlg._spacy_fetch_thread.quit()
@@ -728,6 +740,7 @@ def test_shutdown_parks_a_running_model_discovery(qtbot) -> None:
 
     release = threading.Event()
     svc = MagicMock()
+    svc.anonymization = svc
     svc.list_installed_spacy_models.side_effect = lambda: release.wait(10) and []
     dlg = AnonymizerConfigWidget("English", AnonymizerConfig(), svc)
     qtbot.addWidget(dlg)

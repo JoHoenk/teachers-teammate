@@ -39,7 +39,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...application.service import ProcessingApplicationService, bundled_status_key
+from ...application.addons import bundled_status_key
+from ...application.composition import AppServices
 from ...config import DEFAULTS
 from ...domain.language import language_name
 from ...domain.local_models import READER_SIZE_LABEL
@@ -55,10 +56,9 @@ from ...domain.model_catalog import (
     normalize_tag,
     suitability_rank,
 )
-from ...infrastructure.addon_licenses import license_tooltip
-from ...infrastructure.spacy_models import SPACY_MODELS
+from ...domain.name_models import SPACY_MODELS
 from ...texts import dialogs as dlg
-from ...texts.settings import TAB_READING_MODELS
+from ...texts.settings import TAB_READING_MODELS, license_tooltip
 from .. import _dialogs
 from .. import _user_text as txt
 from .._background import LatestTask
@@ -207,27 +207,25 @@ def _distribution_name(token: str) -> str:
     return name[: match.start()] if match else name
 
 
-def _detect_installed(
-    svc: ProcessingApplicationService, ollama_url: str, models: list[str]
-) -> dict[str, object]:
+def _detect_installed(svc: AppServices, ollama_url: str, models: list[str]) -> dict[str, object]:
     """Probe every downloadable item and return what is installed (background task)."""
     spacy_models = [model_id for _, model_id in _SPACY_MODEL_DOWNLOAD_CHOICES]
-    status = svc.get_installation_status(
+    status = svc.addons.get_installation_status(
         provider_modules={
-            name: module for name, (module, _pip) in svc.list_provider_packages().items()
+            name: module for name, (module, _pip) in svc.providers.list_provider_packages().items()
         },
         spacy_models=spacy_models,
         ollama_models=list(models),
         ollama_url=ollama_url,
     )
     result: dict[str, object] = dict(status)
-    result["spacy"] = svc.is_module_importable("spacy")
+    result["spacy"] = svc.addons.is_module_importable("spacy")
     # Add model size information so the UI can show a Size column.
-    for model, size_bytes in svc.list_ollama_model_sizes(ollama_url).items():
+    for model, size_bytes in svc.ollama.list_ollama_model_sizes(ollama_url).items():
         result[f"size:{model}"] = size_bytes
     # Classify models here (the result is cached by the service) so the GUI thread
     # never blocks on show() requests; the dialog reads the cache afterwards.
-    svc.classify_ollama_models(list(models), ollama_url)
+    svc.recommendations.classify_ollama_models(list(models), ollama_url)
     return result
 
 
@@ -263,14 +261,16 @@ class AddonsPage(SettingsPageBase):
         FOCUS_NAME_DETECTION: TAB_NAME_DETECTION,
     }
 
-    def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:
+    def __init__(  # noqa: PLR0915
+        self, context: SettingsContext, parent: QWidget | None = None
+    ) -> None:
         super().__init__(context, parent)
         settings = context.settings
         self._ollama_url = str(settings.get("ollama_url") or "").strip() or DEFAULTS["ollama_url"]
         self._svc = context.app_service
         self._hardware_profile = str(settings.get("hardware_profile", DEFAULTS["hardware_profile"]))
         self._preselect: list[str] = []
-        self._provider_packages = self._svc.list_provider_packages()
+        self._provider_packages = self._svc.providers.list_provider_packages()
         # "provider:<name>" asks for an LLM provider package, not an Ollama model.
         self._preselect_providers: list[str] = []
         self._pull_connected = False  # subscribed to the pull manager's signals
@@ -288,8 +288,32 @@ class AddonsPage(SettingsPageBase):
         self._round.pull_progress.connect(self._on_round_pull_progress)
         self._round.failed.connect(self._on_round_failed)
         self._round.finished.connect(self._on_round_finished)
-        self._init_status_state()
-        self._init_tick_state()
+        # The one status line: the running step, then a restart, then the last round's result,
+        # then what the detection found.  pip prints nothing while it downloads, so this line
+        # and the bar are what tells the teacher that something is happening.
+        self._idle_status = txt.ADDONS_DETECTING
+        self._idle_warning = False
+        self._round_result = ""
+        self._round_result_warning = False
+        self._round_steps: list[str] = []
+        self._status_item = ""
+        self._status_parts: tuple[str, str, int, int] | None = None
+        self._status_line = ""
+        self._status_started = 0.0
+        self._done_count = 0
+        # Pre-ticking waits for BOTH the installed check and the hardware detection.
+        self._installed_ready = False
+        self._profile_ready = False
+        self._initial_ticks_done = False
+        self._installed_by_category: dict[ModelCategory, bool] = {"ocr": False, "general": False}
+        self._auto_ticked: set[str] = set()  # ticked by the app, not by the user
+        self._user_touched: set[str] = set()
+        self._programmatic_change = False
+        # Last known tick per row: QTreeWidget emits itemChanged for flag, colour
+        # and text changes too, so a real tick change is detected by comparison.
+        self._check_state: dict[str, Qt.CheckState] = {}
+        self._group_items: dict[str, QTreeWidgetItem] = {}
+        self._model_items: dict[str, QTreeWidgetItem] = {}  # tag → child row
 
         main = QVBoxLayout(self)
         main.setContentsMargins(0, 0, 0, 0)
@@ -305,11 +329,7 @@ class AddonsPage(SettingsPageBase):
         self._tabs.addTab(self._build_spacy_tab(), TAB_NAME_DETECTION)
         self._tabs.addTab(self._build_reading_models_tab(), TAB_READING_MODELS)
 
-        # The status line and the action row are always there, in that order and at the bottom
-        # of the page: on a laptop the button must not end up below the fold.
-        self._build_progress(main)
-        self._build_details(main)
-        self._build_actions(main)
+        self._build_status_and_actions(main)
         self._refresh_update_banner()
         self._refresh_status()
 
@@ -319,38 +339,6 @@ class AddonsPage(SettingsPageBase):
         for button in self.findChildren(QPushButton):
             button.setAutoDefault(False)
             button.setDefault(False)
-
-    def _init_status_state(self) -> None:
-        """Set what the status line shows and the round it reports on."""
-        # The one status line: the running step, then a restart, then the last round's result,
-        # then what the detection found.  pip prints nothing while it downloads, so this line
-        # and the bar are what tells the teacher that something is happening.
-        self._idle_status = txt.ADDONS_DETECTING
-        self._idle_warning = False
-        self._round_result = ""
-        self._round_result_warning = False
-        self._round_steps: list[str] = []
-        self._status_item = ""
-        self._status_parts: tuple[str, str, int, int] | None = None
-        self._status_line = ""
-        self._status_started = 0.0
-        self._done_count = 0
-
-    def _init_tick_state(self) -> None:
-        """Set what decides which rows are ticked, and by whom."""
-        # Pre-ticking waits for BOTH the installed check and the hardware detection.
-        self._installed_ready = False
-        self._profile_ready = False
-        self._initial_ticks_done = False
-        self._installed_by_category: dict[ModelCategory, bool] = {"ocr": False, "general": False}
-        self._auto_ticked: set[str] = set()  # ticked by the app, not by the user
-        self._user_touched: set[str] = set()
-        self._programmatic_change = False
-        # Last known tick per row: QTreeWidget emits itemChanged for flag, colour
-        # and text changes too, so a real tick change is detected by comparison.
-        self._check_state: dict[str, Qt.CheckState] = {}
-        self._group_items: dict[str, QTreeWidgetItem] = {}
-        self._model_items: dict[str, QTreeWidgetItem] = {}  # tag → child row
 
     def _build_update_banner(self) -> QWidget:
         """Build the line that offers *Update add-ons* after an app update (hidden otherwise)."""
@@ -367,7 +355,7 @@ class AddonsPage(SettingsPageBase):
 
     def _refresh_update_banner(self) -> None:
         """Show the banner while the packages folder waits for an update."""
-        self._update_banner.setVisible(self._svc.addons_outdated())
+        self._update_banner.setVisible(self._svc.addons.addons_outdated())
 
     def _on_update_addons(self) -> None:
         """Install the add-ons again with the app's package versions (the teacher clicked)."""
@@ -380,8 +368,12 @@ class AddonsPage(SettingsPageBase):
             return
         self._round_started()
 
-    def _build_progress(self, main: QVBoxLayout) -> None:
-        """Build the status line, the bar and the line for the package pip is working on."""
+    def _build_status_and_actions(self, main: QVBoxLayout) -> None:  # noqa: PLR0915
+        """Build the status line, the bar, the details toggle and the action row.
+
+        The status line and the action row are always there, in that order and at the bottom
+        of the page: on a laptop the button must not end up below the fold.
+        """
         self._status = QLabel(self._idle_status)
         self._status.setWordWrap(True)
         self._status.setStyleSheet(_HINT_STYLE)
@@ -400,8 +392,6 @@ class AddonsPage(SettingsPageBase):
         self._hint.hide()
         main.addWidget(self._hint)
 
-    def _build_details(self, main: QVBoxLayout) -> None:
-        """Build the details toggle, the copy button and the log."""
         details_row = QWidget()
         details_layout = QHBoxLayout(details_row)
         details_layout.setContentsMargins(0, 0, 0, 0)
@@ -425,8 +415,6 @@ class AddonsPage(SettingsPageBase):
         self._dl_log.hide()
         main.addWidget(self._dl_log)
 
-    def _build_actions(self, main: QVBoxLayout) -> None:
-        """Build the action row and the timers that move the screen while a step runs."""
         action_row = QWidget()
         action_layout = QHBoxLayout(action_row)
         action_layout.setContentsMargins(0, 0, 0, 0)
@@ -463,7 +451,7 @@ class AddonsPage(SettingsPageBase):
             verb, item, number, total = self._status_parts
             self._set_status(txt.addons_status_step(verb, item, number, total))
             return
-        pending = self._svc.pending_addon_packages()
+        pending = self._svc.addons.pending_addon_packages()
         if pending:
             self._set_status(
                 txt.ADDONS_RESTART_NEEDED
@@ -609,7 +597,7 @@ class AddonsPage(SettingsPageBase):
         page_models_hint.setStyleSheet("color: #888; font-size: 11px; margin-left: 20px;")
         group_layout.addWidget(page_models_hint)
 
-        folder = QLabel(f"Saved in: {self._svc.models_dir()}")
+        folder = QLabel(f"Saved in: {self._svc.reader.models_dir()}")
         folder.setStyleSheet("color: #888; font-size: 11px;")
         folder.setWordWrap(True)
         folder.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -627,7 +615,7 @@ class AddonsPage(SettingsPageBase):
         for prov, (_, pip_pkg) in self._provider_packages.items():
             lbl = _PROVIDER_LABELS.get(prov) or f"{self._provider_name(prov)}  ({pip_pkg})"
             cb = QCheckBox(lbl)
-            cb.setToolTip(license_tooltip(pip_pkg))
+            cb.setToolTip(license_tooltip(self._svc.addons.addon_license(pip_pkg)))
             self._dl_checkboxes[f"{PROVIDER_PREFIX}{prov}"] = cb
             group_layout.addWidget(cb)
         layout.addWidget(group)
@@ -641,7 +629,7 @@ class AddonsPage(SettingsPageBase):
         under the first of them, so a request for the other one is mapped onto it.
         """
         if provider not in self._provider_packages:
-            package = self._svc.get_provider_info(provider).get("package")
+            package = self._svc.providers.get_provider_info(provider).get("package")
             pip = package.get("pip") if isinstance(package, dict) else None
             for name, (_module, listed_pip) in self._provider_packages.items():
                 if pip is not None and listed_pip == pip:
@@ -651,7 +639,7 @@ class AddonsPage(SettingsPageBase):
 
     def _provider_name(self, provider: str) -> str:
         """Return the display name of *provider* (its own name when it has none)."""
-        return str(self._svc.get_provider_info(provider).get("display_name", provider))
+        return str(self._svc.providers.get_provider_info(provider).get("display_name", provider))
 
     def _build_ollama_models_tab(self) -> QWidget:
         """Build the local-models tab: everything fixed except the tree, which takes the rest.
@@ -746,7 +734,7 @@ class AddonsPage(SettingsPageBase):
             self._group_items[key] = group_item
         # "Other models" stays hidden while empty.
         self._group_items["other"].setHidden(True)
-        for spec in self._svc.ollama_catalog():
+        for spec in self._svc.recommendations.ollama_catalog():
             self._add_model_row(spec.tag, "ocr" if spec.category == "ocr" else "general")
         tree.itemChanged.connect(self._on_model_item_changed)
         return tree
@@ -918,7 +906,7 @@ class AddonsPage(SettingsPageBase):
             if category is not None and tags:
                 ratings = {
                     r.tag: r
-                    for r in self._svc.rate_ollama_models(
+                    for r in self._svc.recommendations.rate_ollama_models(
                         tags,
                         category,
                         profile,
@@ -929,7 +917,7 @@ class AddonsPage(SettingsPageBase):
                     )
                 }
             elif tags:
-                abilities = self._svc.classify_ollama_models(
+                abilities = self._svc.recommendations.classify_ollama_models(
                     tags, self._ollama_url, cached_only=True
                 )
             decorated: list[tuple[int, str, QTreeWidgetItem, Suitability, float | None, bool]] = []
@@ -1009,7 +997,7 @@ class AddonsPage(SettingsPageBase):
         intro.setStyleSheet("color: #aaa; font-size: 9pt;")
         install_layout.addWidget(intro)
         cb_spacy = QCheckBox("spaCy  (spacy)")
-        cb_spacy.setToolTip(license_tooltip("spacy"))
+        cb_spacy.setToolTip(license_tooltip(self._svc.addons.addon_license("spacy")))
         self._dl_checkboxes["spacy"] = cb_spacy
         install_layout.addWidget(cb_spacy)
         layout.addWidget(install_group)
@@ -1018,7 +1006,7 @@ class AddonsPage(SettingsPageBase):
         model_layout = QVBoxLayout(model_group)
         for lbl, model_id in _SPACY_MODEL_DOWNLOAD_CHOICES:
             cb = QCheckBox(lbl)
-            cb.setToolTip(license_tooltip(model_id))
+            cb.setToolTip(license_tooltip(self._svc.addons.addon_license(model_id)))
             self._dl_checkboxes[f"spacy:{model_id}"] = cb
             model_layout.addWidget(cb)
         layout.addWidget(model_group)
@@ -1357,7 +1345,7 @@ class AddonsPage(SettingsPageBase):
             category = self._group_category(item) if item is not None else None
             if category is None:
                 continue
-            rating = self._svc.rate_ollama_models(
+            rating = self._svc.recommendations.rate_ollama_models(
                 [tag],
                 category,
                 profile,

@@ -86,6 +86,9 @@ class PipelineDependencies:
     # Whether the computer is kept awake for this run (the application layer holds it); the
     # banner says so, and warns when the run is on battery power.
     keep_awake: KeepAwakeState | None = None
+    # The sentence the banner warns with on battery power; the adapter passes it, because a
+    # sentence a teacher reads is defined in ``texts`` and this layer may not import it.
+    battery_warning: str = ""
     # Where the built-in reader's model files live; the application layer passes the store its
     # readiness check looks at, so the run reads the folder that was checked.
     model_store: ModelStore | None = None
@@ -205,6 +208,7 @@ class OCRPipeline:
         self._current_source_id = ""
         deps = dependencies or PipelineDependencies()
         self._keep_awake: KeepAwakeState | None = deps.keep_awake
+        self._battery_warning = deps.battery_warning
         self._reporter: Reporter = deps.reporter or StdoutReporter()
         self._component_factory = deps.component_factory or PipelineComponentFactory()
         self._hardware: HardwareDetection | None = deps.hardware
@@ -245,7 +249,13 @@ class OCRPipeline:
         storage = resolve_storage_root()
         reporter.status(f"Storage root: {storage.path.resolve()} ({storage.source})")
 
-        run_report.banner(cfg, reporter, config_file=self._config_file, keep_awake=self._keep_awake)
+        run_report.banner(
+            cfg,
+            reporter,
+            config_file=self._config_file,
+            keep_awake=self._keep_awake,
+            battery_warning=self._battery_warning,
+        )
         if cfg.recognition_enabled and cfg.ocr.engine == "ollama":
             try:
                 self._component_factory.check_ocr_model(cfg.ollama_url, cfg.ocr.model, reporter)
@@ -277,7 +287,7 @@ class OCRPipeline:
         inspect exactly what images the preprocessor would send to the OCR model.
         """
         reporter = self._reporter
-        _cfg, preprocess_service, files, tmp_dir = self._prepare_preview_run()
+        preprocess_service, files, tmp_dir = self._prepare_preview_run()
         if not files:
             supported = ", ".join(s.lstrip(".").upper() for s in sorted(supported_suffixes()))
             reporter.status(f"No supported files found ({supported}). Nothing to do.")
@@ -292,26 +302,20 @@ class OCRPipeline:
         run_report.preview_summary(summary, reporter, tmp_dir)
         return summary
 
-    def _prepare_preview_run(self) -> tuple[Config, PreprocessService, list[Path], Path]:
+    def _prepare_preview_run(self) -> tuple[PreprocessService, list[Path], Path]:
         cfg = self._config
         reporter = self._reporter
         tmp_dir = resolve_artifact_dir(cfg.output_dir)
         cfg.output_dir.mkdir(parents=True, exist_ok=True)
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        reporter.status(run_report.LINE)
-        reporter.status("Teacher's Teammate — Preview (preprocess only)")
-        reporter.status(run_report.LINE)
-        reporter.status(f"  Preprocess    : {cfg.ocr.preprocess_method}")
-        reporter.status(f"  Input         : {cfg.input_dir.resolve()}")
-        reporter.status(f"  Preview dir   : {tmp_dir.resolve()}")
-        reporter.status(run_report.LINE)
+        run_report.preview_banner(cfg, reporter, tmp_dir)
 
         builder = StageBuilder(
             cfg, self._component_factory, self._reporter, self._hardware, self._model_store
         )
         preprocess_service = builder.build_preprocessor_service(tmp_dir)
-        return cfg, preprocess_service, self._files, tmp_dir
+        return preprocess_service, self._files, tmp_dir
 
     def _run_preview_batch(
         self,

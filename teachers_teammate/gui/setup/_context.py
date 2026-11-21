@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ...application.composition import AppServices
 
 
 @dataclass(frozen=True)
@@ -21,7 +24,7 @@ class SetupContext:
     """
 
     settings: Mapping[str, Any]
-    app_service: Any
+    app_service: AppServices
     pull_manager: Any = None
     #: The document language to start on (the system language on a first start).
     language: str = ""

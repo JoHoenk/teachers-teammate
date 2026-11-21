@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 from ...application.benchmark_service import BenchmarkApplicationService
 from ...application.composition import inject_addon_packages_dir
-from ...application.service import ProcessingApplicationService
+from ...application.ollama_server import OllamaServerService
 from ...config import DEFAULTS
 from ...texts import dialogs as dlg
 from .. import _dialogs
@@ -77,7 +77,7 @@ class BenchmarkWindow(QMainWindow):
         cfg_box = QGroupBox("OCR configuration")
         cfg_layout = QVBoxLayout(cfg_box)
         self._selector = OcrConfigSelector(
-            app_service=self._service,
+            app_service=self._service.services,
             ollama_url=self._ollama_url,
             hardware_profile=self._hardware_profile,
             show_preview_button=False,
@@ -249,7 +249,7 @@ def main_benchmark(*, window_factory=None) -> None:
     from .._main_window import _app_icon  # noqa: PLC0415  reuse the shared app icon
 
     # Start the slow own-host-name lookup before any widget asks where a step runs.
-    ProcessingApplicationService.warm_up_locality_checks()
+    OllamaServerService.warm_up_locality_checks()
     app = create_app(icon_factory=_app_icon)
     factory = window_factory or _default_window_factory
     window = factory()

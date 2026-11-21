@@ -12,13 +12,14 @@ methods the app calls on a thread it has started.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import dataclasses
 import os
 from pathlib import Path
 import tempfile
 import threading
-from typing import Any
 
 from teachers_teammate._model_defaults import default_model_for_task
+from teachers_teammate.application.composition import AppServices
 from teachers_teammate.application.context_choice import ContextChoice, context_choice
 from teachers_teammate.application.data_flow import text_goes_online
 from teachers_teammate.application.speed_estimates import SpeedChoices, SpeedSummary
@@ -48,6 +49,17 @@ from teachers_teammate.domain.model_catalog import (
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.performance_estimate import TimeRange
 from teachers_teammate.infrastructure.performance_probe import ProbeResult
+
+
+def services_of(stub: object) -> AppServices:
+    """Hand one flat stub to a widget as the grouped services it asks for.
+
+    The stubs answer for every service, so each group points at the same object: a test keeps
+    overriding the one method it cares about, and a new service needs no change here.
+    """
+    return AppServices(
+        **{field.name: stub for field in dataclasses.fields(AppServices)}  # ty: ignore[invalid-argument-type]
+    )
 
 
 def context_choice_from(settings: Mapping[str, object], card_gb: float | None) -> ContextChoice:
@@ -109,6 +121,28 @@ class LocalDataFlowStub:
             on_progress(2_000_000, 2_000_000)
         self.reader_present = True
 
+    def is_local(self, url: str, *, include_wsl_host: bool = False) -> bool:
+        """Answer as the real check does for the addresses the pages use."""
+        _ = include_wsl_host
+        return url.startswith("http://127.0.0.1") or url.startswith("http://localhost")
+
+    def normalize(self, url: str) -> str:
+        """Strip a trailing slash, as the real normaliser does."""
+        return url.rstrip("/")
+
+    def addon_license(self, package: str) -> str | None:
+        """No license list in a test: the tooltip stays empty."""
+        _ = package
+        return None
+
+    def system_language(self) -> str | None:
+        """No system locale in a test."""
+        return None
+
+    def read_gpu_usage(self):
+        """No graphics card in a test."""
+        return None
+
     def describe_data_flow(self, config) -> DataFlow:
         _ = config
         here = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
@@ -169,11 +203,11 @@ class LocalDataFlowStub:
         return bool(info.get("needs_api_key")) and not os.environ.get(str(info.get("env_key", "")))
 
     # ── speed test and time estimates (the panel on the AI models page) ───────
-    def speed_choices(self, settings: Mapping[str, object]) -> SpeedChoices:
+    def choices(self, settings: Mapping[str, object]) -> SpeedChoices:
         """Answer with the real rule: the models a run would use for these settings."""
         return SpeedChoices.from_settings(settings, effective_model=self.effective_model)
 
-    def speed_choices_for_run(self, config: Config) -> SpeedChoices:
+    def choices_for_config(self, config: Config) -> SpeedChoices:
         """Answer with the real rule: the models of the steps the run switches on."""
         return SpeedChoices.from_config(config, effective_model=self.effective_model)
 
@@ -188,11 +222,11 @@ class LocalDataFlowStub:
         _ = choices, hardware, cached_only
         return SpeedSummary()
 
-    def refresh_speed_server_facts(self, ollama_url: str) -> None:
+    def refresh_server_facts(self, ollama_url: str) -> None:
         """Nothing to fetch: a stub has no server."""
         _ = ollama_url
 
-    def speed_page_times(
+    def page_times(
         self,
         tags: Sequence[str],
         category: ModelCategory,
@@ -244,6 +278,7 @@ class RecommendationServiceStub(LocalDataFlowStub):
         self.detect_calls: list[tuple[str, bool]] = []
         self.changed_urls: list[str] = []
         self.gpu_calls: list[bool] = []  # the ``refresh`` flag of every detect_gpus call
+        self.injected_packages_dir = False  # inject_addon_packages_dir was called
         self.outdated_addons = False  # an app update left add-ons that wait for an update
         self.addon_updates = 0  # how often update_addons ran
 
@@ -354,19 +389,8 @@ class RecommendationServiceStub(LocalDataFlowStub):
     def addon_packages_dir(self) -> Path:
         return Path(tempfile.gettempdir()) / "teachers-teammate-addons"
 
-    def install_addon(self, addon: str, target: Path, progress_cb: Any) -> None:
-        _ = (addon, target, progress_cb)
-
-    def clear_stale_addon_modules(self, addon: str) -> None:
-        _ = addon
-
-    def download_spacy_model(self, model: str, target: Path, progress_cb: Any) -> None:
-        _ = (model, target, progress_cb)
-
-    def pull_ollama_model(
-        self, url: str, model_name: str, progress_cb: Any = None, abort_event: Any = None
-    ) -> None:
-        _ = (url, model_name, progress_cb, abort_event)
+    def inject_addon_packages_dir(self) -> None:
+        self.injected_packages_dir = True
 
 
 class FinishedThreadStub:

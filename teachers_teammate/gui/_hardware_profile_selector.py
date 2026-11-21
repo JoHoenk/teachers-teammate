@@ -16,11 +16,11 @@ visible.
 from __future__ import annotations
 
 import logging
-from typing import Protocol
 
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from ..application.composition import AppServices
 from ..config import DEFAULTS
 from ..domain.model_catalog import PROFILE_SETTINGS, HardwareDetection
 from ._background import LatestTask
@@ -41,14 +41,6 @@ _STATUS_STYLE = "color: #888; font-size: 11px;"
 _FREE_MEMORY_INTERVAL_MS = 10_000
 
 
-class _ProfileService(Protocol):
-    def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection: ...
-
-    def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection: ...
-
-    def available_memory_gb(self) -> float | None: ...
-
-
 class HardwareProfileSelector(QWidget):
     """ "My computer" picker with a plain-language detection status line.
 
@@ -64,7 +56,7 @@ class HardwareProfileSelector(QWidget):
     def __init__(
         self,
         *,
-        app_service: _ProfileService,
+        app_service: AppServices,
         setting: str = DEFAULTS["hardware_profile"],
         ollama_url: str = DEFAULTS["ollama_url"],
         read_only: bool = False,
@@ -186,7 +178,9 @@ class HardwareProfileSelector(QWidget):
         detection = self._detection
         if detection is None or detection.system_memory_gb is None or not self.isVisible():
             return
-        self._memory_task.submit(self._app_service.available_memory_gb, self._on_memory_read)
+        self._memory_task.submit(
+            self._app_service.recommendations.available_memory_gb, self._on_memory_read
+        )
 
     def _on_memory_read(self, result: object, error: BaseException | None) -> None:
         if error is not None:
@@ -218,8 +212,8 @@ class HardwareProfileSelector(QWidget):
         def resolve() -> HardwareDetection:
             if setting != "auto":
                 # Through the service: a chosen profile still carries this computer's memory.
-                return service.resolve_hardware_profile(setting, url)
-            return service.detect_hardware(url, refresh=refresh)
+                return service.recommendations.resolve_hardware_profile(setting, url)
+            return service.recommendations.detect_hardware(url, refresh=refresh)
 
         self._task.submit(resolve, self._on_resolved)
 

@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from PySide6.QtCore import QCoreApplication
 
-    from teachers_teammate.application.service import ProcessingApplicationService
+    from teachers_teammate.application.composition import AppServices
     from teachers_teammate.application.setup_plan import SetupAnswers, SetupPlan
     from teachers_teammate.gui.setup import SetupAssistant
 
@@ -203,7 +203,7 @@ def _wait_for_setup_plan(app: QCoreApplication, assistant: SetupAssistant) -> Se
 
 
 def _walk_setup_assistant(
-    service: ProcessingApplicationService,
+    service: AppServices,
     settings: Mapping[str, object],
     frozen: bool,
 ) -> str | None:
@@ -270,8 +270,8 @@ def _check_setup_assistant() -> str | None:
             # The real detection runs in the frozen process: subprocesses, psutil, the platform's
             # own memory query.  That is part of what this check is for.
             settings["hardware_profile"] = "auto"
-            service = build_app_services().processing
-            plan = service.plan_setup(_setup_answers(settings), settings)
+            service = build_app_services()
+            plan = service.setup.plan_setup(_setup_answers(settings), settings)
             problem = _setup_plan_problem(plan, frozen)
             if problem is not None:
                 return problem

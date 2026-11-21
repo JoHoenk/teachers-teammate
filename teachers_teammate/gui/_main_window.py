@@ -45,8 +45,14 @@ import qdarkstyle
 
 from .. import __version__ as _APP_VERSION
 from ..application.check_document import CheckDocument
-from ..application.composition import inject_addon_packages_dir
+from ..application.composition import (
+    AppServices,
+    diagnostics_phase,
+    inject_addon_packages_dir,
+    start_diagnostics,
+)
 from ..application.documents import WorkedOn
+from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
 from ..application.sent_text import SentTexts
 from ..application.service import (
@@ -54,7 +60,6 @@ from ..application.service import (
     NO_TEXT_MESSAGE,
     DocxExport,
     IssueKind,
-    ProcessingApplicationService,
     RequirementIssue,
     RunPreflight,
     WorkNotSavedError,
@@ -63,24 +68,26 @@ from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_
 from ..domain.data_location import STAGE_CORRECTION, DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection, short_model_name
-from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
+from ..domain.ollama_discovery import (
+    OLLAMA_DOWNLOAD_URL,
+    DiscoveredServer,
+    DiscoveryScope,
+    ServerKind,
+    WaitDetail,
+    WaitKind,
+)
 from ..domain.performance_estimate import TimeRange
-from ..domain.run_summary import FileStatus, RunSummary
+from ..domain.run_summary import FileStatus, KeepAwakeState, RunSummary
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..domain.stages import (
     PROGRESS_STAGE_CORRECTION,
     PROGRESS_STAGE_OCR,
     PROGRESS_STAGE_PREPROCESSING,
 )
-from ..infrastructure.diagnostics import phase as diagnostics_phase
-from ..infrastructure.diagnostics import start_if_requested as start_diagnostics_if_requested
-from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
-from ..infrastructure.ollama_utils import WaitDetail, WaitKind
-from ..infrastructure.reporting import BATTERY_WARNING, KeepAwakeState
-from ..infrastructure.system_locale import system_language
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts import privacy
+from ..texts.run import BATTERY_WARNING
 from ..texts.settings import WHERE_ADDONS, WHERE_GENERAL
 from . import _dialogs
 from . import _user_text as txt
@@ -189,7 +196,7 @@ class _PreprocessPreviewThread(QThread):
 
     def __init__(
         self,
-        app_service: ProcessingApplicationService,
+        app_service: AppServices,
         source_path: Path,
         ocr_config: OcrConfig,
         tmp_dir: Path,
@@ -202,7 +209,7 @@ class _PreprocessPreviewThread(QThread):
 
     def run(self) -> None:
         try:
-            orig, proc, steps = self._svc.preprocess_preview(
+            orig, proc, steps = self._svc.reader.preprocess_preview(
                 self._source_path, self._ocr_config, self._tmp_dir
             )
             self.done.emit(orig, proc, steps, "")
@@ -332,7 +339,7 @@ class OllamaDownloadManager(QObject):
         self,
         parent: QObject | None = None,
         *,
-        service: ProcessingApplicationService,
+        service: AppServices,
     ) -> None:
         super().__init__(parent)
         self._service = service
@@ -444,7 +451,7 @@ class MainWindow(QMainWindow):
     def __init__(
         self,
         *,
-        app_service: ProcessingApplicationService,
+        app_service: AppServices,
         worker_factory: Callable[..., _WorkerLike] | None = None,
     ) -> None:
         super().__init__()
@@ -646,8 +653,8 @@ class MainWindow(QMainWindow):
     def _load_credentials_from_settings(self) -> None:
         """Inject stored provider API keys into os.environ (env var takes priority)."""
         env_keys = {
-            str(self._app_service.get_provider_info(provider).get("env_key", ""))
-            for provider in self._app_service.list_providers()
+            str(self._app_service.providers.get_provider_info(provider).get("env_key", ""))
+            for provider in self._app_service.providers.list_providers()
         }
         CredentialStore().load_into_environment(sorted(key for key in env_keys if key))
 
@@ -883,7 +890,7 @@ class MainWindow(QMainWindow):
                 build_benchmark_window,
             )
 
-            self._benchmark_window = build_benchmark_window(processing=self._app_service)
+            self._benchmark_window = build_benchmark_window(app_services=self._app_service)
         elif not self._benchmark_window.isVisible():
             self._benchmark_window.reload_settings()  # closed since: the settings may differ now
         window = self._benchmark_window
@@ -1012,7 +1019,7 @@ class MainWindow(QMainWindow):
 
         # Built now and kept hidden, so the chart collects the data of every run.  Parentless on
         # purpose (see SystemMonitorWindow): closeEvent closes it with this window.
-        self._monitor = SystemMonitorWindow()
+        self._monitor = SystemMonitorWindow(self._app_service.recommendations.read_gpu_usage)
         self._chart = self._monitor.chart
         self._stats = self._monitor.stats
 
@@ -1048,10 +1055,10 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda s=sizes: self._main_splitter.setSizes(s))
 
     def _load_toml_if_present(self) -> None:
-        config_path = self._app_service.resolve_config_path(None)
+        config_path = self._app_service.setup.resolve_config_path(None)
         self._restore_gui_state()
 
-        installer_choices = self._app_service.first_start_settings(config_path)
+        installer_choices = self._app_service.setup.first_start_settings(config_path)
         if installer_choices is not None or config_path is None:
             # First start (no ocr.toml yet, or only what the installer wrote): the assistant
             # asks what only the teacher knows and works the models out from the answers.  It
@@ -1113,7 +1120,10 @@ class MainWindow(QMainWindow):
 
         language = ""
         if first_start:
-            language = system_language() or self._config_panel.lookup_language()
+            language = (
+                self._app_service.processing.system_language()
+                or self._config_panel.lookup_language()
+            )
         context = SetupContext(
             settings=self._config_panel.get_settings_dict(),
             app_service=self._app_service,
@@ -1155,7 +1165,7 @@ class MainWindow(QMainWindow):
         The system language goes into the panel, because no settings file names one yet; then
         today's first start runs: the best models for this computer, once detection finishes.
         """
-        language = system_language()
+        language = self._app_service.processing.system_language()
         if language:
             self._config_panel.load_from_dict({"language": language})
             self._save_settings(notify=False)
@@ -1186,7 +1196,8 @@ class MainWindow(QMainWindow):
         # Detection must never get in the way of starting the app: any failure
         # simply leaves the static defaults in place.
         self._first_run_task.submit(
-            lambda: service.detect_hardware(ollama_url), self._on_first_start_detection
+            lambda: service.recommendations.detect_hardware(ollama_url),
+            self._on_first_start_detection,
         )
 
     def _on_first_start_detection(self, detection: object, error: BaseException | None) -> None:
@@ -1194,7 +1205,7 @@ class MainWindow(QMainWindow):
         if error is not None or not isinstance(detection, HardwareDetection):
             return
         settings = self._config_panel.get_settings_dict()
-        best = self._app_service.first_run_model_settings(
+        best = self._app_service.recommendations.first_run_model_settings(
             detection.profile,
             system_memory_gb=detection.system_memory_gb,
             card_gb=detection.card_gb,
@@ -1240,7 +1251,7 @@ class MainWindow(QMainWindow):
         out = (
             self._config_path
             if self._config_path is not None
-            else self._app_service.default_config_path()
+            else self._app_service.setup.default_config_path()
         )
         try:
             out.write_text(dump_config_file(values), encoding="utf-8")
@@ -1331,7 +1342,7 @@ class MainWindow(QMainWindow):
 
     def _get_file_names(self, config: Config) -> list[str]:
         """Return queued file names via application-layer file discovery."""
-        return [file.name for file in self._app_service.collect_input_files(config)]
+        return [file.name for file in self._app_service.processing.collect_input_files(config)]
 
     def _scan_input_files(self) -> list[Path]:
         """Scan input folder via application service while config is incomplete."""
@@ -1344,7 +1355,7 @@ class MainWindow(QMainWindow):
         input_dir = Path(input_text)
         if not input_dir.is_dir():
             return []
-        return self._app_service.collect_input_files_from_dir(input_dir, recursive=True)
+        return self._app_service.processing.collect_input_files_from_dir(input_dir, recursive=True)
 
     def _refresh_queue_from_inputs(self) -> None:
         """Refresh queue from input selection without showing modal validation errors."""
@@ -1397,8 +1408,8 @@ class MainWindow(QMainWindow):
         }
 
     def _recognition_needed(self, source_ids: list[str] | None = None) -> bool:
-        """Return whether a run over *source_ids* (``None``: the whole queue) reads pages."""
-        return self._app_service.needs_text_recognition(
+        """Return whether a run over *source_ids* (default: the whole queue) reads pages."""
+        return self._app_service.processing.needs_text_recognition(
             self._queued_files(source_ids), recognised=self._recognised_files()
         )
 
@@ -1453,7 +1464,7 @@ class MainWindow(QMainWindow):
         in, Run is disabled and :meth:`_run_in_progress` reports busy, so no second
         worker can be started from the Run button or the right-click menu.
         """
-        refusal = self._app_service.output_refusal_for_run(config)
+        refusal = self._app_service.processing.output_refusal_for_run(config)
         if refusal:
             _dialogs.notify(self, dlg.output_folder_refused(refusal))
             return
@@ -1465,7 +1476,7 @@ class MainWindow(QMainWindow):
         service = self._app_service
         recognised = self._recognised_files()
         run_in_background(
-            lambda: service.check_run_preflight(
+            lambda: service.processing.check_run_preflight(
                 config,
                 recognition=recognition,
                 files=files,
@@ -1547,7 +1558,7 @@ class MainWindow(QMainWindow):
 
     def _confirm_data_flow_then(self, config: Config, on_ready: Callable[[], None]) -> None:
         """Ask once before a run that sends content away from this computer."""
-        flow = self._app_service.describe_data_flow(config)
+        flow = self._app_service.data_flow.describe_data_flow(config)
         if not flow.leaves_computer or flow.fingerprint in self._acknowledgements().fingerprints():
             on_ready()
             return
@@ -1602,7 +1613,7 @@ class MainWindow(QMainWindow):
         queued_source_ids = self._results_table.queued_source_ids()
         queue_was_empty = not queued_source_ids
         if queue_was_empty:
-            queued_files = self._app_service.collect_input_files(config)
+            queued_files = self._app_service.processing.collect_input_files(config)
             self._queued_files_by_source_id = {str(file.resolve()): file for file in queued_files}
             queued_source_ids = [str(file.resolve()) for file in queued_files]
             self._results_table.set_queue(
@@ -1710,13 +1721,13 @@ class MainWindow(QMainWindow):
         if not files:
             return
         service = self._app_service
-        self._pages_task.submit(lambda: service.page_counts(files), self._on_pages_known)
+        self._pages_task.submit(lambda: service.processing.page_counts(files), self._on_pages_known)
 
     def _estimate_per_page(self, config: Config) -> TimeRange | None:
         """Return how long one page takes on this computer, or ``None`` when nothing is known."""
         try:
-            choices = self._app_service.speed_choices_for_run(config)
-            return self._app_service.speed_summary(choices).per_page
+            choices = self._app_service.speeds.choices_for_config(config)
+            return self._app_service.speeds.speed_summary(choices).per_page
         except Exception:  # noqa: BLE001  # an estimate must never keep a run from starting
             return None
 
@@ -1744,7 +1755,7 @@ class MainWindow(QMainWindow):
 
         # One stage by hand: the service builds that config, so the GUI holds no variant of
         # its own that could drift from what a run does.
-        config = self._app_service.config_for_stage_run(config, stage)
+        config = self._app_service.processing.config_for_stage_run(config, stage)
 
         # Check before touching the cache: a re-run that cannot work (Ollama stopped, model
         # missing) must not throw away the results that are there.
@@ -1878,7 +1889,7 @@ class MainWindow(QMainWindow):
         return [
             (
                 sid,
-                self._app_service.export_target(
+                self._app_service.processing.export_target(
                     Path(sid),
                     Path(input_dir) if input_dir else None,
                     Path(folder),
@@ -1922,7 +1933,8 @@ class MainWindow(QMainWindow):
         """Warn when text files would land in the input folder, where the next run reads them.
 
         A one-off export only asks; a run with text files configured there is refused
-        (:meth:`ProcessingApplicationService.output_refusal_for_run`) since it would repeat.
+        (:meth:`~teachers_teammate.application.service.ProcessingApplicationService.output_refusal_for_run`)
+        since it would repeat.
         """
         input_dir = self._config_panel.get_input_dir()
         # With an explicit file selection a run reads only those files.
@@ -1930,7 +1942,9 @@ class MainWindow(QMainWindow):
             return True
         # Folder mode always scans subfolders (see ConfigPanel.to_config).
         if not any(
-            self._app_service.is_in_input_folder(out.parent, Path(input_dir), recursive=True)
+            self._app_service.processing.is_in_input_folder(
+                out.parent, Path(input_dir), recursive=True
+            )
             for _sid, out in targets
         ):
             return True
@@ -1953,7 +1967,7 @@ class MainWindow(QMainWindow):
             try:
                 # The texts, their notation and the review come from the stored document, so the
                 # file carries what the Check tab shows.
-                self._app_service.export_docx(
+                self._app_service.processing.export_docx(
                     config,
                     Path(source_id),
                     out_path,
@@ -2002,12 +2016,12 @@ class MainWindow(QMainWindow):
         def work() -> _TextExportOutcome:
             if anonymize:
                 # Fails once, up front, when spaCy or its model is missing.
-                service.warm_up_anonymizer(language, anon_config)
+                service.anonymization.warm_up_anonymizer(language, anon_config)
             written: list[Path] = []
             failed = list(preflight_errors)
             for source, out_path in jobs:
                 try:
-                    service.export_text(
+                    service.processing.export_text(
                         config,
                         source,
                         out_path,
@@ -2289,7 +2303,7 @@ class MainWindow(QMainWindow):
 
     def _provider_display_name(self, provider: str) -> str:
         """Return the name the teacher knows *provider* by."""
-        info = self._app_service.get_provider_info(provider)
+        info = self._app_service.providers.get_provider_info(provider)
         return str(info.get("display_name") or provider.title())
 
     def _start_readiness_check(self, *, fresh: bool = False) -> None:
@@ -2311,7 +2325,7 @@ class MainWindow(QMainWindow):
         files = self._queued_files()
         recognised = self._recognised_files()
         self._readiness_task.submit(
-            lambda: service.check_run_preflight(
+            lambda: service.processing.check_run_preflight(
                 config,
                 memory=False,
                 recognition=recognition,
@@ -2358,7 +2372,7 @@ class MainWindow(QMainWindow):
         self._server_searched_for = url
         service = self._app_service
         self._server_search_task.submit(
-            lambda: service.discover_ollama_servers(DiscoveryScope.THIS_COMPUTER),
+            lambda: service.ollama.discover_ollama_servers(DiscoveryScope.THIS_COMPUTER),
             lambda result, error: self._on_local_server_search_done(url, result, error),
         )
 
@@ -2367,14 +2381,14 @@ class MainWindow(QMainWindow):
     ) -> None:
         if error is not None or not isinstance(result, list) or url != self._current_ollama_url():
             return
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
 
-        saved = normalize_ollama_url(url)
+        saved = self._app_service.ollama.normalize(url)
         self._found_server = next(
             (
                 s
                 for s in result
-                if isinstance(s, DiscoveredServer) and normalize_ollama_url(s.url) != saved
+                if isinstance(s, DiscoveredServer)
+                and self._app_service.ollama.normalize(s.url) != saved
             ),
             None,
         )
@@ -2443,7 +2457,7 @@ class MainWindow(QMainWindow):
         panel.show_recognition_note(
             skipped=len(skipped),
             not_needed=bool(files)
-            and not self._app_service.needs_text_recognition(
+            and not self._app_service.processing.needs_text_recognition(
                 files, recognised=self._recognised_files()
             ),
         )
@@ -2453,7 +2467,7 @@ class MainWindow(QMainWindow):
         panel = self._config_panel
         if panel.results_problem():
             return results_fix(RESULTS_NO_FOLDER)
-        if panel.get_input_dir() and self._app_service.output_refusal_for_run(
+        if panel.get_input_dir() and self._app_service.processing.output_refusal_for_run(
             panel.lookup_config()
         ):
             return results_fix(RESULTS_TEXT_IN_INPUT)
@@ -2482,7 +2496,7 @@ class MainWindow(QMainWindow):
         Starting it takes a moment, so the check runs a few seconds later instead of at once;
         the 10 s retry keeps looking until the server answers.
         """
-        run_in_background(self._app_service.start_ollama, self._on_ollama_start_done)
+        run_in_background(self._app_service.ollama.start_ollama, self._on_ollama_start_done)
 
     def _on_ollama_start_done(self, _result: object, error: BaseException | None) -> None:
         """Look again in a few seconds, or tell the teacher in the log why Ollama did not start."""
@@ -2500,7 +2514,7 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
         if event.type() != QEvent.Type.ActivationChange or not self.isActiveWindow():
             return
-        self._app_service.reread_installed_models()
+        self._app_service.anonymization.reread_installed_models()
         self._refresh_privacy_availability()
         if self._blocker is not None:
             self._start_readiness_check(fresh=True)
@@ -2521,7 +2535,7 @@ class MainWindow(QMainWindow):
     def _on_pull_finished(self, _model_name: str) -> None:
         # Also covers pulls that finish after the Settings window was closed:
         # without this the cached model list stays stale for minutes.
-        self._app_service.on_ollama_models_changed(
+        self._app_service.recommendations.on_ollama_models_changed(
             self._pull_manager.current_url or self._current_ollama_url()
         )
         self._end_download()
@@ -2926,7 +2940,7 @@ class MainWindow(QMainWindow):
             return
         if not kind.is_anonymized:
             QApplication.clipboard().setText(
-                service.text_for_copy(view, corrected=kind.is_corrected)
+                service.processing.text_for_copy(view, corrected=kind.is_corrected)
             )
             self._check.show_copied()
             return
@@ -2934,7 +2948,7 @@ class MainWindow(QMainWindow):
         anon_config = self._config_panel.build_anonymizer_config()
 
         def _copy() -> object:
-            return service.text_for_copy(
+            return service.processing.text_for_copy(
                 view,
                 corrected=kind.is_corrected,
                 anonymize=True,
@@ -2969,13 +2983,15 @@ class MainWindow(QMainWindow):
         real ones.  The probe never runs on the GUI thread.
         """
         if (
-            self._app_service.cached_hardware_profile(config.hardware_profile, config.ollama_url)
+            self._app_service.recommendations.cached_hardware_profile(
+                config.hardware_profile, config.ollama_url
+            )
             is not None
         ):
             return
 
         def detect() -> object:
-            return self._app_service.detect_hardware(config.ollama_url)
+            return self._app_service.recommendations.detect_hardware(config.ollama_url)
 
         def done(_result: object, error: BaseException | None) -> None:
             # A failed probe keeps the base window; asking again would only fail again.
@@ -3073,7 +3089,7 @@ class MainWindow(QMainWindow):
             view = service.documents.load_view(config, Path(source_id))
             if view is None:
                 return None
-            return service.describe_sent_texts(config, view)
+            return service.processing.describe_sent_texts(config, view)
 
         def _on_done(result: object, error: BaseException | None) -> None:
             busy.accept()
@@ -3112,7 +3128,7 @@ class MainWindow(QMainWindow):
         after the window that started it had closed.
         """
         language = self._config_panel.lookup_language()
-        available = self._app_service.anonymizer_available(
+        available = self._app_service.anonymization.anonymizer_available(
             language, self._config_panel.build_anonymizer_config()
         )
         changed = available != self._privacy_available
@@ -3137,7 +3153,7 @@ class MainWindow(QMainWindow):
         anon_config = self._config_panel.build_anonymizer_config()
 
         def _anonymize() -> object:
-            return service.anonymize_preview(raw_text, language, anon_config)
+            return service.anonymization.anonymize_preview(raw_text, language, anon_config)
 
         def _on_done(result: object, error: BaseException | None) -> None:
             self._on_anonymization_done(result, error)
@@ -3308,7 +3324,7 @@ class MainWindow(QMainWindow):
         installer — whichever window it ran in, and whether that window is still open — has
         the same effect.
         """
-        self._app_service.clear_anonymizer_cache()  # also forgets the installed models
+        self._app_service.anonymization.clear_anonymizer_cache()  # also forgets the installed models
         self._config_panel.refresh_data_flow()  # also refreshes the privacy availability
         self._refresh_privacy_availability()
         self._start_readiness_check()
@@ -3339,7 +3355,7 @@ class MainWindow(QMainWindow):
         if thread is not None and thread.isRunning():
             return  # a preview is already in flight; ignore the extra click
 
-        image_suffixes = self._app_service.list_supported_suffixes() - {".txt"}
+        image_suffixes = self._app_service.processing.list_supported_suffixes() - {".txt"}
         # Prefer the file the user selected in the queue so the preview matches the
         # document they are looking at, not just whichever file sorts first.
         source_path: Path | None = next(
@@ -3364,14 +3380,15 @@ class MainWindow(QMainWindow):
                 )
         if source_path is None:
             supported_glob = " ".join(
-                f"*{s}" for s in sorted(self._app_service.list_supported_suffixes() - {".txt"})
+                f"*{s}"
+                for s in sorted(self._app_service.processing.list_supported_suffixes() - {".txt"})
             )
             chosen = _dialogs.pick_file(owner, dlg.select_image_or_pdf(supported_glob))
             if chosen is None:
                 return
             source_path = chosen
 
-        tmp_dir = self._app_service.resolve_preview_tmp_dir()
+        tmp_dir = self._app_service.reader.resolve_preview_tmp_dir()
 
         thread = _PreprocessPreviewThread(self._app_service, source_path, ocr_config, tmp_dir)
         self._preprocess_preview_thread = thread
@@ -3466,7 +3483,7 @@ def main_gui(
                         splash-creation logic is skipped and the caller's splash is reused.
     """
     # Opt-in (--diagnose): where the start and any freeze of the window spend their time.
-    diagnostics = start_diagnostics_if_requested(_APP_VERSION)
+    diagnostics = start_diagnostics(_APP_VERSION)
     if diagnostics is not None:
         diagnostics.phase("main_gui entered (imports and the early splash are done)")
         diagnostics.start_watching()
@@ -3475,7 +3492,7 @@ def main_gui(
     inject_addon_packages_dir()
     diagnostics_phase("add-on packages folder on sys.path")
     # Start the slow own-host-name lookup before any widget asks where a step runs.
-    ProcessingApplicationService.warm_up_locality_checks()
+    OllamaServerService.warm_up_locality_checks()
     # Suppress Qt's D-Bus tray warning when org.kde.StatusNotifierWatcher is absent.
     os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.tray*=false")
     if sys.stderr is not None:

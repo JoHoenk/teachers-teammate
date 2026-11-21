@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..application.composition import AppServices
 from ..config import DEFAULTS, OcrConfig
 from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, DataLocation
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
@@ -59,7 +60,6 @@ from ._model_fetch import (
     _ModelFetchThread,
     _retire_thread,
     _set_combo,
-    _SettingsAppService,
     _start_thread,
     _status_busy,
     _status_ok,
@@ -87,7 +87,7 @@ class OcrModelPicker(QWidget):
     def __init__(
         self,
         *,
-        app_service: _SettingsAppService,
+        app_service: AppServices,
         ollama_url: str = DEFAULTS["ollama_url"],
         hardware_profile: str = "auto",
         open_downloads: OpenDownloads | None = None,
@@ -131,7 +131,7 @@ class OcrModelPicker(QWidget):
     def _build_engine_row(self, form: QFormLayout) -> None:
         self._ocr_engine = QComboBox()
         # Labels for the teacher, engine ids as data: nothing else reads the shown text.
-        for engine in self._app_service.list_ocr_engines():
+        for engine in self._app_service.reader.list_ocr_engines():
             self._ocr_engine.addItem(txt.OCR_ENGINE_LABELS.get(engine, engine), engine)
         self._ocr_engine.setToolTip(
             "Pages are always read on a computer you control. Online services are not offered: "
@@ -230,7 +230,7 @@ class OcrModelPicker(QWidget):
     def on_packages_changed(self) -> None:
         """An add-on or model was installed: check the engine's package and the list again."""
         if self.engine() == ENGINE_OLLAMA:
-            self._app_service.invalidate_model_cache("ollama", base_url=self._ollama_url)
+            self._app_service.providers.invalidate_model_cache("ollama", base_url=self._ollama_url)
         self.refresh()
 
     def set_hardware_profile(self, setting: str) -> None:
@@ -278,7 +278,7 @@ class OcrModelPicker(QWidget):
         self._engine_hint.setText(txt.OCR_ENGINE_HINTS.get(engine, ""))
 
         # The built-in reader has to be downloaded once; say so and offer the download here.
-        reader_missing = engine == ENGINE_PPOCR and not self._app_service.reader_installed()
+        reader_missing = engine == ENGINE_PPOCR and not self._app_service.reader.reader_installed()
         self._extra_warn.setText(txt.READER_NOT_DOWNLOADED if reader_missing else "")
         self._extra_warn.setVisible(reader_missing)
         self._install_btn.setVisible(reader_missing)
@@ -290,8 +290,8 @@ class OcrModelPicker(QWidget):
         """Say where the chosen engine reads pages (and warn about cloud models)."""
         engine = self.engine()
         model = self._ocr_model.currentText().strip()
-        location = self._app_service.describe_ocr_location(engine, model, self._ollama_url)
-        refusal = self._app_service.describe_ocr_refusal(engine, model, self._ollama_url)
+        location = self._app_service.reader.describe_ocr_location(engine, model, self._ollama_url)
+        refusal = self._app_service.reader.describe_ocr_refusal(engine, model, self._ollama_url)
         details = ""
         if refusal:
             note = "not allowed"
@@ -313,11 +313,11 @@ class OcrModelPicker(QWidget):
             self._set_busy(True, asking_for_models_text("Ollama"))
 
             def fetch(report: Callable[[str], None]) -> list[str]:
-                tags = self._app_service.list_ocr_models(url)
+                tags = self._app_service.reader.list_ocr_models(url)
                 # Classify here so set_models() only needs cache lookups.  It costs one
                 # request per model, so say how many there are before it starts.
                 report(checking_models_text(len(tags)))
-                self._app_service.classify_ollama_models(tags, url)
+                self._app_service.recommendations.classify_ollama_models(tags, url)
                 return tags
 
             self._fetch_thread = _ModelFetchThread(fetch)
@@ -376,7 +376,7 @@ class ScanQualityControls(QWidget):
     def __init__(
         self,
         *,
-        app_service: _SettingsAppService,
+        app_service: AppServices,
         show_preview_button: bool = True,
         show_pdf_text_layer: bool = True,
         show_temperature: bool = True,
@@ -581,7 +581,8 @@ class ScanQualityControls(QWidget):
     def _update_page_models_line(self, *_args: object) -> None:
         """Show the download line only under Automatic while the page models are missing."""
         missing = (
-            self.preprocess_method() == "auto" and not self._app_service.page_models_installed()
+            self.preprocess_method() == "auto"
+            and not self._app_service.reader.page_models_installed()
         )
         self._page_models_row.setVisible(missing)
 
@@ -610,7 +611,7 @@ class OcrConfigSelector(QWidget):
     def __init__(
         self,
         *,
-        app_service: _SettingsAppService,
+        app_service: AppServices,
         ollama_url: str = DEFAULTS["ollama_url"],
         show_preview_button: bool = True,
         show_pdf_text_layer: bool = True,

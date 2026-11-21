@@ -447,7 +447,7 @@ def test_stats_widget_creates_without_error(qtbot) -> None:
     """
     from teachers_teammate.gui._stats_widget import SystemStatsWidget  # noqa: PLC0415
 
-    w = SystemStatsWidget()
+    w = SystemStatsWidget(lambda: None)
     qtbot.addWidget(w)
     assert w is not None
 
@@ -461,7 +461,7 @@ def test_stats_widget_refresh_does_not_crash(qtbot) -> None:
     """
     from teachers_teammate.gui._stats_widget import SystemStatsWidget  # noqa: PLC0415
 
-    w = SystemStatsWidget()
+    w = SystemStatsWidget(lambda: None)
     qtbot.addWidget(w)
     w._refresh()  # should not crash regardless of psutil availability
 
@@ -476,7 +476,7 @@ def test_stats_widget_polls_only_while_shown(qtbot) -> None:
     """
     from teachers_teammate.gui._stats_widget import SystemStatsWidget, _PSUTIL_AVAILABLE  # noqa: PLC0415
 
-    w = SystemStatsWidget()
+    w = SystemStatsWidget(lambda: None)
     qtbot.addWidget(w)
 
     if _PSUTIL_AVAILABLE:
@@ -500,7 +500,7 @@ def test_stats_widget_disabled_without_psutil(qtbot, monkeypatch) -> None:
     from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
 
     monkeypatch.setattr(sw, "_PSUTIL_AVAILABLE", False)
-    w = sw.SystemStatsWidget()
+    w = sw.SystemStatsWidget(lambda: None)
     qtbot.addWidget(w)
 
     assert w._enabled is False
@@ -518,11 +518,7 @@ def test_stats_widget_shows_the_gpu_rows_when_the_card_answers(qtbot, monkeypatc
     from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
     from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
 
-    monkeypatch.setattr(
-        sw, "read_gpu_usage", lambda: GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192)
-    )
-
-    w = sw.SystemStatsWidget()
+    w = sw.SystemStatsWidget(lambda: GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192))
     qtbot.addWidget(w)
     qtbot.waitUntil(lambda: w._gpu_bar is not None and w._gpu_bar.value() == 42)
 
@@ -539,9 +535,7 @@ def test_stats_widget_shows_only_cpu_and_ram_without_a_readable_card(qtbot, monk
     """
     from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
 
-    monkeypatch.setattr(sw, "read_gpu_usage", lambda: None)
-
-    w = sw.SystemStatsWidget()
+    w = sw.SystemStatsWidget(lambda: None)
     qtbot.addWidget(w)
     qtbot.waitUntil(lambda: not w._gpu_read_pending)
 
@@ -563,9 +557,8 @@ def test_stats_widget_creates_the_gpu_rows_when_the_first_reading_failed(
     from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
 
     readings: list[GpuUsage] = []
-    monkeypatch.setattr(sw, "read_gpu_usage", lambda: readings[0] if readings else None)
 
-    w = sw.SystemStatsWidget()
+    w = sw.SystemStatsWidget(lambda: readings[0] if readings else None)
     qtbot.addWidget(w)
     qtbot.waitUntil(lambda: not w._gpu_read_pending)
     assert w._gpu_bar is None
@@ -599,9 +592,7 @@ def test_stats_widget_reads_the_card_off_the_gui_thread(qtbot, monkeypatch) -> N
         release.wait(timeout=5)
         return GpuUsage(10, vram_used_mb=None, vram_total_mb=None)
 
-    monkeypatch.setattr(sw, "read_gpu_usage", slow_read)
-
-    w = sw.SystemStatsWidget()
+    w = sw.SystemStatsWidget(slow_read)
     qtbot.addWidget(w)
     w._refresh()
     w._refresh()
@@ -624,9 +615,8 @@ def test_stats_widget_keeps_the_last_reading_when_the_driver_skips_one(qtbot, mo
     from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
 
     readings = [GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192)]
-    monkeypatch.setattr(sw, "read_gpu_usage", lambda: readings[0] if readings else None)
 
-    w = sw.SystemStatsWidget()
+    w = sw.SystemStatsWidget(lambda: readings[0] if readings else None)
     qtbot.addWidget(w)
     qtbot.waitUntil(lambda: w._gpu_bar is not None and w._gpu_bar.value() == 42)
 

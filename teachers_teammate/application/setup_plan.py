@@ -18,9 +18,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
-from ..config import DEFAULTS
+from ..config import DEFAULTS, INSTALLER_SETTING_KEYS, load_config_file
 from ..domain.data_location import (
     ENGINE_PPOCR,
     RETIRED_OCR_ENGINES,
@@ -48,9 +49,16 @@ from ..domain.model_catalog import (
     normalize_tag,
     suitability_rank,
 )
+from ..domain.ollama_discovery import OllamaState
 from ..infrastructure.ollama_utils import is_local_ollama_url
 from ..settings_schema import normalize_preprocess_method
+from .addons import AddonService
+from .anonymization import AnonymizationService
 from .correction_options import review_has_own_model
+from .model_recommendations import ModelRecommendationService
+from .ollama_server import OllamaServerService
+from .providers import ProviderService
+from .reader import ReaderService
 
 
 class HandIn(StrEnum):
@@ -627,3 +635,168 @@ def build_setup_plan(
         needed_gb=needed_gb,
         free_disk_gb=facts.free_disk_gb,
     )
+
+
+class SetupService:
+    """What the Setup Assistant asks about this computer, and the setup plan it makes from it.
+
+    The rules are the functions of this module; this gathers the facts only the running app can
+    answer (the Ollama server, the hardware, the installed packages) and hands them to
+    :func:`build_setup_plan`.  It also says which settings file a first start reads.
+    """
+
+    def __init__(
+        self,
+        *,
+        ollama: OllamaServerService,
+        providers: ProviderService,
+        recommendations: ModelRecommendationService,
+        anonymization: AnonymizationService,
+        reader: ReaderService,
+        addons: AddonService,
+    ) -> None:
+        self._ollama = ollama
+        self._providers = providers
+        self._recommendations = recommendations
+        self._anonymization = anonymization
+        self._reader = reader
+        self._addons = addons
+
+    # ── What the setup plan needs to know ─────────────────────────────────
+
+    def setup_facts(self, answers: SetupAnswers, current: Mapping[str, Any]) -> SetupFacts:
+        """Gather what the setup plan needs to know about this computer.
+
+        Blocking: it probes Ollama, reads the disk and asks spaCy.  Run it on a background
+        thread.  *current* is the settings as they are now, including the main window's
+        ``anonymization_enabled``.
+        """
+        from ..infrastructure.ollama_install import (  # noqa: PLC0415
+            free_disk_gb,
+            ollama_models_dir,
+        )
+
+        url = answers.ollama_url
+        running = self._ollama.ollama_status(url).state is OllamaState.RUNNING
+        hardware = self._recommendations.resolve_hardware_profile(answers.hardware_profile, url)
+        local = self._ollama.is_local(url, include_wsl_host=True)
+        return SetupFacts(
+            profile=hardware.profile,
+            system_memory_gb=hardware.system_memory_gb,
+            card_gb=hardware.card_gb,
+            ollama_running=running,
+            installed_tags=(
+                frozenset(self._providers.list_provider_models("ollama", base_url=url))
+                if running
+                else frozenset()
+            ),
+            free_disk_gb=free_disk_gb(ollama_models_dir()) if local else None,
+            removal_on=bool(current.get("anonymization_enabled")),
+            name_detection=self._anonymization.anonymizer_available(answers.language),
+            spacy_installed=self._addons.is_module_importable("spacy"),
+            spacy_model=self._anonymization.spacy_model_for_language(answers.language),
+            installed_spacy_models=frozenset(self._anonymization.list_installed_spacy_models()),
+            reader_installed=self._reader.reader_installed(),
+            page_models_installed=self._reader.page_models_installed(),
+            missing_package=(
+                self._providers.missing_provider_package(answers.online_choice[0]) or ""
+                if answers.proofreading is ProofreadingPlace.ONLINE
+                else ""
+            ),
+        )
+
+    def plan_setup(self, answers: SetupAnswers, current: Mapping[str, Any]) -> SetupPlan:
+        """Return the setup plan for *answers*: the settings to write and the downloads to run.
+
+        Blocking, like :meth:`setup_facts`: run it on a background thread.
+        """
+        facts = self.setup_facts(answers, current)
+        return build_setup_plan(answers, current, facts, **self._plan_tools(answers, facts))
+
+    def plan_with_model_choices(
+        self, answers: SetupAnswers, current: Mapping[str, Any]
+    ) -> tuple[SetupPlan, LocalModelChoices]:
+        """Return the setup plan and the models the assistant offers for the proofreading.
+
+        The models are the installed ones and the catalog ones that can work on the computer
+        Ollama runs on, best first, with the one the setup plan uses when the teacher leaves the
+        choice to the assistant.  One call measures the facts once for both.  Blocking, like
+        :meth:`plan_setup`: run it on a background thread.
+        """
+        facts = self.setup_facts(answers, current)
+        tools = self._plan_tools(answers, facts)
+        plan = build_setup_plan(answers, current, facts, **tools)
+        step = next((row for row in plan.steps if row.stage == "correction"), None)
+        choices = build_model_choices(
+            facts, suggested=step.model if step is not None else "", rate=tools["rate"]
+        )
+        return plan, choices
+
+    def _plan_tools(self, answers: SetupAnswers, facts: SetupFacts) -> dict[str, Any]:
+        """Return the rating, recommendation and default-model functions the setup plan is built with."""
+
+        def rate(tag: str, task: ModelCategory) -> ModelRating:
+            return self._recommendations.rate_ollama_models(
+                [tag],
+                task,
+                facts.profile,
+                answers.ollama_url,
+                # Blocking is fine here (a background thread): an installed model outside the
+                # catalog is classified by asking the server, and one that stays unrated would
+                # be replaced although it works.
+                cached_only=False,
+                system_memory_gb=facts.system_memory_gb,
+                card_gb=facts.card_gb,
+            )[0]
+
+        def best(task: ModelCategory) -> str:
+            return self._recommendations.best_ollama_model(
+                task,
+                facts.profile,
+                system_memory_gb=facts.system_memory_gb,
+                card_gb=facts.card_gb,
+            )
+
+        return {
+            "rate": rate,
+            "best": best,
+            "default_model": self._providers.default_model_for_task,
+        }
+
+    # ── The settings file of this start ───────────────────────────────────
+
+    def default_config_path(self) -> Path:
+        """Return the default ``ocr.toml`` path inside the config root."""
+        from ..infrastructure.storage_root import (  # noqa: PLC0415
+            default_config_path,
+        )
+
+        return default_config_path()
+
+    def resolve_config_path(self, explicit: str | None) -> Path | None:
+        """Return the config file path to load, or ``None`` when none applies."""
+        from ..infrastructure.storage_root import (  # noqa: PLC0415
+            resolve_config_path,
+        )
+
+        return resolve_config_path(explicit)
+
+    def first_start_settings(self, path: Path | None) -> dict | None:
+        """Return what the installer chose when *path* is no saved setup yet, else ``None``.
+
+        A first start is a missing settings file, or one that holds only the keys the installer
+        writes (``INSTALLER_SETTING_KEYS``): the teacher has not set the app up then, and the
+        Setup Assistant must still run.  The dict carries those keys, so the first save does not
+        undo them.  The keys are the ones the file holds, also those the schema drops: a file
+        with a retired key was saved by an app that was set up.  A file that cannot be read is a
+        saved setup, so the caller reports it.
+        """
+        if path is None or not path.is_file():
+            return {}
+        try:
+            loaded = load_config_file(path)
+        except Exception:  # noqa: BLE001  # a broken file is the caller's warning, not a first start
+            return None
+        if loaded.keys <= INSTALLER_SETTING_KEYS:
+            return loaded.values
+        return None

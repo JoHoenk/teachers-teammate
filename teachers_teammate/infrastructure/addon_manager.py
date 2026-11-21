@@ -45,6 +45,9 @@ import sys
 import threading
 import time
 
+from ..exceptions import AddonInstallError as AddonInstallError  # noqa: PLC0414
+from ..exceptions import AddonUpdateError as AddonUpdateError  # noqa: PLC0414
+from ..exceptions import InstallFailure as InstallFailure  # noqa: PLC0414
 from .spacy_models import spacy_model_url
 from .subprocess_utils import no_console_window_kwargs
 
@@ -82,34 +85,6 @@ TRASH_SUFFIX = ".trash"
 #: A staging folder younger than this may belong to an install another process still runs; only
 #: an older one is the leftover of a crash.
 _STAGING_MIN_AGE_S = 6 * 3600
-
-
-class InstallFailure(StrEnum):
-    """Why an install failed.  The GUI turns each into a sentence (``texts`` owns the wording)."""
-
-    DISK_FULL = "disk_full"
-    FILE_IN_USE = "file_in_use"
-    OFFLINE = "offline"
-    NO_VERSION = "no_version"
-    MERGE_FAILED = "merge_failed"
-    INSTALL_FAILED = "install_failed"
-    DOWNLOAD_FAILED = "download_failed"
-
-
-class AddonInstallError(RuntimeError):
-    """An add-on install failed for a known *reason*; ``str()`` is for the log, not a teacher."""
-
-    def __init__(self, reason: InstallFailure) -> None:
-        super().__init__(reason.value)
-        self.reason = reason
-
-
-class AddonUpdateError(RuntimeError):
-    """Updating the add-ons failed for some of them; *errors* pairs a requirement with its error."""
-
-    def __init__(self, errors: list[tuple[str, RuntimeError]]) -> None:
-        super().__init__("; ".join(f"{requirement}: {error}" for requirement, error in errors))
-        self.errors = errors
 
 
 #: What every pip call of the installed app adds (see :func:`pip_policy_arguments`).

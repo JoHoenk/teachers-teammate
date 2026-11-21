@@ -78,6 +78,11 @@ def _hardware(*, gpu: str | None = "AMD Radeon RX 9070 XT") -> HardwareDetection
     )
 
 
+def _effective_model(provider: str, model: str, _task: str) -> str:
+    """Resolve a model the way the provider service does when nothing is left to fill in."""
+    return model or f"{provider}-default"
+
+
 def _choices(
     *,
     reading_model: str = "glm-ocr:q8_0",
@@ -230,6 +235,7 @@ def _service(
     store = SpeedStore(tmp_path / "measurements.json")
     client = _FakeClient(facts if facts is not None else ServerFacts())
     service = SpeedEstimateService(
+        effective_model=_effective_model,
         store=store,
         samples=samples if samples is not None else SampleStore(tmp_path / "samples.json"),
         client_factory=lambda _url, _cancel: client,
@@ -471,6 +477,7 @@ def test_a_stopped_test_stores_nothing(tmp_path: Path) -> None:
 
     store = SpeedStore(tmp_path / "measurements.json")
     service = SpeedEstimateService(
+        effective_model=_effective_model,
         store=store,
         client_factory=lambda _url, _cancel: _FakeClient(ServerFacts()),
         probe_factory=lambda *_a, **_k: cast(PerformanceProbe, _StoppingProbe()),
@@ -497,6 +504,7 @@ def test_the_client_of_the_test_gets_the_stop_event(tmp_path: Path) -> None:
         return _FakeClient(ServerFacts())
 
     service = SpeedEstimateService(
+        effective_model=_effective_model,
         store=SpeedStore(tmp_path / "measurements.json"),
         samples=SampleStore(tmp_path / "samples.json"),
         client_factory=client_factory,
@@ -1330,6 +1338,7 @@ def test_the_probe_is_told_whether_a_card_was_found(tmp_path: Path) -> None:
 
     store = SpeedStore(tmp_path / "measurements.json")
     service = SpeedEstimateService(
+        effective_model=_effective_model,
         store=store,
         client_factory=lambda _url, _cancel: _FakeClient(ServerFacts()),
         probe_factory=factory,

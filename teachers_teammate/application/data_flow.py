@@ -210,6 +210,51 @@ def text_goes_online(
     return False
 
 
+class DataFlowService:
+    """Where each step of a run takes place, for the settings this process was built with.
+
+    The rules are the functions of this module; this holds the facts only the process can
+    answer (the providers' metadata and the spaCy models name removal would load), so the GUI
+    and the CLI ask one object and decide nothing themselves.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider_info: ProviderInfo,
+        provider_region: ProviderRegion | None = None,
+        anonymizer_models: Callable[[Config], Sequence[str]] = lambda _config: (),
+    ) -> None:
+        self._provider_info = provider_info
+        self._provider_region = provider_region
+        self._anonymizer_models = anonymizer_models
+
+    def describe_data_flow(self, config: Config) -> DataFlow:
+        """Return where each enabled step of *config* runs (this computer, another, online)."""
+        return describe_data_flow(
+            config,
+            self._provider_info,
+            self._provider_region,
+            self._anonymizer_models(config),
+        )
+
+    def describe_steps(self, config: Config) -> DataFlow:
+        """Return where every step would run if it were ticked, whatever *config* ticks.
+
+        The main window shows the model and place of each step even while it is unticked, so
+        the teacher sees what ticking it would use.  Asking here keeps the GUI from deciding
+        a place itself.
+        """
+        return self.describe_data_flow(
+            replace(
+                config,
+                recognition_enabled=True,
+                correction_enabled=True,
+                evaluation_enabled=True,
+            )
+        )
+
+
 def describe_data_flow(
     config: Config,
     provider_info: ProviderInfo,

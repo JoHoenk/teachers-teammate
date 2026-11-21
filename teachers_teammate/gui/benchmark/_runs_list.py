@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.formatting import TextFormatter
-from ...infrastructure.benchmark.run_store import StoredRun
+from ...domain.benchmark import StoredRunView
 
 _RUN_ID_ROLE = Qt.ItemDataRole.UserRole
 
@@ -31,7 +32,7 @@ def _short_time(timestamp: str) -> str:
 class RunsList(QWidget):
     """Displays stored runs and emits the user's A/B selection and delete intents.
 
-    Holds no business logic: it renders :class:`StoredRun` rows and emits the
+    Holds no business logic: it renders :class:`StoredRunView` rows and emits the
     selected ``run_id`` values; the window resolves them via the service.
     """
 
@@ -41,7 +42,7 @@ class RunsList(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._runs: list[StoredRun] = []
+        self._runs: list[StoredRunView] = []
         self._word_counts: dict[str, int] = {}
         self._a_id = ""
         self._b_id = ""
@@ -69,9 +70,9 @@ class RunsList(QWidget):
         self._clear_btn.clicked.connect(self.clear_all_requested.emit)
         layout.addWidget(self._clear_btn)
 
-    def set_runs(self, runs: list[StoredRun]) -> None:
+    def set_runs(self, runs: Sequence[StoredRunView]) -> None:
         """Populate the list; drop A/B selections that no longer exist."""
-        self._runs = runs
+        self._runs = list(runs)
         # Markup is not text: count the words a reader sees, once per run.
         self._word_counts = {
             run.run_id: len(TextFormatter.plain_text(run.raw_text, run.raw_text_format).split())

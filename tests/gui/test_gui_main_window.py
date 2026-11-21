@@ -1077,7 +1077,7 @@ def test_a_stored_edit_reads_the_document_state_once(main_window, monkeypatch, s
 
     monkeypatch.setattr(main_window._app_service.documents, "load_view", _counting)
 
-    main_window._on_correction_text_edited("corr edited")
+    main_window._check_controller.on_corrected_text_edited("corr edited")
 
     assert calls == ["load_view"]
 
@@ -1094,7 +1094,7 @@ def test_main_window_ocr_edit_is_stored_as_the_teachers_work(main_window, stored
     main_window._results_table.selectRow(0)
     main_window._check_controller.open_document(source_id)
 
-    main_window._on_ocr_text_edited("raw edited")
+    main_window._check_controller.on_raw_text_edited("raw edited")
 
     cfg = main_window._config_panel.to_config()
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
@@ -1128,7 +1128,7 @@ def test_main_window_correction_edit_is_stored_as_the_teachers_work(
     main_window._results_table.selectRow(0)
     main_window._check_controller.open_document(source_id)
 
-    main_window._on_correction_text_edited("corr edited")
+    main_window._check_controller.on_corrected_text_edited("corr edited")
 
     cfg = main_window._config_panel.to_config()
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
@@ -1165,7 +1165,7 @@ def test_main_window_correction_edit_keeps_the_stored_warning_banner(
     assert state is not None
     repo.save(source, dataclasses.replace(state, correction_warning="No explanations."))
 
-    main_window._on_correction_text_edited("corr edited")
+    main_window._check_controller.on_corrected_text_edited("corr edited")
 
     assert main_window._check_controller.page.body.banner.text == txt.READING_FIX_WARNING
     main_window._check_controller.page.body.banner.action_clicked.emit()
@@ -2580,7 +2580,7 @@ def test_an_edit_goes_to_the_open_document_not_to_the_selected_row(
     main_window._check_controller.open_document(str(source_a))
     main_window._results_table.selectRow(1)
 
-    main_window._on_ocr_text_edited("raw edited")
+    main_window._check_controller.on_raw_text_edited("raw edited")
 
     work_a = TeacherWorkStore().load(compute_file_hash(source_a))
     work_b = TeacherWorkStore().load(compute_file_hash(source_b))
@@ -6669,9 +6669,9 @@ def test_an_edit_that_cannot_be_stored_says_so(main_window, monkeypatch, stored,
     monkeypatch.setattr(TeacherWorkStore, "update", refuse)
 
     if kind == "raw":
-        main_window._on_ocr_text_edited("raw edited")
+        main_window._check_controller.on_raw_text_edited("raw edited")
     else:
-        main_window._on_correction_text_edited("corr edited")
+        main_window._check_controller.on_corrected_text_edited("corr edited")
 
     assert len(shown) == 1
     assert shown[0].title == "Not saved"

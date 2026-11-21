@@ -1,9 +1,10 @@
-"""The Check tab: one document, what the run does with it, and the two tab labels.
+"""The Check tab: one document, what the run does with it, and what the teacher does to it.
 
 The window lays the tab out; this controller owns the document the tab shows — which one it
-is, whether the run locks it, what the strip above the text says, and what the two tabs are
-called.  What it needs of the window (open Settings, run a stage) comes in through
-:class:`CheckHooks`, looked up when it is asked, so the controller never reaches into it.
+is, whether the run locks it, what the strip above the text says, what the two tabs are
+called, and what a typed edit or the *Checked* mark does to the store.  What it needs of the
+window (open Settings, run a stage) comes in through :class:`CheckHooks`, looked up when it is
+asked, so the controller never reaches into it.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QTabWidget, QWidget
 
 from ..application.check_document import CheckDocument
+from ..application.commands import WorkNotSavedError
 from ..application.composition import AppServices
 from ..config import Config
 from ..domain.data_location import STAGE_CORRECTION
@@ -35,6 +37,10 @@ from .settings._page import FOCUS_OCR, FOCUS_PROOFREADING
 
 #: How much of a document's name the Check tab label shows before it is shortened.
 TAB_NAME_CHARS = 28
+
+#: Which part of the teacher's work a typed edit writes.
+_RAW = "raw"
+_CORRECTED = "corrected"
 
 
 @dataclass(frozen=True)
@@ -115,6 +121,10 @@ class CheckController(QObject):
         self._page.read_settings_requested.connect(
             lambda: self._hooks.open_settings(SettingsPage.AI_MODELS, FOCUS_OCR)
         )
+        self._page.raw_text_edited.connect(self.on_raw_text_edited)
+        self._page.corrected_text_edited.connect(self.on_corrected_text_edited)
+        self._page.checked_toggled.connect(self.on_checked_toggled)
+        self._page.item_shown.connect(self.on_item_shown)
         # Ctrl+1 / Ctrl+2 reach the tabs from anywhere in the window; Esc is the page's.
         QShortcut(QKeySequence("Ctrl+1"), self._window, self.show_documents)
         QShortcut(QKeySequence("Ctrl+2"), self._window, self.show_check)
@@ -341,6 +351,123 @@ class CheckController(QObject):
         """The full name of the open document above the shortcut, so a short label stays clear."""
         name = self._open_name()
         return f"{name}\nCheck (Ctrl+2)" if name else "Check (Ctrl+2)"
+
+    # ── What the teacher types and marks ─────────────────────────────────
+
+    def on_item_shown(self, key: str) -> None:
+        """An item became the one the card shows: record that the teacher looked at it.
+
+        Stored at once, a few KB, and never undone.  Looking at an item is not work a run has to
+        keep, so it does not make the proofreading one to keep.
+        """
+        if not self._open or not self._page.mark_looked_at(key):
+            return
+        self._services.commands.mark_looked_at(
+            self._config(), source=Path(self._open), keys=[key]
+        )
+
+    def on_checked_toggled(self, checked: bool) -> None:
+        """The teacher pressed *Checked*: store the decision and show what the store says.
+
+        The toggle marks what the document has now — the corrections with a proofreading, the
+        transcription without one — and is its own undo.  It does not move to the next document;
+        ▶ does.  A typed edit is stored first, so the mark names the text the teacher sees.
+        """
+        if not self._open:
+            return
+        self._page.flush_pending_edit()
+        source = Path(self._open)
+        try:
+            config = self._panel.to_config()
+        except ValueError:
+            # Without folders there is no store to write to: the button goes back to what the
+            # document says, not to what was pressed.
+            _dialogs.notify(self._window, dlg.checked_not_saved())
+            self._page.refresh_checked()
+            return
+        try:
+            view = self._services.commands.set_checked(config, source=source, checked=checked)
+        except WorkNotSavedError as exc:
+            _dialogs.notify(self._window, dlg.work_not_saved(exc.name, too_new=exc.too_new))
+            self._page.refresh_checked()
+            return
+        if view is None:
+            _dialogs.notify(self._window, dlg.checked_not_saved())
+            # The button goes back to what the store says, not to what was pressed.
+            self.load(self._open)
+            return
+        doc = self._services.documents.check_document(config, source)
+        self._hooks.sync_row(self._open)
+        if doc is not None:
+            self._page.update_document(doc)
+        self.update_tab()
+
+    def on_raw_text_edited(self, edited_text: str) -> None:
+        """The transcription was typed into: store it and show what the store now says."""
+        self._store_edit(_RAW, edited_text)
+
+    def on_corrected_text_edited(self, edited_text: str) -> None:
+        """The final text was typed into: store it and show what the store now says."""
+        self._store_edit(_CORRECTED, edited_text)
+
+    def _store_edit(self, kind: str, edited_text: str) -> None:
+        """Store one typed edit of the open document, then show the document it left behind.
+
+        One handler for both texts: they differ only in which part of the teacher's work the
+        store writes, and everything after it — the row, the page, the tab label — is the same.
+        """
+        selected = self._edit_target()
+        if selected is None:
+            return
+        source, has_text = selected
+        if kind == _CORRECTED and not has_text:
+            return
+        try:
+            config = self._panel.to_config()
+        except ValueError:
+            return
+        source_id = str(source.resolve())
+        text_format = self._table.text_format_for_source(source_id)
+        try:
+            if kind == _RAW:
+                view = self._services.commands.edit_transcription(
+                    config, source=source, text=edited_text, text_format=text_format
+                )
+            else:
+                view = self._services.commands.edit_corrected_text(
+                    config, source=source, text=edited_text
+                )
+        except WorkNotSavedError as exc:
+            # What was typed stays in the text view, so the teacher can still copy it.
+            _dialogs.notify(self._window, dlg.work_not_saved(exc.name, too_new=exc.too_new))
+            return
+        if view is None:
+            return
+        # One read of the stored state serves the row and the page.
+        doc = self._services.documents.check_document(config, source)
+        self._hooks.sync_row(source_id)
+        if doc is None:
+            return
+        if kind == _RAW:
+            # The proofreading went with the transcription: the page falls back to it.
+            self._page.show_document(doc, *self.position(source_id), typed=True)
+            self.show_copy_state(doc.raw_text, doc.corrected_text)
+        else:
+            self._page.update_document(doc)
+        self.update_tab()
+
+    def _edit_target(self) -> tuple[Path, bool] | None:
+        """Resolve the open document to its input path and whether it has a transcription.
+
+        An edit belongs to the document the Check tab shows, not to the selected row: the
+        selection is how a run picks its documents, and the two may differ.
+        """
+        if not self._open:
+            return None
+        source = Path(self._open)
+        if not source.exists():
+            return None
+        return source, self._table.has_text(self._open)
 
     # ── The Copy menu of the open document ───────────────────────────────
 

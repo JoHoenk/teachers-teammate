@@ -38,7 +38,6 @@ from PySide6.QtWidgets import (
 import qdarkstyle
 
 from .. import __version__ as _APP_VERSION
-from ..application.commands import WorkNotSavedError
 from ..application.composition import (
     AppServices,
     diagnostics_phase,
@@ -161,8 +160,6 @@ def _app_icon() -> QIcon | None:
 
 
 #: The two texts the Check tab lets the teacher type in, as the store names them.
-_EDIT_RAW = "raw"
-_EDIT_CORRECTED = "corrected"
 
 #: Whose computer a found server is on, as the readiness line says it.
 _SERVER_PLACES = {
@@ -496,14 +493,10 @@ class MainWindow(QMainWindow):
         return self._tabs
 
     def _connect_check_page(self) -> None:
-        """Wire what the window still answers itself: the edits, the marks and the privacy view."""
+        """Wire what the window still answers itself: Copy, Save and the privacy view."""
         page = self._check_controller.page
         page.copy_requested.connect(self._on_check_copy)
         page.save_requested.connect(self._on_check_save)
-        page.raw_text_edited.connect(self._on_ocr_text_edited)
-        page.corrected_text_edited.connect(self._on_correction_text_edited)
-        page.checked_toggled.connect(self._on_checked_toggled)
-        page.item_shown.connect(self._on_item_shown)
         page.display_anonymized_changed.connect(self._apply_display_anonymized)
         page.anonymization_needed.connect(self._on_anonymization_needed)
         page.text_zoom_changed.connect(self._store_text_zoom)
@@ -1464,58 +1457,6 @@ class MainWindow(QMainWindow):
         set_check_split(self._settings_store, layout.split)
         set_check_card_split(self._settings_store, layout.card_split)
 
-    def _on_item_shown(self, key: str) -> None:
-        """An item became the one the card shows: record that the teacher looked at it.
-
-        Stored at once, a few KB, and never undone.  Looking at an item is not work a run has to
-        keep, so it does not make the proofreading one to keep.
-        """
-        source_id = self._check_controller.current
-        if not source_id or not self._check_controller.page.mark_looked_at(key):
-            return
-        try:
-            config = self._config_panel.to_config()
-        except ValueError:
-            config = self._config_panel.lookup_config()
-        self._app_service.commands.mark_looked_at(config, source=Path(source_id), keys=[key])
-
-    def _on_checked_toggled(self, checked: bool) -> None:
-        """The teacher pressed *Checked*: store the decision and show what the store says.
-
-        The toggle marks what the document has now — the corrections with a proofreading, the
-        transcription without one — and is its own undo.  It does not move to the next document;
-        ▶ does.  A typed edit is stored first, so the mark names the text the teacher sees.
-        """
-        source_id = self._check_controller.current
-        if not source_id:
-            return
-        self._check_controller.page.flush_pending_edit()
-        source = Path(source_id)
-        try:
-            config = self._config_panel.to_config()
-        except ValueError:
-            # Without folders there is no store to write to: the button goes back to what the
-            # document says, not to what was pressed.
-            _dialogs.notify(self, dlg.checked_not_saved())
-            self._check_controller.page.refresh_checked()
-            return
-        try:
-            view = self._app_service.commands.set_checked(config, source=source, checked=checked)
-        except WorkNotSavedError as exc:
-            _dialogs.notify(self, dlg.work_not_saved(exc.name, too_new=exc.too_new))
-            self._check_controller.page.refresh_checked()
-            return
-        if view is None:
-            _dialogs.notify(self, dlg.checked_not_saved())
-            # The button goes back to what the store says, not to what was pressed.
-            self._check_controller.load(source_id)
-            return
-        doc = self._app_service.documents.check_document(config, source)
-        self._sync_row(source_id)
-        if doc is not None:
-            self._check_controller.page.update_document(doc)
-        self._check_controller.update_tab()
-
     def _on_check_copy(self, kind: CopyKind) -> None:
         """Put the open document's text on the clipboard, as the Copy menu asked."""
         source_id = self._check_controller.current
@@ -1592,76 +1533,6 @@ class MainWindow(QMainWindow):
                 self._refresh_queue_from_inputs()
 
         self._cache_state_task.submit(detect, done)
-
-    def _open_source_for_edit(self) -> tuple[Path, bool] | None:
-        """Resolve the open document to its input path and whether it has a transcription.
-
-        An edit belongs to the document the Check tab shows, not to the selected row: the
-        selection is how a run picks its documents, and the two may differ.
-        """
-        source_id = self._check_controller.current
-        if not source_id:
-            return None
-        source = Path(source_id)
-        if not source.exists():
-            return None
-        return source, self._results_table.has_text(source_id)
-
-    def _on_ocr_text_edited(self, edited_text: str) -> None:
-        """The transcription was typed into: store it and show what the store now says."""
-        self._store_edit(_EDIT_RAW, edited_text)
-
-    def _on_correction_text_edited(self, edited_text: str) -> None:
-        """The final text was typed into: store it and show what the store now says."""
-        self._store_edit(_EDIT_CORRECTED, edited_text)
-
-    def _store_edit(self, kind: str, edited_text: str) -> None:
-        """Store one typed edit of the open document, then show the document it left behind.
-
-        One handler for both texts: they differ only in which part of the teacher's work the
-        store writes, and everything after it — the row, the page, the tab label — is the same.
-        """
-        selected = self._open_source_for_edit()
-        if selected is None:
-            return
-        source, has_text = selected
-        if kind == _EDIT_CORRECTED and not has_text:
-            return
-        try:
-            config = self._config_panel.to_config()
-        except ValueError:
-            return
-        source_id = str(source.resolve())
-        text_format = self._results_table.text_format_for_source(source_id)
-        try:
-            if kind == _EDIT_RAW:
-                view = self._app_service.commands.edit_transcription(
-                    config, source=source, text=edited_text, text_format=text_format
-                )
-            else:
-                view = self._app_service.commands.edit_corrected_text(
-                    config, source=source, text=edited_text
-                )
-        except WorkNotSavedError as exc:
-            # What was typed stays in the text view, so the teacher can still copy it.
-            _dialogs.notify(self, dlg.work_not_saved(exc.name, too_new=exc.too_new))
-            return
-        if view is None:
-            return
-        # One read of the stored state serves the row and the page.
-        doc = self._app_service.documents.check_document(config, source)
-        self._sync_row(source_id)
-        if doc is None:
-            return
-        if kind == _EDIT_RAW:
-            # The proofreading went with the transcription: the page falls back to it.
-            self._check_controller.page.show_document(
-                doc, *self._check_controller.position(source_id), typed=True
-            )
-            self._check_controller.show_copy_state(doc.raw_text, doc.corrected_text)
-        else:
-            self._check_controller.page.update_document(doc)
-        self._check_controller.update_tab()
 
     def _on_what_is_sent_requested(self, source_id: str) -> None:
         """Open "What is sent for this file…" for one row of the results table."""

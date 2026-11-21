@@ -79,8 +79,9 @@ or `docs/development.md`.
 **Where code goes**
 - GUI and CLI contain no discovery or availability logic: implement it in the service that
   owns the topic (`application/run.py`, `providers.py`, …), call it from the GUI.
-- A sentence a teacher reads is defined in `teachers_teammate/texts/` and used by reference,
-  never a literal at the call site. Message boxes and file pickers go through
+- A sentence a teacher reads is defined in `teachers_teammate/texts/` (or, when it is built from
+  application data, in the Qt-free `gui/_user_text.py` / `gui/_model_wording.py`) and used by
+  reference, never a literal at the call site. Message boxes and file pickers go through
   `gui/_dialogs.py`. `tests/unit/test_user_text_centralised.py` enforces it.
 - A service is built once per entry point (`application/composition.py`, called from the
   composition modules); every other class is given the one it uses, never builds or looks one up
@@ -148,6 +149,19 @@ that area. A new LLM provider is a new file in `infrastructure/providers/` and n
 - **Run linters through Bazel only** (`bazel test //:lint`, `bazel run //:format.fix`). A
   `ruff` or `ty` in a local `.venv` can be a different version and give different results.
 - GUI code: test widgets and threads with pytest-qt.
+
+## Writing: docs and comments
+
+- Say it once, short and plain. Describe the current state only: no history ("was", "now",
+  "previously", "no longer", "since"), no upgrade notes, no stories, no dated measurements or
+  status. History is in git; plans and open items go in the git-ignored working-notes folder.
+- A rule or a number lives in one place, preferably the code. A doc points to it and does not copy
+  it; a copied figure goes stale.
+- Each document keeps to its reader: `README.md` and `docs/index.md`, `using_the_app.md`,
+  `advanced_user_guide.md` are for teachers (what they see, in their words); everything else is for
+  developers.
+- Code comments and docstrings only where the code is not obvious, one or two lines, and never
+  history. A field's docstring says what it means, not how it came about.
 
 ## Testing conventions
 

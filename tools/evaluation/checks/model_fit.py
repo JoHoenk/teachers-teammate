@@ -137,16 +137,30 @@ class RamReading:
 
 @dataclass(frozen=True)
 class FitRecord:
-    """One measurement: one model, one window, one machine and one device."""
+    """One measurement: one model, one window, one machine and one device.
+
+    Raw bytes only; reports divide by 10⁹, the catalog's unit.  Nothing derived is stored, so a
+    change of rule costs no new measurement.
+    """
 
     measured_at: str
+    """When the request ran, UTC."""
+
     machine: str
     """The id of the machine, from the store's ``machines/``."""
+
     ollama_version: str
+    """The server's version; another version is another backend."""
+
     tool_commit: str
+    """The commit that made the record."""
+
     tag: str
     digest: str
+    """The build of the model; a tag pushed again has a new one."""
+
     num_ctx: int
+    """The window the request asked for."""
     answer_tokens: int
     """How many tokens the request's answer had (Ollama's ``eval_count``)."""
 
@@ -154,12 +168,18 @@ class FitRecord:
     """How long the model took to write them (Ollama's ``eval_duration``), load excluded."""
 
     options: dict[str, Any] = field(default_factory=dict)
+    """The options of the app's own proofreading request."""
+
     load_seconds: float = 0.0
+    """What a reload costs."""
+
     ollama: OllamaReading | None = None
     card: CardReading | None = None
     ram: RamReading | None = None
+    """``card`` and ``ram`` are ``None`` without the memory agent."""
+
     device: str = "gpu"
-    """``gpu`` or ``cpu``: which of the machine's devices the request ran on."""
+    """``gpu`` or ``cpu``; the two are never pooled."""
     format: int = FORMAT
 
     def to_json(self) -> dict[str, Any]:

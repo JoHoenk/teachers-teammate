@@ -5,7 +5,8 @@ clone to a passing check run. The detailed developer documentation lives in `doc
 
 | Guide | Contents |
 |---|---|
-| [docs/development.md](docs/development.md) | Architecture, model catalog (choosing writing models: size measurements, gate 1, gate 2, test sets), storage/caching, GUI structure (Settings, Check tab, Setup Assistant), error handling, downloads |
+| [docs/development.md](docs/development.md) | Architecture, model catalog and the evaluation tools, storage/caching, GUI structure (Settings, Check tab, Setup Assistant), error handling, downloads |
+| [evaluations/README.md](evaluations/README.md) | How the model recommendations are made: the gates, test sets, metrics, comparison |
 | [docs/testing.md](docs/testing.md) | Test stack, markers, coverage, Given-When-Then convention |
 | [docs/deployment.md](docs/deployment.md) | CI pipeline, building wheels/binaries/installers, license report |
 

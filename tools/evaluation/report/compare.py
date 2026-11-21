@@ -33,8 +33,18 @@ _DERIVED_BY: dict[str, frozenset[str]] = {
 """The axes that decide a derived axis: it may vary only when one of them varies too."""
 
 
+VERDICT_WORDS: dict[stats.Verdict, str] = {
+    stats.Verdict.BETTER: "better than the baseline",
+    stats.Verdict.TIE: "a tie with the baseline",
+    stats.Verdict.WORSE: "worse than the baseline",
+}
+"""A verdict as the phrase a verdict line ends in."""
+
+
 def axes_of(text: str) -> tuple[str, ...]:
     """Return the axis names of an ``--along`` value such as ``"temperature,steps"``.
+
+    ``machine`` and ``isolated`` count as axes: runs that differ only there are separate groups.
 
     Raises:
         ValueError: if a name is not an axis of :mod:`..core.axes`, naming the ones that are.
@@ -42,12 +52,13 @@ def axes_of(text: str) -> tuple[str, ...]:
     names = tuple(part.strip() for part in text.split(",") if part.strip())
     if not names:
         raise ValueError("--along needs at least one axis")
+    environment = sorted(groups.ENVIRONMENT_AXES)
     for name in names:
-        if name in AXIS_NAMES:
+        if name in AXIS_NAMES or name in groups.ENVIRONMENT_AXES:
             continue
         if name.startswith(SAMPLING_PREFIX) and len(name) > len(SAMPLING_PREFIX):
             continue
-        allowed = ", ".join(AXIS_NAMES)
+        allowed = ", ".join([*AXIS_NAMES, *environment])
         raise ValueError(f"unknown axis {name!r}; use one of: {allowed}, or sampling.<option>")
     return names
 
@@ -130,7 +141,7 @@ class Comparison:
             if verdict is None:
                 lines.append(f"- {name}: no difference could be measured")
                 continue
-            lines.append(f"- {name}: {verdict.value} than the baseline ({_delta(row.delta)})")
+            lines.append(f"- {name}: {VERDICT_WORDS[verdict]} ({_delta(row.delta)})")
         return lines
 
     def _name(self, row: sweep.SweepRow) -> str:
@@ -180,7 +191,8 @@ def select(
         if len(found) > 1:
             raise ValueError(
                 f"{', '.join(value)} names {len(found)} runs that differ in "
-                f"{_differing(found[0].key, found[1].key)}; name that axis in --along"
+                f"{_differing(found[0].key, found[1].key)}; name it in --along, or fix it with "
+                "--where <axis>=<value>"
             )
     return [by_value[value][0] for value in sorted(by_value, key=_sort_key)]
 
@@ -388,6 +400,7 @@ def _sweep_indexes(along: Along) -> list[int]:
 
 
 __all__ = [
+    "VERDICT_WORDS",
     "Along",
     "Comparison",
     "axes_of",

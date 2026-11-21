@@ -34,6 +34,8 @@ class Machine:
     """One machine of the registry: what it is, and what it was measured on."""
 
     id: str
+    """The file name, and every record's ``machine``."""
+
     gpu_vendor: str
     gpu_name: str
     vram_mb: int
@@ -41,7 +43,10 @@ class Machine:
     ram_gib: int
     os: str
     accelerator_stack: str
+    """The driver stack; Ollama cannot report it, and two backends differ by it."""
+
     notes: str = ""
+    """What a reader needs to compare two machines."""
     aliases: tuple[str, ...] = ()
     """The labels the records used before the registry.  Documentation, not ids: a command line
     that names one is refused like any other unknown machine."""

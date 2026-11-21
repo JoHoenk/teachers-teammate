@@ -1,6 +1,6 @@
 # Code signing policy
 
-Teacher's Teammate is a free, open-source program for teachers. Its Windows installers are
+Teacher's Teammate is a free, open-source program for teachers. Its Windows files are to be
 signed with a certificate that a non-profit signing service issues to open-source projects, so
 that Windows can tell a genuine download from a tampered one. This page says what is signed,
 where the files come from, who may ask for a signature, and what the app does with your data.
@@ -15,8 +15,8 @@ where the files come from, who may ask for a signature, and what the app does wi
 | `teachers-teammate-<version>-macos.dmg` | macOS | no — not signed or notarized |
 | `teachers-teammate_<version>_amd64.deb`, `teachers-teammate-<version>-linux-x86_64.tar.xz` | Linux | no — see below |
 
-**Windows — signing: not yet applied for.** The certificate is requested from a signing service
-for open-source projects; until it is granted, Windows shows the "Windows protected your PC"
+**Windows — not signed yet.** The certificate for open-source projects has not been applied for;
+until it is granted, Windows shows the "Windows protected your PC"
 message and you click **More info → Run anyway**. The three files above are the only ones that
 will carry a signature. Nothing inside the app folder (`_internal/`) is signed: those are
 libraries from other projects (Python, Qt, OpenCV), each published by its own authors.

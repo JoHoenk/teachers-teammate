@@ -39,7 +39,7 @@ from tools.evaluation.core.records import (
 )
 from tools.evaluation.metrics.offsets import token_offsets
 from tools.evaluation.metrics.quality import ordered_edits
-from tools.evaluation.report import compare, groups, load
+from tools.evaluation.report import compare, groups, load, stats
 from tools.evaluation.report.tables import by_error, false_alarms, passes, performance, sweep
 from tools.evaluation.store import layout, writer
 
@@ -912,6 +912,16 @@ def test_an_unknown_axis_is_refused():
         compare.axes_of("warmth")
 
 
+def test_the_environment_is_an_axis_a_command_can_name():
+    """
+    Given  an ``--along`` value naming the machine and whether the card was isolated
+    When   it is parsed
+    Then   both names come back, because runs that differ only there are groups to be told apart
+    """
+    assert compare.axes_of("machine,isolated") == ("machine", "isolated")
+    assert compare.where_of(["isolated=true"]) == {"isolated": "true"}
+
+
 def test_an_empty_along_value_is_refused():
     """
     Given  an ``--along`` value with no axis in it
@@ -944,6 +954,42 @@ def test_a_comparison_along_temperature_has_one_row_per_temperature(store):
 
     assert [found.values(row) for row in found.rows] == [("0",), ("0.7",)]
     assert found.baseline is found.rows[0]
+
+
+def test_two_runs_that_differ_only_in_isolation_are_told_apart_by_naming_it(tmp_path):
+    """
+    Given  two runs of one model and temperature, one with the card isolated and one without
+    When   they are compared without naming the isolation, and then along it
+    Then   the first is refused with a hint that works, and the second has one row per value
+    """
+    records = _records()
+    run = _run(records)
+    shared = replace(run.header, environment=replace(run.header.environment, isolated=False))
+    alone = replace(run.header, environment=replace(run.header.environment, isolated=True))
+    root = _store(
+        tmp_path / "isolation",
+        records,
+        replace(run, header=shared),
+        replace(run, header=alone),
+    )
+
+    with pytest.raises(ValueError, match="--where <axis>=<value>"):
+        compare.compare(_groups(root), along=compare.Along(axes=("model",), where={}))
+    found = compare.compare(_groups(root), along=compare.Along(axes=("isolated",), where={}))
+
+    assert [found.values(row) for row in found.rows] == [("false",), ("true",)]
+
+
+def test_a_tie_is_worded_as_a_tie_with_the_baseline(store):
+    """
+    Given  a comparison whose verdicts name each of the three outcomes
+    When   the wording is looked up
+    Then   a tie reads "a tie with the baseline" and not "tie than the baseline"
+    """
+    assert compare.VERDICT_WORDS[stats.Verdict.TIE] == "a tie with the baseline"
+    assert compare.VERDICT_WORDS[stats.Verdict.BETTER] == "better than the baseline"
+    assert compare.VERDICT_WORDS[stats.Verdict.WORSE] == "worse than the baseline"
+    assert set(compare.VERDICT_WORDS) == set(stats.Verdict)
 
 
 def test_a_comparison_refuses_two_runs_that_differ_in_an_unnamed_axis(store):
@@ -1168,7 +1214,7 @@ def test_the_comparison_names_the_baseline_and_the_verdicts(store):
     verdicts = compare.compare(_groups(store), along=along).verdicts()
 
     assert verdicts[0].endswith(": the baseline")
-    assert "than the baseline" in verdicts[1]
+    assert "the baseline (" in verdicts[1]
 
 
 def test_a_sampling_option_is_an_axis_of_its_own(store):

@@ -518,7 +518,8 @@ def _compare_command(sub) -> None:
     compared.add_argument(
         "--along",
         default="model",
-        help="the axes that vary, comma-separated (default: %(default)s): " + ", ".join(AXIS_NAMES),
+        help="the axes that vary, comma-separated (default: %(default)s): "
+        + ", ".join([*AXIS_NAMES, *sorted(groups.ENVIRONMENT_AXES)]),
     )
     compared.add_argument(
         "--where",

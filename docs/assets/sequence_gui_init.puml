@@ -14,7 +14,7 @@ participant "MainWindow"        as WIN
 participant "AppService"        as SVC
 participant "ConfigPanel"       as CPANEL
 participant "ResultsTable"      as TABLE
-participant "LogWidget\nPreviewPanel" as PANE
+participant "LogWidget\nCheckPage" as PANE
 participant "QTimer (500 ms)"   as TIMER
 
 OS -> MAIN             : python -m teachers_teammate.gui
@@ -36,24 +36,24 @@ WIN -> TABLE           : ResultsTable()
 activate TABLE
 TABLE --> WIN          :
 deactivate TABLE
-WIN -> PANE            : LogWidget(), PreviewPanel()
+WIN -> PANE            : LogWidget(), CheckPage()
 activate PANE
 PANE --> WIN           :
 deactivate PANE
 WIN -> WIN             : OllamaDownloadManager()\nnote right: manages background\nmodel-pull thread; outlives dialogs
 WIN -> WIN             : connect signals\n(paths_changed → _refresh_queue_from_inputs)
-WIN -> TIMER           : singleShot(500 ms, _check_llm_status)
+WIN -> TIMER           : singleShot(500 ms, _start_readiness_check)
 WIN -> WIN             : _load_toml_if_present()
 note right WIN         : loads ocr.toml if present\nupdates ConfigPanel
 
 MAIN -> QAPP           : app.exec()   [event loop starts]
 QAPP -> WIN            : show()
 
-TIMER -> WIN           : fire _check_llm_status()
-WIN -> SVC             : check_connection(engine=…, url=…)
+TIMER -> WIN           : fire _start_readiness_check()
+WIN -> SVC             : check_run_preflight(config, memory=False)\n[background LatestTask]
 activate SVC
-SVC --> WIN            : (connected, model_ok, message)
+SVC --> WIN            : RunPreflight (blocker or ready)
 deactivate SVC
-WIN -> WIN             : update status label(s)
+WIN -> WIN             : update the readiness line
 
 @enduml

@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 LEVELS: tuple[str, ...] = ("A1", "A2", "B1", "B2", "C1", "C2")
 """CEFR levels accepted by ``Config.correction_level`` (language-neutral)."""
 
 DEFAULT_LEVEL = "B2"
 
-OUTPUT_MODES: tuple[str, ...] = ("review", "text")
-"""``review`` = structured answer with explanations; ``text`` = corrections only."""
 
-DEFAULT_OUTPUT_MODE = "review"
+class CorrectionOutput(StrEnum):
+    """What the proofreading answer carries."""
+
+    REVIEW = "review"
+    """Corrections with explanations and the unclear list."""
+
+    TEXT = "text"
+    """Corrections only."""
+
+
+OUTPUT_MODES: tuple[CorrectionOutput, ...] = tuple(CorrectionOutput)
+
+DEFAULT_OUTPUT_MODE = CorrectionOutput.REVIEW
 
 
 def normalize_level(level: str) -> str:
@@ -19,14 +31,14 @@ def normalize_level(level: str) -> str:
     return cleaned if cleaned in LEVELS else DEFAULT_LEVEL
 
 
-def normalize_output_mode(mode: str) -> str:
+def normalize_output_mode(mode: str) -> CorrectionOutput:
     """Return *mode* when it is one of :data:`OUTPUT_MODES`, else :data:`DEFAULT_OUTPUT_MODE`.
 
     Every layer reads the setting through this function, so an unknown value (a typo in the
     config file) means the same everywhere: explanations on.
     """
     cleaned = str(mode).strip().lower()
-    return cleaned if cleaned in OUTPUT_MODES else DEFAULT_OUTPUT_MODE
+    return CorrectionOutput(cleaned) if cleaned in OUTPUT_MODES else DEFAULT_OUTPUT_MODE
 
 
 CUT_OFF_TRIES = 2

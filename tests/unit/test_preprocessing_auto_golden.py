@@ -23,6 +23,7 @@ import cv2
 import numpy as np
 import pytest
 
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.preprocessing.identity import AUTO_VERSION
@@ -58,7 +59,7 @@ def digest_of(image_path: Path, steps: list[str]) -> str:
 
 def prepare(source: Path, folder: Path) -> tuple[Path, list[str]]:
     """Prepare *source* the way a run does for the built-in reader without page models."""
-    ocr = OcrConfig(engine="ppocr", preprocess_method="auto")
+    ocr = OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.AUTO)
     pipeline = StepPipeline(steps_for(ocr, ModelStore(folder / "no_models")), tmp_dir=folder)
     return pipeline.preprocess(source)
 

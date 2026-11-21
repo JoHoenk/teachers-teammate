@@ -576,7 +576,7 @@ def set_update_check(value: str, folder: str = "") -> int:
             # The settings an earlier version left in the cache folder are moved first, so the
             # new file does not hide them.
             path = resolve_config_path(None) or default_config_path()
-        values = load_config_file(path) if path.is_file() else {}
+        values = load_config_file(path).values if path.is_file() else {}
         values["check_for_updates"] = value == "on"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(dump_config_file(values), encoding="utf-8")

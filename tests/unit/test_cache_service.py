@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import DEFAULTS, OcrConfig
 from teachers_teammate.infrastructure.input_provider_factory import (
     InputOptions,
@@ -369,7 +370,10 @@ def test_the_ollama_ocr_key_does_not_depend_on_the_reader_models(tmp_path: Path)
         tmp_path,
         language="German",
         ocr=OcrConfig(
-            engine="ollama", model="qwen3-vl:8b", preprocess_method="none", temperature=0.0
+            engine="ollama",
+            model="qwen3-vl:8b",
+            preprocess_method=PreprocessMethod.NONE,
+            temperature=0.0,
         ),
     )
 
@@ -433,7 +437,7 @@ def test_ocr_config_hash_changes_with_each_preprocessing_field(
 
     Without this, the cache (which has no expiry) returns stale OCR text after a change.
     """
-    base = OcrConfig(engine="ppocr", preprocess_method="auto")
+    base = OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.AUTO)
     svc_a, _, _ = _make_svc(tmp_path, ocr=base)
     svc_b, _, _ = _make_svc(tmp_path, ocr=mutate(base))
     assert svc_a._ocr_config_hash("p", _PDF) != svc_b._ocr_config_hash("p", _PDF)
@@ -448,7 +452,7 @@ def test_the_automatic_fingerprint_names_version_output_and_available_model_step
     Then   the entries are the method, the AUTO_VERSION, the output, the available model steps
            ("+turn", "+flatten"), the DPI and the text-layer entries
     """
-    ocr = OcrConfig(engine="ppocr", preprocess_method="auto", pdf_render_dpi=600)
+    ocr = OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.AUTO, pdf_render_dpi=600)
     empty = ModelStore(tmp_path / "empty")
     full = fake_page_models_store(tmp_path)
 
@@ -474,7 +478,9 @@ def test_downloading_the_page_models_changes_the_automatic_key_once(tmp_path: Pa
     Then   the two keys differ (pages are read again once), and a store with them gives the
            same key every time
     """
-    cfg = make_config(tmp_path, ocr=OcrConfig(engine="ollama", preprocess_method="auto"))
+    cfg = make_config(
+        tmp_path, ocr=OcrConfig(engine="ollama", preprocess_method=PreprocessMethod.AUTO)
+    )
     empty = ModelStore(tmp_path / "empty")
     full = fake_page_models_store(tmp_path)
 
@@ -491,7 +497,7 @@ def test_the_original_page_key_is_the_method_alone(tmp_path: Path) -> None:
     When   the fingerprint is computed without and with the page models
     Then   both are the method, the DPI and the text-layer entries: the models change nothing
     """
-    ocr = OcrConfig(engine="ppocr", preprocess_method="none")
+    ocr = OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.NONE)
 
     plain = _preprocess_fingerprint(ocr, _PDF, ModelStore(tmp_path / "empty"))
 
@@ -516,8 +522,8 @@ def test_preview_hash_changes_with_preprocessing_field(tmp_path: Path) -> None:
         repo.reconcile_runtime_config.return_value = state
         return svc.prepare(src).preview_config_hash
 
-    h_auto = _prepare(OcrConfig(engine="ppocr", preprocess_method="auto"))
-    h_none = _prepare(OcrConfig(engine="ppocr", preprocess_method="none"))
+    h_auto = _prepare(OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.AUTO))
+    h_none = _prepare(OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.NONE))
     assert h_auto != h_none
 
 

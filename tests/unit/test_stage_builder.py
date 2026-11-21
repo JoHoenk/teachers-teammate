@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.config import OcrConfig
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.exceptions import OnlineOcrNotAllowedError
@@ -21,9 +22,12 @@ from tests.conftest import make_config
 
 
 @pytest.mark.use_case("Batch_OCR_Processing")
-@pytest.mark.parametrize(("method", "first_step"), [("auto", "measure"), ("none", None)])
+@pytest.mark.parametrize(
+    ("method", "first_step"),
+    [(PreprocessMethod.AUTO, "measure"), (PreprocessMethod.NONE, None)],
+)
 def test_build_preprocessor_builds_the_steps_of_the_chosen_method(
-    tmp_path: Path, method: str, first_step: str | None
+    tmp_path: Path, method: PreprocessMethod, first_step: str | None
 ) -> None:
     """
     Given  a Config whose OcrConfig chooses the automatic preparation, or "Original page"

@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.application import service as service_module
 from teachers_teammate.config import Config
 from teachers_teammate.application.commands import ApplicationCommands, WorkNotSavedError
@@ -415,7 +416,7 @@ def test_preprocess_preview_uses_injected_component_factory(
         state_repository_factory=MagicMock(),
         component_factory=factory,
     )
-    ocr = OcrConfig(preprocess_method="auto")
+    ocr = OcrConfig(preprocess_method=PreprocessMethod.AUTO)
 
     _original, _processed, steps = svc.preprocess_preview(sample_png, ocr, tmp_path)
 
@@ -602,9 +603,11 @@ def test_page_models_notice_names_the_flag_only_when_the_automatic_preparation_l
         model_store=ModelStore(tmp_path / "models"),
     )
 
-    auto = make_config(tmp_path, ocr=OcrConfig(preprocess_method="auto"))
-    original = make_config(tmp_path, ocr=OcrConfig(preprocess_method="none"))
-    off = make_config(tmp_path, ocr=OcrConfig(preprocess_method="auto"), recognition_enabled=False)
+    auto = make_config(tmp_path, ocr=OcrConfig(preprocess_method=PreprocessMethod.AUTO))
+    original = make_config(tmp_path, ocr=OcrConfig(preprocess_method=PreprocessMethod.NONE))
+    off = make_config(
+        tmp_path, ocr=OcrConfig(preprocess_method=PreprocessMethod.AUTO), recognition_enabled=False
+    )
 
     assert "--download-page-models" in svc.page_models_notice_for_run(auto)
     assert svc.page_models_notice_for_run(original) == ""
@@ -620,7 +623,7 @@ def test_the_page_models_are_installed_when_the_store_has_them(tmp_path: Path) -
     """
     from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
-    config = make_config(tmp_path, ocr=OcrConfig(preprocess_method="auto"))
+    config = make_config(tmp_path, ocr=OcrConfig(preprocess_method=PreprocessMethod.AUTO))
 
     def service(store) -> ProcessingApplicationService:
         return ProcessingApplicationService(

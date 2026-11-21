@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from ..domain.correction_prompts import NOTES_LIMIT
+from ..domain.data_location import OCR_ENGINE_NAMES, RETIRED_ENGINE_NAMES
 from ..domain.local_models import READER_SIZE_LABEL
+from ..domain.output_files import FolderProblem
+from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ._types import (
     Choice,
     ChoiceRole,
@@ -61,6 +65,60 @@ def text_recognition_changed_retired(name: str) -> Notice:
         f"server. Download it once under {WHERE_READING_MODELS} "
         f"({READER_SIZE_LABEL}).",
     )
+
+
+def setting_notice(notice: SettingNotice) -> Notice:
+    """Tell the teacher what the app changed about a value of their settings file."""
+    if notice.kind is SettingNoticeKind.ENGINE_REPLACED:
+        if notice.online:
+            return text_recognition_changed_online(
+                notice.detail, notice.replacement, list(OCR_ENGINE_NAMES.values())
+            )
+        name = RETIRED_ENGINE_NAMES.get(notice.detail.strip().lower(), notice.detail)
+        return text_recognition_changed_retired(name)
+    if notice.kind is SettingNoticeKind.NOTES_CUT:
+        return Notice(
+            "Notes shortened",
+            f"The notes for the AI are longer than {NOTES_LIMIT} characters and were cut.",
+            NoticeKind.WARNING,
+        )
+    return Notice(
+        "Setting ignored",
+        f"The saved setting “{notice.key}” has a value the app cannot use ({notice.detail}), "
+        "so it uses its default instead.",
+        NoticeKind.WARNING,
+    )
+
+
+def folder_problem_text(problem: FolderProblem, *, input_text: str = "") -> str:
+    """Return why a run cannot start with the folders it was given, in a teacher's words."""
+    if problem is FolderProblem.NO_INPUT:
+        return "Input folder is required."
+    if problem is FolderProblem.NO_OUTPUT:
+        return "Output folder is required."
+    return f"Input folder does not exist: {input_text}"
+
+
+def cli_folder_problem_text(problem: FolderProblem, *, input_text: str = "") -> str:
+    """Return why a run cannot start with the folders it was given, with the option to fix it."""
+    if problem is FolderProblem.NO_INPUT:
+        return "No input folder specified. Use -i/--input or set 'input' in the config file."
+    if problem is FolderProblem.NO_OUTPUT:
+        return (
+            "No output folder specified. Use -o/--output or set 'output' in the config file. "
+            "(Output can be omitted only when no output files are written.)"
+        )
+    return folder_problem_text(problem, input_text=input_text)
+
+
+def cli_warning(text: str) -> str:
+    """Return *text* as a warning line of the command line."""
+    return f"WARNING: {text}"
+
+
+def cli_error(text: str) -> str:
+    """Return *text* as an error line of the command line."""
+    return f"ERROR: {text}"
 
 
 def save_failed(reason: str) -> Notice:

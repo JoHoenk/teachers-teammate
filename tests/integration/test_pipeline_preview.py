@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.pipeline import OCRPipeline, preprocess_preview
@@ -17,9 +18,9 @@ from tests.conftest import make_config
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
-@pytest.mark.parametrize("method", ["auto", "none"])
+@pytest.mark.parametrize("method", list(PreprocessMethod))
 def test_preprocess_preview_returns_existing_paths(
-    tmp_path: Path, sample_png: Path, method: str
+    tmp_path: Path, sample_png: Path, method: PreprocessMethod
 ) -> None:
     """
     Given  a PNG image and a preprocessing method
@@ -43,7 +44,7 @@ def test_preprocess_preview_none_returns_same_path_for_original_and_processed(
     Then   original and processed paths are equal (no processing) and steps is empty
     """
     original, processed, steps = preprocess_preview(
-        sample_png, OcrConfig(preprocess_method="none"), tmp_path
+        sample_png, OcrConfig(preprocess_method=PreprocessMethod.NONE), tmp_path
     )
     assert original == processed
     assert steps == []
@@ -59,7 +60,7 @@ def test_preprocess_preview_of_the_automatic_preparation_writes_a_new_image(
     Then   the processed path differs from the original and the gray conversion is recorded
     """
     original, processed, steps = preprocess_preview(
-        sample_png, OcrConfig(engine="ollama", preprocess_method="auto"), tmp_path
+        sample_png, OcrConfig(engine="ollama", preprocess_method=PreprocessMethod.AUTO), tmp_path
     )
     assert original != processed
     assert steps == ["grayscale"]
@@ -73,7 +74,7 @@ def test_preprocess_preview_works_with_pdf_input(tmp_path: Path, sample_pdf: Pat
     Then   both returned paths exist and the original is a PNG (first page rendered from PDF)
     """
     original, processed, _steps = preprocess_preview(
-        sample_pdf, OcrConfig(preprocess_method="auto"), tmp_path
+        sample_pdf, OcrConfig(preprocess_method=PreprocessMethod.AUTO), tmp_path
     )
     assert original.exists()
     assert processed.exists()
@@ -97,7 +98,7 @@ def test_preprocess_preview_applies_the_steps_a_page_needs(tmp_path: Path) -> No
     Image.fromarray((np.asarray(page, dtype=np.float32) * gradient).astype(np.uint8)).save(source)
 
     _original, _processed, steps = preprocess_preview(
-        source, OcrConfig(preprocess_method="auto"), tmp_path
+        source, OcrConfig(preprocess_method=PreprocessMethod.AUTO), tmp_path
     )
 
     assert "light" in steps
@@ -118,7 +119,7 @@ def test_preprocess_preview_uses_the_given_build_preprocessor(
     actually run; calling the default constructor directly would silently diverge.
     """
     calls: list[tuple[Path, bool, OcrConfig, ModelStore | None]] = []
-    ocr = OcrConfig(preprocess_method="auto")
+    ocr = OcrConfig(preprocess_method=PreprocessMethod.AUTO)
 
     class _StubPreprocessor:
         def preprocess(self, image_path: Path) -> tuple[Path, list[str]]:
@@ -153,10 +154,10 @@ def test_preprocess_preview_uses_configured_pdf_dpi(tmp_path: Path, sample_pdf: 
     low_dir.mkdir()
     high_dir.mkdir()
     default_original, _p, _s = preprocess_preview(
-        sample_pdf, OcrConfig(preprocess_method="none", pdf_render_dpi=100), low_dir
+        sample_pdf, OcrConfig(preprocess_method=PreprocessMethod.NONE, pdf_render_dpi=100), low_dir
     )
     high_original, _p2, _s2 = preprocess_preview(
-        sample_pdf, OcrConfig(preprocess_method="none", pdf_render_dpi=300), high_dir
+        sample_pdf, OcrConfig(preprocess_method=PreprocessMethod.NONE, pdf_render_dpi=300), high_dir
     )
     with Image.open(default_original) as low_img, Image.open(high_original) as high_img:
         assert high_img.size[0] > low_img.size[0]

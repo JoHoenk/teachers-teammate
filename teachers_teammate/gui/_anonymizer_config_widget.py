@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.service import ProcessingApplicationService
-from ..config import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
+from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from ..texts import dialogs as dlg
 from ..texts import privacy
 from . import _dialogs

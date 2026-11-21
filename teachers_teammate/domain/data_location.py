@@ -11,16 +11,34 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 
-#: OCR engines that read pages on a computer the user controls, with the name shown for
-#: each.  Reading a page needs the whole page (names, grades, handwriting), so personal
-#: information cannot be hidden first: online services are deliberately not offered here.
-ENGINE_OLLAMA = "ollama"
-ENGINE_PPOCR = "ppocr"
+
+class OcrEngine(StrEnum):
+    """The engines that read pages on a computer the user controls.
+
+    Reading a page needs the whole page (names, grades, handwriting), so personal information
+    cannot be hidden first: online services are deliberately not offered here.
+    """
+
+    OLLAMA = "ollama"
+    PPOCR = "ppocr"
+
+
+ENGINE_OLLAMA = OcrEngine.OLLAMA
+ENGINE_PPOCR = OcrEngine.PPOCR
+
+#: The name shown for each engine.
 OCR_ENGINE_NAMES: dict[str, str] = {
     ENGINE_OLLAMA: "Ollama",
     ENGINE_PPOCR: "Built-in reader",
 }
 LOCAL_OCR_ENGINES: tuple[str, ...] = tuple(OCR_ENGINE_NAMES)
+
+#: Engines of older versions that were removed, and what replaces them.  Both were local, so the
+#: replacement is local too: the built-in reader also reads pages on this computer.
+RETIRED_OCR_ENGINES: dict[str, str] = {"tesseract": ENGINE_PPOCR, "paddleocr": ENGINE_PPOCR}
+
+#: How a teacher knew each retired engine (for the notice that it was replaced).
+RETIRED_ENGINE_NAMES: dict[str, str] = {"tesseract": "Tesseract", "paddleocr": "PaddleOCR"}
 
 STAGE_OCR = "ocr"
 STAGE_CORRECTION = "correction"

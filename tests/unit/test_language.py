@@ -8,11 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.config import (
-    DEFAULTS,
-    SECONDARY_MODEL_AUTO,
-    SECONDARY_MODEL_NONE,
-)
+from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.language import LANGUAGES, language_from_locale
 from teachers_teammate.infrastructure.anonymizer import (
     AnonymizerConfig,
@@ -26,6 +22,7 @@ from teachers_teammate.infrastructure.spacy_models import (
     spacy_model_url,
 )
 from teachers_teammate.infrastructure.system_locale import system_language, system_locale_code
+from teachers_teammate.settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from tests.conftest import make_config
 
 # ── language_from_locale ───────────────────────────────────────────────────
@@ -263,7 +260,7 @@ def test_old_config_with_none_still_means_no_extra_model(tmp_path: Path) -> None
 
     path = tmp_path / "ocr.toml"
     path.write_text('anonymizer_secondary_model = "none"\n', encoding="utf-8")
-    assert load_config_file(path)["anonymizer_secondary_model"] == SECONDARY_MODEL_NONE
+    assert load_config_file(path).values["anonymizer_secondary_model"] == SECONDARY_MODEL_NONE
 
 
 def test_replacing_a_config_field_keeps_the_resolved_value() -> None:

@@ -12,8 +12,9 @@ What is replaced, each at the narrowest seam:
 * Ollama — :class:`~tests.fakes.fake_ollama.FakeOllama` on one loopback port, so a server on the
   developer's computer cannot answer instead.
 * pip, spaCy, the reader and the page models — recording stubs on the service's
-  ``install_packages`` / ``download_page_models`` / ``download_reader``: the real downloads have
-  their own tests and need the network.
+  ``install_packages`` / ``download_page_models`` / ``download_reader`` and on
+  ``download_spacy_model`` (the round's spaCy thread builds its own service): the real downloads
+  have their own tests and need the network.
 * What the model store holds — a :class:`ModelStore` under ``tmp_path`` with a ``bundled_root``
   that does not exist, so a ``_models`` folder left by a local build cannot change the setup plan.
 * The computer — ``hardware_profile = "16gb"``, a fixed free disk and a fixed memory, so the
@@ -114,6 +115,8 @@ class Downloads:
     def __init__(self) -> None:
         #: The pip package lists the round installed, in order.
         self.packages: list[list[str]] = []
+        #: The spaCy models the round downloaded, in order.
+        self.spacy_models: list[str] = []
         #: How often the page models were downloaded.
         self.page_models = 0
         #: How often the built-in reader was downloaded.
@@ -123,6 +126,14 @@ class Downloads:
         """Record the packages and report them as installed."""
         self.packages.append(list(packages))
         progress_cb(f"installed {', '.join(packages)}")
+
+    def download_spacy_model(
+        self, model: str, target: Path, progress_cb: Callable[[str], None]
+    ) -> None:
+        """Record the spaCy model; the package is never fetched."""
+        _ = target
+        self.spacy_models.append(model)
+        progress_cb(f"downloaded {model}")
 
     def download_page_models(
         self,
@@ -293,9 +304,11 @@ class Driver:
     def wait_for_downloads(self) -> None:
         """Wait until the round and the pull manager have nothing left to do.
 
-        The pulls start only once the page models are done, and that arrives through the event
-        loop, so waiting on the pull manager alone would return before the first pull began.
-        The Done page's lines are read here, while the wizard still exists.
+        The round hands the pulls over to the manager, so neither half alone says when the
+        work is over: the round is still running while the manager pulls, and the manager is
+        idle until the round has installed the page models.  A row that never starts — a model
+        the teacher left unticked, or one whose pull failed — stays "waiting", so the rows
+        cannot say it either.  The rows are read here, while the wizard still exists.
         """
         wait_until(
             self._qtbot,
@@ -382,6 +395,14 @@ class Walkthrough:
             self.service, "download_page_models", self.downloads.download_page_models
         )
         monkeypatch.setattr(self.service, "download_reader", self.downloads.download_reader)
+        # The round's spaCy thread builds a service of its own, so the stub goes on the class.
+        monkeypatch.setattr(
+            ProcessingApplicationService,
+            "download_spacy_model",
+            lambda _service, model, target, progress_cb: self.downloads.download_spacy_model(
+                model, target, progress_cb
+            ),
+        )
 
         self.settings: dict[str, Any] = dict(DEFAULTS)
         self.settings.update(settings or {})
@@ -411,7 +432,7 @@ class Walkthrough:
 
     def saved_settings(self) -> dict[str, Any]:
         """Return the settings file as the app reads it back."""
-        return load_config_file(self.config_path)
+        return load_config_file(self.config_path).values
 
     # ── running the wizard ────────────────────────────────────────────────────
 
@@ -598,6 +619,7 @@ def test_s1_handwritten_pages_are_set_up_on_this_computer(walkthrough) -> None:
     ]
     assert walk.fake.pulled == ollama_downloads(plan)
     assert walk.downloads.page_models == 1
+    assert walk.downloads.spacy_models == names(downloads_of(plan, DownloadKind.SPACY_MODEL))
 
     saved = walk.saved_settings()
     assert saved["language"] == LANGUAGE

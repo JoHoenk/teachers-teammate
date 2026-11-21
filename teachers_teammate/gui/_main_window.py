@@ -59,17 +59,9 @@ from ..application.service import (
     WorkedOn,
     WorkNotSavedError,
 )
-from ..config import (
-    DEFAULTS,
-    RETIRED_ENGINE_NAMES,
-    Config,
-    OcrConfig,
-    ReplacedEngine,
-    dump_config_file,
-    load_config_file,
-    unavailable_ocr_engine,
-)
-from ..domain.data_location import OCR_ENGINE_NAMES, STAGE_CORRECTION, DataFlow
+from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
+from ..domain.data_location import STAGE_CORRECTION, DataFlow
+from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection, short_model_name
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
@@ -675,7 +667,6 @@ class MainWindow(QMainWindow):
         self._on_data_flow_changed(self._config_panel.data_flow())
         self._results_table.export_requested.connect(self._on_export_requested)
         self._config_panel.paths_changed.connect(self._refresh_queue_from_inputs)
-        self._config_panel.ocr_engine_replaced.connect(self._show_engine_replaced)
         self._config_panel.anonymizer_configure_requested.connect(
             lambda _language, _config: self.open_settings(
                 SettingsPage.PRIVACY, focus=FOCUS_DETECTION
@@ -1067,7 +1058,8 @@ class MainWindow(QMainWindow):
             return
         self._config_path = config_path
         try:
-            values = load_config_file(config_path)
+            loaded = load_config_file(config_path)
+            values = loaded.values
             base = config_path.parent.resolve()
             for key in ("input", "output"):
                 if values.get(key):
@@ -1081,31 +1073,21 @@ class MainWindow(QMainWindow):
             # shown consistently on startup.
             self._refresh_queue_from_inputs()
             self._log.append_text(f"Loaded settings from {config_path}\n")
-            self._tell_if_ocr_engine_was_replaced(config_path)
+            for notice in loaded.notices:
+                self._show_setting_notice(notice)
         except Exception as exc:  # noqa: BLE001  # config file may be missing, malformed, or use an unexpected type; log the warning and continue
             self._log.append_text(f"WARNING: Could not load {config_path}: {exc}\n")
 
-    def _tell_if_ocr_engine_was_replaced(self, config_path: Path) -> None:
-        """Say so when the saved settings named a text-recognition engine that is gone.
+    def _show_setting_notice(self, setting_notice: SettingNotice) -> None:
+        """Say what the app changed about a saved setting instead of changing it silently.
 
-        Such a setting is replaced (see ``load_config_file``).  Doing that silently would
-        leave the next run failing for a reason the teacher never chose.
+        A replaced text-recognition engine changes what the next run does, so it interrupts
+        the teacher; the other notices are in the log.
         """
-        replaced = unavailable_ocr_engine(config_path)
-        if replaced is not None:
-            self._show_engine_replaced(replaced)
-
-    def _show_engine_replaced(self, replaced: ReplacedEngine) -> None:
-        """Tell the teacher which text-recognition engine was replaced, and by what."""
-        if replaced.online:
-            notice = dlg.text_recognition_changed_online(
-                replaced.old, DEFAULTS["ocr_engine"], list(OCR_ENGINE_NAMES.values())
-            )
-        else:
-            name = RETIRED_ENGINE_NAMES.get(replaced.old.strip().lower(), replaced.old)
-            notice = dlg.text_recognition_changed_retired(name)
+        notice = dlg.setting_notice(setting_notice)
         self._log.append_text(f"NOTICE: {notice.body}\n")
-        _dialogs.notify(self, notice)
+        if setting_notice.kind is SettingNoticeKind.ENGINE_REPLACED:
+            _dialogs.notify(self, notice)
 
     def _open_setup_assistant_first_start(self) -> None:
         """Open the assistant on a first start, on top of the window that just appeared."""

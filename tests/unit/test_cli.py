@@ -938,8 +938,56 @@ def test_run_cli_text_files_need_an_output_folder(
     rc = run_cli(argv=["-i", str(tmp_path), "--no-docx", flag], app_service=service)
 
     assert rc == 1
-    assert "No output folder specified" in capsys.readouterr().err
+    assert "No output folder specified. Use -o/--output" in capsys.readouterr().err
     assert service.configs == []
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_without_an_input_folder_says_how_to_give_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    Given  no -i and no config file
+    When   run_cli() is called
+    Then   it exits with 1 and names the option and the config key that give the folder
+    """
+    import teachers_teammate.infrastructure.storage_root as storage_module  # noqa: PLC0415
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
+    monkeypatch.chdir(tmp_path)
+    service = _TextFlagsAppService()
+
+    rc = run_cli(argv=[], app_service=service)
+
+    assert rc == 1
+    assert (
+        "ERROR: No input folder specified. Use -i/--input or set 'input' in the config file."
+        in capsys.readouterr().err
+    )
+    assert service.configs == []
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_with_a_missing_input_folder_names_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    Given  an input folder that does not exist
+    When   run_cli() is called
+    Then   it exits with 1 and names the folder
+    """
+    import teachers_teammate.infrastructure.storage_root as storage_module  # noqa: PLC0415
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
+    monkeypatch.chdir(tmp_path)
+    missing = tmp_path / "nowhere"
+
+    rc = run_cli(argv=["-i", str(missing)], app_service=_TextFlagsAppService())
+
+    assert rc == 1
+    assert f"ERROR: Input folder does not exist: {missing}" in capsys.readouterr().err
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")

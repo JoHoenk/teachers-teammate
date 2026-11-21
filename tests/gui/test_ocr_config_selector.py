@@ -7,6 +7,7 @@ import html
 
 import pytest
 
+from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.data_location import DataLocation, StageLocation
 from teachers_teammate.domain.formatted_text import TextFormat
@@ -100,7 +101,9 @@ def test_load_ocr_config_round_trips(selector) -> None:
     Then   the engine, preprocess method, and temperature are preserved
     """
     selector.load_ocr_config(
-        OcrConfig(engine="ppocr", model="", preprocess_method="none", temperature=0.3)
+        OcrConfig(
+            engine="ppocr", model="", preprocess_method=PreprocessMethod.NONE, temperature=0.3
+        )
     )
     ocr = selector.get_ocr_config()
     assert ocr.engine == "ppocr"
@@ -117,7 +120,7 @@ def test_load_ocr_config_round_trips_preprocessing_fields(selector) -> None:
     Then   the preparation and the PDF DPI spin box round-trip
     """
     selector.load_ocr_config(
-        OcrConfig(engine="ppocr", preprocess_method="none", pdf_render_dpi=150)
+        OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.NONE, pdf_render_dpi=150)
     )
     ocr = selector.get_ocr_config()
     assert ocr.pdf_render_dpi == 150
@@ -188,7 +191,7 @@ def test_load_ocr_config_shows_the_label_of_the_method(selector) -> None:
     When   load_ocr_config() populates the selector
     Then   the combo shows "Original page" while the stored id stays "none"
     """
-    selector.load_ocr_config(OcrConfig(engine="ppocr", preprocess_method="none"))
+    selector.load_ocr_config(OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.NONE))
     assert selector._scan._preprocess.currentText() == "Original page"
     assert selector._scan.preprocess_method() == "none"
 

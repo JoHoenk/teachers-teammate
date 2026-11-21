@@ -70,6 +70,7 @@ filegroup(
         "unit/test_ollama_utils.py",
         "unit/test_preprocessor.py",
         "unit/test_service.py",
+        "unit/test_settings_schema.py",
         "unit/test_setup_plan.py",
         "unit/test_stage_builder.py",
         "unit/test_state_repository.py",
@@ -278,6 +279,20 @@ py_test(
     args = ["unit/test_config.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+py_test(
+    name = "test_settings_schema",
+    size = "medium",
+    srcs = _COMMON_SRCS + ["unit/test_settings_schema.py"],
+    args = ["unit/test_settings_schema.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS +
+           _GUI_DEPS +
+           _PIPELINE_DEPS +
+           _CLI_LIB + [
+        "//teachers_teammate:gui_layer_lib",
+    ],
 )
 
 py_test(
@@ -1904,9 +1919,12 @@ py_test(
     deps = _COMMON_DEPS + _FORMAT_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
 )
 
+# A GUI test builds real widgets and a real window, and a loaded runner runs a dozen of them at
+# once: the 60 s a ``small`` test gets is not enough headroom, so every ``test_gui_*`` is
+# ``medium``.  A timeout is a flake, and a flake hides the failure it should report.
 py_test(
     name = "test_gui_config_panel",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/test_gui_config_panel.py",
     ],
@@ -1917,7 +1935,7 @@ py_test(
 
 py_test(
     name = "test_gui_readiness",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_readiness.py"],
     args = ["gui/test_gui_readiness.py"],
     main = "run_test.py",
@@ -1926,7 +1944,7 @@ py_test(
 
 py_test(
     name = "test_gui_check_page",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_check_page.py"],
     args = ["gui/test_gui_check_page.py"],
     main = "run_test.py",
@@ -1935,7 +1953,7 @@ py_test(
 
 py_test(
     name = "test_gui_results_table",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_results_table.py"],
     args = ["gui/test_gui_results_table.py"],
     main = "run_test.py",
@@ -1944,7 +1962,7 @@ py_test(
 
 py_test(
     name = "test_gui_what_is_sent",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_what_is_sent.py"],
     args = ["gui/test_gui_what_is_sent.py"],
     main = "run_test.py",
@@ -1965,7 +1983,7 @@ py_test(
 
 py_test(
     name = "test_gui_ollama_status_line",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_ollama_status_line.py"],
     args = ["gui/test_gui_ollama_status_line.py"],
     main = "run_test.py",
@@ -1974,7 +1992,7 @@ py_test(
 
 py_test(
     name = "test_gui_worker",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_worker.py"],
     args = ["gui/test_gui_worker.py"],
     main = "run_test.py",
@@ -1983,7 +2001,7 @@ py_test(
 
 py_test(
     name = "test_gui_prompt_dialog",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_settings_stubs.py",
         "gui/test_gui_prompt_dialog.py",
@@ -2007,7 +2025,7 @@ py_test(
 
 py_test(
     name = "test_gui_general_page",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_gui_harness.py",
         "gui/test_gui_general_page.py",
@@ -2019,7 +2037,7 @@ py_test(
 
 py_test(
     name = "test_gui_run_status",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_run_status.py"],
     args = ["gui/test_gui_run_status.py"],
     main = "run_test.py",
@@ -2028,7 +2046,7 @@ py_test(
 
 py_test(
     name = "test_gui_settings_pages",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_gui_harness.py",
         "gui/_settings_stubs.py",
@@ -2041,7 +2059,7 @@ py_test(
 
 py_test(
     name = "test_gui_settings_window",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_gui_harness.py",
         "gui/_settings_stubs.py",
@@ -2054,7 +2072,7 @@ py_test(
 
 py_test(
     name = "test_gui_setup_assistant",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_gui_harness.py",
         "gui/_settings_stubs.py",
@@ -2067,7 +2085,7 @@ py_test(
 
 py_test(
     name = "test_gui_setup_flow",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_setup_flow.py"],
     args = ["gui/test_gui_setup_flow.py"],
     main = "run_test.py",
@@ -2075,8 +2093,7 @@ py_test(
 )
 
 # The whole wizard, end to end: the real pages, the real service, real threads, a real HTTP
-# conversation with a fake Ollama and the real MainWindow writing a real ocr.toml.  ``medium``
-# for the headroom: the default 60 s of ``small`` is tight for a wizard plus real threads.
+# conversation with a fake Ollama and the real MainWindow writing a real ocr.toml.
 py_test(
     name = "test_gui_setup_walkthrough",
     size = "medium",
@@ -2095,7 +2112,7 @@ py_test(
 
 py_test(
     name = "test_gui_setup_pages",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_gui_harness.py",
         "gui/_settings_stubs.py",
@@ -2108,7 +2125,7 @@ py_test(
 
 py_test(
     name = "test_gui_plain_map",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_plain_map.py"],
     args = ["gui/test_gui_plain_map.py"],
     main = "run_test.py",
@@ -2117,7 +2134,7 @@ py_test(
 
 py_test(
     name = "test_gui_check_style",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_check_style.py"],
     args = ["gui/test_gui_check_style.py"],
     main = "run_test.py",
@@ -2126,7 +2143,7 @@ py_test(
 
 py_test(
     name = "test_gui_text_views",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_text_views.py"],
     args = ["gui/test_gui_text_views.py"],
     main = "run_test.py",
@@ -2135,7 +2152,7 @@ py_test(
 
 py_test(
     name = "test_gui_check_body",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_check_body.py"],
     args = ["gui/test_gui_check_body.py"],
     main = "run_test.py",
@@ -2144,7 +2161,7 @@ py_test(
 
 py_test(
     name = "test_gui_side_panel",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_side_panel.py"],
     args = ["gui/test_gui_side_panel.py"],
     main = "run_test.py",
@@ -2153,7 +2170,7 @@ py_test(
 
 py_test(
     name = "test_gui_window_geometry",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_gui_harness.py",
         "gui/_settings_stubs.py",
@@ -2166,7 +2183,7 @@ py_test(
 
 py_test(
     name = "test_gui_scan_view",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_scan_view.py"],
     args = ["gui/test_gui_scan_view.py"],
     main = "run_test.py",
@@ -2175,7 +2192,7 @@ py_test(
 
 py_test(
     name = "test_gui_formatted_text",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_formatted_text.py"],
     args = ["gui/test_gui_formatted_text.py"],
     main = "run_test.py",
@@ -2184,7 +2201,7 @@ py_test(
 
 py_test(
     name = "test_gui_chart_widget",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_chart_widget.py"],
     args = ["gui/test_gui_chart_widget.py"],
     main = "run_test.py",
@@ -2193,7 +2210,7 @@ py_test(
 
 py_test(
     name = "test_gui_widgets",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_widgets.py"],
     args = ["gui/test_gui_widgets.py"],
     main = "run_test.py",
@@ -2211,7 +2228,7 @@ py_test(
 
 py_test(
     name = "test_gui_anonymizer_widget",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/test_gui_anonymizer_widget.py",
     ],
@@ -2222,7 +2239,7 @@ py_test(
 
 py_test(
     name = "test_gui_privacy_settings",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_gui_harness.py",
         "gui/test_gui_privacy_settings.py",
@@ -2243,7 +2260,7 @@ py_test(
 
 py_test(
     name = "test_gui_privacy_view",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_gui_harness.py",
         "gui/test_gui_privacy_view.py",
@@ -2255,7 +2272,7 @@ py_test(
 
 py_test(
     name = "test_gui_dialogs",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_dialogs.py"],
     args = ["gui/test_gui_dialogs.py"],
     main = "run_test.py",
@@ -2264,7 +2281,7 @@ py_test(
 
 py_test(
     name = "test_gui_addon_installer_dialog",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_addon_installer_dialog.py"],
     args = ["gui/test_gui_addon_installer_dialog.py"],
     main = "run_test.py",
@@ -2273,7 +2290,7 @@ py_test(
 
 py_test(
     name = "test_gui_update_check",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_update_check.py"],
     args = ["gui/test_gui_update_check.py"],
     main = "run_test.py",
@@ -2291,7 +2308,7 @@ py_test(
 
 py_test(
     name = "test_gui_speed_panel",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_speed_panel.py"],
     args = ["gui/test_gui_speed_panel.py"],
     main = "run_test.py",
@@ -2336,7 +2353,7 @@ py_test(
 
 py_test(
     name = "test_gui_install_round",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_install_round.py"],
     args = ["gui/test_gui_install_round.py"],
     main = "run_test.py",
@@ -2345,7 +2362,7 @@ py_test(
 
 py_test(
     name = "test_gui_addons_page",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "fakes/fake_ollama.py",
         "gui/_gui_harness.py",
@@ -2370,7 +2387,7 @@ py_test(
 
 py_test(
     name = "test_gui_lifecycle",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_gui_harness.py",
         "gui/test_gui_lifecycle.py",
@@ -2382,7 +2399,7 @@ py_test(
 
 py_test(
     name = "test_gui_bootstrap",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_gui_harness.py",
         "gui/test_gui_bootstrap.py",

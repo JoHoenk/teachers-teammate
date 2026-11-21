@@ -1,10 +1,11 @@
 """Pipeline configuration: the :class:`Config` dataclass and TOML file helpers.
 
-This module is the single source of truth for runtime configuration.  Both
-the CLI (argument parsing → :class:`Config`) and the GUI
-(:class:`~teachers_teammate.gui._config_panel.ConfigPanel` → :class:`Config`)
-build a :class:`Config` and hand it to
-:class:`~teachers_teammate.infrastructure.pipeline.OCRPipeline`.
+This module is the single place a :class:`Config` is assembled.  Both the CLI (argument
+parsing → :meth:`Config.from_settings`) and the GUI
+(:class:`~teachers_teammate.gui._config_panel.ConfigPanel` → :meth:`Config.from_settings`)
+build one and hand it to :class:`~teachers_teammate.infrastructure.pipeline.OCRPipeline`.
+Which keys exist, what they default to and what they accept is
+:mod:`teachers_teammate.settings_schema`.
 """
 
 from __future__ import annotations
@@ -12,196 +13,38 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 import tomllib
 from typing import Any
 
 from ._model_defaults import default_model_for_task
-from .domain.correction_policy import DEFAULT_LEVEL, normalize_level, normalize_output_mode
-from .domain.correction_prompts import NOTES_LIMIT
-from .domain.data_location import ENGINE_PPOCR, LOCAL_OCR_ENGINES
+from .domain.correction_policy import CorrectionOutput
 from .domain.model_catalog import (
-    DEFAULT_OCR_MODEL,
-    DEFAULT_WRITING_MODEL,
     OCR_TEMPERATURE,
-    PROFILE_SETTINGS,
+    HardwareProfileSetting,
     RequestProfile,
     request_profile,
     review_temperature,
 )
-from .domain.pdf_text_layer import (
-    PDF_TEXT_LAYER_MODES,
-    PdfTextLayerMode,
-    normalize_pdf_text_layer,
-    parse_pdf_text_layer,
-)
-from .domain.prompt_text import migrate_saved_default
+from .domain.output_files import DocxFormat
+from .domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
+from .domain.setting_values import ContextSetting, PreprocessMethod
 from .exceptions import ConfigFileParseError
 from .interfaces import SUPPORTED_SUFFIXES as SUPPORTED_SUFFIXES  # noqa: PLC0414
 
-#: Value of ``anonymizer_secondary_model`` meaning "the model of the system language".
-SECONDARY_MODEL_AUTO = "auto:system"
-#: Value meaning "no extra detection model" (what an explicit "(none)" in the GUI stores).
-SECONDARY_MODEL_NONE = "none"
+# ``DEFAULTS`` is read from here by most of the app; every other name of the schema is imported
+# from ``settings_schema`` itself.
+from .settings_schema import (
+    DEFAULTS as DEFAULTS,  # noqa: PLC0414
+    SECONDARY_MODEL_AUTO,
+    LoadedSettings,
+    normalize_ocr_engine,
+    normalize_ocr_model,
+    normalize_preprocess_method,
+    normalize_settings,
+)
 
 
-DEFAULTS: dict[str, Any] = {
-    # ── OCR ──────────────────────────────────────────────────────────────────
-    "ocr_engine": "ollama",
-    "ocr_model": DEFAULT_OCR_MODEL,
-    "language": "English",
-    "preprocess_method": "auto",
-    "ollama_url": "http://127.0.0.1:11434",
-    "ocr_timeout": 180,
-    # Whether scans (images, PDFs without a text layer) are read.  Off = only text that already
-    # exists is used (text files, PDFs with a text layer) and scans are skipped.
-    "recognition_enabled": True,
-    # Keep the computer from going to sleep while documents are processed (the screen may still
-    # turn off).  Not part of any cache key.
-    "keep_awake": True,
-    # Ask GitHub once at every start whether a newer version exists.  The only thing the app
-    # sends without being asked, so it can be switched off; a settings file without the key
-    # keeps the check on.
-    "check_for_updates": True,
-    # ── Preprocessing (image preparation and PDF rendering) ───────────────────
-    "pdf_render_dpi": 300,
-    # "auto" | "always" | "never" — use a PDF's embedded text instead of OCR.
-    "pdf_text_layer": "auto",
-    # ── Input / output ────────────────────────────────────────────────────────
-    "recursive": False,
-    "debug": False,
-    # ── Correction ────────────────────────────────────────────────────────────
-    "correction_enabled": True,
-    "anonymization_enabled": False,
-    "correction_provider": "ollama",
-    "correction_model": DEFAULT_WRITING_MODEL,
-    # What the teacher wants the model to know about this class or this text.  The instructions
-    # themselves are fixed by the app; the notes are the one place a teacher adds context.
-    "correction_notes": "",
-    # CEFR level of the proofreading (A1-C2); language-neutral, so one setting for all languages.
-    "correction_level": DEFAULT_LEVEL,
-    # "" = same as the language of the text. Otherwise the language of the explanations.
-    "explanation_language": "",
-    # "review" = corrections + explanations + unclear list; "text" = corrections only.
-    "correction_output": "review",
-    # ── Evaluation ────────────────────────────────────────────────────────────
-    "evaluation_enabled": False,
-    "evaluate_provider": "ollama",
-    "evaluate_model": DEFAULT_WRITING_MODEL,
-    # What the content review asks.  The teacher can replace it (Options… of "Review content").
-    "evaluate_prompt": (
-        "You help a teacher read a student's text. Review its content, not its spelling, "
-        "grammar or punctuation. Write a short report with: "
-        "1) what the text is about, in one sentence; "
-        "2) whether it is complete and consistent; "
-        "3) gaps, contradictions or passages that are hard to follow, each with a short quote; "
-        "4) one short suggestion for the teacher. "
-        "Write in the language of the text and keep the report brief."
-    ),
-    # ── Output ────────────────────────────────────────────────────────────────
-    "docx_format": "table",
-    "docx_enabled": False,
-    # Text files of the extracted text, plain and with personal data replaced.
-    "text_enabled": False,
-    "text_anonymized_enabled": False,
-    # ── Anonymizer ────────────────────────────────────────────────────────────
-    "anonymizer_primary_model": None,
-    # "auto:system" = the model for the language the operating system is set to;
-    # "none" / None = no extra model.
-    "anonymizer_secondary_model": SECONDARY_MODEL_AUTO,
-    # ── Hardware recommendations ──────────────────────────────────────────────
-    # "auto" | "cpu" | "8gb" | "16gb".  The pipeline never reads it, but the run-start memory
-    # warning does: a hand-picked profile decides how much of a model has to fit where.
-    "hardware_profile": "auto",
-    # ── Context window ────────────────────────────────────────────────────────
-    # "auto" = as large as the graphics card still holds at full speed (8192 / 16384 / 32768,
-    # never smaller than 8192).  Sized from the card's total memory, not from the memory free
-    # right now: free memory changes between runs, and a window that changed with it would make
-    # Ollama reload the model and would invalidate the result cache.  A fixed value from
-    # CONTEXT_SETTINGS pins it — for advanced users, and for a remote server whose card the app
-    # cannot see.
-    "proofreading_context": "auto",
-}
-
-#: Values accepted for ``proofreading_context``: ``"auto"`` or a window from this ladder.
-CONTEXT_SETTINGS: tuple[str, ...] = ("auto", "8192", "16384", "32768")
-
-
-#: Engines of older versions that were removed, and what replaces them.  Both were local, so the
-#: replacement is local too: the built-in reader also reads pages on this computer.
-RETIRED_OCR_ENGINES: dict[str, str] = {"tesseract": ENGINE_PPOCR, "paddleocr": ENGINE_PPOCR}
-
-#: How a teacher knew each retired engine (for the notice that it was replaced).
-RETIRED_ENGINE_NAMES: dict[str, str] = {"tesseract": "Tesseract", "paddleocr": "PaddleOCR"}
-
-
-def normalize_ocr_engine(value: object) -> str:
-    """Return *value* if it is a local OCR engine, else the default engine.
-
-    Settings files written by older versions may name an online engine (``langchain`` or a
-    provider such as ``openai``).  Text recognition never goes online any more, so those
-    fall back to the default instead of silently uploading pages.  A removed local engine
-    (``tesseract``, ``paddleocr``) becomes the built-in reader.
-    """
-    engine = str(value).strip().lower()
-    if engine in LOCAL_OCR_ENGINES:
-        return engine
-    if engine in RETIRED_OCR_ENGINES:
-        print(
-            f"WARNING: ocr_engine {value!r} was removed; the built-in reader is used instead.",
-            file=sys.stderr,
-        )
-        return RETIRED_OCR_ENGINES[engine]
-    print(
-        f"WARNING: ocr_engine {value!r} is not available (text recognition stays on this "
-        f"computer; choose one of {', '.join(LOCAL_OCR_ENGINES)}) — using "
-        f"'{DEFAULTS['ocr_engine']}'.",
-        file=sys.stderr,
-    )
-    return DEFAULTS["ocr_engine"]
-
-
-def normalize_ocr_model(value: object, model: object) -> str:
-    """Return *model*, or the default OCR model when *value* named an unavailable engine.
-
-    A model name saved next to an online engine (``gpt-4o``) means nothing to the engine
-    that replaces it, so it is reset together with the engine.
-    """
-    if str(value).strip().lower() in (*LOCAL_OCR_ENGINES, *RETIRED_OCR_ENGINES):
-        return str(model)
-    return DEFAULTS["ocr_model"]
-
-
-PREPROCESS_METHODS = ("auto", "none")
-"""The two image preparations: the automatic one, and "Original page" (no step)."""
-
-
-def normalize_preprocess_method(method: object) -> str:
-    """Return ``"none"`` (Original page) for ``none``, ``"auto"`` for anything else.
-
-    Settings files from before the automatic preparation name ``grayscale``, ``clahe`` or
-    ``adaptive_threshold``: those methods are gone and read as the automatic preparation.
-    """
-    return "none" if str(method).strip().lower() == "none" else "auto"
-
-
-def normalize_notes(notes: object) -> str:
-    """Return the teacher's notes as a request carries them: stripped, at most ``NOTES_LIMIT``.
-
-    The same rule in the settings file, on the command line and in the dialog, so a request
-    never carries more than the limit.  A longer text is cut and says so on stderr.
-    """
-    text = str(notes or "").strip()
-    if len(text) <= NOTES_LIMIT:
-        return text
-    print(
-        f"WARNING: the notes for the AI are longer than {NOTES_LIMIT} characters and were cut.",
-        file=sys.stderr,
-    )
-    return text[:NOTES_LIMIT].rstrip()
-
-
-@dataclass
+@dataclass(frozen=True)
 class OcrConfig:
     """The OCR slice of the runtime configuration.
 
@@ -213,8 +56,10 @@ class OcrConfig:
     """
 
     engine: str = DEFAULTS["ocr_engine"]
+    """An :class:`~teachers_teammate.domain.data_location.OcrEngine` for a run; a ``str`` because a
+    stored Benchmark run keeps the engine it was read with, an old online one included."""
     model: str = DEFAULTS["ocr_model"]
-    preprocess_method: str = DEFAULTS["preprocess_method"]
+    preprocess_method: PreprocessMethod = DEFAULTS["preprocess_method"]
     temperature: float = OCR_TEMPERATURE
     """Fixed for the app; only the Benchmark varies it to compare readings."""
     pdf_render_dpi: int = DEFAULTS["pdf_render_dpi"]
@@ -224,8 +69,11 @@ class OcrConfig:
     def __post_init__(self) -> None:
         # Programmatic callers and GUI settings bypass argparse ``choices``; fold
         # case/whitespace and fall back to "auto" for anything that is not a mode.
-        self.pdf_text_layer = normalize_pdf_text_layer(self.pdf_text_layer)
-        self.preprocess_method = normalize_preprocess_method(self.preprocess_method)
+        object.__setattr__(
+            self, "preprocess_method", normalize_preprocess_method(self.preprocess_method)
+        )
+        object.__setattr__(self, "pdf_render_dpi", int(self.pdf_render_dpi))
+        object.__setattr__(self, "pdf_text_layer", normalize_pdf_text_layer(self.pdf_text_layer))
 
     @classmethod
     def from_settings(cls, values: Mapping[str, object]) -> OcrConfig:
@@ -233,21 +81,27 @@ class OcrConfig:
 
         Keys that are missing fall back to :data:`DEFAULTS`.  This is the single place the
         GUI's flat settings (``ocr_engine``, ``preprocess_method``, …) map onto the fields.
+
+        The engine and its model are normalised here and not in :meth:`__post_init__`: an
+        :class:`OcrConfig` is also the record of a Benchmark run, and a stored run must keep
+        the engine it was read with (an old online one included) so its history still reads
+        right.
         """
 
         def get(key: str) -> Any:
             return values.get(key, DEFAULTS[key])
 
+        engine = get("ocr_engine")
         return cls(
-            engine=normalize_ocr_engine(get("ocr_engine")),
-            model=normalize_ocr_model(get("ocr_engine"), get("ocr_model")),
-            preprocess_method=normalize_preprocess_method(get("preprocess_method")),
-            pdf_render_dpi=int(get("pdf_render_dpi")),
+            engine=normalize_ocr_engine(engine),
+            model=normalize_ocr_model(engine, get("ocr_model")),
+            preprocess_method=get("preprocess_method"),
+            pdf_render_dpi=get("pdf_render_dpi"),
             pdf_text_layer=get("pdf_text_layer"),
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class Config:
     """All runtime configuration, derived from CLI arguments or the GUI."""
 
@@ -269,7 +123,7 @@ class Config:
     correction_notes: str = DEFAULTS["correction_notes"]
     correction_level: str = DEFAULTS["correction_level"]
     explanation_language: str = DEFAULTS["explanation_language"]
-    correction_output: str = DEFAULTS["correction_output"]
+    correction_output: CorrectionOutput = DEFAULTS["correction_output"]
     anonymization_enabled: bool = DEFAULTS["anonymization_enabled"]
 
     # ── Evaluation ────────────────────────────────────────────────────────────
@@ -279,7 +133,7 @@ class Config:
     evaluate_prompt: str = DEFAULTS["evaluate_prompt"]
 
     # ── Output ───────────────────────────────────────────────────────────────
-    docx_format: str = DEFAULTS["docx_format"]
+    docx_format: DocxFormat = DEFAULTS["docx_format"]
     docx_enabled: bool = DEFAULTS["docx_enabled"]
     text_enabled: bool = DEFAULTS["text_enabled"]
     text_anonymized_enabled: bool = DEFAULTS["text_anonymized_enabled"]
@@ -287,12 +141,12 @@ class Config:
     # ── Hardware ─────────────────────────────────────────────────────────────
     # "auto" (detect) or a profile chosen by hand ("cpu" / "8gb" / "16gb").  Only the
     # recommendations and the run-start memory warning read it.
-    hardware_profile: str = DEFAULTS["hardware_profile"]
+    hardware_profile: HardwareProfileSetting = DEFAULTS["hardware_profile"]
 
     # ── Context window ───────────────────────────────────────────────────────
     # "auto" (as large as the graphics card holds at full speed) or a fixed window in tokens.
     # An unknown value falls back to "auto" with a warning, as hardware_profile does.
-    proofreading_context: str = DEFAULTS["proofreading_context"]
+    proofreading_context: ContextSetting = DEFAULTS["proofreading_context"]
 
     # ── Text recognition ─────────────────────────────────────────────────────
     # Deliberately not part of OcrConfig: that slice says *how* pages are read (and
@@ -321,6 +175,63 @@ class Config:
 
     # ── Internal ─────────────────────────────────────────────────────────────
     ocr_timeout: int = DEFAULTS["ocr_timeout"]
+
+    @classmethod
+    def from_settings(
+        cls,
+        values: Mapping[str, object],
+        *,
+        input_dir: Path,
+        output_dir: Path,
+        recursive: bool,
+        ocr: OcrConfig | None = None,
+    ) -> Config:
+        """Build a :class:`Config` from a flat settings dict (``ocr.toml`` key names).
+
+        The one place a :class:`Config` is assembled: the GUI, the CLI and the Benchmark all
+        come through here, so a key means the same in all three.  Keys *values* does not hold
+        fall back to :data:`DEFAULTS`; the folders and ``recursive`` are the caller's, because
+        they are what a batch is about rather than a setting of the app.
+        """
+        settings = normalize_settings(values).values
+
+        def get(key: str) -> Any:
+            return settings.get(key, DEFAULTS[key])
+
+        return cls(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            recursive=recursive,
+            ocr=ocr if ocr is not None else OcrConfig.from_settings(settings),
+            debug=get("debug"),
+            language=get("language"),
+            ollama_url=get("ollama_url"),
+            ocr_timeout=get("ocr_timeout"),
+            recognition_enabled=get("recognition_enabled"),
+            keep_awake=get("keep_awake"),
+            check_for_updates=get("check_for_updates"),
+            correction_enabled=get("correction_enabled"),
+            anonymization_enabled=get("anonymization_enabled"),
+            correction_provider=get("correction_provider"),
+            correction_model=get("correction_model"),
+            correction_notes=get("correction_notes"),
+            correction_level=get("correction_level"),
+            explanation_language=get("explanation_language"),
+            correction_output=get("correction_output"),
+            evaluation_enabled=get("evaluation_enabled"),
+            evaluate_provider=get("evaluate_provider"),
+            evaluate_model=get("evaluate_model"),
+            evaluate_prompt=get("evaluate_prompt"),
+            docx_format=get("docx_format"),
+            docx_enabled=get("docx_enabled"),
+            text_enabled=get("text_enabled"),
+            text_anonymized_enabled=get("text_anonymized_enabled"),
+            anonymizer_primary_model=get("anonymizer_primary_model"),
+            anonymizer_secondary_model=get("anonymizer_secondary_model"),
+            anonymizer_patterns=get("anonymizer_patterns"),
+            hardware_profile=get("hardware_profile"),
+            proofreading_context=get("proofreading_context"),
+        )
 
     @property
     def writes_text_files(self) -> bool:
@@ -388,173 +299,27 @@ def _read_toml(path: Path) -> dict[str, Any]:
         raise ConfigFileParseError(f"Could not parse config file {path}: {exc}") from exc
 
 
-@dataclass(frozen=True)
-class ReplacedEngine:
-    """An OCR engine a settings file named that is no longer available, and its replacement."""
-
-    old: str
-    """The engine as the file wrote it."""
-    new: str
-    """The engine used instead."""
-    online: bool
-    """The old engine was an online service (not a removed local engine)."""
-
-
-def replaced_ocr_engine(value: object) -> ReplacedEngine | None:
-    """Return what replaces the OCR engine *value*, or ``None`` when it is still available."""
-    if value is None:
-        return None
-    engine = str(value).strip().lower()
-    if engine in LOCAL_OCR_ENGINES:
-        return None
-    if engine in RETIRED_OCR_ENGINES:
-        return ReplacedEngine(str(value), RETIRED_OCR_ENGINES[engine], online=False)
-    return ReplacedEngine(str(value), DEFAULTS["ocr_engine"], online=True)
-
-
-def unavailable_ocr_engine(path: Path) -> ReplacedEngine | None:
-    """Return the OCR engine *path* names if it is no longer available, else ``None``.
-
-    :func:`load_config_file` already swaps such an engine for its replacement; this tells a
-    GUI what was swapped so it can say so instead of changing the setting silently.
-    """
-    try:
-        engine = _read_toml(path).get("ocr_engine")
-    except ConfigFileParseError:
-        return None
-    return replaced_ocr_engine(engine)
-
-
 #: The settings the installer may write before the app has ever started.  A settings file that
 #: holds nothing else is not a teacher's saved setup: the first start (the Setup Assistant) still
 #: runs, and carries these values over.
 INSTALLER_SETTING_KEYS: frozenset[str] = frozenset({"check_for_updates"})
 
 
-def load_config_file(path: Path) -> dict:
-    """Parse *path* as TOML and return a dict of recognised pipeline keys.
+def load_config_file(path: Path) -> LoadedSettings:
+    """Parse *path* as TOML and return the settings it holds, and what was changed about them.
 
-    Unknown provider values are passed through unchanged; callers are
-    responsible for validating against the runtime provider list.
+    Keys the schema does not know are dropped; a value a key does not accept is left out (the
+    default applies) and reported in ``notices``, so a caller can say so instead of changing a
+    teacher's setting silently.
 
     Args:
         path: Path to a TOML file.
 
     Returns:
-        Dict suitable for passing to :meth:`argparse.ArgumentParser.set_defaults`.
+        The recognised values, suitable for :meth:`Config.from_settings` and for
+        :meth:`argparse.ArgumentParser.set_defaults`.
     """
-    known_keys = {
-        "input",
-        "output",
-        "recursive",
-        "debug",
-        "ocr_engine",
-        "ocr_model",
-        "language",
-        "preprocess_method",
-        "ollama_url",
-        "ocr_timeout",
-        "recognition_enabled",
-        "keep_awake",
-        "check_for_updates",
-        "correction_enabled",
-        "anonymization_enabled",
-        "correction_provider",
-        "correction_model",
-        "correction_notes",
-        "correction_level",
-        "explanation_language",
-        "correction_output",
-        "evaluation_enabled",
-        "evaluate_provider",
-        "evaluate_model",
-        "evaluate_prompt",
-        "docx_format",
-        "docx_enabled",
-        "text_enabled",
-        "text_anonymized_enabled",
-        "anonymizer_primary_model",
-        "anonymizer_secondary_model",
-        "anonymizer_patterns",
-        "pdf_render_dpi",
-        "pdf_text_layer",
-        "hardware_profile",
-        "proofreading_context",
-    }
-    raw = _read_toml(path)
-    result = {k: v for k, v in raw.items() if k in known_keys}
-
-    if "ocr_engine" in result:
-        result["ocr_model"] = normalize_ocr_model(
-            result["ocr_engine"], result.get("ocr_model", DEFAULTS["ocr_model"])
-        )
-        result["ocr_engine"] = normalize_ocr_engine(result["ocr_engine"])
-
-    if "preprocess_method" in result:
-        result["preprocess_method"] = normalize_preprocess_method(result["preprocess_method"])
-
-    if "pdf_text_layer" in result:
-        raw_mode = result["pdf_text_layer"]
-        mode = parse_pdf_text_layer(raw_mode)
-        if mode is not None:
-            result["pdf_text_layer"] = mode
-        else:
-            print(
-                f"WARNING: pdf_text_layer must be one of {', '.join(PDF_TEXT_LAYER_MODES)}"
-                f" (got {raw_mode!r}) — ignored.",
-                file=sys.stderr,
-            )
-            del result["pdf_text_layer"]
-
-    if "anonymizer_patterns" in result:
-        raw_pats = result["anonymizer_patterns"]
-        if not isinstance(raw_pats, list) or not all(
-            isinstance(p, (list, tuple)) and len(p) == 2 and all(isinstance(x, str) for x in p)
-            for p in raw_pats
-        ):
-            print(
-                "WARNING: anonymizer_patterns must be a list of [tag, pattern] string pairs"
-                " — ignored.",
-                file=sys.stderr,
-            )
-            del result["anonymizer_patterns"]
-        else:
-            result["anonymizer_patterns"] = [tuple(p) for p in raw_pats]
-
-    if "hardware_profile" in result and result["hardware_profile"] not in PROFILE_SETTINGS:
-        print(
-            f"WARNING: hardware_profile '{result['hardware_profile']}' is not one of "
-            f"{', '.join(PROFILE_SETTINGS)} — falling back to 'auto'.",
-            file=sys.stderr,
-        )
-        del result["hardware_profile"]
-
-    if (
-        "proofreading_context" in result
-        and str(result["proofreading_context"]) not in CONTEXT_SETTINGS
-    ):
-        print(
-            f"WARNING: proofreading_context '{result['proofreading_context']}' is not one of "
-            f"{', '.join(CONTEXT_SETTINGS)} — falling back to 'auto'.",
-            file=sys.stderr,
-        )
-        del result["proofreading_context"]
-
-    # A typo must not mean different things in different layers: unknown values fall back to
-    # the defaults (level B2, explanations on), as the GUI does.
-    if "correction_level" in result:
-        result["correction_level"] = normalize_level(str(result["correction_level"]))
-    if "correction_output" in result:
-        result["correction_output"] = normalize_output_mode(str(result["correction_output"]))
-
-    if "correction_notes" in result:
-        result["correction_notes"] = normalize_notes(str(result["correction_notes"]))
-    if "evaluate_prompt" in result:
-        result["evaluate_prompt"] = migrate_saved_default(
-            str(result["evaluate_prompt"]), DEFAULTS["evaluate_prompt"]
-        )
-
-    return result
+    return normalize_settings(_read_toml(path))
 
 
 def _toml_string(val: str) -> str:

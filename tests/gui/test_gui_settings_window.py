@@ -560,7 +560,7 @@ def test_the_profile_chosen_on_this_computer_reaches_the_other_pages(qtbot) -> N
     assert models._ocr_picker._hw_selector is models._computer_box.selector
     assert models._shared._hw_selector is models._computer_box.selector
     assert models._review._hw_selector is models._computer_box.selector
-    assert window.page(SettingsPage.ADDONS)._hardware_selector.setting() == "cpu"
+    assert window.page(SettingsPage.ADDONS).ollama_models._hardware_selector.setting() == "cpu"
     assert window.values().settings["hardware_profile"] == "cpu"
 
     window.show_page(SettingsPage.SCAN_QUALITY)  # built later, not affected
@@ -581,7 +581,7 @@ def test_a_page_built_after_a_profile_change_starts_with_it(qtbot) -> None:
 
     window.show_page(SettingsPage.ADDONS)
 
-    assert window.page(SettingsPage.ADDONS)._hardware_selector.setting() == "16gb"
+    assert window.page(SettingsPage.ADDONS).ollama_models._hardware_selector.setting() == "16gb"
 
 
 @pytest.mark.gui
@@ -738,10 +738,10 @@ def test_a_provider_preselect_opens_online_services_with_the_package_ticked(qtbo
     window = _window(qtbot, SettingsPage.ADDONS, service=service, preselect=["provider:mistral"])
     addons = window.page(SettingsPage.ADDONS)
 
-    qtbot.waitUntil(lambda: addons._dl_checkboxes["provider:mistral"].isChecked(), timeout=5000)
+    qtbot.waitUntil(lambda: addons.providers.checkboxes["provider:mistral"].isChecked(), timeout=5000)
 
     assert addons._tabs.currentIndex() == AddonsPage.TAB_ONLINE_SERVICES
-    assert not addons._dl_checkboxes["provider:openai"].isChecked()
+    assert not addons.providers.checkboxes["provider:openai"].isChecked()
 
 
 @pytest.mark.gui
@@ -789,7 +789,7 @@ def test_the_change_link_on_add_ons_opens_this_computer(qtbot) -> None:
     """
     window = _window(qtbot, SettingsPage.ADDONS)
 
-    window.page(SettingsPage.ADDONS)._profile_line.change_link.linkActivated.emit("change")
+    window.page(SettingsPage.ADDONS).ollama_models._profile_line.change_link.linkActivated.emit("change")
 
     assert window.current_page() is SettingsPage.AI_SETUP
 
@@ -822,7 +822,7 @@ def test_a_package_hint_install_switches_to_add_ons_and_the_hint_goes_after_the_
     assert window.current_page() is SettingsPage.ADDONS
     addons = window.page(SettingsPage.ADDONS)
     assert addons._tabs.currentIndex() == AddonsPage.TAB_ONLINE_SERVICES
-    qtbot.waitUntil(lambda: addons._dl_checkboxes["provider:mistral"].isChecked(), timeout=5000)
+    qtbot.waitUntil(lambda: addons.providers.checkboxes["provider:mistral"].isChecked(), timeout=5000)
 
     service.missing = {}  # the install finished
     with qtbot.waitSignal(window.packages_changed, timeout=2000):
@@ -1044,7 +1044,7 @@ def test_enter_in_a_field_on_add_ons_does_not_close_the_window(qtbot, monkeypatc
     qtbot.waitExposed(window)
 
     assert [b.text() for b in window.findChildren(QPushButton) if b.isDefault()] == []
-    field = _addons(window)._ollama_custom_input
+    field = _addons(window).ollama_models._ollama_custom_input
     field.setFocus()
     QTest.keyClick(field, Qt.Key.Key_Return)
 

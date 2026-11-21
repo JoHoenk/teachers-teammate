@@ -324,7 +324,7 @@ class AddonsCapableService(DummyAppService):
     def get_installation_status(self, *, ollama_models=None, **_kwargs) -> dict[str, bool]:
         return {f"ollama:{m}": False for m in (ollama_models or [])}
 
-    def list_ollama_model_sizes(self, url: str = "") -> dict[str, int]:
+    def list_ollama_model_sizes(self, url: str) -> dict[str, int]:
         _ = url
         return {}
 
@@ -344,7 +344,7 @@ class ProviderAddonsService(ProviderAppService):
             status[f"provider:{name}"] = name not in self.missing
         return status
 
-    def list_ollama_model_sizes(self, url: str = "") -> dict[str, int]:
+    def list_ollama_model_sizes(self, url: str) -> dict[str, int]:
         _ = url
         return {}
 

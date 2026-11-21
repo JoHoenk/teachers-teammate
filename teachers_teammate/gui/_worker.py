@@ -162,38 +162,3 @@ def detach_running_worker(worker: QThread) -> None:
 def detached_workers_running() -> bool:
     """Return whether a detached worker is still running."""
     return any(worker.isRunning() for worker in _DETACHED)
-
-
-class _ConnectionCheckThread(QThread):
-    """Background check: OCR engine reachability / correction provider auth."""
-
-    check_done = Signal(bool, bool, str)  # (connected, model_ok, message)
-
-    def __init__(
-        self,
-        *,
-        engine: str = "",
-        provider: str = "",
-        url: str = "http://127.0.0.1:11434",
-        model: str = "",
-        app_service: AppServices,
-    ) -> None:
-        super().__init__()
-        self._engine = engine
-        self._provider = provider
-        self._url = url
-        self._model = model
-        self._app_service = app_service
-
-    def run(self) -> None:
-        if self._engine:
-            connected, model_ok, msg = self._app_service.reader.check_engine(
-                self._engine, self._url, model=self._model
-            )
-        elif self._provider:
-            connected, model_ok, msg = self._app_service.providers.check_connection(
-                self._provider, self._url, model=self._model
-            )
-        else:
-            connected, model_ok, msg = False, False, "Nothing to check."
-        self.check_done.emit(connected, model_ok, msg)

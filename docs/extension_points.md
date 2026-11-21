@@ -123,6 +123,22 @@ and *Test speed* each need their own click. **Start with the walkthrough**
 `tests/gui/test_gui_setup_walkthrough.py` (real wizard, service, threads and `MainWindow`
 against a fake Ollama). See {doc}`development` → "Setup Assistant"
 
+## A service needs something from infrastructure
+
+1. Add the method to a `Protocol` in `application/ports.py` — narrow: only what the caller asks
+   (`OllamaServer` carries a server's answers, `HardwareProbe` this computer's cards and memory,
+   `AddonState` the packages folder, `NameModels` the spaCy models).
+2. Give the service the protocol as a required constructor argument and call it; nothing in the
+   method body imports the module any more.
+3. Build the implementation in `application/composition.py`. An adapter class whose methods call
+   the module's functions by name keeps those functions patchable in a test, and no second
+   construction is needed (see `SystemHardwareProbe`, `AddonPackages`, `SpacyModels`).
+4. Lower `BUDGET` in `tests/unit/test_lazy_import_budget.py` if the change removed a
+   `# noqa: PLC0415`; the test fails when the number no longer matches.
+
+What stays a lazy import: installs with progress and their own errors, the facts of the process
+(`inject_packages_dir()`, `can_install_addons()`), and pure helpers on strings and names.
+
 ## Add-on packages (installed app)
 
 `infrastructure/addon_manager.py`. `get_packages_dir()` comes **first** on `sys.path`, so every

@@ -282,3 +282,25 @@ def test_check_connection_provider_returns_false_when_env_var_missing(
 
 
 # ── list_supported_suffixes
+
+
+@pytest.mark.unit
+def test_refreshing_the_ollama_model_list_drops_the_classifications_of_that_server() -> None:
+    """
+    Given  the built services, with a classification kept for one Ollama server
+    When   the model list of that server is refreshed
+    Then   the recommendations forget that server's classifications, and no other's
+    """
+    from teachers_teammate.infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
+
+    services = build_app_services()
+    kept = {"qwen3.5:9b": frozenset()}
+    url, other = "http://127.0.0.1:11434", "http://192.168.1.50:11434"
+    cache = services.recommendations._classification
+    cache[normalize_ollama_url(url)] = dict(kept)
+    cache[normalize_ollama_url(other)] = dict(kept)
+
+    services.providers.invalidate_model_cache("ollama", url)
+
+    assert normalize_ollama_url(url) not in cache
+    assert normalize_ollama_url(other) in cache

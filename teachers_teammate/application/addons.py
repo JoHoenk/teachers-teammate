@@ -12,9 +12,11 @@ import importlib.util
 from pathlib import Path
 
 from ..domain.local_models import PAGE_MODELS, READER_MODELS
+from ..domain.model_catalog import normalize_tag
 from ..infrastructure.addon_manager import ADDON_PRIVACY
 from ..infrastructure.onnx.store import ModelStore
 from .anonymization import AnonymizationService
+from .ports import AddonState
 from .providers import ProviderService, importable
 from .reader import ReaderService
 
@@ -44,8 +46,12 @@ class AddonService:
         providers: ProviderService,
         reader: ReaderService,
         anonymization: AnonymizationService,
+        state: AddonState,
     ) -> None:
         self._model_store = model_store or ModelStore()
+        # What the packages folder holds: the installs below are this service's own, the
+        # questions about them come from there.
+        self._state = state
         self._providers = providers
         self._reader = reader
         self._anonymization = anonymization
@@ -91,8 +97,6 @@ class AddonService:
                 result[f"spacy:{model_id}"] = model_id in installed_spacy
 
         if ollama_models:
-            from ..domain.model_catalog import normalize_tag  # noqa: PLC0415
-
             try:
                 # Compare normalised tags: "llama3.2" and "llama3.2:latest" are one model.
                 pulled = {
@@ -113,9 +117,7 @@ class AddonService:
 
     def is_addon_available(self, addon: str) -> bool:
         """Return whether the named addon package is importable."""
-        from ..infrastructure.addon_manager import is_addon_importable  # noqa: PLC0415
-
-        return is_addon_importable(addon)
+        return self._state.importable(addon)
 
     def is_module_importable(self, module: str) -> bool:
         """Return True if *module* can be imported (the package is installed).
@@ -137,15 +139,11 @@ class AddonService:
         Windows locks a file the running app has loaded, so a package that could not replace
         its old copy waits there; :func:`prepare_packages_dir` applies it at the next start.
         """
-        from ..infrastructure.addon_manager import addons_restart_needed  # noqa: PLC0415
-
-        return addons_restart_needed()
+        return self._state.restart_needed()
 
     def pending_addon_packages(self) -> list[str]:
         """Return the normalised names of the packages that wait for the next start."""
-        from ..infrastructure.addon_manager import pending_addon_packages  # noqa: PLC0415
-
-        return pending_addon_packages()
+        return self._state.pending()
 
     def addons_outdated(self) -> bool:
         """Return whether an app update left add-ons that wait for *Update add-ons*.
@@ -154,17 +152,21 @@ class AddonService:
         folder names and one small ``WHEEL`` file per package; ``False`` outside the installed
         app.
         """
-        from ..infrastructure.addon_manager import addons_outdated  # noqa: PLC0415
+        return self._state.outdated()
 
-        return addons_outdated()
+    def addon_in_folder(self, distribution: str) -> bool:
+        """Return whether *distribution* is installed as an add-on in the packages folder."""
+        return self._state.in_folder(distribution)
+
+    def addon_waits_for_restart(self, distribution: str) -> bool:
+        """Return whether *distribution* is installed but waits for the next start."""
+        return self._state.waits_for_restart(distribution)
 
     # ── Installing ────────────────────────────────────────────────────────
 
     def addon_packages_dir(self) -> Path:
         """Return the persistent user-writable directory for addon packages."""
-        from ..infrastructure.addon_manager import get_packages_dir  # noqa: PLC0415
-
-        return get_packages_dir()
+        return self._state.packages_dir()
 
     def install_addon(
         self,
@@ -183,12 +185,9 @@ class AddonService:
         progress_cb: Callable[[str], None],
     ) -> None:
         """Install arbitrary pip *packages* into the addon packages directory."""
-        from ..infrastructure.addon_manager import (  # noqa: PLC0415
-            get_packages_dir,
-            install_packages_subprocess,
-        )
+        from ..infrastructure.addon_manager import install_packages_subprocess  # noqa: PLC0415
 
-        install_packages_subprocess(packages, get_packages_dir(), progress_cb)
+        install_packages_subprocess(packages, self._state.packages_dir(), progress_cb)
 
     def update_addons(self, progress_cb: Callable[[str], None]) -> None:
         """Install the add-ons in the packages directory again with the app's package versions.

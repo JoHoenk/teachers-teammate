@@ -19,9 +19,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..infrastructure import power
+from ..infrastructure.addon_manager import AddonPackages
 from ..infrastructure.file_discovery import FileDiscovery
+from ..infrastructure.gpu_detector import SystemHardwareProbe
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline
+from ..infrastructure.spacy_models import SpacyModels
 from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.state_repository import StateRepository
 from ..infrastructure.teacher_work_store import TeacherWorkStore
@@ -103,17 +106,23 @@ def build_app_services(
     model_store = model_store or ModelStore()
     sleep_blocker = sleep_blocker or power.default_sleep_blocker()
     ollama = OllamaServerService()
+    # The narrow collaborators the services below branch on: this computer, the add-on packages
+    # folder, the spaCy models.  Each is a Protocol in ``application/ports.py``.
+    hardware = SystemHardwareProbe()
+    addon_state = AddonPackages()
+    names = SpacyModels()
     providers = ProviderService()
     reader = ReaderService(
         model_store=model_store, component_factory=component_factory, providers=providers
     )
     speeds = SpeedEstimateService(effective_model=providers.effective_model)
-    anonymization = AnonymizationService()
+    anonymization = AnonymizationService(names=names)
     addons = AddonService(
         model_store=model_store,
         providers=providers,
         reader=reader,
         anonymization=anonymization,
+        state=addon_state,
     )
     data_flow = DataFlowService(
         provider_info=providers.get_provider_info,
@@ -125,7 +134,10 @@ def build_app_services(
         invalidate_model_list=providers.forget_ollama_model_list,
         invalidate_speed_facts=speeds.forget_server_facts,
         machine_factor=lambda url, task: speeds.machine_factors(url).for_category(task),
+        hardware=hardware,
     )
+    # Refreshing a server's model list also drops what was classified from it.
+    providers.watch_classifications(recommendations.invalidate_classification)
     setup = SetupService(
         ollama=ollama,
         providers=providers,
@@ -160,6 +172,7 @@ def build_app_services(
         model_store=model_store,
         work_store=work_store,
         ollama=ollama,
+        hardware=hardware,
         providers=providers,
         reader=reader,
         recommendations=recommendations,

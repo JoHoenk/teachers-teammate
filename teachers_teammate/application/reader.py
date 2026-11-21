@@ -13,13 +13,8 @@ import threading
 import uuid
 
 from ..config import OcrConfig
-from ..domain.data_location import (
-    ENGINE_OLLAMA,
-    ENGINE_PPOCR,
-    StageLocation,
-    is_ollama_cloud_model,
-)
-from ..domain.local_models import PAGE_MODELS, READER_MODELS, READER_SIZE_LABEL
+from ..domain.data_location import StageLocation, is_ollama_cloud_model
+from ..domain.local_models import PAGE_MODELS, READER_MODELS
 from ..infrastructure.ocr_processor import SUPPORTED_OCR_ENGINES
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import preprocess_preview
@@ -66,23 +61,6 @@ class ReaderService:
     def describe_ocr_refusal(self, engine: str, model: str, ollama_url: str) -> str:
         """Return why text recognition with these settings is refused, or ``""`` when allowed."""
         return ocr_refusal(engine, model, ollama_url)
-
-    def check_engine(
-        self, engine: str, url: str = "http://127.0.0.1:11434", *, model: str = ""
-    ) -> tuple[bool, bool, str]:
-        """Check whether the recognition *engine* is ready, and whether *model* is there.
-
-        Returns ``(connected, model_ok, message)``, as the provider check does: an Ollama engine
-        is answered by its server, the built-in reader by its downloaded model files, and any
-        other engine needs nothing that can be checked from here.
-        """
-        if engine == ENGINE_OLLAMA:
-            return self._providers.check_connection(ENGINE_OLLAMA, url, model=model)
-        if engine == ENGINE_PPOCR:
-            if self.reader_installed():
-                return True, True, "✓ built-in reader ready"
-            return False, False, f"✗ built-in reader not downloaded ({READER_SIZE_LABEL})"
-        return True, True, "✓ OK"
 
     # ── The preview of the automatic image preparation ────────────────────
 

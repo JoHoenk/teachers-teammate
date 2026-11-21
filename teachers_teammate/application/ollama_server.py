@@ -99,11 +99,11 @@ class OllamaServerService:
             can_start=state is OllamaState.NOT_RUNNING and can_start_ollama(),
         )
 
-    def list_ollama_model_sizes(self, url: str = "") -> dict[str, int]:
+    def list_ollama_model_sizes(self, url: str) -> dict[str, int]:
         """Return ``{model_name: size_bytes}`` for models installed in Ollama."""
         from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
-        return dict(OllamaClient(url or "http://127.0.0.1:11434").list_models_with_size())
+        return dict(OllamaClient(url).list_models_with_size())
 
     def listed_models(self, url: str) -> tuple[list[str], str]:
         """Return ``(installed, unreachable)`` for the server at *url*, asking it now.
@@ -124,6 +124,12 @@ class OllamaServerService:
         from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
         return OllamaClient(url).activity(model)
+
+    def unload(self, url: str, model: str) -> None:
+        """Drop *model* out of the server's memory at *url*, so it costs no memory any more."""
+        from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+        OllamaClient(url).unload(model)
 
     def wait_for(self, url: str, model: str) -> WaitDetail:
         """Return why *model* has to wait for another one at *url*, or nothing.

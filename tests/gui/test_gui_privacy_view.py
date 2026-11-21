@@ -11,7 +11,6 @@ import pytest
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.anonymization import AnonymizationService
 from teachers_teammate.application.providers import ProviderService
-from teachers_teammate.application.reader import ReaderService
 from teachers_teammate.application.run import RunService
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui import _user_text as txt
@@ -146,9 +145,6 @@ def _no_network(monkeypatch) -> None:
     monkeypatch.setattr(RunService, "check_stage_requirements", lambda *_: [])
     monkeypatch.setattr(
         ProviderService, "check_connection", lambda self, **_kw: (False, False, "offline")
-    )
-    monkeypatch.setattr(
-        ReaderService, "check_engine", lambda self, **_kw: (False, False, "offline")
     )
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)

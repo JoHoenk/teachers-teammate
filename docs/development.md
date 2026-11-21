@@ -116,6 +116,14 @@ are the exception, and the only one: `gui/composition.py`, `gui/_app_bootstrap.p
 `cli_composition.py`, `__main__.py` and `frozen_modes.py`. `tests/unit/test_layer_imports.py`
 holds both rules.
 
+A service in `application/` does not reach into `infrastructure` from a method body. What it
+needs of a module comes in through its constructor, typed by a `Protocol` in
+`application/ports.py` (`OllamaServer`, `AddonState`, `HardwareProbe`, `NameModels`);
+`application/composition.py` hands over the class of the running app, a test hands over a fake.
+What still needs a lazy import — an add-on package that must not be imported at start-up, a
+module that imports back — carries `# noqa: PLC0415`, and the count of those in `application/`
+is the ratchet of `tests/unit/test_lazy_import_budget.py`.
+
 ```{uml} assets/component_diagram.puml
 :align: center
 :alt: Teacher's Teammate component architecture
@@ -3760,11 +3768,11 @@ Off, the layers behave like this:
   others (exit code 0).  `ProcessingResult.skipped` -> `FileOutcome(status=SKIPPED)`; a file that is
   gone since it was queued is skipped the same way.  The main window opens
   no error dialog for it and `ResultsTable.add_result` shows "skipped" in grey.
-- `_ollama_needed` / `configured_ollama_models` / `ocr_refusal_for_run` ignore the OCR model, the
+- `_ollama_needed` / `_configured_ollama_models` / `ocr_refusal_for_run` ignore the OCR model, the
   pipeline does not check it, and `describe_data_flow` leaves the recognition stage out (no page
   leaves anywhere).  `describe_steps` forces it back on so the line under the step can still say
   what ticking it would use.
-- `check_run_preflight(config, files=..., recognised=...)` asks `plan_recognition()` (images are
+- `check_run_preflight(config, files=..., recognised=...)` asks `_plan_recognition()` (images are
   scans; PDFs are opened with `pdf_has_text_layer()`, cached by path/size/mtime/mode, so call it from
   a background thread) and returns `RunPreflight.skipped`; when no file is readable it is blocked by
   `IssueKind.NOTHING_TO_READ` (fix: **Turn on**, `COMMAND_TURN_ON_RECOGNITION`).  The main window

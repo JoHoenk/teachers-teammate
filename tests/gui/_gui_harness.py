@@ -27,7 +27,6 @@ from PySide6.QtWidgets import QWidget
 from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.application.composition import AppServices
 from teachers_teammate.application.providers import ProviderService
-from teachers_teammate.application.reader import ReaderService
 from teachers_teammate.application.run import RunService
 from teachers_teammate.domain.benchmark import PairComparison, compare_pair
 from teachers_teammate.domain.model_catalog import (
@@ -42,7 +41,6 @@ from teachers_teammate.gui._background import LatestTask
 from teachers_teammate.gui._privacy_settings import FlowAcknowledgements
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._update_check import UpdateCheckThread
-from teachers_teammate.gui._worker import _ConnectionCheckThread
 from teachers_teammate.gui.settings import SettingsContext, SettingsResult
 
 from ._service_stubs import LocalDataFlowStub, context_choice_from, services_of
@@ -225,7 +223,6 @@ def neutralize_gui_threads(monkeypatch: Any) -> None:
     """
     for thread_cls in (
         UpdateCheckThread,
-        _ConnectionCheckThread,
         _model_fetch._ModelFetchThread,
         _install_round._PipInstallThread,
         _anonymizer_config_widget._SpacyModelFetchThread,
@@ -238,7 +235,6 @@ def neutralize_gui_threads(monkeypatch: Any) -> None:
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(ProviderService, "check_connection", lambda *a, **k: (True, True, "✓ OK"))
-    monkeypatch.setattr(ReaderService, "check_engine", lambda *a, **k: (True, True, "✓ OK"))
     monkeypatch.setattr(RunService, "check_stage_requirements", lambda *a, **k: [])
 
 

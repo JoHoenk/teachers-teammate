@@ -52,7 +52,7 @@ from .anonymization import AnonymizationService
 from .data_flow import ocr_refusal
 from .documents import DocumentQueries, WorkedOn
 from .model_recommendations import ModelRecommendationService
-from .ollama_server import OllamaServerService
+from .ports import HardwareProbe, OllamaServer
 from .providers import ProviderService
 from .reader import ReaderService
 
@@ -226,7 +226,8 @@ class RunService:
         sleep_blocker: SleepBlocker,
         model_store: ModelStore,
         work_store: TeacherWorkStore,
-        ollama: OllamaServerService,
+        ollama: OllamaServer,
+        hardware: HardwareProbe,
         providers: ProviderService,
         reader: ReaderService,
         recommendations: ModelRecommendationService,
@@ -245,6 +246,9 @@ class RunService:
         # see the same folder.
         self._work_store = work_store
         self._ollama = ollama
+        # The cheap question of this computer a run asks; the full probe stays with the
+        # recommendations.
+        self._hardware = hardware
         self._providers = providers
         self._reader = reader
         self._recommendations = recommendations
@@ -718,18 +722,15 @@ class RunService:
         window = window_of_model(config, windows, tag)
         return memory_at_context_gb(spec, window) or spec.memory_gb
 
-    @staticmethod
-    def _runs_on_apple_silicon(detection: HardwareDetection) -> bool:
+    def _runs_on_apple_silicon(self, detection: HardwareDetection) -> bool:
         """Whether the models share one pool of memory with the graphics side (Apple Silicon).
 
         Read from the computer, not from the detection reason: a profile chosen by hand is a
         MANUAL detection, but on Apple Silicon the whole model still comes out of that memory.
         """
-        from ..infrastructure import gpu_detector  # noqa: PLC0415
-
         return (
             detection.reason is DetectionReason.APPLE_UNIFIED_MEMORY
-            or gpu_detector.detect_apple_unified_memory_gb() is not None
+            or self._hardware.apple_unified_memory_gb() is not None
         )
 
     def config_for_stage_run(self, config: Config, stage: str) -> Config:
@@ -854,16 +855,11 @@ class RunService:
 
     def _addon_needs_update(self, distribution: str) -> bool:
         """Return whether *distribution* is installed as an add-on but kept off by an app update."""
-        from ..infrastructure.addon_manager import addon_in_folder, addons_outdated  # noqa: PLC0415
+        return self._addons.addons_outdated() and self._addons.addon_in_folder(distribution)
 
-        return addons_outdated() and addon_in_folder(distribution)
-
-    @staticmethod
-    def _addon_waits_for_restart(distribution: str) -> bool:
+    def _addon_waits_for_restart(self, distribution: str) -> bool:
         """Return whether *distribution* is installed but waits for the next start."""
-        from ..infrastructure.addon_manager import addon_waits_for_restart  # noqa: PLC0415
-
-        return addon_waits_for_restart(distribution)
+        return self._addons.addon_waits_for_restart(distribution)
 
     def _name_detection_issues(self, language: str) -> list[RequirementIssue]:
         """Return what removing names still needs: spaCy itself or the model of *language*."""

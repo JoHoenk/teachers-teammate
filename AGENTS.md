@@ -137,7 +137,9 @@ that area. A new LLM provider is a new file in `infrastructure/providers/` and n
 ## Code conventions
 
 - Line length 100, double quotes (`[tool.ruff]` in `pyproject.toml`).
-- Lazy imports (inside functions): add `# noqa: PLC0415`.
+- Lazy imports (inside functions): add `# noqa: PLC0415`. The count of them in `application/` is
+  pinned by `tests/unit/test_lazy_import_budget.py`; a collaborator a service branches on belongs
+  in `application/ports.py` as a `Protocol` and comes in through the constructor.
 - Type checker is `ty`. Suppress with `# ty: ignore[<rule>]`, **not** `# type: ignore[...]`
   (ty ignores it silently). ty uses its own rule names (`invalid-assignment`,
   `invalid-argument-type`, `invalid-method-override`, `unresolved-attribute`, …). Prefer

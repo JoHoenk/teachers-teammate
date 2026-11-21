@@ -20,7 +20,6 @@ from teachers_teammate.application.speed_estimates import SpeedSummary
 from teachers_teammate.application.documents import WorkedOn
 from teachers_teammate.application.model_recommendations import ModelRecommendationService
 from teachers_teammate.application.providers import ProviderService
-from teachers_teammate.application.reader import ReaderService
 from teachers_teammate.application.run import IssueKind, RequirementIssue, RunPreflight, RunService
 from teachers_teammate.application.setup_plan import SetupService
 from teachers_teammate.domain.model_catalog import (
@@ -172,9 +171,6 @@ def _no_network_in_gui_tests(monkeypatch) -> None:
     # The status row checks its services in the background; never probe a real server.
     monkeypatch.setattr(
         ProviderService, "check_connection", lambda self, **_kw: (False, False, "offline (test)")
-    )
-    monkeypatch.setattr(
-        ReaderService, "check_engine", lambda self, **_kw: (False, False, "offline (test)")
     )
 
 

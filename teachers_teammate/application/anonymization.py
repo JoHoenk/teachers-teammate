@@ -14,25 +14,28 @@ import threading
 from typing import TYPE_CHECKING
 
 from ..config import Config
+from ..domain.name_models import FALLBACK_SPACY_MODEL, SPACY_MODELS, spacy_model_for
 from ..infrastructure.anonymizer import (
     AnonymizationResultCache,
     AnonymizerConfig,
     CachedAnonymizer,
     anonymizer_config_from,
 )
+from .ports import NameModels
 
 _logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from ..infrastructure.anonymizer import SpacyAnonymizer
     from ..interfaces import Anonymizer
 
 
 class AnonymizationService:
     """What personal-info removal loads and the caches it answers from."""
 
-    def __init__(self) -> None:
-        self._anonymizer_cache: dict[tuple, SpacyAnonymizer] = {}
+    def __init__(self, *, names: NameModels) -> None:
+        # The spaCy models name detection loads: which are installed, and loading one.
+        self._names = names
+        self._anonymizer_cache: dict[tuple, Anonymizer] = {}
         # Anonymized texts of this session, so a run, a preview and an export analyse the same
         # text once.  In memory only: nothing that was hidden is written to disk.
         self._anonymization_cache = AnonymizationResultCache()
@@ -59,15 +62,13 @@ class AnonymizationService:
 
     def _anonymizer(
         self, language: str, config: object | None
-    ) -> tuple[SpacyAnonymizer, AnonymizerConfig]:
+    ) -> tuple[Anonymizer, AnonymizerConfig]:
         """Return the cached anonymizer and its resolved settings; callers hold the lock."""
-        from ..infrastructure.anonymizer import SpacyAnonymizer  # noqa: PLC0415
-
         anon_config = self.resolve_anonymizer_config(language, config)
         cache_key = (language, anon_config)
         cached = self._anonymizer_cache.get(cache_key)
         if cached is None:
-            cached = SpacyAnonymizer(language, anon_config)
+            cached = self._names.anonymizer(language, anon_config)
             self._anonymizer_cache[cache_key] = cached
         return cached, anon_config
 
@@ -129,15 +130,11 @@ class AnonymizationService:
 
     def spacy_model_for_language(self, language: str) -> str:
         """Return the spaCy model name for *language*, falling back to the multilingual model."""
-        from ..infrastructure.spacy_models import spacy_model_for  # noqa: PLC0415
-
         return spacy_model_for(language)
 
     def list_installed_spacy_models(self) -> list[str]:
         """Return sorted names of installed spaCy model packages, or ``[]`` if spaCy is absent."""
-        from ..infrastructure.spacy_models import installed_spacy_models  # noqa: PLC0415
-
-        return installed_spacy_models()
+        return self._names.installed()
 
     def _remembered_installed_models(self) -> list[str]:
         """Return the installed spaCy models, asking spaCy only once until it is forgotten."""
@@ -173,19 +170,12 @@ class AnonymizationService:
         The model of the document language itself is left out: a second pass with it would only
         repeat the first.
         """
-        from ..infrastructure.spacy_models import (  # noqa: PLC0415
-            FALLBACK_SPACY_MODEL,
-            SPACY_MODELS,
-            spacy_model_for,
-        )
-
         own = spacy_model_for(language)
         models = dict.fromkeys([*SPACY_MODELS.values(), FALLBACK_SPACY_MODEL])
         return [model for model in models if model != own]
 
     def system_spacy_model(self) -> str | None:
         """Return the spaCy model for the language this computer is set to, if it is known."""
-        from ..infrastructure.spacy_models import spacy_model_for  # noqa: PLC0415
         from ..infrastructure.system_locale import system_language  # noqa: PLC0415
 
         language = system_language()
@@ -223,7 +213,6 @@ class AnonymizationService:
         "would it work?", and the run itself warns when a model is missing.
         """
         from ..infrastructure.anonymizer import resolve_anonymizer_config  # noqa: PLC0415
-        from ..infrastructure.spacy_models import spacy_model_for  # noqa: PLC0415
         from ..infrastructure.system_locale import system_language  # noqa: PLC0415
 
         anon_config: AnonymizerConfig = (

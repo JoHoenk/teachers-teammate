@@ -49,6 +49,7 @@ from ..domain.model_catalog import (
 from ..exceptions import OllamaConnectionError
 from ..infrastructure.gpu_detector import GpuInfo
 from .context_choice import ContextChoice, context_choice
+from .ports import HardwareProbe
 
 _logger = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ class ModelRecommendationService:
         invalidate_model_list: Callable[[str], None] | None = None,
         invalidate_speed_facts: Callable[[str], None] | None = None,
         machine_factor: Callable[[str, ModelCategory], float | None] | None = None,
+        hardware: HardwareProbe,
     ) -> None:
         """Create the service.
 
@@ -103,11 +105,14 @@ class ModelRecommendationService:
             machine_factor: ``(ollama_url, category)`` → how much slower this
                 computer is than the reference machine, for the speed a rating
                 of :meth:`rate_ollama_models` may carry.
+            hardware: What this computer is: its graphics cards and its memory.  The
+                probe runs once per process, however often the URL changes.
         """
         self._effective_model = effective_model
         self._invalidate_model_list = invalidate_model_list or (lambda _url: None)
         self._invalidate_speed_facts = invalidate_speed_facts or (lambda _url: None)
         self._machine_factor_of = machine_factor or (lambda _url, _category: None)
+        self._hardware = hardware
         self._probe: _LocalProbe | None = None
         self._probe_lock = threading.Lock()
         self._system_memory: tuple[float | None] | None = None  # read once, a 1-tuple when read
@@ -122,13 +127,10 @@ class ModelRecommendationService:
         # classification lookups; concurrent callers wait for the one probe.
         with self._probe_lock:
             if self._probe is None or refresh:
-                # Module attribute lookups at call time keep this patchable.
-                from ..infrastructure import gpu_detector  # noqa: PLC0415
-
                 self._probe = _LocalProbe(
-                    gpus=tuple(gpu_detector.detect_gpus()),
-                    apple_unified_memory_gb=gpu_detector.detect_apple_unified_memory_gb(),
-                    system_memory_gb=gpu_detector.detect_system_memory_gb(),
+                    gpus=tuple(self._hardware.gpus()),
+                    apple_unified_memory_gb=self._hardware.apple_unified_memory_gb(),
+                    system_memory_gb=self._hardware.system_memory_gb(),
                 )
                 _logger.info("Probed this computer: %s", self._probe)
             return self._probe
@@ -148,15 +150,11 @@ class ModelRecommendationService:
         model suggestion depends on it.  It is a quick query, but the GUI still asks for it on a
         background task, like every other probe of this computer.
         """
-        from ..infrastructure import gpu_detector  # noqa: PLC0415
-
-        return gpu_detector.detect_available_memory_gb()
+        return self._hardware.available_memory_gb()
 
     def read_gpu_usage(self) -> GpuUsage | None:
         """Return how busy the first graphics card is right now, or ``None`` when unreadable."""
-        from ..infrastructure import gpu_detector  # noqa: PLC0415
-
-        return gpu_detector.read_gpu_usage()
+        return self._hardware.gpu_usage()
 
     def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection:
         """Return the hardware detection for the machine that runs Ollama.
@@ -233,7 +231,6 @@ class ModelRecommendationService:
         card is still rated by the memory the computer has, so that is read separately and
         once: it is a quick query, unlike the graphics probe.
         """
-        from ..infrastructure import gpu_detector  # noqa: PLC0415
         from ..infrastructure.ollama_utils import (  # noqa: PLC0415
             is_local_ollama_url,
             normalize_ollama_url,
@@ -241,10 +238,10 @@ class ModelRecommendationService:
 
         if not is_local_ollama_url(normalize_ollama_url(ollama_url)):
             return None
-        if gpu_detector.detect_apple_unified_memory_gb() is not None:
+        if self._hardware.apple_unified_memory_gb() is not None:
             return None  # the graphics share is carved out of this memory: no second helping
         if self._system_memory is None:
-            self._system_memory = (gpu_detector.detect_system_memory_gb(),)
+            self._system_memory = (self._hardware.system_memory_gb(),)
         return self._system_memory[0]
 
     # ── catalog ────────────────────────────────────────────────────────────

@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+from typing import TYPE_CHECKING
 
 from ..domain.name_models import FALLBACK_SPACY_MODEL as FALLBACK_SPACY_MODEL  # noqa: PLC0414
 from ..domain.name_models import SPACY_MODEL_DOWNLOAD_URL, SPACY_MODEL_PINS
 from ..domain.name_models import SPACY_MODELS as SPACY_MODELS  # noqa: PLC0414
 from ..domain.name_models import spacy_model_for as spacy_model_for  # noqa: PLC0414
+
+if TYPE_CHECKING:
+    from ..domain.anonymization import AnonymizerConfig
+    from ..interfaces import Anonymizer
 
 
 def spacy_model_url(model: str) -> str:
@@ -47,3 +52,27 @@ def installed_spacy_models() -> list[str]:
     if not _importable("spacy"):
         return []
     return sorted(model for model in SPACY_MODEL_PINS if _importable(model))
+
+
+class SpacyModels:
+    """The spaCy models name detection loads, asked through this module.
+
+    Each method looks its function up by name when it is called, so a test that patches one of
+    them changes what this object answers — and a model downloaded while the app runs is seen
+    without a restart (:func:`installed_spacy_models` asks the import system).
+    """
+
+    def installed(self) -> list[str]:
+        """Return the sorted names of the installed spaCy models, or ``[]`` without spaCy."""
+        return installed_spacy_models()
+
+    def anonymizer(self, language: str, config: AnonymizerConfig | None = None) -> Anonymizer:
+        """Return an anonymizer for *language*, loaded from the models *config* names.
+
+        Raises:
+            ImportError: spaCy is not installed.
+            OSError: a model the settings name is not downloaded.
+        """
+        from .anonymizer import SpacyAnonymizer  # noqa: PLC0415  # spaCy is an add-on
+
+        return SpacyAnonymizer(language, config)

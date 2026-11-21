@@ -15,6 +15,7 @@ from pathlib import Path
 from ..config import DEFAULTS, Config
 from ..domain.context_budget import RunWindows
 from ..domain.formatted_text import TextFormat, normalize_text_format
+from ..infrastructure.anonymizer import anonymizer_config_from
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.state_repository import (
     DocumentState,
@@ -274,8 +275,6 @@ class DocumentQueries:
         ``None`` when personal-info removal is off: nothing is hidden then, so the dialog
         must show the text as written.
         """
-        from ..infrastructure.anonymizer import anonymizer_config_from  # noqa: PLC0415
-
         if not config.anonymization_enabled:
             return None
         anon_config = anonymizer_config_from(config)

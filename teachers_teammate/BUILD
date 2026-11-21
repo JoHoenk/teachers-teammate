@@ -182,6 +182,7 @@ _APPLICATION_SRCS = [
     "application/merged_view.py",
     "application/model_recommendations.py",
     "application/ollama_server.py",
+    "application/ports.py",
     "application/providers.py",
     "application/queue.py",
     "application/reader.py",

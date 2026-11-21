@@ -1466,3 +1466,25 @@ def test_preflight_looks_at_the_teachers_work_only_when_asked(tmp_path: Path) ->
 
     assert plain.worked_on.empty is True
     assert asked.worked_on.transcribed == (source,)
+
+
+@pytest.mark.unit
+def test_the_memory_check_does_not_probe_the_graphics_cards(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a profile chosen by hand and a computer whose graphics probe must not run
+    When   the memory is checked before a run
+    Then   the check still refuses the model, and never asked for the graphics cards
+    """
+    from teachers_teammate.domain.model_catalog import DetectionReason  # noqa: PLC0415
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+
+    def _no_probe() -> list:
+        raise AssertionError("the graphics cards were probed")
+
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, ocr_engine="ppocr")
+    _computer(svc, monkeypatch, profile="8gb", free_gb=0.5, reason=DetectionReason.MANUAL)
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
+    monkeypatch.setattr(gpu_detector, "detect_gpus", _no_probe)
+
+    assert svc.run.memory_warning_for_run(cfg) != ""

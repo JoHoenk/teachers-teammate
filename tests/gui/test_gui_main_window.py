@@ -35,6 +35,7 @@ from teachers_teammate.domain.proofreading.review import CorrectionReview, EditN
 from teachers_teammate.domain.teacher_work import WorkTooNewError
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _main_window as main_window_module
+from teachers_teammate.gui import _preprocess_preview as preprocess_module
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._export_menu import ExportKind
@@ -1663,7 +1664,7 @@ def test_the_pull_manager_pulls_the_whole_queue_on_its_own(qtbot, monkeypatch) -
             pass
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager(service=real_service())
+    manager = main_window_module.PullManager(service=real_service())
     started: list[str] = []
     queue_seen: list[list[str]] = []
     manager.started.connect(started.append)
@@ -1720,7 +1721,7 @@ def test_a_pull_thread_outlives_the_manager_that_started_it(qtbot, monkeypatch) 
             return True
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager(service=real_service())
+    manager = main_window_module.PullManager(service=real_service())
     held_before = set(_model_fetch._RETIRED_THREADS)
 
     manager.start("http://host:11434", "a:1b")
@@ -1769,7 +1770,7 @@ def test_aborting_a_pull_drops_the_queue(qtbot, monkeypatch) -> None:
             pass
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager(service=real_service())
+    manager = main_window_module.PullManager(service=real_service())
     manager.start("http://host:11434", "a:1b", ["b:1b", "c:1b"])
 
     manager.abort()
@@ -3025,11 +3026,11 @@ def test_the_preview_opens_on_top_of_the_settings_window(main_window, monkeypatc
         def exec(self) -> int:
             return 0
 
-    monkeypatch.setattr(main_window_module, "QDialog", _FakeDialog)
-    monkeypatch.setattr(main_window_module, "load_pixmap", lambda _p: QPixmap())
+    monkeypatch.setattr(preprocess_module, "QDialog", _FakeDialog)
+    monkeypatch.setattr(preprocess_module, "load_pixmap", lambda _p: QPixmap())
     owner.show()
 
-    main_window._on_preprocess_preview_done(
+    main_window._preprocess_preview._on_done(
         Path("a.png"), Path("b.png"), ["deskew"], "", OcrConfig(), Path("/tmp/none"), parent=owner
     )
 
@@ -3156,7 +3157,7 @@ def test_main_window_on_preprocess_preview_no_source_user_cancels(
 ) -> None:
     """
     Given  input dir has no images and user cancels the file dialog
-    When   _on_preprocess_preview_requested is called
+    When   PreprocessPreview.request is called
     Then   method returns without error and no background thread is started
     """
     from unittest.mock import patch  # noqa: PLC0415
@@ -3165,10 +3166,10 @@ def test_main_window_on_preprocess_preview_no_source_user_cancels(
 
     monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(tmp_path))
     monkeypatch.setattr(_dialogs, "pick_file", lambda *_a, **_k: None)
-    main_window._on_preprocess_preview_requested(
+    main_window._preprocess_preview.request(
         OcrConfig(preprocess_method=PreprocessMethod.NONE)
     )  # should not raise
-    assert main_window._preprocess_preview_thread is None
+    assert main_window._preprocess_preview._thread is None
 
 
 @pytest.mark.gui
@@ -3177,10 +3178,10 @@ def test_main_window_on_preprocess_preview_preprocess_error(
 ) -> None:
     """
     Given  preprocess_preview raises an exception
-    When   _on_preprocess_preview_requested runs its background thread to completion
+    When   PreprocessPreview.request runs its background thread to completion
     Then   a warning dialog is shown and no crash occurs
 
-    preprocess_preview now runs off the GUI thread (see _PreprocessPreviewThread), so
+    preprocess_preview runs off the GUI thread (see _PreprocessPreviewThread), so
     the warning only appears once the thread's done signal has been delivered.
     """
     from unittest.mock import patch  # noqa: PLC0415
@@ -3196,8 +3197,8 @@ def test_main_window_on_preprocess_preview_preprocess_error(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad file")),
     )
     shown = _record_notices(monkeypatch)
-    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method=PreprocessMethod.NONE))
-    thread = main_window._preprocess_preview_thread
+    main_window._preprocess_preview.request(OcrConfig(preprocess_method=PreprocessMethod.NONE))
+    thread = main_window._preprocess_preview._thread
     assert thread is not None
     assert thread.wait(THREAD_WAIT_MS), "the preview thread never finished"
     qtbot.waitUntil(lambda: bool(shown), timeout=THREAD_WAIT_MS)
@@ -3211,7 +3212,7 @@ def test_main_window_on_preprocess_preview_ignores_concurrent_click(
 ) -> None:
     """
     Given  a preprocessing preview already running in the background
-    When   _on_preprocess_preview_requested is called again before it finishes
+    When   PreprocessPreview.request is called again before it finishes
     Then   the second call is ignored: no second thread replaces the first, and the
            error dialog for the one background run appears exactly once
     """
@@ -3236,10 +3237,10 @@ def test_main_window_on_preprocess_preview_ignores_concurrent_click(
     )
 
     shown = _record_notices(monkeypatch)
-    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method=PreprocessMethod.NONE))
-    first_thread = main_window._preprocess_preview_thread
-    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method=PreprocessMethod.NONE))
-    assert main_window._preprocess_preview_thread is first_thread
+    main_window._preprocess_preview.request(OcrConfig(preprocess_method=PreprocessMethod.NONE))
+    first_thread = main_window._preprocess_preview._thread
+    main_window._preprocess_preview.request(OcrConfig(preprocess_method=PreprocessMethod.NONE))
+    assert main_window._preprocess_preview._thread is first_thread
 
     assert first_thread.wait(THREAD_WAIT_MS), "the preview thread never finished"
     qtbot.waitUntil(lambda: bool(shown), timeout=THREAD_WAIT_MS)
@@ -5207,7 +5208,7 @@ def test_a_pull_requested_while_one_runs_is_queued_not_dropped(qtbot, monkeypatc
             pass
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager(service=real_service())
+    manager = main_window_module.PullManager(service=real_service())
     manager.start("http://host:11434", "a:1b")
 
     manager.start("http://host:11434", "a:1b", ["b:1b"])

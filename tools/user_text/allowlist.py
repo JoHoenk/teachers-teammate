@@ -200,7 +200,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Answer a few questions to set up the AI for this computer.",
             "Benchmark…",
             "Check",
-            "Ctrl + scroll wheel to zoom",
             "Documents",
             "Export",
             "File",
@@ -219,7 +218,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Tools",
             "Try a document with different text-recognition settings and compare the results.",
             "User Guide…",
-            "f'Preprocessing Preview — {ocr_config.preprocess_method}'",
             'f\'Version <b>{version}</b> is available — <a href="{url}" style="color:#ffd966;">Download</a> · turn this check off under {WHERE_GENERAL}\'',
             "f'{PAGE_TITLES[page]}…'",
             "✕",
@@ -246,6 +244,12 @@ ALLOWED: dict[str, frozenset[str]] = {
     "teachers_teammate/gui/_ollama_status_line.py": frozenset(
         {
             "",
+        }
+    ),
+    "teachers_teammate/gui/_preprocess_preview.py": frozenset(
+        {
+            "Ctrl + scroll wheel to zoom",
+            "f'Preprocessing Preview — {ocr_config.preprocess_method}'",
         }
     ),
     "teachers_teammate/gui/_prompt_editor.py": frozenset(

@@ -40,7 +40,7 @@ WIN -> PANE            : LogWidget(), CheckPage()
 activate PANE
 PANE --> WIN           :
 deactivate PANE
-WIN -> WIN             : OllamaDownloadManager()\nnote right: manages background\nmodel-pull thread; outlives dialogs
+WIN -> WIN             : PullManager()\nnote right: manages background\nmodel-pull thread; outlives dialogs
 WIN -> WIN             : connect signals\n(paths_changed → _refresh_queue_from_inputs)
 WIN -> TIMER           : singleShot(500 ms, _start_readiness_check)
 WIN -> WIN             : _load_toml_if_present()

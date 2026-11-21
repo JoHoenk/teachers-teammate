@@ -4,7 +4,7 @@ What is real here: :class:`~teachers_teammate.gui.setup.SetupAssistant` and ever
 :class:`~teachers_teammate.application.setup_plan.SetupService` (``setup_facts``,
 ``plan_setup``, ``ollama_status``, model listing and rating), the ``LatestTask`` thread pool,
 :class:`~teachers_teammate.gui._install_round.InstallRound`,
-:class:`~teachers_teammate.gui._main_window.OllamaDownloadManager`, the ``ollama`` client over
+:class:`~teachers_teammate.gui._pull_manager.PullManager`, the ``ollama`` client over
 loopback HTTP, :class:`~teachers_teammate.gui._main_window.MainWindow` and ``ocr.toml`` on disk.
 
 What is replaced, each at the narrowest seam:

@@ -7,12 +7,11 @@ from enum import Enum
 import logging
 import os
 from pathlib import Path
-import shutil
 import sys
 import time
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Protocol, cast
 
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QDesktopServices,
@@ -25,7 +24,6 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
-    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -58,7 +56,7 @@ from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
 from ..application.run import IssueKind, RequirementIssue, RunPreflight
 from ..application.sent_text import SentTexts
-from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
+from ..config import DEFAULTS, Config, dump_config_file, load_config_file
 from ..domain.data_location import STAGE_CORRECTION, DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection, short_model_name
@@ -91,6 +89,7 @@ from ._chart_widget import ChartWidget
 from ._config_panel import ConfigPanel
 from ._credential_store import CredentialStore
 from ._data_flow_summary import advice_text, level_text, stage_tooltip
+from ._error_text import spacy_problem
 from ._export_menu import ExportKind, build_export_menu
 from ._fix_targets import (
     COMMAND_CHOOSE_FOLDER,
@@ -109,16 +108,16 @@ from ._fix_targets import (
 )
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
-from ._image_view import ZoomableImageView
 from ._log_widget import LogWidget
-from ._model_fetch import _start_thread
 from ._model_wording import profile_text
+from ._preprocess_preview import PreprocessPreview
 from ._privacy_settings import (
     DISPLAY_ANONYMIZED_DEFAULT,
     FlowAcknowledgements,
     display_anonymized,
     set_display_anonymized,
 )
+from ._pull_manager import PullManager
 from ._readiness_line import ReadinessLine, readiness
 from ._results_table import ResultsTable
 from ._run_status import RunPace, RunProgress, RunTone, describe_run
@@ -177,47 +176,6 @@ def _export_failure(name: str, exc: Exception) -> str:
     if isinstance(exc, WouldOverwriteInput):
         return dlg.export_would_overwrite_input(name, exc.target.name)
     return f"{name}: {exc}"
-
-
-def _spacy_problem(exc: BaseException) -> str | None:
-    """Explain a missing spaCy install / model (``None`` for any other error)."""
-    if isinstance(exc, ImportError):
-        return privacy.spacy_missing(str(exc), installed_app=bool(getattr(sys, "frozen", False)))
-    if isinstance(exc, OSError):
-        return privacy.spacy_model_missing(str(exc))
-    return None
-
-
-class _PreprocessPreviewThread(QThread):
-    """Run preprocess_preview() in a background thread for the preprocessing preview dialog.
-
-    Preprocessing a full-resolution scan (denoise, deskew, ...) can take several
-    seconds; running it on the GUI thread would freeze the window until it returns.
-    """
-
-    done = Signal(object, object, object, str)  # original_path, processed_path, steps, error
-
-    def __init__(
-        self,
-        app_service: AppServices,
-        source_path: Path,
-        ocr_config: OcrConfig,
-        tmp_dir: Path,
-    ) -> None:
-        super().__init__()
-        self._svc = app_service
-        self._source_path = source_path
-        self._ocr_config = ocr_config
-        self._tmp_dir = tmp_dir
-
-    def run(self) -> None:
-        try:
-            orig, proc, steps = self._svc.reader.preprocess_preview(
-                self._source_path, self._ocr_config, self._tmp_dir
-            )
-            self.done.emit(orig, proc, steps, "")
-        except Exception as exc:  # noqa: BLE001  # preprocess_preview raises for unsupported files, missing deps, or I/O errors; report via the done signal
-            self.done.emit(None, None, None, str(exc))
 
 
 class _StopStage(Enum):
@@ -324,102 +282,6 @@ def _app_icon() -> QIcon | None:
             if not icon.isNull():
                 return icon
     return None
-
-
-class OllamaDownloadManager(QObject):
-    """Manages a single active Ollama model pull thread, outliving any dialog.
-
-    MainWindow owns this object; Settings → Add-ons subscribes while it is open and
-    unsubscribes when the window closes, so pulls continue in the background.
-    """
-
-    progress = Signal(str, float, float)  # (status, completed_bytes, total_bytes)
-    started = Signal(str)  # model_name
-    finished = Signal(str)  # model_name (success)
-    error = Signal(str)  # error message
-
-    def __init__(
-        self,
-        parent: QObject | None = None,
-        *,
-        service: AppServices,
-    ) -> None:
-        super().__init__(parent)
-        self._service = service
-        self._thread: QThread | None = None
-        self._current_model: str = ""
-        self._current_url: str = ""
-        #: Models waiting for the running pull; pulled one after the other, also after the
-        #: Settings window that asked for them was closed.
-        self._queue: list[str] = []
-
-    @property
-    def is_active(self) -> bool:
-        return self._thread is not None and self._thread.isRunning()
-
-    @property
-    def current_model(self) -> str:
-        return self._current_model
-
-    @property
-    def current_url(self) -> str:
-        """Ollama server of the latest (or running) pull."""
-        return self._current_url
-
-    @property
-    def queued(self) -> list[str]:
-        """Return the models still waiting for the running pull (a copy)."""
-        return list(self._queue)
-
-    def start(self, url: str, model_name: str, queue: Sequence[str] = ()) -> None:
-        """Pull *model_name* from *url*, then each model of *queue*.
-
-        While a pull is running (also one that outlived the Settings window) the models are
-        added to its queue instead, so a request is never dropped silently; a model that is
-        already pulling or waiting is not added twice.  A failed or aborted pull drops the
-        queue.
-        """
-        if self.is_active:
-            for model in (model_name, *queue):
-                if model != self._current_model and model not in self._queue:
-                    self._queue.append(model)
-            return
-        self._queue = list(queue)
-        self._begin(url, model_name)
-
-    def _begin(self, url: str, model_name: str) -> None:
-        from ._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
-
-        self._current_model = model_name
-        self._current_url = url
-        thread = _OllamaPullThread(self._service, url, model_name)
-        thread.progress.connect(self.progress)
-        thread.finished_ok.connect(self._on_finished_ok)
-        thread.finished_err.connect(self._on_finished_err)
-        # Kept alive until it ends: the thread reports from run(), so the reference dropped
-        # in _on_finished_ok may be the last one while the thread is still running.
-        _start_thread(thread)
-        self._thread = thread
-        self.started.emit(model_name)
-
-    def abort(self) -> None:
-        """Request the active pull to stop after the current chunk (and drop the queue)."""
-        self._queue.clear()
-        if self._thread is not None:
-            self._thread.request_abort()  # ty: ignore[unresolved-attribute]  # _thread holds an abortable _OllamaPullThread; base QThread lacks request_abort
-
-    def _on_finished_ok(self, model_name: str) -> None:
-        self._thread = None
-        # Subscribers see the queue as it was when this pull ended: a non-empty one means
-        # the round goes on.
-        self.finished.emit(model_name)
-        if self._queue:
-            self._begin(self._current_url, self._queue.pop(0))
-
-    def _on_finished_err(self, msg: str) -> None:
-        self._thread = None
-        self._queue.clear()
-        self.error.emit(msg)
 
 
 #: The two texts the Check tab lets the teacher type in, as the store names them.
@@ -538,7 +400,7 @@ class MainWindow(QMainWindow):
         """Initialise per-window runtime state and declare widgets built later."""
         self._worker: _WorkerLike | None = None
         self._config_path: Path | None = None
-        self._pull_manager = OllamaDownloadManager(self, service=self._app_service)
+        self._pull_manager = PullManager(self, service=self._app_service)
         self._sent_texts_task = LatestTask(self)
         self._last_sent_texts: SentTexts | None = None
         self._anonymize_task = LatestTask(self)
@@ -571,7 +433,7 @@ class MainWindow(QMainWindow):
         #: The text and language of the running hiding job, to not start it twice.
         self._anonymize_key: tuple[str, str] | None = None
         self._first_run_task = LatestTask(self)
-        self._preprocess_preview_thread: _PreprocessPreviewThread | None = None
+        self._preprocess_preview: PreprocessPreview
         #: The Settings window while it is open (dialogs started from it use it as parent).
         self._settings_window: SettingsWindow | None = None
         self._init_menu_state()
@@ -689,6 +551,9 @@ class MainWindow(QMainWindow):
         )
         self._config_panel.results_changed.connect(self._on_results_changed)
         self._config_panel.instructions_changed.connect(self._on_instructions_changed)
+        self._preprocess_preview = PreprocessPreview(
+            self, services=self._app_service, panel=self._config_panel, table=self._results_table
+        )
         self._connect_check_page()
         self._refresh_privacy_availability()
         self._check.set_display_anonymized(self._display_anonymized)
@@ -2027,7 +1892,7 @@ class MainWindow(QMainWindow):
         def done(result: object, error: BaseException | None) -> None:
             self._text_export_running = False
             if error is not None:
-                message = (_spacy_problem(error) if anonymize else None) or str(error)
+                message = (spacy_problem(error) if anonymize else None) or str(error)
                 _dialogs.notify(self, dlg.text_export_error(message, preflight_errors))
                 return
             if not isinstance(result, _TextExportOutcome):
@@ -2947,7 +2812,7 @@ class MainWindow(QMainWindow):
 
         def _on_done(result: object, error: BaseException | None) -> None:
             if error is not None:
-                _dialogs.notify(self, dlg.copy_failed(_spacy_problem(error) or str(error)))
+                _dialogs.notify(self, dlg.copy_failed(spacy_problem(error) or str(error)))
                 return
             QApplication.clipboard().setText(str(result))
             self._check.show_copied()
@@ -3084,7 +2949,7 @@ class MainWindow(QMainWindow):
             busy.accept()
             if error is not None:
                 _dialogs.notify(
-                    self, privacy.what_is_sent_failed(_spacy_problem(error) or str(error))
+                    self, privacy.what_is_sent_failed(spacy_problem(error) or str(error))
                 )
                 return
             if not isinstance(result, SentTexts):
@@ -3157,7 +3022,7 @@ class MainWindow(QMainWindow):
         self._anonymize_running = False
         if error is not None or not isinstance(payload, tuple) or len(payload) != 2:
             reason = (
-                (_spacy_problem(error) or str(error)) if error is not None else dlg.UNKNOWN_ERROR
+                (spacy_problem(error) or str(error)) if error is not None else dlg.UNKNOWN_ERROR
             )
             self._check.set_anonymization({}, error=reason)
             return
@@ -3265,7 +3130,7 @@ class MainWindow(QMainWindow):
             preselect=preselect,
         )
         window.preprocess_preview_requested.connect(
-            lambda ocr_config: self._on_preprocess_preview_requested(ocr_config, parent=window)
+            self._preprocess_preview.request,
         )
         window.packages_changed.connect(self.packages_changed)
         window.addon_installed.connect(self._on_addon_installed)
@@ -3334,117 +3199,6 @@ class MainWindow(QMainWindow):
         elif addon == PAGE_MODELS_ADDON_ID:
             self._log.append_text("The page models are downloaded.\n")
         self._start_readiness_check()
-
-    def _on_preprocess_preview_requested(
-        self, ocr_config: OcrConfig, *, parent: QWidget | None = None
-    ) -> None:
-        """Preview *ocr_config*'s image preparation; dialogs open on top of *parent*."""
-        owner = parent or self
-        thread = self._preprocess_preview_thread
-        if thread is not None and thread.isRunning():
-            return  # a preview is already in flight; ignore the extra click
-
-        image_suffixes = self._app_service.run.list_supported_suffixes() - {".txt"}
-        # Prefer the file the user selected in the queue so the preview matches the
-        # document they are looking at, not just whichever file sorts first.
-        source_path: Path | None = next(
-            (
-                Path(sid)
-                for sid in self._results_table.selected_source_ids()
-                if Path(sid).suffix.lower() in image_suffixes and Path(sid).is_file()
-            ),
-            None,
-        )
-        input_dir_text = self._config_panel.get_input_dir()
-        if source_path is None and input_dir_text:
-            input_dir = Path(input_dir_text)
-            if input_dir.is_dir():
-                source_path = next(
-                    (
-                        f
-                        for f in sorted(input_dir.iterdir())
-                        if f.is_file() and f.suffix.lower() in image_suffixes
-                    ),
-                    None,
-                )
-        if source_path is None:
-            supported_glob = " ".join(
-                f"*{s}" for s in sorted(self._app_service.run.list_supported_suffixes() - {".txt"})
-            )
-            chosen = _dialogs.pick_file(owner, dlg.select_image_or_pdf(supported_glob))
-            if chosen is None:
-                return
-            source_path = chosen
-
-        tmp_dir = self._app_service.reader.resolve_preview_tmp_dir()
-
-        thread = _PreprocessPreviewThread(self._app_service, source_path, ocr_config, tmp_dir)
-        self._preprocess_preview_thread = thread
-        # QueuedConnection: guarantees the callback (which builds widgets) runs on the
-        # GUI thread even though the lambda itself isn't a QObject the auto-connection
-        # logic can use to infer that.
-        thread.done.connect(
-            lambda orig, proc, steps, error: self._on_preprocess_preview_done(
-                orig, proc, steps, error, ocr_config, tmp_dir, parent=owner
-            ),
-            Qt.ConnectionType.QueuedConnection,
-        )
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        thread.start()
-
-    def _on_preprocess_preview_done(
-        self,
-        orig_path: Path | None,
-        proc_path: Path | None,
-        steps: list[str] | None,
-        error: str,
-        ocr_config: OcrConfig,
-        tmp_dir: Path,
-        *,
-        parent: QWidget | None = None,
-    ) -> None:
-        QApplication.restoreOverrideCursor()
-        # The Settings window may have been closed while the preview was being made.
-        owner = parent if parent is not None and _is_shown(parent) else self
-        if error:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            _dialogs.notify(owner, dlg.preprocessing_preview_failed(error))
-            return
-        assert orig_path is not None
-        assert proc_path is not None
-        assert steps is not None
-
-        orig_pix = load_pixmap(orig_path)
-        proc_pix = load_pixmap(proc_path)
-
-        preview = QDialog(owner)
-        preview.setWindowTitle(f"Preprocessing Preview — {ocr_config.preprocess_method}")
-        preview.resize(1000, 620)
-
-        vbox = QVBoxLayout(preview)
-        hint = QLabel("Ctrl + scroll wheel to zoom")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setStyleSheet("color: #888; font-size: 8pt;")
-        vbox.addWidget(hint)
-
-        img_row = QHBoxLayout()
-        step_label = ", ".join(steps) if steps else "unchanged"
-        for title, pix in [("Original", orig_pix), (f"Processed ({step_label})", proc_pix)]:
-            col = QVBoxLayout()
-            hdr = QLabel(title)
-            hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            zoom_view = ZoomableImageView()
-            zoom_view.set_pixmap(pix)
-            col.addWidget(hdr)
-            col.addWidget(zoom_view, stretch=1)
-            img_row.addLayout(col)
-        vbox.addLayout(img_row, stretch=1)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(preview.reject)
-        vbox.addWidget(buttons)
-        preview.finished.connect(lambda _: shutil.rmtree(tmp_dir, ignore_errors=True))
-        preview.exec()
 
 
 # ── Entry point ────────────────────────────────────────────────────────────

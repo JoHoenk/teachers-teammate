@@ -5,7 +5,7 @@ log lines and the rule about closing the window are the same in both places.
 
 pip and spaCy run here and must finish before their window closes (a new package has to be
 importable before anything uses it); the pulls are handed to the main window's
-``OllamaDownloadManager`` and go on after the window has closed.
+``PullManager`` and go on after the window has closed.
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ class InstallRound(QObject):
 
     pip and spaCy run here and must finish before their window closes (a new package has to be
     importable before anything uses it); the pulls are handed to the main window's
-    OllamaDownloadManager and go on after the window has closed.
+    PullManager and go on after the window has closed.
     """
 
     log_line = Signal(str)

@@ -236,8 +236,8 @@ class PrivacyPage(SettingsPageBase):
 
         The remembered answers are kept: they have their own "Ask again" buttons.
         """
-        from ...application.service import (  # noqa: PLC0415
-            DEFAULT_ANONYMIZER_PATTERNS,
+        from ...domain.anonymization import (  # noqa: PLC0415
+            DEFAULT_PATTERNS,
             AnonymizerConfig,
         )
 
@@ -245,7 +245,7 @@ class PrivacyPage(SettingsPageBase):
             AnonymizerConfig(
                 primary_model=DEFAULTS["anonymizer_primary_model"] or None,
                 secondary_model=DEFAULTS["anonymizer_secondary_model"],
-                patterns=tuple(DEFAULT_ANONYMIZER_PATTERNS),
+                patterns=tuple(DEFAULT_PATTERNS),
             )
         )
         if self._available:

@@ -632,29 +632,29 @@ def run_cli(
         recursive=args.recursive,
     )
 
-    files = service.processing.collect_input_files(config)
+    files = service.run.collect_input_files(config)
     if args.preview_only:
-        return service.processing.run_preview_only(config, files).exit_code
+        return service.run.run_preview_only(config, files).exit_code
     refusal = (
-        service.processing.ocr_refusal_for_run(config)
-        or service.processing.reader_refusal_for_run(config, files)
-        or service.processing.output_refusal_for_run(config)
+        service.run.ocr_refusal_for_run(config)
+        or service.run.reader_refusal_for_run(config, files)
+        or service.run.output_refusal_for_run(config)
     )
     if refusal:
         print(f"ERROR: {refusal}", file=sys.stderr)
         return 1
-    warning = service.processing.memory_warning_for_run(config)
+    warning = service.run.memory_warning_for_run(config)
     if warning:
         if not args.ignore_memory_check:
             print(f"ERROR: {warning}", file=sys.stderr)
             print("Use --ignore-memory-check to run anyway.", file=sys.stderr)
             return 1
         print(f"WARNING: {warning}", file=sys.stderr)
-    notice = service.processing.page_models_notice_for_run(config)
+    notice = service.run.page_models_notice_for_run(config)
     if notice:
         print(notice, file=sys.stderr)
     _print_data_flow(service.data_flow.describe_data_flow(config))
-    return service.processing.run_selected(
+    return service.run.run_selected(
         config, files, config_file=config_path, battery_warning=BATTERY_WARNING
     ).exit_code
 

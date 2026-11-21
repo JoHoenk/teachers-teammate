@@ -24,7 +24,7 @@ activate QAPP
 MAIN -> WIN            : build_main_window()
 activate WIN
 
-WIN -> SVC             : ProcessingApplicationService()
+WIN -> SVC             : build_app_services()
 activate SVC
 SVC --> WIN            : service
 deactivate SVC

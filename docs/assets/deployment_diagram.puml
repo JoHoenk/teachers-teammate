@@ -15,7 +15,7 @@ node "User's Machine" as LOCAL {
   }
 
   package "Application" {
-    component "ProcessingApplicationService\n+ Application Commands" as APP
+    component "RunService / ApplicationCommands\n(application/)" as APP
   }
 
   package "Domain  (policy kernel — no I/O)" {

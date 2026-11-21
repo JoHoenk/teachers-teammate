@@ -120,7 +120,7 @@ class SpeedPanel(QWidget):
         """Create the block.
 
         Args:
-            app_service: The application service; only its speed facade methods are used.
+            app_service: The application services; only :class:`SpeedEstimateService` is used.
             settings_provider: Returns the settings as the AI models page shows them now, so the
                 test covers unsaved choices too.
             profile_selector: The page's one resolution of this computer; it decides whether a

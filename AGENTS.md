@@ -30,9 +30,10 @@ domain/          — pure business concepts (freshness policy, stage names); no 
 interfaces.py    — ABCs for every pipeline stage; SUPPORTED_SUFFIXES lives here
 infrastructure/  — concrete implementations (OCR engines, LLM providers, DOCX builder, etc.)
 infrastructure/workflow/ — FileProcessor (per-file stage orchestrator), run_files() coordinator
-application/     — ProcessingApplicationService (the run, providers, …), DocumentQueries (reads)
-                   and DocumentCommands (writes), reached as `.documents` / `.commands`;
-                   the only entry point for GUI and CLI
+application/     — the services, one per topic: RunService (the run) in `run.py`, plus
+                   providers, reader, recommendations, speeds, anonymization, addons, data_flow,
+                   setup, export, DocumentQueries (reads) and DocumentCommands (writes), reached
+                   as `.run` / `.documents` / `.commands`; the only entry for GUI and CLI
 gui/ / cli.py    — adapters; no discovery or availability logic
                    (gui/settings/ = the Settings window, one page per topic)
 texts/           — every sentence a teacher reads; Qt-free, imports only domain
@@ -75,8 +76,8 @@ or `docs/development.md`.
   main window already own and never turns anything off.
 
 **Where code goes**
-- GUI and CLI contain no discovery or availability logic: implement it in
-  `ProcessingApplicationService`, call it from the GUI.
+- GUI and CLI contain no discovery or availability logic: implement it in the service that
+  owns the topic (`application/run.py`, `providers.py`, …), call it from the GUI.
 - A sentence a teacher reads is defined in `teachers_teammate/texts/` and used by reference,
   never a literal at the call site. Message boxes and file pickers go through
   `gui/_dialogs.py`. `tests/unit/test_user_text_centralised.py` enforces it.

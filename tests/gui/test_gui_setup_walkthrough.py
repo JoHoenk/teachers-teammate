@@ -1,7 +1,7 @@
 """The Setup Assistant walked end to end: the real wizard, the real service, a real server.
 
 What is real here: :class:`~teachers_teammate.gui.setup.SetupAssistant` and every page,
-:class:`~teachers_teammate.application.service.ProcessingApplicationService` (``setup_facts``,
+:class:`~teachers_teammate.application.setup_plan.SetupService` (``setup_facts``,
 ``plan_setup``, ``ollama_status``, model listing and rating), the ``LatestTask`` thread pool,
 :class:`~teachers_teammate.gui._install_round.InstallRound`,
 :class:`~teachers_teammate.gui._main_window.OllamaDownloadManager`, the ``ollama`` client over
@@ -40,17 +40,16 @@ from PySide6.QtWidgets import QApplication, QWizard
 import pytest
 
 from teachers_teammate.application import providers as providers_module
-from teachers_teammate.application import service as service_module
 from teachers_teammate.application.anonymization import AnonymizationService
 from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.application.providers import ProviderService
-from teachers_teammate.application.service import ProcessingApplicationService
 from teachers_teammate.application.setup_plan import (
     DownloadKind,
     HandIn,
     PlannedDownload,
     ProofreadingPlace,
     SetupPlan,
+    SetupService,
 )
 from teachers_teammate.config import DEFAULTS, dump_config_file, load_config_file
 from teachers_teammate.domain.model_catalog import HardwareProfile, ModelCategory, best_model
@@ -393,7 +392,7 @@ class Walkthrough:
         self.services = build_app_services(
             model_store=ModelStore(tmp_path / "models", bundled_root=tmp_path / "no-bundle")
         )
-        self.service = self.services.processing
+        self.service = self.services.run
         monkeypatch.setattr(
             self.services.addons, "install_packages", self.downloads.install_packages
         )
@@ -882,7 +881,7 @@ def test_s8_cancel_on_a_first_start_leaves_a_working_setup(walkthrough, monkeypa
     When   the teacher cancels the assistant the first-start timer opened
     Then   the settings file holds the system language and the best models for this computer
     """
-    monkeypatch.setattr(ProcessingApplicationService, "system_language", lambda self: LANGUAGE)
+    monkeypatch.setattr(SetupService, "system_language", lambda self: LANGUAGE)
     walk = walkthrough(first_start=True)
     profile = walk.services.recommendations.resolve_hardware_profile("auto", walk.fake.url).profile
 

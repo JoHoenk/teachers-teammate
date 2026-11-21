@@ -46,7 +46,6 @@ class BenchmarkApplicationService:
         runner: _Runner | None = None,
     ) -> None:
         self.services = app_services
-        self._processing = app_services.processing
         self._setup = app_services.setup
         self._store = run_store or BenchmarkRunStore()
         self._component_factory = component_factory or PipelineComponentFactory()
@@ -68,7 +67,7 @@ class BenchmarkApplicationService:
             return {}
 
     def list_supported_suffixes(self) -> frozenset[str]:
-        return self._processing.list_supported_suffixes()
+        return self.services.run.list_supported_suffixes()
 
     # ── Benchmark operations ────────────────────────────────────────────────
 
@@ -126,7 +125,7 @@ class BenchmarkApplicationService:
                 source,
                 component_factory=self._component_factory,
                 stop_event=stop_event,
-                model_store=self._processing.model_store,
+                model_store=self.services.model_store,
             )
         finally:
             # A benchmark that ends or is stopped must not leave its model in memory: the next
@@ -136,7 +135,7 @@ class BenchmarkApplicationService:
             raise BenchmarkRunError(result.error)
 
         ocr_config_hash = compute_ocr_config_hash(
-            config, get_ocr_prompt(language), source, self._processing.model_store
+            config, get_ocr_prompt(language), source, self.services.model_store
         )
         if on_progress is not None:
             on_progress("Storing run…")

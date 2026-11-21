@@ -106,7 +106,7 @@ bazel run //:requirements_test.update
 The codebase is split into four layers. Each layer may only depend on layers below it:
 
 - **Presentation** (`gui/`, `cli.py`) — translates user interactions into application calls and renders results. Contains no business logic, and imports `pkg`, `core`, `domain`, `application` and `texts` only.
-- **Application** (`application/service.py`, `application/commands.py`) — coordinates use cases; the only entry point for the GUI and CLI.
+- **Application** (`application/`) — the services, one per topic (`run.py` for the run, `documents.py`, `commands.py`, …); they coordinate the use cases and are the only entry point for the GUI and CLI.
 - **Domain** (`domain/`) — pure business concepts (stage names, freshness policy); no I/O.
 - **Infrastructure** (`infrastructure/`) — concrete implementations: OCR engines, LLM providers, file I/O, DOCX builder, and the pipeline orchestration in `infrastructure/workflow/`.
 
@@ -240,7 +240,7 @@ layering:
   append-only run store, see below) and `runner.py` (an OCR-only path that reuses
   `StageBuilder`, `PreprocessService`, and `OCRStageService`).
 - **Application** `application/benchmark_service.py` — `BenchmarkApplicationService`
-  composes `ProcessingApplicationService` for OCR discovery queries and adds
+  answers the OCR discovery queries through the services it is given and adds
   `run_and_store` / `list_runs` / `delete_run` / `compare`. The GUI talks only to
   this service.
 - **Presentation** `gui/benchmark/` — a thin window reusing shared widgets
@@ -597,7 +597,7 @@ The two share thresholds come from speeds measured on an 8 GB card (a share of 0
 tokens per second, 0.73 gave 13, 0.66 gave 6.6); they are ratios, so they scale with the
 computer, but they come from one card and one processor.
 
-`ProcessingApplicationService.memory_warning_for_run()` is the run-time counterpart, used by
+`RunService.memory_warning_for_run()` is the run-time counterpart, used by
 `check_run_preflight()` (GUI) and the command line before a run: for an Ollama on this computer,
 the part of every catalogued model that does not fit the card (all of it on Apple Silicon) has to
 fit the main memory that is free *right now*, minus `RUN_MEMORY_MARGIN_GB` (2 GB).  It reads
@@ -875,11 +875,11 @@ does the service read?* — without spaCy, a model or a widget:
 - The function keeps an internal `hidden()` memo, so every distinct text is anonymized at
   most once.  The proofreading section, the content-review section and the comparison view
   therefore share one spaCy pass, and the shared cache behind `anonymize`
-  (`application/service.py`, see *Shared anonymization cache*) answers the second call.
+  (`application/anonymization.py`, see *Shared anonymization cache*) answers the second call.
 - `preview_extracted` asks for the anonymized extracted text as well, for the dialog's
   original-vs-anonymized tab; the service passes `config.anonymization_enabled`, so the tab
   appears exactly when names are actually being hidden.
-- `ProcessingApplicationService.describe_sent_texts()` supplies `anonymize` (the caching
+- `DocumentQueries.describe_sent_texts()` supplies `anonymize` (the caching
   preview anonymizer, `None` when removal is off) and builds the prompts with the same code
   the stages use (`_sent_correction_prompt` / `_sent_evaluation_prompt`), so the dialog cannot
   drift from what a run sends.  `SentTexts` carries the sections, `flow.level`, the raw text
@@ -957,7 +957,7 @@ the file at its next step).  The Stop button is two-step (`_StopStage` in `_main
 The result of a run is `domain/run_summary.py:RunSummary`: `succeeded`, `failed`, `skipped`,
 `stopped` (interrupted by Stop now), `not_started` and `error` (the run could not start).
 `status` is failed > stopped > done, and `exit_code` is `1` only for failed.  `run_files()`
-(`workflow/coordinator.py`), `OCRPipeline.run()` and `ProcessingApplicationService.run_selected()`
+(`workflow/coordinator.py`), `OCRPipeline.run()` and `RunService.run_selected()`
 return it; `OCRWorker.run_finished` carries it to the GUI, and `gui/_run_status.py:describe_run`
 holds all the wording (progress text, tray message).  A stopped file is neither a success nor
 a failure, like a skipped one: `ProcessingResult.stopped` -> `FileOutcome(status=STOPPED)` ->
@@ -1016,7 +1016,7 @@ the lock was granted, so the printed line (`ready_line`) is what makes `held` tr
 however slow, ends the helper without it.  macOS has no such signal and relies on `caffeinate`
 exiting at once when it refuses.  `SleepBlocker.available` is `False` for the null blocker, so
 `KeepAwakeState.available` tells "nothing was requested" (WSL) from "the system refused".  The only place it is held
-is `ProcessingApplicationService.run_selected()`, around the whole `pipeline.run()` (GUI and
+is `RunService.run_selected()`, around the whole `pipeline.run()` (GUI and
 CLI both go through it), so it is released on errors and on Stop alike.  `Config.keep_awake`
 (default on; `--allow-sleep` / `--keep-awake`; Settings → General) switches it; it is in no
 cache key.  The service reports a `KeepAwakeState` (held or refused, on battery or not,
@@ -1938,7 +1938,7 @@ SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
 - **One download at a time per process** (`_DOWNLOAD_LOCK`): two would write the same `.part`
   file.  What is missing is worked out inside the lock, so a download that waited finds the
   files in place and fetches nothing; it can still be cancelled while it waits.
-- A run reads the store its service checks (`ProcessingApplicationService(model_store=)` →
+- A run reads the store its service checks (`RunService(model_store=)` →
   `PipelineDependencies.model_store` / `run_ocr(model_store=)` → `StageBuilder.model_store`), so
   the readiness check and the run never look at different folders.
 - `reader_refusal_for_run` (CLI) refuses only a run that has a file to read: a folder of text
@@ -2111,7 +2111,7 @@ correction hash` into each part, so the same settings never ask again.
 
 **One merge point for every reader.**  `current_texts(machine, work)` returns the texts the
 document has now — transcription 2 else 1, corrected 5 (where bound) else 4 — plus
-`machine_corrected` (text 4) and the `WorkStatus` a reader marks.  `ProcessingApplicationService`
+`machine_corrected` (text 4) and the `WorkStatus` a reader marks.  `DocumentQueries`
 merges it into every `DocumentStateView` (`load_view`, `queue_rows`), and
 the pipeline calls the same function.  Queue rows, *Export*, *Copy*, *Save*, *Hide names*, *What
 is sent* and `check_document` read the view.  **Nothing outside the cache's own code reads a
@@ -2179,7 +2179,8 @@ Tests: `tests/unit/test_teacher_work.py` (the model, the merge, the changes),
 `tests/unit/test_teacher_work_store.py` (the store), `tests/unit/test_atomic_file.py` (the
 write), `tests/unit/test_domain_policy.py` (the freshness flags),
 `tests/unit/test_file_processor.py` (the pipeline on the current texts),
-`tests/unit/test_service.py` (the merged views, the commands, `worked_on_documents`),
+`tests/unit/test_documents_service.py` (the merged views, `worked_on_documents`) and
+`tests/unit/test_commands_service.py` (the writes),
 `tests/unit/test_teacher_work_readers.py` (no reader names the cache's type).
 
 ### Shared anonymization cache
@@ -3350,7 +3351,7 @@ succeed at a larger window. Without resolved windows the key falls back to
 
 Adding the evaluation part changed the content-review hash of every Ollama setup once, so after
 that update each cached content review counts as stale and is made again (proofreading results
-are untouched). The GUI asks `ProcessingApplicationService.resolved_windows()` for the keys it
+are untouched). The GUI asks `application/run.py:windows_for()` for the keys it
 expects; that never probes the graphics card (the probe runs `nvidia-smi` and must stay off the
 GUI thread), so until this computer has been probed it returns the base windows, and the main
 window probes in a background task and shows the queue again.
@@ -3712,7 +3713,7 @@ After a model download, `inject_packages_dir()` ensures the model is immediately
 ### Ollama models
 
 Ollama models are pulled via the **Ollama HTTP API**, not pip.  The Add-ons page's
-"AI models for this computer" tab calls `ProcessingApplicationService.pull_ollama_model()`, which uses
+"AI models for this computer" tab calls `OllamaServerService.pull_ollama_model()`, which uses
 the `ollama` Python client to stream a `POST /api/pull` request to the configured Ollama
 server (default `http://127.0.0.1:11434`).
 
@@ -3776,7 +3777,7 @@ Off, the layers behave like this:
 Rules in `domain/ollama_discovery.py` (pure: `OLLAMA_HOST` parsing, `/proc/net/route` and
 `resolv.conf` parsing, `classify_host`, `scan_targets`), I/O in `infrastructure/ollama_discovery.py`
 (`probe_server`, `discover_this_computer`, `scan_network`) and `infrastructure/wsl.py`.  The only
-entry point for the GUI is `ProcessingApplicationService.discover_ollama_servers(scope)`.
+entry point for the GUI is `OllamaServerService.discover_ollama_servers(scope)`.
 
 - `DiscoveryScope.THIS_COMPUTER`: the `OLLAMA_HOST` address, `127.0.0.1:11434`, and -- inside WSL --
   the Windows host (default gateway, then name servers; no `wsl.exe`, that would start a

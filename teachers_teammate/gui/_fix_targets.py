@@ -2,7 +2,7 @@
 
 The readiness line above Run, the requirement guard that unticks a step, and the dialog that
 stops a run all ask :func:`fix_for`, so they say the same thing and open the same place.  The
-rows are matched on :class:`~teachers_teammate.application.service.IssueKind`, never on the
+rows are matched on :class:`~teachers_teammate.application.run.IssueKind`, never on the
 sentence, so rewording a message can't break a fix.  Pure functions: no widgets.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..application.service import IssueKind, RequirementIssue
+from ..application.run import IssueKind, RequirementIssue
 from ..domain.language import language_name
 from . import _user_text as txt
 from ._install_round import PACKAGE_PREFIX, READER_ITEM

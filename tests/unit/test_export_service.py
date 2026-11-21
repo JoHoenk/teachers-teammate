@@ -9,7 +9,7 @@ import pytest
 
 from teachers_teammate.application.composition import AppServices, build_app_services
 from teachers_teammate.application.export import ExportService
-from teachers_teammate.application.service import AnonymizerConfig
+from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.teacher_work import text_identity
 from teachers_teammate.infrastructure.state_repository import (
     OcrResultRecord,
@@ -157,7 +157,9 @@ def test_export_docx_writes_the_teachers_corrections(tmp_path: Path) -> None:
     """
     from docx import Document  # noqa: PLC0415
 
-    services, source = _services_with_document(tmp_path, raw_text="hello world", corrected="Hello world.")
+    services, source = _services_with_document(
+        tmp_path, raw_text="hello world", corrected="Hello world."
+    )
     config = make_config(tmp_path)
     services.commands.edit_corrected_text(config, source=source, text="Hello, world!")
     out = tmp_path / "doc.docx"
@@ -198,7 +200,9 @@ def test_export_docx_refuses_a_document_without_text(tmp_path: Path) -> None:
     services = _services(StateRepository(tmp_path / "state"))
 
     with pytest.raises(ValueError, match="No OCR text"):
-        services.export.export_docx(make_config(tmp_path), tmp_path / "doc.png", tmp_path / "doc.docx")
+        services.export.export_docx(
+            make_config(tmp_path), tmp_path / "doc.png", tmp_path / "doc.docx"
+        )
 
 
 # ── export_text / is_in_input_folder ──────────────────────────────────────
@@ -368,7 +372,9 @@ def test_text_for_copy_is_what_export_text_writes(
     anonymizer = MagicMock()
     anonymizer.anonymize.side_effect = lambda text: (text.replace("Anna", "[PERSON_1]"), {})
     out = tmp_path / "scan.txt"
-    services, source = _services_with_document(tmp_path, raw_text=raw_text, raw_text_format=text_format)
+    services, source = _services_with_document(
+        tmp_path, raw_text=raw_text, raw_text_format=text_format
+    )
     config = make_config(tmp_path)
 
     with patch(

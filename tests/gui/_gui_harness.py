@@ -26,7 +26,9 @@ from PySide6.QtWidgets import QWidget
 
 from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.application.composition import AppServices
-from teachers_teammate.application.service import ProcessingApplicationService
+from teachers_teammate.application.providers import ProviderService
+from teachers_teammate.application.reader import ReaderService
+from teachers_teammate.application.run import RunService
 from teachers_teammate.domain.benchmark import PairComparison, compare_pair
 from teachers_teammate.domain.model_catalog import (
     OLLAMA_CATALOG,
@@ -235,12 +237,9 @@ def neutralize_gui_threads(monkeypatch: Any) -> None:
     monkeypatch.setattr(LatestTask, "submit", lambda self, fn, on_done: 0)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(
-        ProcessingApplicationService, "check_connection", lambda *a, **k: (True, True, "✓ OK")
-    )
-    monkeypatch.setattr(
-        ProcessingApplicationService, "check_stage_requirements", lambda *a, **k: []
-    )
+    monkeypatch.setattr(ProviderService, "check_connection", lambda *a, **k: (True, True, "✓ OK"))
+    monkeypatch.setattr(ReaderService, "check_engine", lambda *a, **k: (True, True, "✓ OK"))
+    monkeypatch.setattr(RunService, "check_stage_requirements", lambda *a, **k: [])
 
 
 def assert_no_running_threads(widget: QWidget) -> None:

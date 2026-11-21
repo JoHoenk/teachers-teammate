@@ -457,7 +457,7 @@ class _GuardService(LocalDataFlowStub):
     """Service stub reporting one missing Ollama model for the requirement check."""
 
     def check_stage_requirements(self, config, stage: str):
-        from teachers_teammate.application.service import (  # noqa: PLC0415
+        from teachers_teammate.application.run import (  # noqa: PLC0415
             IssueKind,
             RequirementIssue,
         )
@@ -615,7 +615,7 @@ def test_only_the_latest_guard_check_of_a_stage_counts(qtbot, monkeypatch) -> No
     """
     import threading  # noqa: PLC0415
 
-    from teachers_teammate.application.service import IssueKind, RequirementIssue  # noqa: PLC0415
+    from teachers_teammate.application.run import IssueKind, RequirementIssue  # noqa: PLC0415
     from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
 
     gates = [threading.Event(), threading.Event()]
@@ -1033,7 +1033,7 @@ class _FlowServiceMissingPrivacy(_FlowService):
     """Like :class:`_FlowService`, but the privacy add-on is missing."""
 
     def check_stage_requirements(self, config, stage: str):
-        from teachers_teammate.application.service import (  # noqa: PLC0415
+        from teachers_teammate.application.run import (  # noqa: PLC0415
             IssueKind,
             RequirementIssue,
         )
@@ -1752,7 +1752,7 @@ def test_ticking_recognition_checks_the_engine_and_unticks_when_it_is_missing(
     When   "Recognize text" is ticked
     Then   the requirement guard unticks it again and explains why, like any other step
     """
-    from teachers_teammate.application.service import IssueKind, RequirementIssue  # noqa: PLC0415
+    from teachers_teammate.application.run import IssueKind, RequirementIssue  # noqa: PLC0415
     from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
 
     dialogs: list[object] = []

@@ -12,11 +12,15 @@ import importlib.util
 from pathlib import Path
 
 from ..domain.local_models import PAGE_MODELS, READER_MODELS
+from ..infrastructure.addon_manager import ADDON_PRIVACY
 from ..infrastructure.onnx.store import ModelStore
 from .anonymization import AnonymizationService
 from .providers import ProviderService, importable
 from .reader import ReaderService
 
+#: The id of the personal-info add-on (spaCy and the name-detection models), as the Add-ons
+#: page and the installer know it.
+PRIVACY_ADDON = ADDON_PRIVACY
 #: Keys of :meth:`AddonService.get_installation_status` for the two model sets the app can carry
 #: itself; the Add-ons page names its rows (and its install items) the same way.
 READER_STATUS_KEY = "reader:ppocr"

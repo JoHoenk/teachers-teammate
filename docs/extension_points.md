@@ -41,14 +41,14 @@ wording.
 `Config.recognition_enabled` is not part of `OcrConfig`, so no cache key changes. Off:
 `RecognitionSwitchedOffError` → `ProcessingResult.skipped` → `RunOutcome.skipped` →
 `FileDoneEvent.skipped`. Gate anything that needs the OCR model/engine on it.
-`ProcessingApplicationService.plan_recognition()` works out what a run can use; it opens PDFs,
+`RunService` (`application/run.py`) works out what a run can use; it opens PDFs,
 so background thread only. See {doc}`development` → "Text recognition switch"
 
 ## Ollama server: finding, installing, starting
 
 - Finding: rules in `domain/ollama_discovery.py`, probing in `infrastructure/ollama_discovery.py`,
   WSL host in `infrastructure/wsl.py`; the GUI only calls
-  `ProcessingApplicationService.discover_ollama_servers(scope)`. See {doc}`development` →
+  `OllamaServerService.discover_ollama_servers(scope)`. See {doc}`development` →
   "Finding the Ollama server"
 - Found / running: `infrastructure/ollama_install.py` (program search, start, models folder, free
   space, `OLLAMA_DOWNLOAD_URL`); `IssueKind.OLLAMA_NOT_FOUND` / `OLLAMA_NOT_RUNNING` and their
@@ -110,7 +110,7 @@ model in `domain/formatted_text.py`, adapters use `application/formatting.py:Tex
 ## New run requirement
 
 Add an `IssueKind` and its check to `check_stage_requirements` / `check_run_preflight`
-(`application/service.py`), and a row in `gui/_fix_targets.py:fix_for`: the readiness line, the
+(`application/run.py`), and a row in `gui/_fix_targets.py:fix_for`: the readiness line, the
 requirement guard and the "run can't start" dialog all take their line and buttons from it.
 Preselect entries for Add-ons are model tags, `provider:<id>` and `spacy:<model>`.
 

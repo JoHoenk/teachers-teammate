@@ -12,7 +12,7 @@ from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 import pytest
 
-from teachers_teammate.application.service import AnonymizerConfig
+from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.config import DEFAULTS, OcrConfig
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _model_fetch

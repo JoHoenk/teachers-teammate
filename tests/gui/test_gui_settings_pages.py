@@ -1539,7 +1539,7 @@ def test_on_provider_changed_seeds_the_model(qtbot, monkeypatch) -> None:
     """
     section = _proofreading(qtbot, values={"correction_provider": "ollama"})
     monkeypatch.setattr(
-        section._app_service.processing,
+        section._app_service.providers,
         "get_provider_info",
         lambda p: {
             "models": [f"{p}-model-1", f"{p}-model-2"],
@@ -1663,7 +1663,7 @@ def test_changing_the_provider_preselects_its_default_model(qtbot, monkeypatch) 
     """
     section = _proofreading(qtbot, values={"correction_provider": "ollama"})
     monkeypatch.setattr(
-        section._app_service.processing,
+        section._app_service.providers,
         "get_provider_info",
         lambda p: {
             "models": [f"{p}-model-1", f"{p}-model-2"],

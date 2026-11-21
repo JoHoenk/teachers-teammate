@@ -75,7 +75,7 @@ class OllamaStatusLine(QWidget):
         """Create the line.
 
         Args:
-            app_service: The application service; only its Ollama facade methods are used.
+            app_service: The application services; only :class:`OllamaServerService` is used.
             url: The address to ask about; :meth:`set_url` follows the page's field.
         """
         super().__init__(parent)

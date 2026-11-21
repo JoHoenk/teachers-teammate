@@ -182,7 +182,8 @@ def test_connection_thread_no_engine_or_provider(qtbot) -> None:
     Then   check_done emits False with a 'Nothing to check' message
 
     The engine/provider matrix for check_connection itself is covered in
-    tests/unit/test_service.py; here we only exercise the GUI thread wiring.
+    tests/unit/test_reader_service.py and test_provider_service.py; here we only exercise the
+    GUI thread wiring.
     """
     thread = _ConnectionCheckThread(app_service=real_service())
     results: list[tuple[bool, str]] = []

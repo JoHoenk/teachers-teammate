@@ -19,7 +19,7 @@ package "Presentation Layer" {
 }
 
 package "Application Layer" {
-  [ProcessingApplicationService\n(service.py)] as A_SERVICE
+  [RunService\n(run.py)] as A_SERVICE
   [DocumentCommands\n(commands.py)] as A_CMD
   [DocumentQueries\n(documents.py)] as A_QUERY
   [BenchmarkApplicationService\n(benchmark_service.py)] as A_BENCH

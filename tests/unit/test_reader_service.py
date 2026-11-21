@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,7 +12,7 @@ from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.local_models import PAGE_MODELS
 from teachers_teammate.domain.setting_values import PreprocessMethod
-from tests.conftest import fake_page_models_store
+from tests.conftest import fake_page_models_store, fake_reader_store
 
 
 @pytest.mark.unit
@@ -148,3 +148,69 @@ def test_reader_downloads_through_the_store(tmp_path: Path) -> None:
     assert len(list(store.download.call_args.args[0])) == 2
     assert reader.reader_installed() is False
     assert reader.models_dir() == tmp_path
+
+
+# ── check_engine ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Service_Availability_Check")
+def test_check_connection_ollama_engine_returns_true_when_models_present(monkeypatch) -> None:
+    """
+    Given  the ollama engine and OllamaClient.check_connection reports one model available
+    When   the reader's check for the ollama engine is called
+    Then   returns (connected=True, model_ok=True, <success message>)
+    """
+    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        ollama_utils.OllamaClient,
+        "check_connection",
+        lambda self, model="": (True, True, "✓ Connected — 1 model(s) available"),
+    )
+    services = build_app_services()
+    ok, _, msg = services.reader.check_engine("ollama")
+    assert ok is True
+    assert "1" in msg
+
+
+@pytest.mark.unit
+def test_check_connection_ollama_engine_returns_false_when_no_models() -> None:
+    """
+    Given  Ollama is reachable but has no models pulled
+    When   the reader's check for the ollama engine is called
+    Then   returns (connected=True, model_ok=False, <message mentioning Ollama>)
+    """
+    services = build_app_services()
+    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
+
+    with patch.object(
+        ollama_utils.OllamaClient,
+        "check_connection",
+        return_value=(True, False, "✗ Connected to Ollama but no models are pulled"),
+    ):
+        connected, model_ok, msg = services.reader.check_engine("ollama")
+    assert connected is True
+    assert model_ok is False
+    assert "Ollama" in msg or "ollama" in msg.lower()
+
+
+# ── check_connection — provider checks ────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_check_connection_reader_reports_whether_it_is_downloaded(tmp_path: Path) -> None:
+    """
+    Given  a service with and one without the reader's model files
+    When   the reader's check for the built-in reader is called
+    Then   the first is connected, the second says the reader is not downloaded
+    """
+    ok, _, msg = build_app_services(
+        model_store=fake_reader_store(tmp_path / "a")
+    ).reader.check_engine("ppocr")
+    missing, _, missing_msg = build_app_services(
+        model_store=fake_reader_store(tmp_path / "b", installed=False)
+    ).reader.check_engine("ppocr")
+
+    assert ok is True and "built-in reader ready" in msg
+    assert missing is False and "not downloaded" in missing_msg and "31 MB" in missing_msg

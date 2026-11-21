@@ -75,7 +75,6 @@ filegroup(
         "unit/test_preprocessor.py",
         "unit/test_provider_service.py",
         "unit/test_recommendation_service.py",
-        "unit/test_service.py",
         "unit/test_settings_schema.py",
         "unit/test_setup_plan.py",
         "unit/test_setup_service.py",
@@ -149,6 +148,7 @@ _COMMON_SRCS = [
     "conftest.py",
     "__init__.py",
     "unit/__init__.py",
+    "unit/_service_helpers.py",
     "integration/__init__.py",
     "gui/__init__.py",
     "gui/_service_stubs.py",
@@ -741,7 +741,8 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_provider_service.py"],
     args = ["unit/test_provider_service.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _APPLICATION_LIB,
+    # It builds the whole set of services to check a provider, so the pipeline comes with it.
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -1143,11 +1144,42 @@ py_test(
     deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
+# The run: its files, its requirements and its summary.
 py_test(
-    name = "test_service",
+    name = "test_run_service",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_service.py"],
-    args = ["unit/test_service.py"],
+    srcs = _COMMON_SRCS + ["unit/test_run_service.py"],
+    args = ["unit/test_run_service.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
+)
+
+# What the store says about a document.
+py_test(
+    name = "test_documents_service",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_documents_service.py"],
+    args = ["unit/test_documents_service.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
+)
+
+# The writes: the teacher's texts and decisions.
+py_test(
+    name = "test_commands_service",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_commands_service.py"],
+    args = ["unit/test_commands_service.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
+)
+
+# Where each step of a run takes place.
+py_test(
+    name = "test_data_flow_service",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_data_flow_service.py"],
+    args = ["unit/test_data_flow_service.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
 )
@@ -2730,17 +2762,19 @@ test_suite(
         ":test_cli",
         ":test_cli_composition",
         ":test_collect_files",
+        ":test_commands_service",
         ":test_compare_mistral_regions",
         ":test_config",
         ":test_context_budget",
         ":test_coordinator",
         ":test_correction_options",
         ":test_correction_prompts_steps",
+        ":test_data_flow_service",
         ":test_data_location",
         ":test_diagnostics",
+        ":test_documents_service",
         ":test_docx_builder",
         ":test_docx_comments",
-        ":test_export_service",
         ":test_domain_policy",
         ":test_edits",
         ":test_evaluation",
@@ -2772,6 +2806,7 @@ test_suite(
         ":test_exchange_corrector",
         ":test_exchange_schemas",
         ":test_exchange_t",
+        ":test_export_service",
         ":test_fake_ollama",
         ":test_fallback_exchange",
         ":test_fetch_models",
@@ -2828,11 +2863,11 @@ test_suite(
         ":test_request_profile",
         ":test_review_v2",
         ":test_run_gui",
+        ":test_run_service",
         ":test_run_stats",
         ":test_run_summary",
         ":test_sent_text",
         ":test_sentences",
-        ":test_service",
         ":test_service_construction",
         ":test_setup_plan",
         ":test_setup_service",

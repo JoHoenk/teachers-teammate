@@ -21,8 +21,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..application.addons import PRIVACY_ADDON
 from ..application.composition import AppServices, inject_addon_packages_dir
-from ..application.service import ADDON_PRIVACY
 from ..domain.local_models import HUGGING_FACE_HOST, PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
 from ..exceptions import ModelDownloadCancelledError
 from ..texts.settings import WHERE_ADDONS
@@ -37,7 +37,7 @@ def _model_for_system_language(service: AppServices) -> str:
 
 
 _ADDON_META: dict[str, dict] = {
-    ADDON_PRIVACY: {
+    PRIVACY_ADDON: {
         "title": "Install Privacy Add-on",
         "description": (
             "This installs <b>spaCy</b>, the NLP library used for PII anonymization.<br><br>"
@@ -78,7 +78,7 @@ class AddonInstallerDialog(QDialog):
 
     def __init__(self, addon: str, parent: QWidget | None = None, *, service: Any) -> None:
         super().__init__(parent)
-        meta = _ADDON_META.get(addon, _ADDON_META[ADDON_PRIVACY])
+        meta = _ADDON_META.get(addon, _ADDON_META[PRIVACY_ADDON])
         self._service = service
         self._addon = addon
         self._thread: _InstallThread | None = None

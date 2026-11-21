@@ -11,10 +11,9 @@ from typing import Any
 from PySide6.QtCore import QThread, Signal
 
 from ..application.composition import AppServices
-from ..application.service import ProgressCallbacks
 from ..config import Config
 from ..domain.run_summary import FileOutcome, KeepAwakeState, RunSummary
-from ..interfaces import CallbackReporter
+from ..interfaces import CallbackReporter, ProgressCallbacks
 from ..texts.run import BATTERY_WARNING
 from ._types import FileDoneEvent
 
@@ -138,7 +137,7 @@ class OCRWorker(QThread):
                     on_first_token=on_first_token,
                 ),
             }
-            summary = self._app_service.processing.run_selected(
+            summary = self._app_service.run.run_selected(
                 self._config, self._files, **pipeline_kwargs
             )
         except (Exception, SystemExit) as exc:  # noqa: BLE001  # catch SystemExit to prevent the worker thread from killing the GUI process; also catches unexpected exceptions
@@ -187,10 +186,14 @@ class _ConnectionCheckThread(QThread):
         self._app_service = app_service
 
     def run(self) -> None:
-        connected, model_ok, msg = self._app_service.processing.check_connection(
-            engine=self._engine,
-            provider=self._provider,
-            url=self._url,
-            model=self._model,
-        )
+        if self._engine:
+            connected, model_ok, msg = self._app_service.reader.check_engine(
+                self._engine, self._url, model=self._model
+            )
+        elif self._provider:
+            connected, model_ok, msg = self._app_service.providers.check_connection(
+                self._provider, self._url, model=self._model
+            )
+        else:
+            connected, model_ok, msg = False, False, "Nothing to check."
         self.check_done.emit(connected, model_ok, msg)

@@ -185,9 +185,9 @@ _APPLICATION_SRCS = [
     "application/providers.py",
     "application/queue.py",
     "application/reader.py",
+    "application/run.py",
     "application/sent_text.py",
     "application/speed_estimates.py",
-    "application/service.py",
     "application/setup_plan.py",
 ]
 

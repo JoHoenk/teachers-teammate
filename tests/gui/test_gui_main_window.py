@@ -19,12 +19,9 @@ from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.speed_estimates import SpeedSummary
 from teachers_teammate.application.documents import WorkedOn
 from teachers_teammate.application.model_recommendations import ModelRecommendationService
-from teachers_teammate.application.service import (
-    IssueKind,
-    ProcessingApplicationService,
-    RequirementIssue,
-    RunPreflight,
-)
+from teachers_teammate.application.providers import ProviderService
+from teachers_teammate.application.reader import ReaderService
+from teachers_teammate.application.run import IssueKind, RequirementIssue, RunPreflight, RunService
 from teachers_teammate.application.setup_plan import SetupService
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
@@ -168,17 +165,16 @@ def _answer_questions(monkeypatch, *, yes: bool) -> list[Question]:
 @pytest.fixture(autouse=True)
 def _no_network_in_gui_tests(monkeypatch) -> None:
     """Prevent all MainWindow tests from making Ollama/network calls via the dependency guard."""
-    monkeypatch.setattr(ProcessingApplicationService, "check_stage_requirements", lambda *_: [])
-    monkeypatch.setattr(
-        ProcessingApplicationService, "check_run_preflight", lambda *_args, **_kw: RunPreflight()
-    )
+    monkeypatch.setattr(RunService, "check_stage_requirements", lambda *_: [])
+    monkeypatch.setattr(RunService, "check_run_preflight", lambda *_args, **_kw: RunPreflight())
     # The silent server search must not probe the real computer or its network.
     monkeypatch.setattr(OllamaServerService, "discover_ollama_servers", lambda *_a, **_kw: [])
     # The status row checks its services in the background; never probe a real server.
     monkeypatch.setattr(
-        ProcessingApplicationService,
-        "check_connection",
-        lambda self, **_kw: (False, False, "offline (test)"),
+        ProviderService, "check_connection", lambda self, **_kw: (False, False, "offline (test)")
+    )
+    monkeypatch.setattr(
+        ReaderService, "check_engine", lambda self, **_kw: (False, False, "offline (test)")
     )
 
 
@@ -3640,7 +3636,7 @@ def test_cancelling_the_assistant_on_a_first_start_keeps_todays_setup(
     Then   the system language and the best models for this computer are saved, so the app
            works without the assistant
     """
-    monkeypatch.setattr(ProcessingApplicationService, "system_language", lambda self: "German")
+    monkeypatch.setattr(SetupService, "system_language", lambda self: "German")
     detection = HardwareDetection(
         profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
     )
@@ -3843,7 +3839,7 @@ def test_missing_model_dialog_opens_addons_with_models_preselected(
     )
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: MagicMock())
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        RunService,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(missing_models=("qwen3-vl:8b", "qwen3.5:9b")),
     )
@@ -4066,7 +4062,7 @@ def test_run_with_ollama_unreachable_shows_clear_message_and_does_not_start(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        RunService,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(ollama_unreachable="✗ Cannot connect to Ollama"),
     )
@@ -4105,7 +4101,7 @@ def test_run_checks_requirements_off_the_gui_thread(
         assert release.wait(timeout=5), "test never released the check"
         return RunPreflight()
 
-    monkeypatch.setattr(ProcessingApplicationService, "check_run_preflight", _slow_preflight)
+    monkeypatch.setattr(RunService, "check_run_preflight", _slow_preflight)
 
     main_window._on_run()
 
@@ -4131,7 +4127,7 @@ def test_run_shows_unmet_stage_requirement_dialog(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        RunService,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(
             stage="correction",
@@ -4162,7 +4158,7 @@ def test_insufficient_memory_runs_anyway_only_when_the_user_says_so(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        RunService,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
     )
@@ -4193,7 +4189,7 @@ def test_cancelling_the_memory_warning_does_not_start_the_run(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        RunService,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
     )
@@ -4284,7 +4280,7 @@ def test_run_refuses_online_ocr_with_an_explanation(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        RunService,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(ocr_not_allowed="Runs on Ollama's servers."),
     )
@@ -4314,7 +4310,7 @@ def test_run_with_text_files_in_the_input_folder_is_refused(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     preflight: list[object] = []
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        RunService,
         "check_run_preflight",
         lambda self, config: preflight.append(config) or RunPreflight(),
     )
@@ -4611,7 +4607,7 @@ def test_stage_rerun_with_unmet_requirement_keeps_the_cached_results(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        ProcessingApplicationService,
+        RunService,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(ollama_unreachable="✗ Cannot connect to Ollama"),
     )
@@ -4656,7 +4652,7 @@ def test_run_pressed_while_requirements_are_checked_starts_nothing_twice(
         assert release.wait(timeout=5), "test never released the check"
         return RunPreflight()
 
-    monkeypatch.setattr(ProcessingApplicationService, "check_run_preflight", _slow_preflight)
+    monkeypatch.setattr(RunService, "check_run_preflight", _slow_preflight)
     busy = _record_notices(monkeypatch)
 
     main_window._on_run()
@@ -5324,7 +5320,7 @@ def _preflight_returns(monkeypatch, result: RunPreflight) -> list[dict]:
         calls.append(kwargs)
         return result
 
-    monkeypatch.setattr(ProcessingApplicationService, "check_run_preflight", answer)
+    monkeypatch.setattr(RunService, "check_run_preflight", answer)
     return calls
 
 
@@ -5477,7 +5473,7 @@ def test_the_line_says_checking_only_when_the_first_answer_is_slow(
         assert release.wait(timeout=5), "test never released the check"
         return RunPreflight()
 
-    monkeypatch.setattr(ProcessingApplicationService, "check_run_preflight", slow)
+    monkeypatch.setattr(RunService, "check_run_preflight", slow)
     panel = ready_window._config_panel
     panel._selected_folder = tmp_path  # no scan of the folder: the queue below is the queue
     ready_window._results_table.set_queue([_queue_row(str(tmp_path / "a.png"), "a.png")])
@@ -5509,7 +5505,7 @@ def test_a_stale_readiness_answer_is_dropped(qtbot, ready_window, monkeypatch) -
         assert gates[index].wait(timeout=5), "test never released the check"
         return answers[index]
 
-    monkeypatch.setattr(ProcessingApplicationService, "check_run_preflight", preflight)
+    monkeypatch.setattr(RunService, "check_run_preflight", preflight)
     ready_window._start_readiness_check()
     qtbot.waitUntil(lambda: started["n"] == 1, timeout=3000)
     ready_window._start_readiness_check()

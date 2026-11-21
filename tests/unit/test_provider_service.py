@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from teachers_teammate.application import providers as providers_module
+from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.domain.model_listing import ModelListing
 
@@ -205,3 +206,79 @@ def test_provider_key_missing_follows_the_provider_info_and_environment(
     monkeypatch.setattr(providers_module, "get_provider_info", lambda _provider: info)
 
     assert ProviderService().provider_key_missing("any") is missing
+
+
+# ── check_connection ──────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_check_connection_provider_ollama_success(monkeypatch) -> None:
+    """
+    Given  provider='ollama' and OllamaClient.check_connection reports success
+    When   the provider's check for ollama is called
+    Then   returns (connected=True, model_ok=True, <success message>)
+    """
+    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        ollama_utils.OllamaClient,
+        "check_connection",
+        lambda self, model="": (True, True, "✓ Connected — 1 model(s) available"),
+    )
+    services = build_app_services()
+    ok, _, msg = services.providers.check_connection("ollama")
+    assert ok is True
+
+
+@pytest.mark.parametrize(
+    ("provider", "env_var"),
+    [
+        ("openai", "OPENAI_API_KEY"),
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("google", "GOOGLE_API_KEY"),
+        ("mistral", "MISTRAL_API_KEY"),
+        ("mistral_eu", "MISTRAL_API_KEY"),
+        ("cohere", "COHERE_API_KEY"),
+    ],
+)
+@pytest.mark.unit
+@pytest.mark.use_case("Service_Availability_Check")
+def test_check_connection_provider_returns_true_when_env_var_set(
+    provider: str, env_var: str, monkeypatch
+) -> None:
+    """
+    Given  a known LLM provider and its API key env var is set to a non-empty value
+    When   the provider's check for <name> is called
+    Then   returns (connected=True, model_ok=True, <message containing the env var name>)
+    """
+    monkeypatch.setenv(env_var, "sk-test")
+    services = build_app_services()
+    ok, _, msg = services.providers.check_connection(provider)
+    assert ok is True
+    assert env_var in msg
+
+
+@pytest.mark.parametrize(
+    ("provider", "env_var"),
+    [
+        ("openai", "OPENAI_API_KEY"),
+        ("anthropic", "ANTHROPIC_API_KEY"),
+    ],
+)
+@pytest.mark.unit
+def test_check_connection_provider_returns_false_when_env_var_missing(
+    provider: str, env_var: str, monkeypatch
+) -> None:
+    """
+    Given  a known LLM provider and its API key env var is not set
+    When   the provider's check for <name> is called
+    Then   returns (connected=False, model_ok=False, <message containing the env var name>)
+    """
+    monkeypatch.delenv(env_var, raising=False)
+    services = build_app_services()
+    ok, _, msg = services.providers.check_connection(provider)
+    assert ok is False
+    assert env_var in msg
+
+
+# ── list_supported_suffixes

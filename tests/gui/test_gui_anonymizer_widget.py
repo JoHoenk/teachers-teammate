@@ -824,7 +824,7 @@ def test_earlier_default_patterns_resolve_to_current_defaults(qtbot, tmp_path) -
     When   the anonymizer config is built for the dialog, the export menu and the preview
     Then   it holds the current default patterns
     """
-    from teachers_teammate.infrastructure.anonymizer import (  # noqa: PLC0415
+    from teachers_teammate.domain.anonymization import (  # noqa: PLC0415
         _LEGACY_DEFAULT_PATTERNS,
     )
 

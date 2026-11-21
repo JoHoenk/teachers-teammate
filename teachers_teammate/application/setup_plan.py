@@ -705,6 +705,12 @@ class SetupService:
             ),
         )
 
+    def system_language(self) -> str | None:
+        """Return the language of this computer's system, or ``None`` when it is not supported."""
+        from ..infrastructure.system_locale import system_language  # noqa: PLC0415
+
+        return system_language()
+
     def plan_setup(self, answers: SetupAnswers, current: Mapping[str, Any]) -> SetupPlan:
         """Return the setup plan for *answers*: the settings to write and the downloads to run.
 

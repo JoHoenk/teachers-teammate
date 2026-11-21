@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 import dataclasses
 from dataclasses import dataclass
 from enum import StrEnum
-import functools
 import importlib.util
 import logging
 import os
 from pathlib import Path
-import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -104,10 +102,8 @@ from ..infrastructure.stage_builder import (
     window_of_model,
 )
 from ..infrastructure.state_repository import (
-    DocumentState,
     StateRepository,
     compute_file_hash_cached,
-    machine_texts,
 )
 from ..infrastructure.storage_root import (
     default_config_path as _infra_default_config_path,
@@ -120,21 +116,11 @@ from ..infrastructure.storage_root import (
     resolve_config_path as _infra_resolve_config_path,
 )
 from ..infrastructure.teacher_work_store import TeacherWorkStore
-from ..infrastructure.workflow.cache_service import (
-    ExpectedHashes,
-    compute_correction_config_hash,
-    expected_hashes,
-    privacy_fingerprint,
-    stage_hashes,
-)
 from ..interfaces import SUPPORTED_SUFFIXES, SleepBlocker
-from .check_document import CheckDocument, check_document_of
 from .commands import DocumentCommands
 from .commands import WorkNotSavedError as WorkNotSavedError  # noqa: PLC0414
 from .context_choice import ContextChoice, context_choice
 from .correction_options import prompt_step_title
-from .documents import DocumentQueries, WorkedOn
-from .document_view import DocumentStateView
 from .data_flow import (
     describe_data_flow,
     llm_location,
@@ -142,10 +128,10 @@ from .data_flow import (
     ocr_refusal,
     text_goes_online,
 )
+from .document_view import DocumentStateView
+from .documents import DocumentQueries, WorkedOn
 from .formatting import TextFormatter
-from .merged_view import merged_view, reconciled_view
 from .model_recommendations import ModelRecommendationService
-from .queue import QueueRow, StoredStages, queue_row
 from .sent_text import Anonymize, SentTexts, describe_sent_texts
 from .setup_plan import (
     LocalModelChoices,
@@ -246,10 +232,10 @@ class RunPreflight:
     skipped: tuple[Path, ...] = ()
     #: The documents whose corrections or transcription the teacher worked on, so the window can
     #: ask what to do with them before the run replaces anything.
-    worked_on: WorkedOn = WorkedOn()
+    worked_on: WorkedOn = dataclasses.field(default_factory=WorkedOn)
     #: Another model is in the way on the Ollama server, so the first file waits for it.  A
     #: note, never a refusal: the run works, it just waits.
-    ollama_wait: WaitDetail = WaitDetail()
+    ollama_wait: WaitDetail = dataclasses.field(default_factory=WaitDetail)
 
     @property
     def blocked(self) -> bool:
@@ -397,7 +383,7 @@ class ProcessingApplicationService:
         )
         # Read-only queries over the store; the adapters use this one directly.
         self.documents = DocumentQueries(
-            state_repository_factory=self._state_repository_factory,
+            state_store_factory=self._state_store,
             work_store=self._work_store,
             model_store=self._model_store,
             windows_for=self.resolved_windows,

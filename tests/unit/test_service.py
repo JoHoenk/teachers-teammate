@@ -21,7 +21,6 @@ from teachers_teammate.application import service as service_module
 from teachers_teammate.config import Config
 from teachers_teammate.application.composition import inject_addon_packages_dir
 from teachers_teammate.application.commands import DocumentCommands, WorkNotSavedError
-from teachers_teammate.application.documents import DocumentQueries
 from teachers_teammate.application.queue import StageState
 from teachers_teammate.application.service import (
     AnonymizerConfig,
@@ -1157,7 +1156,7 @@ def test_views_without_a_stored_result_cost_no_privacy_fingerprint(tmp_path: Pat
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
     with patch(
-        "teachers_teammate.application.service.privacy_fingerprint", side_effect=AssertionError
+        "teachers_teammate.application.documents.privacy_fingerprint", side_effect=AssertionError
     ):
         assert svc.documents.load_view(cfg, source) is not None
         assert svc.documents.queue_rows(cfg, [source])
@@ -1423,12 +1422,11 @@ def test_reader_refusal_names_the_download_flag(tmp_path: Path) -> None:
     off = make_config(tmp_path / "s", ocr_engine="ppocr", recognition_enabled=False)
     files = [config.input_dir / "scan.png"]
 
-    with patch.object(DocumentQueries, "_documents", return_value=iter(())):
-        refusal = svc.reader_refusal_for_run(config, files)
+    refusal = svc.reader_refusal_for_run(config, files)
 
-        assert "--download-reader" in refusal
-        assert svc.reader_refusal_for_run(ollama, files) == ""
-        assert svc.reader_refusal_for_run(off, files) == ""
+    assert "--download-reader" in refusal
+    assert svc.reader_refusal_for_run(ollama, files) == ""
+    assert svc.reader_refusal_for_run(off, files) == ""
 
 
 @pytest.mark.unit
@@ -1447,16 +1445,23 @@ def test_reader_refusal_lets_a_run_over_text_files_start(tmp_path: Path) -> None
     scan = config.input_dir / "scan.png"
     scan.write_bytes(b"x")
 
-    with patch.object(DocumentQueries, "_documents", return_value=iter(())):
-        assert svc.reader_refusal_for_run(config, [text]) == ""
-        assert "--download-reader" in svc.reader_refusal_for_run(config, [text, scan])
+    assert svc.reader_refusal_for_run(config, [text]) == ""
+    assert "--download-reader" in svc.reader_refusal_for_run(config, [text, scan])
 
+
+def _empty_store() -> MagicMock:
+    """Return a state store that has no result for any file."""
+    store = MagicMock()
+    store.load_valid.return_value = None
+    return store
 
 
 def _reader_service(tmp_path: Path) -> ProcessingApplicationService:
     """Return a service over an empty reader store that finds the files of a real folder."""
     return _make_svc(
-        model_store=fake_reader_store(tmp_path, installed=False), discovery=FileDiscovery()
+        model_store=fake_reader_store(tmp_path, installed=False),
+        discovery=FileDiscovery(),
+        state_repository_factory=lambda _path: _empty_store(),
     )
 
 

@@ -26,16 +26,15 @@ from typing import Protocol
 
 from ._model_defaults import default_model_for_task
 from .application.composition import inject_addon_packages_dir
-from .application.service import ProcessingApplicationService
 from .config import Config, load_config_file
 from .domain.correction_prompts import NOTES_LIMIT
 from .domain.data_location import LOCAL_OCR_ENGINES, DataFlow, PrivacyLevel
-from .domain.output_files import folder_problem
 from .domain.local_models import (
     HUGGING_FACE_HOST,
     PAGE_MODELS_SIZE_LABEL,
     READER_SIZE_LABEL,
 )
+from .domain.output_files import folder_problem
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
 from .domain.run_summary import RunSummary
 from .exceptions import ConfigFileNotFoundError, ConfigFileParseError, ModelDownloadError

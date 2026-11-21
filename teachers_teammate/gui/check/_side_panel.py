@@ -54,8 +54,8 @@ from PySide6.QtWidgets import (
 
 from ...application.check_document import CheckDocument
 from ...application.check_items import (
-    CheckItem,
     MODEL_KINDS,
+    CheckItem,
     ItemKind,
     counts_for_looked_at,
     first_unseen,
@@ -439,6 +439,17 @@ class _Card(QFrame):
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(4)
 
+        self._build_text(layout)
+        self._build_buttons(layout)
+        self._key = ""
+        self._editable = False
+        self.replace.textChanged.connect(self._refresh_replace_ok)
+        self.replace.returnPressed.connect(self._on_replace)
+        self.replace_ok.clicked.connect(self._on_replace)
+        self.set_item(None, Masking(), editable=False)
+
+    def _build_text(self, layout: QVBoxLayout) -> None:
+        """Add the scrolling text of the card: what changed, and why."""
         self._title = _wrapped_label()
         title_font = self._title.font()
         title_font.setBold(True)
@@ -467,6 +478,8 @@ class _Card(QFrame):
         self._scroll.setMinimumHeight(self.fontMetrics().lineSpacing() * _CARD_MIN_LINES + 6)
         layout.addWidget(self._scroll, 1)
 
+    def _build_buttons(self, layout: QVBoxLayout) -> None:
+        """Add the row of buttons and the field for the words to write instead."""
         self.take_out = QPushButton(txt.TAKE_OUT)
         self.put_back = QPushButton(txt.PUT_BACK)
         self.use_suggestion = QPushButton(txt.USE_SUGGESTION)
@@ -502,12 +515,6 @@ class _Card(QFrame):
             max(widget.sizeHint().height() for widget in (*self._buttons, self.replace_ok))
         )
         layout.addWidget(self._button_row)
-        self._key = ""
-        self._editable = False
-        self.replace.textChanged.connect(self._refresh_replace_ok)
-        self.replace.returnPressed.connect(self._on_replace)
-        self.replace_ok.clicked.connect(self._on_replace)
-        self.set_item(None, Masking(), editable=False)
 
     def sizeHint(self) -> QSize:
         """Ask for five lines of text and the buttons, so the splitter opens the card that tall."""

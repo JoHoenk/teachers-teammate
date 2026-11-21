@@ -1967,3 +1967,29 @@ def test_a_proofreading_made_from_another_text_is_reset_even_when_kept(tmp_path:
 
     assert reconciled.correction_done is False
     assert reconciled.correction_source_hash == ""
+
+
+@pytest.mark.parametrize("stage", STAGE_ORDER)
+def test_reconcile_clears_the_stale_stage_and_the_later_ones(tmp_path: Path, stage: str) -> None:
+    """
+    Given  a state with every stage done and every stage field set
+    When   it is reconciled with *stage* as the earliest stale stage, for a run that asks for
+           no image preparation
+    Then   every field of that stage and of every later stage is back at its empty value
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = _full_state(repo, src)
+
+    reconciled = repo.reconcile(
+        src,
+        state,
+        source_hash=state.source_hash,
+        stale_stage=stage,  # ty: ignore[invalid-argument-type]
+        preview_config_hash="",
+    )
+
+    blank = repo.create(src, state.source_hash)
+    for later in STAGE_ORDER[STAGE_ORDER.index(stage) :]:
+        for name in _stage_fields(later):
+            assert getattr(reconciled, name) == getattr(blank, name), name

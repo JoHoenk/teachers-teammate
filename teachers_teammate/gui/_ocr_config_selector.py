@@ -38,16 +38,16 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import DEFAULTS, OcrConfig
-from ..settings_schema import PREPROCESS_METHODS, normalize_preprocess_method
 from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, DataLocation
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import OCR_TEMPERATURE
-from ..domain.setting_values import PreprocessMethod
 from ..domain.pdf_text_layer import (
     PDF_TEXT_LAYER_MODES,
     PdfTextLayerMode,
     normalize_pdf_text_layer,
 )
+from ..domain.setting_values import PreprocessMethod
+from ..settings_schema import PREPROCESS_METHODS, normalize_preprocess_method
 from . import _user_text as txt
 from ._collapsible_section import CollapsibleSection
 from ._data_flow_summary import LocationHint

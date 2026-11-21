@@ -89,6 +89,7 @@ from .._model_wording import (
     too_large_confirmation,
     too_large_tooltip,
 )
+from ._computer_box import ProfileLine
 from ._page import (
     FOCUS_ADDON_UPDATE,
     FOCUS_LOCAL_MODELS,
@@ -99,7 +100,6 @@ from ._page import (
     SettingsPage,
     SettingsPageBase,
 )
-from ._computer_box import ProfileLine
 
 TITLE = "Add-ons"
 DESCRIPTION = (
@@ -288,32 +288,8 @@ class AddonsPage(SettingsPageBase):
         self._round.pull_progress.connect(self._on_round_pull_progress)
         self._round.failed.connect(self._on_round_failed)
         self._round.finished.connect(self._on_round_finished)
-        # The one status line: the running step, then a restart, then the last round's result,
-        # then what the detection found.  pip prints nothing while it downloads, so this line
-        # and the bar are what tells the teacher that something is happening.
-        self._idle_status = txt.ADDONS_DETECTING
-        self._idle_warning = False
-        self._round_result = ""
-        self._round_result_warning = False
-        self._round_steps: list[str] = []
-        self._status_item = ""
-        self._status_parts: tuple[str, str, int, int] | None = None
-        self._status_line = ""
-        self._status_started = 0.0
-        self._done_count = 0
-        # Pre-ticking waits for BOTH the installed check and the hardware detection.
-        self._installed_ready = False
-        self._profile_ready = False
-        self._initial_ticks_done = False
-        self._installed_by_category: dict[ModelCategory, bool] = {"ocr": False, "general": False}
-        self._auto_ticked: set[str] = set()  # ticked by the app, not by the user
-        self._user_touched: set[str] = set()
-        self._programmatic_change = False
-        # Last known tick per row: QTreeWidget emits itemChanged for flag, colour
-        # and text changes too, so a real tick change is detected by comparison.
-        self._check_state: dict[str, Qt.CheckState] = {}
-        self._group_items: dict[str, QTreeWidgetItem] = {}
-        self._model_items: dict[str, QTreeWidgetItem] = {}  # tag → child row
+        self._init_status_state()
+        self._init_tick_state()
 
         main = QVBoxLayout(self)
         main.setContentsMargins(0, 0, 0, 0)
@@ -329,7 +305,11 @@ class AddonsPage(SettingsPageBase):
         self._tabs.addTab(self._build_spacy_tab(), TAB_NAME_DETECTION)
         self._tabs.addTab(self._build_reading_models_tab(), TAB_READING_MODELS)
 
-        self._build_status_and_actions(main)
+        # The status line and the action row are always there, in that order and at the bottom
+        # of the page: on a laptop the button must not end up below the fold.
+        self._build_progress(main)
+        self._build_details(main)
+        self._build_actions(main)
         self._refresh_update_banner()
         self._refresh_status()
 
@@ -339,6 +319,38 @@ class AddonsPage(SettingsPageBase):
         for button in self.findChildren(QPushButton):
             button.setAutoDefault(False)
             button.setDefault(False)
+
+    def _init_status_state(self) -> None:
+        """Set what the status line shows and the round it reports on."""
+        # The one status line: the running step, then a restart, then the last round's result,
+        # then what the detection found.  pip prints nothing while it downloads, so this line
+        # and the bar are what tells the teacher that something is happening.
+        self._idle_status = txt.ADDONS_DETECTING
+        self._idle_warning = False
+        self._round_result = ""
+        self._round_result_warning = False
+        self._round_steps: list[str] = []
+        self._status_item = ""
+        self._status_parts: tuple[str, str, int, int] | None = None
+        self._status_line = ""
+        self._status_started = 0.0
+        self._done_count = 0
+
+    def _init_tick_state(self) -> None:
+        """Set what decides which rows are ticked, and by whom."""
+        # Pre-ticking waits for BOTH the installed check and the hardware detection.
+        self._installed_ready = False
+        self._profile_ready = False
+        self._initial_ticks_done = False
+        self._installed_by_category: dict[ModelCategory, bool] = {"ocr": False, "general": False}
+        self._auto_ticked: set[str] = set()  # ticked by the app, not by the user
+        self._user_touched: set[str] = set()
+        self._programmatic_change = False
+        # Last known tick per row: QTreeWidget emits itemChanged for flag, colour
+        # and text changes too, so a real tick change is detected by comparison.
+        self._check_state: dict[str, Qt.CheckState] = {}
+        self._group_items: dict[str, QTreeWidgetItem] = {}
+        self._model_items: dict[str, QTreeWidgetItem] = {}  # tag → child row
 
     def _build_update_banner(self) -> QWidget:
         """Build the line that offers *Update add-ons* after an app update (hidden otherwise)."""
@@ -368,12 +380,8 @@ class AddonsPage(SettingsPageBase):
             return
         self._round_started()
 
-    def _build_status_and_actions(self, main: QVBoxLayout) -> None:
-        """Build the status line, the bar, the details toggle and the action row.
-
-        The status line and the action row are always there, in that order and at the bottom
-        of the page: on a laptop the button must not end up below the fold.
-        """
+    def _build_progress(self, main: QVBoxLayout) -> None:
+        """Build the status line, the bar and the line for the package pip is working on."""
         self._status = QLabel(self._idle_status)
         self._status.setWordWrap(True)
         self._status.setStyleSheet(_HINT_STYLE)
@@ -392,6 +400,8 @@ class AddonsPage(SettingsPageBase):
         self._hint.hide()
         main.addWidget(self._hint)
 
+    def _build_details(self, main: QVBoxLayout) -> None:
+        """Build the details toggle, the copy button and the log."""
         details_row = QWidget()
         details_layout = QHBoxLayout(details_row)
         details_layout.setContentsMargins(0, 0, 0, 0)
@@ -415,6 +425,8 @@ class AddonsPage(SettingsPageBase):
         self._dl_log.hide()
         main.addWidget(self._dl_log)
 
+    def _build_actions(self, main: QVBoxLayout) -> None:
+        """Build the action row and the timers that move the screen while a step runs."""
         action_row = QWidget()
         action_layout = QHBoxLayout(action_row)
         action_layout.setContentsMargins(0, 0, 0, 0)

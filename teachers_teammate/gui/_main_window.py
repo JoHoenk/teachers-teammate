@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-import dataclasses
 from enum import Enum
 import logging
 import os
@@ -47,9 +46,9 @@ import qdarkstyle
 from .. import __version__ as _APP_VERSION
 from ..application.check_document import CheckDocument
 from ..application.composition import inject_addon_packages_dir
+from ..application.documents import WorkedOn
 from ..application.queue import StageState
 from ..application.sent_text import SentTexts
-from ..application.documents import WorkedOn
 from ..application.service import (
     ADDON_PRIVACY,
     NO_TEXT_MESSAGE,
@@ -62,12 +61,12 @@ from ..application.service import (
 )
 from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
 from ..domain.data_location import STAGE_CORRECTION, DataFlow
-from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection, short_model_name
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
 from ..domain.performance_estimate import TimeRange
 from ..domain.run_summary import FileStatus, RunSummary
+from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..domain.stages import (
     PROGRESS_STAGE_CORRECTION,
     PROGRESS_STAGE_OCR,

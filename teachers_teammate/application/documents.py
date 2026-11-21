@@ -21,7 +21,6 @@ from ..infrastructure.state_repository import (
     compute_file_hash_cached,
     machine_texts,
 )
-from ..infrastructure.storage_root import resolve_artifact_dir
 from ..infrastructure.teacher_work_store import TeacherWorkStore
 from ..infrastructure.workflow.cache_service import (
     ExpectedHashes,
@@ -70,19 +69,16 @@ class DocumentQueries:
     def __init__(
         self,
         *,
-        state_repository_factory: Callable[[Path], StateRepository],
+        state_store_factory: Callable[[Config], StateRepository],
         work_store: TeacherWorkStore,
         model_store: ModelStore,
         windows_for: Callable[[Config], RunWindows],
     ) -> None:
-        self._state_repository_factory = state_repository_factory
+        self._state_store = state_store_factory
         self._work_store = work_store
         self._model_store = model_store
         # The context windows a run would use; the run service owns them.
         self._windows_for = windows_for
-
-    def _state_store(self, config: Config) -> StateRepository:
-        return self._state_repository_factory(resolve_artifact_dir(config.output_dir) / "state")
 
     def _documents(
         self, config: Config, files: Iterable[Path], *, reconciled: bool
@@ -161,10 +157,11 @@ class DocumentQueries:
     def recognised_files(self, config: Config, files: Collection[Path]) -> set[Path]:
         """Return the *files* whose recognised text is already stored (best effort)."""
         try:
-            documents = list(self._documents(config, files, reconciled=False))
+            store = self._state_store(config)
+            states = [(file, store.load_valid(file)) for file in files]
         except Exception:  # noqa: BLE001  # a lookup that fails only means "read it again"
             return set()
-        return {file for file, _state, view in documents if view is not None and view.ocr_done}
+        return {file for file, state in states if state is not None and state.ocr_done}
 
     def worked_on_documents(
         self, config: Config, files: Collection[Path], *, run_proofreads: bool
@@ -234,12 +231,9 @@ class DocumentQueries:
             worked_on=tuple(worked_on_documents),
         )
 
-    def _merged(
-        self, view: DocumentStateView, state: DocumentState, *, kept_over_settings: bool = False
-    ) -> DocumentStateView:
+    def _merged(self, view: DocumentStateView, state: DocumentState) -> DocumentStateView:
         """Return *view* with the teacher's texts over the machine's."""
-        work = self._work_store.load(state.source_hash)
-        return merged_view(view, state, work, kept_over_settings=kept_over_settings)
+        return merged_view(view, state, self._work_store.load(state.source_hash))
 
     @staticmethod
     def _sent_verdict(

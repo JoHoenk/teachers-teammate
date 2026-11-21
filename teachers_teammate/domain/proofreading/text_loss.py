@@ -183,7 +183,7 @@ def repair(source: str, corrected: str, hunks: Sequence[Hunk] | None = None) -> 
     )
 
 
-_OPENING = "([{\"'„“‚‘»«"
+_OPENING = "([{\"'„“‚‘»«"  # noqa: RUF001  # the quotes are the point
 
 
 def _wordlike(char: str) -> bool:

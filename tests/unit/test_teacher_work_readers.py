@@ -24,7 +24,6 @@ ALLOWED = {
     "teachers_teammate/application/document_view.py",
     "teachers_teammate/application/documents.py",
     "teachers_teammate/application/merged_view.py",
-    "teachers_teammate/application/service.py",
 }
 """The modules that may name ``DocumentState``: the view it becomes, the merge that fills in the
 teacher's texts, and the queries that call both."""

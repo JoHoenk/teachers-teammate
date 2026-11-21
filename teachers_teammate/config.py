@@ -35,6 +35,8 @@ from .interfaces import SUPPORTED_SUFFIXES as SUPPORTED_SUFFIXES  # noqa: PLC041
 # from ``settings_schema`` itself.
 from .settings_schema import (
     DEFAULTS as DEFAULTS,  # noqa: PLC0414
+)
+from .settings_schema import (
     SECONDARY_MODEL_AUTO,
     LoadedSettings,
     normalize_ocr_engine,

@@ -20,8 +20,8 @@ from ..domain.data_location import SentStatus
 from ..domain.formatted_text import TextFormat, normalize_text_format
 from ..domain.proofreading.review import AlignedReview, CorrectionReview, align
 from ..domain.teacher_work import WorkStatus, looked_at_progress
-from .document_view import DocumentStateView
 from .check_items import CheckItem, check_items, countable_keys
+from .document_view import DocumentStateView
 from .formatting import TextFormatter
 
 _CACHE_SIZE = 64

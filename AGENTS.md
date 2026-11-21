@@ -30,7 +30,8 @@ domain/          — pure business concepts (freshness policy, stage names); no 
 interfaces.py    — ABCs for every pipeline stage; SUPPORTED_SUFFIXES lives here
 infrastructure/  — concrete implementations (OCR engines, LLM providers, DOCX builder, etc.)
 infrastructure/workflow/ — FileProcessor (per-file stage orchestrator), run_files() coordinator
-application/     — ProcessingApplicationService (queries) + ApplicationCommands (writes);
+application/     — ProcessingApplicationService (the run, providers, …), DocumentQueries (reads)
+                   and DocumentCommands (writes), reached as `.documents` / `.commands`;
                    the only entry point for GUI and CLI
 gui/ / cli.py    — adapters; no discovery or availability logic
                    (gui/settings/ = the Settings window, one page per topic)

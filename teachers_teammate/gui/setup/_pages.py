@@ -24,8 +24,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QProgressBar,
+    QPushButton,
     QRadioButton,
     QScrollArea,
     QVBoxLayout,
@@ -59,29 +59,7 @@ from ...domain.language import LANGUAGES
 from ...domain.local_models import PAGE_MODELS_ADDON_ID
 from ...domain.model_catalog import DiskVerdict, Suitability, short_model_name
 from ...infrastructure.ollama_utils import is_local_ollama_url
-from .. import _user_text as txt
-from .._background import LatestTask
-from .._data_flow_summary import short_place
-from .._hardware_profile_selector import HardwareProfileSelector
-from .._install_round import (
-    PACKAGE_PREFIX,
-    PAGE_MODELS_ITEM,
-    READER_PREFIX,
-    READER_PROGRESS_STATUS,
-)
-from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
-from .._model_item_delegate import ModelItem, fill_grouped
-from .._model_item_delegate import install as install_model_labels
-from .._model_wording import compact_suitability_text
-from .._ollama_status_line import OllamaStatusLine
-from ..settings._ai_service_section import PROOFREADING, AiServiceSection
-from ..settings._server_search_dialog import ServerSearchDialog
-from ..settings._speed_panel import SpeedPanel
-from ._context import SetupContext
-from ._flow import ORDER, SetupPageId, next_page
-from ._summary import SummaryRows, size_text, summary_rows
 from ...texts.setup import (
-    name_model_label,
     CLASSES_HANDWRITTEN,
     CLASSES_HANDWRITTEN_NOTE,
     CLASSES_LANGUAGE,
@@ -178,7 +156,29 @@ from ...texts.setup import (
     WELCOME_POINTS,
     WELCOME_TEXT,
     WELCOME_TITLE,
+    name_model_label,
 )
+from .. import _user_text as txt
+from .._background import LatestTask
+from .._data_flow_summary import short_place
+from .._hardware_profile_selector import HardwareProfileSelector
+from .._install_round import (
+    PACKAGE_PREFIX,
+    PAGE_MODELS_ITEM,
+    READER_PREFIX,
+    READER_PROGRESS_STATUS,
+)
+from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
+from .._model_item_delegate import ModelItem, fill_grouped
+from .._model_item_delegate import install as install_model_labels
+from .._model_wording import compact_suitability_text
+from .._ollama_status_line import OllamaStatusLine
+from ..settings._ai_service_section import PROOFREADING, AiServiceSection
+from ..settings._server_search_dialog import ServerSearchDialog
+from ..settings._speed_panel import SpeedPanel
+from ._context import SetupContext
+from ._flow import ORDER, SetupPageId, next_page
+from ._summary import SummaryRows, size_text, summary_rows
 
 if TYPE_CHECKING:
     from ._assistant import SetupAssistant
@@ -772,6 +772,19 @@ class PrivacyPage(SetupPage):
         self._case: PrivacyCase | None = None
         layout = self._content()
 
+        self._build_sending()
+        layout.addWidget(self._sending)
+        self._build_stays()
+        layout.addWidget(self._stays)
+        self._build_extra()
+        layout.addWidget(self._extra_holder)
+        layout.addStretch(1)
+        self._extra.toggled.connect(self._sync_extra)
+        self._remove.toggled.connect(self._sync_extra)
+        self._hide.toggled.connect(self._sync_extra)
+
+    def _build_sending(self) -> None:
+        """Build the part for text that leaves this computer."""
         # Text that leaves this computer — to an online service or to another PC in the network:
         # what is sent, and whether the names are replaced first.
         self._sending = QWidget()
@@ -792,8 +805,9 @@ class PrivacyPage(SetupPage):
         sending.addSpacing(8)
         self._school = _note(PRIVACY_SCHOOL_NOTE)
         sending.addWidget(self._school)
-        layout.addWidget(self._sending)
 
+    def _build_stays(self) -> None:
+        """Build the part for everything that stays on this computer."""
         # Everything on this computer: nothing is sent, so there is nothing to remove; the names
         # can still be hidden in the texts this app shows.
         self._stays = QWidget()
@@ -812,8 +826,9 @@ class PrivacyPage(SetupPage):
         self._hide_already = _note(PRIVACY_ALREADY_ON)
         self._hide_already.setVisible(False)
         stays.addWidget(_indent(self._hide_already))
-        layout.addWidget(self._stays)
 
+    def _build_extra(self) -> None:
+        """Build the choice of one more language to find names in."""
         # One more language to find names in, below whichever of the two the teacher sees.
         self._extra_holder = QWidget()
         extra = QVBoxLayout(self._extra_holder)
@@ -823,11 +838,6 @@ class PrivacyPage(SetupPage):
         self._extra_model = QComboBox()
         extra.addWidget(_indent(self._extra_model))
         extra.addWidget(_indent(_note(PRIVACY_EXTRA_NOTE)))
-        layout.addWidget(self._extra_holder)
-        layout.addStretch(1)
-        self._extra.toggled.connect(self._sync_extra)
-        self._remove.toggled.connect(self._sync_extra)
-        self._hide.toggled.connect(self._sync_extra)
 
     def extra_names_model(self) -> str:
         """Return the spaCy model of the extra language, or ``""`` when none is ticked."""

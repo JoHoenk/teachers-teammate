@@ -42,7 +42,7 @@ note right TABLE       : queue rows shown with grey "pending" state
 TABLE --> WIN          :
 deactivate TABLE
 
-WIN -> SVC             : queue_rows(config, files)
+WIN -> SVC             : documents.queue_rows(config, files)
 activate SVC
 SVC -> REPO            : load_valid(file)
 activate REPO

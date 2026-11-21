@@ -58,8 +58,8 @@ pylint_test(
 ruff_test(
     name = "py_ruff",
     srcs = [
-        "//teachers_teammate:gui_lib",
-        "//teachers_teammate:ocr_lib",
+        "//teachers_teammate:gui_lib_typed",
+        "//teachers_teammate:ocr_lib_typed",
         "//tests:tests_lib",
         "//tools:evaluate",
         "//tools:prepare_gec_testset",

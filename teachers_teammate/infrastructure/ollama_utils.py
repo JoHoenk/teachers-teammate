@@ -16,7 +16,7 @@ import queue
 import socket
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from ..domain.context_budget import (
@@ -331,6 +331,47 @@ def _first_item[T](
                 raise
 
 
+def _chat_messages(prompt: str, images: list[str] | None, system: str) -> list[dict]:
+    """Return the messages of a chat: the system message when there is one, then the user's."""
+    message: dict = {"role": "user", "content": prompt}
+    if images:
+        message["images"] = images
+    return [{"role": "system", "content": system}, message] if system else [message]
+
+
+def _open_chat_stream(client: Any, request: dict, think: bool | str | None) -> Iterator:
+    """Open a streaming chat for *request*; ``think=None`` leaves the argument out."""
+    kwargs: dict = {**request, "stream": True}
+    if think is not None:
+        kwargs["think"] = think
+    return client.chat(**kwargs)
+
+
+def _pump[T](
+    it: Iterator[T], item_queue: queue.Queue[T | BaseException | None], abandoned: threading.Event
+) -> None:
+    """Move the items of *it* into *item_queue*, then ``None``; an error goes in as itself.
+
+    Runs in the reader thread of :func:`_consume_iterator_with_first_token_timeout`.
+    """
+    try:
+        for item in it:
+            if abandoned.is_set():
+                break
+            item_queue.put(item)
+    except Exception as exc:  # noqa: BLE001  # forward any iterator/transport error to the consumer thread via the queue
+        item_queue.put(exc)
+    finally:
+        # Closing a generator closes its HTTP response, which tells the server to stop.
+        close = getattr(it, "close", None)
+        if close is not None:
+            try:
+                close()
+            except Exception:  # noqa: BLE001  # a stream that cannot be closed is already gone
+                pass
+        item_queue.put(None)  # sentinel: stream finished
+
+
 def _consume_iterator_with_first_token_timeout[T](
     it: Iterator[T],
     first_token_timeout: float,
@@ -370,25 +411,7 @@ def _consume_iterator_with_first_token_timeout[T](
     item_queue: queue.Queue[T | BaseException | None] = queue.Queue()
     abandoned = threading.Event()
 
-    def _reader() -> None:
-        try:
-            for item in it:
-                if abandoned.is_set():
-                    break
-                item_queue.put(item)
-        except Exception as exc:  # noqa: BLE001  # forward any iterator/transport error to the consumer thread via the queue
-            item_queue.put(exc)
-        finally:
-            # Closing a generator closes its HTTP response, which tells the server to stop.
-            close = getattr(it, "close", None)
-            if close is not None:
-                try:
-                    close()
-                except Exception:  # noqa: BLE001  # a stream that cannot be closed is already gone
-                    pass
-            item_queue.put(None)  # sentinel: stream finished
-
-    t = threading.Thread(target=_reader, daemon=True)
+    t = threading.Thread(target=_pump, args=(it, item_queue, abandoned), daemon=True)
     t.start()
     deadline = None if total_timeout is None else time.monotonic() + total_timeout
 
@@ -754,7 +777,7 @@ class OllamaClient:
         """Return the models the server holds in memory right now, or ``()`` on any error."""
         return self._ps_models() or ()
 
-    def activity(self, model: str = "") -> ServerActivity:
+    def activity(self, model: str = "") -> ServerActivity:  # noqa: ARG002  # callers ask `has(model)`
         """Return what the server is doing, and whether *model* is in memory.
 
         A model whose ``expires_at`` moved since the previous call is generating.  That is
@@ -782,7 +805,7 @@ class OllamaClient:
         """
         try:
             self._client().generate(model=model, prompt="", keep_alive=0)
-        except Exception:  # noqa: BLE001  # an old server or a hiccup: nothing to do about it
+        except Exception:  # an old server or a hiccup: nothing to do about it
             logger.debug("could not unload %s from Ollama", model, exc_info=True)
 
     def server_facts(self) -> ServerFacts:
@@ -1068,33 +1091,22 @@ class OllamaClient:
         if stop_requested(self._cancel_event):
             raise RunStoppedError
         self._last_stats = None
-        message: dict = {"role": "user", "content": prompt}
-        if images:
-            message["images"] = images
-        messages = [{"role": "system", "content": system}, message] if system else [message]
-
-        structured: dict = {} if format is None else {"format": format}
-
-        def open_stream(think_flag: bool | str | None) -> Iterator:
-            kwargs: dict = {
-                "model": model,
-                "messages": messages,
-                "stream": True,
-                "options": options,
-                **structured,
-            }
-            if think_flag is not None:
-                kwargs["think"] = think_flag
-            return client.chat(**kwargs)
+        request: dict = {
+            "model": model,
+            "messages": _chat_messages(prompt, images, system),
+            "options": options,
+        }
+        if format is not None:
+            request["format"] = format
 
         try:
             client = ollama.Client(host=self.base_url, timeout=timeout)
             try:
-                stream = open_stream(think)
+                stream = _open_chat_stream(client, request, think)
             except TypeError:
                 # Older ollama clients lack the ``think`` kwarg. The output cleaner strips any
                 # leaked reasoning regardless.
-                stream = open_stream(None)
+                stream = _open_chat_stream(client, request, None)
         except Exception as exc:
             raise OllamaUnreachableError(
                 f"cannot connect to Ollama at {self.base_url} — {exc}"
@@ -1139,7 +1151,7 @@ class OllamaClient:
             if think is None or not _rejects_think(exc):
                 raise
             chunks = _consume_iterator_with_first_token_timeout(
-                _mapped_stream(open_stream(None), self.base_url),
+                _mapped_stream(_open_chat_stream(client, request, None), self.base_url),
                 timeout,
                 total_timeout,
                 self._cancel_event,

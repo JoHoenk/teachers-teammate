@@ -24,10 +24,10 @@ import re
 import threading
 from typing import TYPE_CHECKING
 
-from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from ..domain.anonymization import restore
 from ..domain.formatted_text import INLINE_TAG_ALTERNATION
 from ..interfaces import AnonymizationMap, Anonymizer
+from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from . import system_locale
 from .spacy_models import spacy_model_for
 

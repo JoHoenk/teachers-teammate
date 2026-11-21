@@ -13,11 +13,11 @@ import importlib.util
 import os
 import time
 
+from .._model_defaults import default_model_for_task
 from ..domain.data_location import StageLocation
 from ..domain.model_listing import ModelListing
 from ..infrastructure.llm_factory import (
     check_provider_connection,
-    default_model_for_task,
     get_provider_data_region,
     get_provider_info,
     list_provider_models_checked,

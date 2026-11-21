@@ -23,7 +23,6 @@ NVML for NVIDIA, and the ``amdgpu`` driver's own sysfs files for AMD.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path

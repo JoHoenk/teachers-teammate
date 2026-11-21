@@ -36,11 +36,6 @@ from .domain.run_summary import FileOutcome, KeepAwakeState
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-# Re-export OCRError so callers can do `from .interfaces import OCRError`.
-# The canonical source is teachers_teammate.exceptions.
-# imported for downstream callers, not for local use.
-from .exceptions import OCRError as OCRError  # noqa: PLC0414  # pylint: disable=unused-import
-
 SUPPORTED_SUFFIXES: frozenset[str] = frozenset({".pdf", ".png", ".jpg", ".jpeg", ".txt"})
 
 

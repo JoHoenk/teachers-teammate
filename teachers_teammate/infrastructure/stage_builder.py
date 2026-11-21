@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from .ocr_formats import OcrOutputPostprocessor
 
 from ..config import Config, OcrConfig
+from ..domain.anonymization import AnonymizerConfig
 from ..domain.context_budget import (
     BASE_NUM_CTX,
     RunWindows,
@@ -49,12 +50,9 @@ from ..interfaces import (
     Evaluator,
     ImagePreprocessor,
     OCRProcessor,
+    Reporter,
 )
-from .anonymizer import (
-    AnonymizerConfig,
-    anonymizer_config_from,
-    resolve_anonymizer_config,
-)
+from .anonymizer import anonymizer_config_from, resolve_anonymizer_config
 from .docx_builder import DocxDocumentCreator
 from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
 from .llm_factory import build_llm, get_provider_info
@@ -67,7 +65,7 @@ from .preprocessing.steps import StepPipeline
 from .proofreading.chunking import ChunkingCorrector
 from .proofreading.corrector import ProofreadingSettings, build_exchange_corrector
 from .proofreading.port import LangChainPort, ModelPort, OllamaPort
-from .reporting import Reporter, StdoutReporter
+from .reporting import StdoutReporter
 from .spacy_models import installed_spacy_models
 from .system_locale import system_language
 from .workflow.preprocess_service import PreprocessService

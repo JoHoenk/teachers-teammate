@@ -43,16 +43,17 @@ import threading
 
 from ..config import Config, OcrConfig
 from ..domain.model_catalog import HardwareDetection
+from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import output_folder_refusal
-from ..domain.run_summary import RunSummary
+from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..exceptions import OllamaConnectionError, ProviderNotAvailableError
-from ..interfaces import ImagePreprocessor
+from ..interfaces import ImagePreprocessor, ProgressCallbacks, Reporter
 from . import run_report
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
-from .ollama_utils import OllamaClient, WaitDetail
+from .ollama_utils import OllamaClient
 from .onnx.store import ModelStore
 from .preview_image_store import PreviewImageStore
-from .reporting import KeepAwakeState, ProgressCallbacks, Reporter, StdoutReporter
+from .reporting import StdoutReporter
 from .run_stats import RunStatsCollector
 from .speed_store import SampleStore
 from .stage_builder import PipelineComponentFactory as PipelineComponentFactory  # noqa: PLC0414

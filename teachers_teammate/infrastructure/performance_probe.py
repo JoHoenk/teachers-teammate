@@ -28,13 +28,18 @@ import threading
 from ..config import OcrConfig
 from ..domain.model_catalog import (
     OCR_TEMPERATURE,
+    ServerFacts,
     normalize_tag,
     request_profile,
     review_temperature,
 )
-from ..domain.performance_estimate import ModelSpeed, SpeedStep, StepOutcome
-from ..domain.performance_estimate import ProbeResult as ProbeResult  # noqa: PLC0414
-from ..domain.performance_estimate import StepResult as StepResult  # noqa: PLC0414
+from ..domain.performance_estimate import (
+    ModelSpeed,
+    ProbeResult,
+    SpeedStep,
+    StepOutcome,
+    StepResult,
+)
 from ..exceptions import (
     OCRDeadlineError,
     OCRError,
@@ -47,7 +52,6 @@ from .ollama_utils import (
     PROOFREADING_NUM_CTX,
     ChatStats,
     OllamaClient,
-    ServerFacts,
     proofreading_options,
 )
 from .onnx.store import ModelStore

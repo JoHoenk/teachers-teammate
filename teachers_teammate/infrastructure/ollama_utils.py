@@ -22,14 +22,11 @@ from ..domain.context_budget import (
     ContextBudget,
     answers_with_the_same_text,
 )
-from ..domain.model_catalog import LoadedModel as LoadedModel  # noqa: PLC0414
-from ..domain.model_catalog import ServerFacts as ServerFacts  # noqa: PLC0414
-from ..domain.model_catalog import normalize_tag
-from ..domain.ollama_discovery import WaitDetail as WaitDetail  # noqa: PLC0414
-from ..domain.ollama_discovery import WaitKind as WaitKind  # noqa: PLC0414
-from ..domain.ollama_discovery import is_private_host
+from ..domain.model_catalog import LoadedModel, ServerFacts, normalize_tag
+from ..domain.ollama_discovery import WaitDetail, WaitKind, is_private_host
 from ..exceptions import OllamaConnectionError, RunStoppedError, stop_requested
-from .reporting import Reporter, StdoutReporter
+from ..interfaces import Reporter
+from .reporting import StdoutReporter
 from .wsl import windows_host_addresses
 
 if TYPE_CHECKING:

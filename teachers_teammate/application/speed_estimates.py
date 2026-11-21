@@ -35,6 +35,7 @@ from ..domain.model_catalog import (
     HardwareDetection,
     ModelCategory,
     RequestProfile,
+    ServerFacts,
     find_spec,
     rate_model,
     request_profile,
@@ -60,7 +61,7 @@ from ..domain.performance_estimate import (
     reading_page_time,
 )
 from ..domain.proofreading.result import StepName
-from ..infrastructure.ollama_utils import PROOFREADING_NUM_CTX, ServerFacts
+from ..infrastructure.ollama_utils import PROOFREADING_NUM_CTX
 from ..infrastructure.performance_probe import (
     PerformanceProbe,
     ProbeResult,

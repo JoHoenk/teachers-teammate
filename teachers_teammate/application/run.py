@@ -29,15 +29,14 @@ from ..domain.model_catalog import (
     ram_needed_gb,
 )
 from ..domain.model_listing import ModelListing
+from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import TEXT_SUFFIX, output_folder_refusal
 from ..domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
-from ..domain.run_summary import RunSummary
+from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..infrastructure.file_discovery import FileDiscovery
-from ..infrastructure.ollama_utils import WaitDetail
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline
 from ..infrastructure.power import KEEP_AWAKE_REASON, NullSleepBlocker, on_battery
-from ..infrastructure.reporting import KeepAwakeState, ProgressCallbacks
 from ..infrastructure.stage_builder import (
     PipelineComponentFactory,
     resolve_run_windows,
@@ -46,7 +45,7 @@ from ..infrastructure.stage_builder import (
 from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
 from ..infrastructure.storage_root import resolve_artifact_dir
 from ..infrastructure.teacher_work_store import TeacherWorkStore
-from ..interfaces import SUPPORTED_SUFFIXES, SleepBlocker
+from ..interfaces import SUPPORTED_SUFFIXES, ProgressCallbacks, SleepBlocker
 from .addons import AddonService
 from .anonymization import AnonymizationService
 from .data_flow import ocr_refusal

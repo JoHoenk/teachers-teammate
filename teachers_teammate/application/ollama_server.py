@@ -14,9 +14,10 @@ from ..domain.ollama_discovery import (
     DiscoveredServer,
     DiscoveryScope,
     OllamaState,
+    WaitDetail,
     ollama_state,
 )
-from ..infrastructure.ollama_utils import ServerActivity, WaitDetail, warm_up_own_host_names
+from ..infrastructure.ollama_utils import ServerActivity, warm_up_own_host_names
 
 
 @dataclass(frozen=True)
@@ -137,7 +138,7 @@ class OllamaServerService:
         A note, not a refusal: another model is in memory and busy, so the server finishes it
         and loads *model* before the first answer.
         """
-        from ..infrastructure.ollama_utils import WaitKind  # noqa: PLC0415
+        from ..domain.ollama_discovery import WaitKind  # noqa: PLC0415
 
         activity = self.activity(url, model)
         if activity.has(model):

@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-from .._model_defaults import default_model_for_task as default_model_for_task  # noqa: PLC0414
 from ..domain.data_location import DataRegion
 from ..domain.model_listing import ModelListing
 from ..exceptions import ProviderNotAvailableError

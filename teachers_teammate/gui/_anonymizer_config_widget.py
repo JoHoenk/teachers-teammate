@@ -74,7 +74,7 @@ class AnonymizerConfigWidget(QWidget):
         language: Document language — used to derive the primary NER model label
             and as input to the preview.
         anonymizer_config: Current
-            :class:`~teachers_teammate.infrastructure.anonymizer.AnonymizerConfig`.
+            :class:`~teachers_teammate.domain.anonymization.AnonymizerConfig`.
         app_service: Application service used to run the preview.
         parent: Parent widget.
         sample_text: Optional text to pre-fill the preview input.
@@ -606,7 +606,7 @@ class AnonymizerConfigWidget(QWidget):
 
     @property
     def anonymizer_config(self) -> object:
-        """Return an :class:`~teachers_teammate.infrastructure.anonymizer.AnonymizerConfig`
+        """Return an :class:`~teachers_teammate.domain.anonymization.AnonymizerConfig`
         reflecting the current dialog state."""
         primary = (
             self._primary_model.currentData()

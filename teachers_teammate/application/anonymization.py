@@ -14,10 +14,10 @@ import threading
 from typing import TYPE_CHECKING
 
 from ..config import Config
+from ..domain.anonymization import AnonymizerConfig
 from ..domain.name_models import FALLBACK_SPACY_MODEL, SPACY_MODELS, spacy_model_for
 from ..infrastructure.anonymizer import (
     AnonymizationResultCache,
-    AnonymizerConfig,
     CachedAnonymizer,
     anonymizer_config_from,
 )

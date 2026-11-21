@@ -45,9 +45,7 @@ import sys
 import threading
 import time
 
-from ..exceptions import AddonInstallError as AddonInstallError  # noqa: PLC0414
-from ..exceptions import AddonUpdateError as AddonUpdateError  # noqa: PLC0414
-from ..exceptions import InstallFailure as InstallFailure  # noqa: PLC0414
+from ..exceptions import AddonInstallError, AddonUpdateError, InstallFailure
 from .spacy_models import spacy_model_url
 from .subprocess_utils import no_console_window_kwargs
 

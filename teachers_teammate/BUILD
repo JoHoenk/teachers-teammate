@@ -250,6 +250,7 @@ _GUI_SRCS = [
     "gui/_ollama_status_line.py",
     "gui/_package_hint.py",
     "gui/_server_card.py",
+    "gui/_settings_file.py",
     "gui/_settings_launcher.py",
     "gui/_path_row.py",
     "gui/_preprocess_preview.py",

@@ -45,12 +45,11 @@ from ..application.documents import WorkedOn
 from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
 from ..application.run import IssueKind, RunPreflight
-from ..config import DEFAULTS, Config, dump_config_file, load_config_file
+from ..config import DEFAULTS, Config
 from ..domain.data_location import DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import ServerKind
-from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..texts import dialogs as dlg
 from ..texts.settings import WHERE_ADDONS, WHERE_GENERAL
 from . import _dialogs
@@ -75,11 +74,11 @@ from ._readiness_line import ReadinessLine
 from ._results_table import ResultsTable
 from ._run_controller import RunController, RunHooks, WorkerLike
 from ._run_session import RunSession, wait_detail_text
+from ._settings_file import SettingsFile, SettingsFileHooks
 from ._settings_launcher import SettingsHooks, SettingsLauncher
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
 from ._update_check import UpdateCheckThread
-from ._window_geometry import maximize_without_saved_geometry, restore_geometry
 from .settings import SettingsPage
 from .settings._page import FOCUS_DETECTION
 
@@ -198,7 +197,7 @@ class MainWindow(QMainWindow):
 
     def _init_runtime_state(self) -> None:
         """Initialise per-window runtime state and declare widgets built later."""
-        self._config_path: Path | None = None
+        self._settings_file: SettingsFile
         self._pull_manager = PullManager(self, service=self._app_service)
         #: What the run in progress is doing: the file, the step, the pace and the Stop stage.
         self._run_session = RunSession()
@@ -283,6 +282,18 @@ class MainWindow(QMainWindow):
             hooks=self._menu_hooks(),
         )
         self._connect_pages()
+        self._settings_file = SettingsFile(
+            self,
+            services=self._app_service,
+            panel=self._config_panel,
+            splitter=self._main_splitter,
+            log=self._log,
+            settings_store=self._settings_store,
+            hooks=SettingsFileHooks(
+                ask_first_start=self._open_setup_assistant_first_start,
+                queue_loaded=self._refresh_queue_from_inputs,
+            ),
+        )
 
         # No parent: the thread outlives the window if it is closed during the request.
         # The switch is read once, at start: turning it off takes effect at the next start.
@@ -542,75 +553,16 @@ class MainWindow(QMainWindow):
 
     # ── Settings persistence ──────────────────────────────────────────────
 
-    #: How long a drag of a pane waits before the layout is written to the settings.
     _QSETTINGS_ORG = "TeachersTeammate"
     _QSETTINGS_APP = "TeachersTeammate"
 
     def _restore_gui_state(self) -> None:
-        """Restore the window geometry and the splitter sizes from QSettings."""
-        qs = QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
-        if not restore_geometry(self, qs.value("gui/geometry")):
-            # The first start: the window is as large as the screen allows.  A saved geometry,
-            # normal or maximized, always wins over this.
-            maximize_without_saved_geometry(self)
-        sizes = [360, 1140]
-        raw_sizes = qs.value("gui/panel_sizes")
-        if isinstance(raw_sizes, list) and len(raw_sizes) == 2:
-            try:
-                restored = [int(v) for v in raw_sizes]
-                if restored[0] >= 200 and restored[1] >= 400:
-                    sizes = restored
-            except ValueError, TypeError:
-                pass
-        QTimer.singleShot(0, lambda s=sizes: self._main_splitter.setSizes(s))
+        """Restore the window geometry and the splitter sizes from the GUI settings."""
+        self._settings_file.restore_gui_state()
 
     def _load_toml_if_present(self) -> None:
-        config_path = self._app_service.setup.resolve_config_path(None)
-        self._restore_gui_state()
-
-        installer_choices = self._app_service.setup.first_start_settings(config_path)
-        if installer_choices is not None or config_path is None:
-            # First start (no ocr.toml yet, or only what the installer wrote): the assistant
-            # asks what only the teacher knows and works the models out from the answers.  It
-            # opens on top of this window, so the teacher sees the app first.  What the
-            # installer chose is loaded first, so the first save keeps it.
-            if installer_choices and config_path is not None:
-                self._config_path = config_path
-                self._config_panel.load_from_dict(installer_choices)
-            QTimer.singleShot(0, self._open_setup_assistant_first_start)
-            return
-        self._config_path = config_path
-        try:
-            loaded = load_config_file(config_path)
-            values = loaded.values
-            base = config_path.parent.resolve()
-            for key in ("input", "output"):
-                if values.get(key):
-                    p = Path(str(values[key]))
-                    if not p.is_absolute():
-                        values[key] = str((base / p).resolve())
-            self._config_panel.load_from_dict(values)
-            # Signals fired during bulk field restoration can run queue refresh
-            # before all dependent settings (e.g. docx_enabled) are applied. Run one
-            # final refresh after the full config is loaded so cached state is
-            # shown consistently on startup.
-            self._refresh_queue_from_inputs()
-            self._log.append_text(f"Loaded settings from {config_path}\n")
-            for notice in loaded.notices:
-                self._show_setting_notice(notice)
-        except Exception as exc:  # noqa: BLE001  # config file may be missing, malformed, or use an unexpected type; log the warning and continue
-            self._log.append_text(f"WARNING: Could not load {config_path}: {exc}\n")
-
-    def _show_setting_notice(self, setting_notice: SettingNotice) -> None:
-        """Say what the app changed about a saved setting instead of changing it silently.
-
-        A replaced text-recognition engine changes what the next run does, so it interrupts
-        the teacher; the other notices are in the log.
-        """
-        notice = dlg.setting_notice(setting_notice)
-        self._log.append_text(f"NOTICE: {notice.body}\n")
-        if setting_notice.kind is SettingNoticeKind.ENGINE_REPLACED:
-            _dialogs.notify(self, notice)
+        """Read the settings file, or ask the first-start questions when there is none."""
+        self._settings_file.load_if_present()
 
     def _open_setup_assistant_first_start(self) -> None:
         """Open the assistant on a first start, on top of the window that just appeared."""
@@ -749,24 +701,8 @@ class MainWindow(QMainWindow):
         self._readiness_controller.start_check()
 
     def _save_settings(self, *, notify: bool = True, silent_on_error: bool = False) -> None:
-        # Persist window geometry and splitter sizes to QSettings (UI state, not pipeline config)
-        qs = QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
-        qs.setValue("gui/geometry", self.saveGeometry())
-        qs.setValue("gui/panel_sizes", self._main_splitter.sizes())
-
-        values = self._config_panel.to_dict()
-        out = (
-            self._config_path
-            if self._config_path is not None
-            else self._app_service.setup.default_config_path()
-        )
-        try:
-            out.write_text(dump_config_file(values), encoding="utf-8")
-            if notify:
-                self._log.append_text(f"Settings saved to {out.resolve()}\n")
-        except OSError as exc:
-            if not silent_on_error:
-                _dialogs.notify(self, dlg.save_failed(str(exc)))
+        """Write the settings file and remember the window geometry."""
+        self._settings_file.save(notify=notify, silent_on_error=silent_on_error)
 
     def _confirm_close_during_run(self) -> bool:
         """Ask whether to stop the run and close; the default answer keeps the run going."""

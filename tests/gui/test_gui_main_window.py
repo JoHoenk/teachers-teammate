@@ -1012,7 +1012,7 @@ def test_main_window_save_settings_logs_success(main_window, tmp_path, monkeypat
     Then   the log shows 'Settings saved'
     """
     out = tmp_path / "ocr.toml"
-    main_window._config_path = out
+    main_window._settings_file._config_path = out
 
     main_window._save_settings()
 
@@ -1027,7 +1027,7 @@ def test_main_window_save_settings_shows_warning_on_error(main_window, monkeypat
     When   _save_settings() is called
     Then   a warning dialog is shown
     """
-    main_window._config_path = Path("/nonexistent/dir/ocr.toml")
+    main_window._settings_file._config_path = Path("/nonexistent/dir/ocr.toml")
     shown = _record_notices(monkeypatch)
 
     main_window._save_settings()
@@ -2224,7 +2224,7 @@ def test_main_window_load_toml_if_present_loads_values(qtbot, monkeypatch, tmp_p
     """
     Given  a valid TOML config file exists at the resolved config path
     When   MainWindow is initialised (calls _load_toml_if_present internally)
-    Then   _config_path is set to the resolved path
+    Then   the config path is set to the resolved path
     """
     config_path = tmp_path / "ocr.toml"
     config_path.write_text('language = "German"\n', encoding="utf-8")
@@ -2235,12 +2235,12 @@ def test_main_window_load_toml_if_present_loads_values(qtbot, monkeypatch, tmp_p
         lambda self, _: config_path,
     )
     monkeypatch.setattr(
-        "teachers_teammate.gui._main_window.load_config_file",
+        "teachers_teammate.gui._settings_file.load_config_file",
         lambda _path: {"language": "German"},
     )
     win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
-    assert win._config_path == config_path
+    assert win._settings_file.config_path == config_path
 
 
 @pytest.mark.gui
@@ -2248,7 +2248,7 @@ def test_main_window_load_toml_if_present_no_path(qtbot, monkeypatch) -> None:
     """
     Given  resolve_config_path returns None
     When   _load_toml_if_present is called
-    Then   method returns immediately without setting _config_path
+    Then   method returns immediately without setting a config path
     """
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
@@ -2259,9 +2259,9 @@ def test_main_window_load_toml_if_present_no_path(qtbot, monkeypatch) -> None:
         "teachers_teammate.application.setup_plan.SetupService.resolve_config_path",
         lambda self, _: None,
     )
-    win._config_path = None
+    win._settings_file._config_path = None
     win._load_toml_if_present()
-    assert win._config_path is None
+    assert win._settings_file.config_path is None
 
 
 @pytest.mark.gui
@@ -2288,7 +2288,7 @@ def test_main_window_load_toml_if_present_exception_logged(qtbot, monkeypatch, t
         raise ValueError("parse error")
 
     monkeypatch.setattr(
-        "teachers_teammate.gui._main_window.load_config_file",
+        "teachers_teammate.gui._settings_file.load_config_file",
         _raise,
     )
     win._load_toml_if_present()  # should not raise
@@ -2961,7 +2961,7 @@ def test_the_setup_result_is_applied_without_a_guard_dialog(
     monkeypatch.setattr(
         ReadinessController, "start_check", lambda self, **_kw: checked.append("check")
     )
-    main_window._config_path = tmp_path / "ocr.toml"
+    main_window._settings_file._config_path = tmp_path / "ocr.toml"
 
     main_window._apply_setup_result(
         SetupResult(

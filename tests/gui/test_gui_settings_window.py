@@ -115,7 +115,7 @@ def scripted_box(monkeypatch) -> type[_ScriptedAnswers]:
 def _hermetic_window(monkeypatch) -> None:
     """Keep the window offline: in-memory QSettings, no spaCy model discovery."""
     _MemoryQSettings.store = {}
-    monkeypatch.setattr(window_module, "QSettings", _MemoryQSettings)
+    monkeypatch.setattr(window_module, "app_settings", _MemoryQSettings)
     monkeypatch.setattr(_anonymizer_config_widget, "LatestTask", InertLatestTask)
 
 

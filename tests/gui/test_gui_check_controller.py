@@ -1135,7 +1135,7 @@ def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
     Then   the panes and the card have the sizes they were left at
     """
     SharedMemorySettings.store = {}
-    monkeypatch.setattr(main_window_module, "QSettings", SharedMemorySettings)
+    monkeypatch.setattr(main_window_module, "app_settings", SharedMemorySettings)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     first = MainWindow(app_service=real_service(), worker_factory=DummyWorker)

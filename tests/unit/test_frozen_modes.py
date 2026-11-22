@@ -539,3 +539,184 @@ def test_addon_smoke_test_names_a_failed_install_and_a_failed_name_detection(
         "name detection: ImportError: spacy is installed but cannot be loaded: "
         "packaging.requirements",
     ]
+
+
+def _script(tmp_path: Path, body: str) -> Path:
+    """Write *body* as a script a run is asked to play."""
+    path = tmp_path / "walk.py"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def _writes_the_result(result: str) -> str:
+    """Return a script body that writes *result* to the file it is given, and then ends."""
+    return (
+        f"import pathlib, sys\npathlib.Path(sys.argv[1]).write_text({result!r}, encoding='utf-8')\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("ending", "expected"),
+    [
+        ("raise SystemExit(0)", 0),
+        ("raise SystemExit(3)", 3),
+        ("raise SystemExit()", 0),
+        ("raise SystemExit('a message')", 1),
+    ],
+)
+def test_run_script_passes_the_exit_code_through(
+    tmp_path: Path, ending: str, expected: int
+) -> None:
+    """
+    Given  a script that ends by exiting with a code, no code, or a message
+    When   the app runs it
+    Then   the run ends with that code (a message counting as 1, as Python counts it)
+    """
+    script = _script(tmp_path, _writes_the_result("{}") + ending)
+    out = tmp_path / "e2e.json"
+
+    assert frozen_modes.run_script(script, out, []) == expected
+
+
+def test_run_script_gives_the_script_its_arguments_and_restores_them(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  the arguments the app was started with
+    When   a script is run with further arguments of its own
+    Then   the script sees the script path, the result file and those arguments, and the app's
+           own arguments are back afterwards
+    """
+    import sys  # noqa: PLC0415
+
+    script = _script(
+        tmp_path,
+        "import json, pathlib, sys\n"
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv), encoding='utf-8')\n",
+    )
+    out = tmp_path / "e2e.json"
+    monkeypatch.setattr(sys, "argv", ["teachers-teammate", "--_run_script"])
+
+    assert frozen_modes.run_script(script, out, ["--screenshots", "shots"]) == 0
+
+    assert json.loads(out.read_text(encoding="utf-8")) == [
+        str(script),
+        str(out),
+        "--screenshots",
+        "shots",
+    ]
+    assert sys.argv == ["teachers-teammate", "--_run_script"]
+
+
+def test_run_script_records_an_exception_that_got_away(tmp_path: Path) -> None:
+    """
+    Given  a script that fails without writing anything
+    When   the app runs it
+    Then   the run fails with 1 and the result names the error type, its message and its
+           traceback, which is the only trace a windowed build has
+    """
+    script = _script(tmp_path, "raise ValueError('the reader is missing')\n")
+    out = tmp_path / "e2e.json"
+
+    assert frozen_modes.run_script(script, out, []) == 1
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["ok"] is False
+    assert result["failed"] == ["uncaught: ValueError: the reader is missing"]
+    assert "walk.py" in result["traceback"]
+
+
+def test_run_script_names_a_script_that_is_not_there(tmp_path: Path) -> None:
+    """
+    Given  the path of a script that does not exist
+    When   the app is asked to run it
+    Then   it stops with 2 and the result names the path
+    """
+    out = tmp_path / "e2e.json"
+
+    assert frozen_modes.run_script(tmp_path / "missing.py", out, []) == 2
+
+    assert json.loads(out.read_text(encoding="utf-8"))["failed"] == [
+        f"no script at {tmp_path / 'missing.py'}"
+    ]
+
+
+def test_run_script_leaves_the_result_the_script_wrote_alone(tmp_path: Path) -> None:
+    """
+    Given  a script that writes its own result
+    When   the app runs it
+    Then   the result file is exactly what the script wrote
+    """
+    script = _script(tmp_path, _writes_the_result('{"ok": true, "steps": []}'))
+    out = tmp_path / "e2e.json"
+
+    assert frozen_modes.run_script(script, out, []) == 0
+
+    assert out.read_text(encoding="utf-8") == '{"ok": true, "steps": []}'
+
+
+def test_run_script_keeps_what_the_script_wrote_before_it_failed(tmp_path: Path) -> None:
+    """
+    Given  a script that wrote its steps so far and then raised
+    When   the app runs it
+    Then   the result keeps those steps and adds the failure and the traceback
+    """
+    script = _script(
+        tmp_path,
+        "import json, pathlib, sys\n"
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps({'ok': True, 'steps': ['run']}))\n"
+        "raise ValueError('step two broke')\n",
+    )
+    out = tmp_path / "e2e.json"
+
+    assert frozen_modes.run_script(script, out, []) == 1
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert (result["ok"], result["steps"]) == (False, ["run"])
+    assert result["failed"] == ["uncaught: ValueError: step two broke"]
+    assert "traceback" in result
+
+
+def test_run_script_does_not_pass_on_the_result_of_an_earlier_run(tmp_path: Path) -> None:
+    """
+    Given  a result file an earlier run left behind, saying ok
+    When   a script that writes nothing is run
+    Then   the earlier result is gone: the run fails and says the script wrote none
+    """
+    out = tmp_path / "e2e.json"
+    out.write_text('{"ok": true, "steps": []}', encoding="utf-8")
+
+    assert frozen_modes.run_script(_script(tmp_path, "pass\n"), out, []) == 1
+
+    assert json.loads(out.read_text(encoding="utf-8"))["failed"] == ["the script wrote no result"]
+
+
+def test_run_script_records_the_message_of_an_exit(tmp_path: Path) -> None:
+    """
+    Given  a script that exits with a message and wrote no result
+    When   the app runs it
+    Then   the exit code is 1 and the result carries the message, which a windowed build cannot
+           print
+    """
+    script = _script(tmp_path, "raise SystemExit('the reader is missing')\n")
+    out = tmp_path / "e2e.json"
+
+    assert frozen_modes.run_script(script, out, []) == 1
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert (result["ok"], result["failed"]) == (False, ["exit: the reader is missing"])
+
+
+def test_run_script_records_a_script_that_wrote_no_result(tmp_path: Path) -> None:
+    """
+    Given  a script that ends without writing its result
+    When   the app runs it
+    Then   the run fails with 1 and the result says so
+    """
+    script = _script(tmp_path, "pass\n")
+    out = tmp_path / "e2e.json"
+
+    assert frozen_modes.run_script(script, out, []) == 1
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert (result["ok"], result["failed"]) == (False, ["the script wrote no result"])

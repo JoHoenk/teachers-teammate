@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from ..config import DEFAULTS
 from ..texts import dialogs as dlg
 from ..texts import review as txt
-from . import _dialogs
+from . import _dialogs, _handles
 from ._path_row import PathRow
 
 #: The three choices of the "Text file" row: which text files a run writes.
@@ -89,6 +89,7 @@ class ResultsStep(QObject):
 
         self._output_row = PathRow(txt.RESULTS_LABEL, txt.RESULTS_PLACEHOLDER)
         self._output_dir = self._output_row.field()
+        self._output_dir.setObjectName(_handles.OUTPUT_PATH)
         self._output_row.set_tooltip(txt.RESULTS_TOOLTIP)
         self._output_browse = self._output_row.add_button(
             txt.RESULTS_BUTTON, txt.RESULTS_BUTTON_TOOLTIP, self.choose

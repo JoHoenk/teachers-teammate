@@ -26,7 +26,7 @@ from ..domain.stages import Stage
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts.run import BATTERY_WARNING
-from . import _dialogs
+from . import _dialogs, _handles
 from ._background import LatestTask
 from ._chart_widget import ChartWidget
 from ._log_widget import LogWidget
@@ -143,6 +143,7 @@ class RunController(QObject):
         assert style is not None
         #: Run and Stop, and what the window shows around them: a run's own widgets.
         self.run_button = QPushButton("Run Selected")
+        self.run_button.setObjectName(_handles.RUN_BUTTON)
         self.run_button.setIcon(
             QIcon.fromTheme(
                 "media-playback-start",
@@ -156,6 +157,7 @@ class RunController(QObject):
             "QPushButton:disabled { background: #95a5a6; }"
         )
         self.stop_button = QPushButton(STOP_TEXT)
+        self.stop_button.setObjectName(_handles.STOP_BUTTON)
         self.stop_button.setToolTip(STOP_TOOLTIP)
         self.stop_button.setIcon(
             QIcon.fromTheme(

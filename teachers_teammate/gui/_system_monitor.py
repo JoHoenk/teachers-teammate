@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QHideEvent
 from PySide6.QtWidgets import QSplitter, QVBoxLayout, QWidget
 
 from ..domain.model_catalog import GpuUsage
 from ._chart_widget import ChartWidget
+from ._handles import MONITOR_WINDOW
+from ._qsettings import app_settings
 from ._stats_widget import SystemStatsWidget
 
 GEOMETRY_KEY = "gui/monitor_geometry"
-_QSETTINGS_ORG = "TeachersTeammate"
-_QSETTINGS_APP = "TeachersTeammate"
 
 
 class SystemMonitorWindow(QWidget):
@@ -35,6 +35,7 @@ class SystemMonitorWindow(QWidget):
     ) -> None:
         super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle("System Monitor")
+        self.setObjectName(MONITOR_WINDOW)
         self.chart = ChartWidget()
         self.stats = SystemStatsWidget(read_gpu_usage)
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -46,13 +47,13 @@ class SystemMonitorWindow(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.addWidget(splitter)
         self.resize(560, 520)
-        geometry = QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).value(GEOMETRY_KEY)
+        geometry = app_settings().value(GEOMETRY_KEY)
         if geometry is not None:
             self.restoreGeometry(geometry)
 
     def hideEvent(self, event: QHideEvent) -> None:  # Qt override
         """Remember where the window was; closing it only hides it."""
-        QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).setValue(GEOMETRY_KEY, self.saveGeometry())
+        app_settings().setValue(GEOMETRY_KEY, self.saveGeometry())
         super().hideEvent(event)
 
     def show_and_raise(self) -> None:

@@ -10,6 +10,9 @@ which of the two is in use, so the Settings window never claims more than is tru
 A key found in the settings file is moved into the secret store the first time the store is
 available (:meth:`CredentialStore.load_into_environment`), and the plain copy is deleted.
 A key set in the environment before the app started always wins and is never written.
+
+Under ``TEACHERS_TEAMMATE_TMPDIR`` (a test, the smoke test, the app walkthrough) there is no
+secret store: the folder holds everything of the run, and the teacher's own keys stay out of it.
 """
 
 from __future__ import annotations
@@ -20,15 +23,14 @@ import logging
 import os
 from types import ModuleType
 
-from PySide6.QtCore import QSettings
+from ..config import override_root
+from ._qsettings import app_settings
 
 LOG = logging.getLogger(__name__)
 
 #: The service name the keys are filed under in the secret store.
 KEYRING_SERVICE = "TeachersTeammate"
 
-_QSETTINGS_ORG = "TeachersTeammate"
-_QSETTINGS_APP = "TeachersTeammate"
 _FILE_GROUP = "credentials"
 
 #: The keys that were already in the environment when :meth:`CredentialStore.load_into_environment`
@@ -56,8 +58,11 @@ def _keyring() -> ModuleType | None:
     """Return the ``keyring`` module if it is installed and has a usable backend, else ``None``.
 
     ``keyring`` picks its backend from what the system offers; with none it falls back to a
-    "fail" backend whose priority is 0, which must not count as a store.
+    "fail" backend whose priority is 0, which must not count as a store.  An override folder
+    means no store at all.
     """
+    if override_root() is not None:
+        return None
     try:
         import keyring  # noqa: PLC0415
     except ImportError:
@@ -121,7 +126,7 @@ class CredentialStore:
             else:
                 self._remove_file_value(env_key)
                 return KeyLocation.KEYCHAIN
-        QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).setValue(f"{_FILE_GROUP}/{env_key}", value)
+        app_settings().setValue(f"{_FILE_GROUP}/{env_key}", value)
         return KeyLocation.SETTINGS_FILE
 
     def remove(self, env_key: str) -> None:
@@ -174,9 +179,9 @@ class CredentialStore:
 
     @staticmethod
     def _file_value(env_key: str) -> str:
-        value = QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).value(f"{_FILE_GROUP}/{env_key}", "")
+        value = app_settings().value(f"{_FILE_GROUP}/{env_key}", "")
         return value if isinstance(value, str) else ""
 
     @staticmethod
     def _remove_file_value(env_key: str) -> None:
-        QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).remove(f"{_FILE_GROUP}/{env_key}")
+        app_settings().remove(f"{_FILE_GROUP}/{env_key}")

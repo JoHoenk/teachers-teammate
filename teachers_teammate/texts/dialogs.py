@@ -609,3 +609,13 @@ def select_image_or_pdf(supported_glob: str) -> FilePrompt:
 def choose_document(pattern: str) -> FilePrompt:
     """The picker for the document the Benchmark window runs."""
     return FilePrompt("Choose document", name_filter=f"Supported files ({pattern})")
+
+
+def answerer_gave_no_answer(type_name: str) -> str:
+    """The error for an answerer that answered a question with something but an ``Answer``."""
+    return f"An answerer must return an Answer or None for a question, not {type_name}."
+
+
+def answerer_gave_foreign_button(button: str, title: str) -> str:
+    """The error for an answerer that clicked a *button* the question *title* does not have."""
+    return f"{button} is not a button of the question {title!r}."

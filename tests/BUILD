@@ -2492,6 +2492,15 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_qsettings",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_qsettings.py"],
+    args = ["gui/test_qsettings.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+py_test(
     name = "test_gui_addon_installer_dialog",
     size = "medium",
     srcs = _COMMON_SRCS + [
@@ -3004,6 +3013,7 @@ test_suite(
         ":test_gui_privacy_settings",
         ":test_gui_privacy_view",
         ":test_gui_prompt_dialog",
+        ":test_gui_qsettings",
         ":test_gui_readiness",
         ":test_gui_results_table",
         ":test_gui_run_session",

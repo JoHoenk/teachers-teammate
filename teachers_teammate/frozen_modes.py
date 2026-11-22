@@ -17,6 +17,11 @@ it needs the network, so CI runs it as a step of its own.
 
 ``forget_keys`` is what the uninstaller calls before it removes the program files: the API
 keys sit in the system keychain, which no uninstaller can enumerate.
+
+``run_script`` runs a script handed to the app — ``--_run_script <script.py> <file.json> [args…]``
+— in the app's own process.  The app walkthrough is such a script: it builds the real main
+window and plays a teacher, so no test-only code ships in the bundle, and a changed script runs
+against an installed copy without rebuilding it.
 """
 
 from __future__ import annotations
@@ -28,10 +33,12 @@ from io import BytesIO
 import json
 import os
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -678,6 +685,90 @@ def run_addon_smoke_test(out_path: Path) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return 0 if not failed else 1
+
+
+def _write_result(out_path: Path, result: dict[str, object]) -> None:
+    """Write *result* as the JSON file a walkthrough run is read from."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+
+
+def _script_exit(exc: SystemExit) -> tuple[int, str]:
+    """Return the exit code a ``SystemExit`` stands for and its message, if it carries one.
+
+    A message counts as code 1, as Python counts it.
+    """
+    code = exc.code
+    if code is None:
+        return 0, ""
+    if isinstance(code, int):
+        return code, ""
+    return 1, str(code)
+
+
+def _add_failure(out_path: Path, failure: str, extra: dict[str, object]) -> None:
+    """Add *failure* to the result the script already wrote, or write a result of its own.
+
+    What the script recorded before it failed stays: a walk that got through nine steps says so.
+    """
+    result: dict[str, object] = {}
+    try:
+        loaded = json.loads(out_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            result = loaded
+    except OSError, ValueError:
+        pass
+    failed = result.get("failed")
+    result["ok"] = False
+    result["failed"] = [*(failed if isinstance(failed, list) else []), failure]
+    result.update(extra)
+    _write_result(out_path, result)
+
+
+def run_script(script: Path, out_path: Path, args: list[str]) -> int:
+    """Run *script* in this process as ``__main__``; 0 when what it checked passed.
+
+    The script writes the result file itself.  This runner adds to it when the script failed
+    without saying so (an exception that got away, an exit with a message) and writes it when
+    there is none (a missing script, a script that ended without a result).  A result left by an
+    earlier run is removed first, so a script that writes nothing cannot pass on it.  On Windows
+    the windowed build has no stderr, so the file is the only place a crash shows.
+
+    Args:
+        script: The path of the script to run.
+        out_path: The file the result belongs in; the script gets it as its first argument.
+        args: Further arguments for the script.
+
+    Returns:
+        0, the exit code the script chose, or 1 for a failure of its own.
+    """
+    out_path.unlink(missing_ok=True)
+    if not script.is_file():
+        _write_result(out_path, {"ok": False, "failed": [f"no script at {script}"]})
+        return 2
+    previous = sys.argv
+    sys.argv = [str(script), str(out_path), *args]
+    code = 0
+    message = ""
+    try:
+        runpy.run_path(str(script), run_name="__main__")
+    except SystemExit as exc:
+        code, message = _script_exit(exc)
+    except BaseException as exc:  # noqa: BLE001 — anything the script raises is its failure
+        _add_failure(
+            out_path,
+            f"uncaught: {type(exc).__name__}: {exc}",
+            {"traceback": traceback.format_exc()},
+        )
+        return 1
+    finally:
+        sys.argv = previous
+    if message:
+        _add_failure(out_path, f"exit: {message}", {})
+    elif not out_path.is_file():
+        _write_result(out_path, {"ok": False, "failed": ["the script wrote no result"]})
+        return code or 1
+    return code
 
 
 def run_smoke_test(out_path: Path) -> int:

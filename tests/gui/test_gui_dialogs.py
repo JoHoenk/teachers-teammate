@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QAbstractButton, QCheckBox, QFileDialog, QMessageB
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts._types import (
+    Answer,
     Choice,
     FilePrompt,
     Notice,
@@ -268,3 +269,162 @@ def test_a_cancelled_picker_returns_nothing(qtbot, monkeypatch) -> None:
     assert _dialogs.pick_file(None, prompt) is None
     assert _dialogs.pick_files(None, prompt) == []
     assert _dialogs.save_file(None, prompt) is None
+
+
+def _nothing_shown(monkeypatch) -> None:
+    """Fail the test if any box or picker is really shown."""
+
+    def shown(*_args, **_kwargs):
+        raise AssertionError("a dialog was shown while an answerer was open")
+
+    monkeypatch.setattr(QMessageBox, "exec", shown)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", shown)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", shown)
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", shown)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", shown)
+
+
+def _answering_everything(asked: _dialogs.Asked) -> object:
+    """Answer each call kind the way the walkthrough does: a choice, a path, nothing."""
+    return {
+        "notify": None,
+        "choose": Answer(dlg.clear_all_runs("x").choices[0], checked=True),
+        "pick_folder": Path("/chosen"),
+        "pick_file": Path("/chosen/a.png"),
+        "pick_files": [Path("/chosen/a.png"), Path("/chosen/b.png")],
+        "save_file": Path("/chosen/out.docx"),
+    }[asked.call]
+
+
+@pytest.mark.gui
+def test_an_answerer_answers_every_box_and_picker_instead_of_showing_it(qtbot, monkeypatch) -> None:
+    """
+    Given  an answerer that answers every kind of call
+    When   a notice, a question, the two pickers and the save prompt are asked
+    Then   nothing is shown, each answer comes back, and the record names every call once
+    """
+    _nothing_shown(monkeypatch)
+    prompt = FilePrompt("Title")
+
+    with _dialogs.answering(_answering_everything) as asked:
+        _dialogs.notify(None, Notice("Save failed", "Disk full", NoticeKind.WARNING))
+        answer = _dialogs.choose(None, dlg.clear_all_runs("x"))
+        accepted = _dialogs.ask(None, dlg.clear_all_runs("x"))
+        folder = _dialogs.pick_folder(None, prompt)
+        one = _dialogs.pick_file(None, prompt)
+        several = _dialogs.pick_files(None, prompt)
+        saved = _dialogs.save_file(None, prompt)
+
+    assert (answer.checked, accepted) == (True, True)
+    assert (folder, one, several, saved) == (
+        Path("/chosen"),
+        Path("/chosen/a.png"),
+        [Path("/chosen/a.png"), Path("/chosen/b.png")],
+        Path("/chosen/out.docx"),
+    )
+    # ``ask`` goes through ``choose``: the teacher answered one question, so it is recorded once.
+    assert [call.call for call in asked] == [
+        "notify",
+        "choose",
+        "choose",
+        "pick_folder",
+        "pick_file",
+        "pick_files",
+        "save_file",
+    ]
+
+
+@pytest.mark.gui
+def test_the_innermost_answerer_answers_and_the_outer_one_still_counts(qtbot, monkeypatch) -> None:
+    """
+    Given  an answerer that says No, and an inner one that says Yes
+    When   a question is asked inside the inner block and again after it
+    Then   the inner answer wins while it is open, and the outer one takes over afterwards
+    """
+    yes = Answer(dlg.clear_all_runs("x").choices[0])
+    no = Answer(dlg.clear_all_runs("x").choices[1])
+
+    with _dialogs.answering(lambda _asked: no) as outer:
+        with _dialogs.answering(lambda _asked: yes) as inner:
+            inside = _dialogs.choose(None, dlg.clear_all_runs("x"))
+        after = _dialogs.choose(None, dlg.clear_all_runs("x"))
+
+    assert (inside.accepted, after.accepted) == (True, False)
+    assert len(inner) == 1
+    assert len(outer) == 1  # the outer one records only what it answered itself
+
+
+@pytest.mark.gui
+def test_the_answerer_is_put_back_when_the_block_raises(qtbot, monkeypatch) -> None:
+    """
+    Given  an answerer that is open while the code it wraps fails
+    When   the exception leaves the block
+    Then   the next box is shown again, by the real dialog
+    """
+    shown = _click(monkeypatch, lambda _box: None)
+
+    with pytest.raises(RuntimeError):
+        with _dialogs.answering(_answering_everything):
+            raise RuntimeError("the walk stopped here")
+
+    _dialogs.notify(None, Notice("Save failed", "Disk full", NoticeKind.WARNING))
+
+    assert len(shown) == 1
+
+
+@pytest.mark.gui
+def test_an_answerer_that_declines_and_cancels_says_so(qtbot, monkeypatch) -> None:
+    """
+    Given  an answerer that answers nothing and picks nothing, as a declined box does
+    When   a question and the pickers are asked
+    Then   the question comes back declined and unchecked, and the pickers come back empty
+    """
+    _nothing_shown(monkeypatch)
+    prompt = FilePrompt("Title")
+
+    with _dialogs.answering(lambda _asked: None):
+        answer = _dialogs.choose(None, dlg.clear_all_runs("x"))
+        folder = _dialogs.pick_folder(None, prompt)
+        several = _dialogs.pick_files(None, prompt)
+
+    assert (answer.choice, answer.checked, answer.accepted) == (None, False, False)
+    assert folder is None
+    assert several == []
+
+
+@pytest.mark.gui
+def test_the_same_answerer_can_be_open_twice(qtbot, monkeypatch) -> None:
+    """
+    Given  one answerer opened inside itself, both records still empty and so equal
+    When   the inner block ends and a question is asked
+    Then   the outer record gets it, the stack is clean after both blocks, and the real box is
+           back
+    """
+    yes = Answer(dlg.clear_all_runs("x").choices[0])
+
+    def answerer(_asked: _dialogs.Asked) -> Answer:
+        return yes
+
+    with _dialogs.answering(answerer) as outer:
+        with _dialogs.answering(answerer):
+            pass
+        _dialogs.choose(None, dlg.clear_all_runs("x"))
+
+    assert len(outer) == 1
+    assert _dialogs._ANSWERING == []
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    "wrong", [True, "Yes", Choice(label="Elsewhere"), Answer(Choice(label="Elsewhere"))]
+)
+def test_an_answerer_must_answer_a_question_with_an_answer(qtbot, wrong: object) -> None:
+    """
+    Given  an answerer that returns something a box could not give: a bool, a string, a button
+           that is not the question's
+    When   the question is asked
+    Then   the script is told, instead of the answer counting as the teacher declining
+    """
+    with _dialogs.answering(lambda _asked: wrong):
+        with pytest.raises((TypeError, ValueError)):
+            _dialogs.choose(None, dlg.clear_all_runs("x"))

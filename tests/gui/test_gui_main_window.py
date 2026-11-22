@@ -11,8 +11,8 @@ from typing import Any, ClassVar
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QShortcut
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QAction, QShortcut
+from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget
 
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.application.ollama_server import OllamaServerService
@@ -30,7 +30,7 @@ from teachers_teammate.domain.model_catalog import (
     DetectionReason,
     HardwareDetection,
 )
-from teachers_teammate.gui import _dialogs
+from teachers_teammate.gui import _dialogs, _handles
 from teachers_teammate.gui import _export_controller as export_controller_module
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui import _menu_bar as menu_bar_module
@@ -1453,7 +1453,7 @@ def test_the_first_start_opens_maximized_and_a_saved_geometry_wins(
         def value(self, key: str, default: object = None) -> object:
             return values.get(key, default)
 
-    monkeypatch.setattr(main_window_module, "QSettings", _Store)
+    monkeypatch.setattr(main_window_module, "app_settings", lambda: _Store())
     main_window.setWindowState(Qt.WindowState.WindowNoState)
 
     main_window._settings_file.restore_gui_state()
@@ -1731,7 +1731,7 @@ def test_the_monitor_remembers_its_geometry(qtbot, main_window, monkeypatch) -> 
         def setValue(self, key: str, value: object) -> None:
             stored[key] = value
 
-    monkeypatch.setattr(_system_monitor, "QSettings", MemorySettings)
+    monkeypatch.setattr(_system_monitor, "app_settings", lambda: MemorySettings())
     restored: list[object] = []
     monkeypatch.setattr(
         _system_monitor.SystemMonitorWindow,
@@ -3105,7 +3105,7 @@ def confirm_box(monkeypatch):
         return Answer(question.choices[0], _Confirmations.remember)
 
     monkeypatch.setattr(_dialogs, "choose", choose)
-    monkeypatch.setattr(main_window_module, "QSettings", SharedMemorySettings)
+    monkeypatch.setattr(main_window_module, "app_settings", SharedMemorySettings)
     return _Confirmations
 
 
@@ -5311,3 +5311,59 @@ def test_an_export_error_is_told_in_the_teachers_words(error: Exception, expecte
     Then   the two refusals use the sentences of texts/ and any other error its own message
     """
     assert export_controller_module._export_failure("note.png", error).startswith(expected)
+
+
+# ── What the app walkthrough looks up ────────────────────────────────────────
+
+#: Everything inside the window that the app walkthrough finds by object name.
+_WALKTHROUGH_WIDGETS = (
+    _handles.RUN_BUTTON,
+    _handles.STOP_BUTTON,
+    _handles.EXPORT_BUTTON,
+    _handles.MAIN_TABS,
+    _handles.RESULTS_TABLE,
+    _handles.INPUT_FOLDER_BUTTON,
+    _handles.INPUT_PATH,
+    _handles.OUTPUT_PATH,
+    _handles.CHECK_PAGE,
+    _handles.READ_VIEW,
+)
+
+#: The menu entries it triggers.
+_WALKTHROUGH_ACTIONS = (
+    _handles.ALL_SETTINGS,
+    _handles.BENCHMARK,
+    _handles.SYSTEM_MONITOR,
+    _handles.SETUP_ASSISTANT,
+    _handles.USER_GUIDE,
+    _handles.LICENSES,
+    _handles.ABOUT,
+)
+
+
+def _top_level(name: str) -> list[QWidget]:
+    """Return the windows of the app, visible or not, that carry the object name *name*."""
+    return [widget for widget in QApplication.topLevelWidgets() if widget.objectName() == name]
+
+
+@pytest.mark.gui
+def test_the_walkthrough_finds_every_handle_exactly_once(qtbot, main_window, stored) -> None:
+    """
+    Given  the main window with one queued document, and the System Monitor it built
+    When   the walkthrough looks up each handle of ``gui/_handles.py`` by object name
+    Then   each is found exactly once: the buttons, the fields, the tabs, the table, the row's
+           Open button, the menu entries, and the window the main window does not own
+    """
+    [a] = stored("a.png")
+
+    for name in _WALKTHROUGH_WIDGETS:
+        assert len(main_window.findChildren(QWidget, name)) == 1, name
+    for name in _WALKTHROUGH_ACTIONS:
+        assert len(main_window.findChildren(QAction, name)) == 1, name
+
+    opened = main_window.findChildren(QAbstractButton, _handles.OPEN_DOCUMENT)
+    assert [button.property(_handles.SOURCE_ID_PROPERTY) for button in opened] == [a]
+
+    # Among the top-level widgets, because the main window does not own it; this test process
+    # keeps the monitors of the tests before it, so the walkthrough's own window is checked for.
+    assert main_window._monitor in _top_level(_handles.MONITOR_WINDOW)

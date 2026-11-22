@@ -23,6 +23,7 @@ from ...config import DEFAULTS
 from ...texts import dialogs as dlg
 from .. import _dialogs
 from .._app_bootstrap import create_app, finish_process
+from .._handles import BENCHMARK_WINDOW
 from .._log_widget import LogWidget
 from .._ocr_config_selector import OcrConfigSelector
 from .._worker import detach_running_worker
@@ -42,6 +43,7 @@ class BenchmarkWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.setWindowTitle("Teacher's Teammate — OCR Benchmark")
+        self.setObjectName(BENCHMARK_WINDOW)
         self.resize(1100, 720)
         self._service = app_service
         self._worker_factory = worker_factory or BenchmarkWorker

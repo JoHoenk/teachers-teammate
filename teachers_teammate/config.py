@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import tomllib
 from typing import Any
@@ -289,6 +290,17 @@ class Config:
     def evaluate_temperature(self) -> float:
         """Return the temperature the content review is sent at."""
         return review_temperature(self.effective_evaluate_model, self.evaluate_provider)
+
+
+def override_root() -> Path | None:
+    """Return the folder ``TEACHERS_TEAMMATE_TMPDIR`` names, or ``None`` when it is not set.
+
+    Set, that folder holds what the app would otherwise spread over the cache, the config and
+    the data folder: a test, the smoke test and the app walkthrough keep everything of theirs
+    in one temporary folder that way.
+    """
+    override = os.environ.get("TEACHERS_TEAMMATE_TMPDIR", "").strip()
+    return Path(override) if override else None
 
 
 def _read_toml(path: Path) -> dict[str, Any]:

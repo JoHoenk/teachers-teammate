@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QMainWindow, QMenuBar
 
+from . import _handles
 from ._config_panel import ConfigPanel
 from ._export_controller import ExportController
 from ._export_menu import build_export_menu
@@ -119,6 +120,7 @@ class MenuBar(QObject):
             self.settings_actions[page] = action
         settings_menu.addSeparator()
         all_act = QAction("All settings\u2026", self)
+        all_act.setObjectName(_handles.ALL_SETTINGS)
         all_act.setShortcut(QKeySequence("Ctrl+,"))
         all_act.setMenuRole(QAction.MenuRole.PreferencesRole)
         all_act.triggered.connect(lambda: self._hooks.open_settings(last_page()))
@@ -130,12 +132,14 @@ class MenuBar(QObject):
         tools_menu = bar.addMenu("Tools")
         assert tools_menu is not None
         benchmark_act = QAction("Benchmark\u2026", self)
+        benchmark_act.setObjectName(_handles.BENCHMARK)
         benchmark_act.setToolTip(
             "Try a document with different text-recognition settings and compare the results."
         )
         benchmark_act.triggered.connect(self._hooks.open_benchmark)
         tools_menu.addAction(benchmark_act)
         monitor_act = QAction("System Monitor", self)
+        monitor_act.setObjectName(_handles.SYSTEM_MONITOR)
         monitor_act.setToolTip("How busy this computer is, and how long each document took.")
         monitor_act.triggered.connect(self._hooks.open_monitor)
         tools_menu.addAction(monitor_act)
@@ -143,6 +147,7 @@ class MenuBar(QObject):
         self.monitor_action = monitor_act
         tools_menu.addSeparator()
         self.setup_action = QAction("Setup Assistant\u2026", self)
+        self.setup_action.setObjectName(_handles.SETUP_ASSISTANT)
         self.setup_action.setToolTip("Answer a few questions to set up the AI for this computer.")
         self.setup_action.triggered.connect(
             lambda _checked=False: self._hooks.open_setup_assistant()
@@ -154,13 +159,16 @@ class MenuBar(QObject):
         help_menu = bar.addMenu("Help")
         assert help_menu is not None
         guide_act = QAction("User Guide\u2026", self)
+        guide_act.setObjectName(_handles.USER_GUIDE)
         guide_act.triggered.connect(lambda: HelpDialog(self._window).exec())
         help_menu.addAction(guide_act)
         help_menu.addSeparator()
         licenses_act = QAction("Third-Party Licenses\u2026", self)
+        licenses_act.setObjectName(_handles.LICENSES)
         licenses_act.triggered.connect(lambda: ThirdPartyLicensesDialog(self._window).exec())
         help_menu.addAction(licenses_act)
         help_menu.addSeparator()
         about_act = QAction("About Teacher\u2019s Teammate\u2026", self)
+        about_act.setObjectName(_handles.ABOUT)
         about_act.triggered.connect(lambda: AboutDialog(self._window).exec())
         help_menu.addAction(about_act)

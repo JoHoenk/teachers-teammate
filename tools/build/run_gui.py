@@ -65,9 +65,12 @@ _HELPER_MODES = (
     "--_set_update_check",
     "--_spacy_download_mode",
 )
-if not any(mode in sys.argv for mode in _HELPER_MODES):
-    prepare_packages_dir()
-inject_packages_dir()
+# A script handed over runs on the bundle alone: the add-on folder is the teacher's own, and the
+# script's isolation (``TEACHERS_TEAMMATE_TMPDIR``) does not reach it.
+if "--_run_script" not in sys.argv:
+    if not any(mode in sys.argv for mode in _HELPER_MODES):
+        prepare_packages_dir()
+    inject_packages_dir()
 
 # ── smoke test dispatch ──────────────────────────────────────────────────────
 # A build is checked by running the app with `--_smoke_test <file>`: the checks live in
@@ -93,6 +96,24 @@ if "--_addon_smoke_test" in sys.argv:
     from teachers_teammate.frozen_modes import run_addon_smoke_test
 
     raise SystemExit(run_addon_smoke_test(_SmokePath(sys.argv[_idx + 1])))
+
+# ── script dispatch ──────────────────────────────────────────────────────────
+# `--_run_script <script.py> <file.json> [args…]` runs a script the caller hands over, in this
+# process: the app walkthrough is one (frozen_modes.run_script).  The script writes the result
+# file, so a --windowed build reports there instead of on a console it does not have.
+if "--_run_script" in sys.argv:
+    _idx = sys.argv.index("--_run_script")
+    _rest = sys.argv[_idx + 1 :]
+    if len(_rest) < 2:
+        raise SystemExit(2)
+
+    from pathlib import Path as _ScriptPath
+
+    from teachers_teammate.frozen_modes import run_script
+
+    raise SystemExit(
+        run_script(_ScriptPath(_rest[0]), _ScriptPath(_rest[1]), _rest[2:]),
+    )
 
 # ── forget-keys dispatch ─────────────────────────────────────────────────────
 # The uninstaller runs `--_forget_keys` before it removes the program files: the API

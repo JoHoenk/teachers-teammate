@@ -1,4 +1,4 @@
-"""Tests for the background update-check thread."""
+"""Tests for the update check against GitHub Releases."""
 
 from __future__ import annotations
 
@@ -7,7 +7,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.gui._update_check import UpdateCheckThread, _version_tuple
+from teachers_teammate.gui import _update_check
+from teachers_teammate.gui._background import wait_for_background_tasks
+from teachers_teammate.gui._update_check import (
+    _version_tuple,
+    check_for_update,
+    fetch_newer_release,
+)
 
 
 # ── _version_tuple ────────────────────────────────────────────────────────────
@@ -115,12 +121,6 @@ def test_version_tuple_empty_string_returns_empty() -> None:
     assert _version_tuple("") == ()
 
 
-# The autouse conftest fixture stubs start() per test; keep the real one for lifetime tests.
-_REAL_START = UpdateCheckThread.start
-
-# ── UpdateCheckThread ─────────────────────────────────────────────────────────
-
-
 def _fake_response(tag: str, url: str = "https://example.com/rel") -> MagicMock:
     body = json.dumps({"tag_name": tag, "html_url": url}).encode()
     resp = MagicMock()
@@ -130,204 +130,127 @@ def _fake_response(tag: str, url: str = "https://example.com/rel") -> MagicMock:
     return resp
 
 
-@pytest.mark.gui
-def test_update_available_emitted_when_newer(qtbot) -> None:
+def test_a_newer_release_is_offered() -> None:
     """
     Given  the installed version is 0.9.0 and the latest GitHub release is v1.0.0
-    When   UpdateCheckThread.run() is called
-    Then   update_available is emitted with the new version string and release URL
+    When   the release is fetched
+    Then   its version without the tag prefix and its URL come back
     """
-    emitted: list[tuple[str, str]] = []
-    thread = UpdateCheckThread()
-    thread.update_available.connect(lambda v, u: emitted.append((v, u)))
-
     with (
         patch("teachers_teammate.__version__", "0.9.0"),
         patch("urllib.request.urlopen", return_value=_fake_response("v1.0.0")),
     ):
-        thread.run()
-
-    qtbot.wait(10)
-    assert emitted == [("1.0.0", "https://example.com/rel")]
+        assert fetch_newer_release() == ("1.0.0", "https://example.com/rel")
 
 
-@pytest.mark.gui
-def test_update_not_emitted_when_same_version(qtbot) -> None:
+def test_the_same_version_is_not_offered() -> None:
     """
     Given  the installed version equals the latest GitHub release (both 1.0.0)
-    When   UpdateCheckThread.run() is called
-    Then   update_available is not emitted
+    When   the release is fetched
+    Then   nothing is offered
     """
-    emitted: list[tuple[str, str]] = []
-    thread = UpdateCheckThread()
-    thread.update_available.connect(lambda v, u: emitted.append((v, u)))
-
     with (
         patch("teachers_teammate.__version__", "1.0.0"),
         patch("urllib.request.urlopen", return_value=_fake_response("v1.0.0")),
     ):
-        thread.run()
-
-    qtbot.wait(10)
-    assert emitted == []
+        assert fetch_newer_release() is None
 
 
-@pytest.mark.gui
-def test_update_not_emitted_when_remote_is_older(qtbot) -> None:
+def test_an_older_release_is_not_offered() -> None:
     """
     Given  the installed version (1.1.0) is newer than the latest GitHub release (v1.0.0)
-    When   UpdateCheckThread.run() is called
-    Then   update_available is not emitted
+    When   the release is fetched
+    Then   nothing is offered
     """
-    emitted: list[tuple[str, str]] = []
-    thread = UpdateCheckThread()
-    thread.update_available.connect(lambda v, u: emitted.append((v, u)))
-
     with (
         patch("teachers_teammate.__version__", "1.1.0"),
         patch("urllib.request.urlopen", return_value=_fake_response("v1.0.0")),
     ):
-        thread.run()
-
-    qtbot.wait(10)
-    assert emitted == []
+        assert fetch_newer_release() is None
 
 
-@pytest.mark.gui
-def test_rc_build_is_not_offered_the_previous_release(qtbot) -> None:
+def test_an_rc_build_is_not_offered_the_previous_release() -> None:
     """
     Given  the installed version is the pre-release 0.5.7rc1 and the latest release is v0.5.6
-    When   UpdateCheckThread.run() is called
-    Then   update_available is not emitted: the rc is newer than that release
+    When   the release is fetched
+    Then   nothing is offered: the rc is newer than that release
     """
-    emitted: list[tuple[str, str]] = []
-    thread = UpdateCheckThread()
-    thread.update_available.connect(lambda v, u: emitted.append((v, u)))
-
     with (
         patch("teachers_teammate.__version__", "0.5.7rc1"),
         patch("urllib.request.urlopen", return_value=_fake_response("v0.5.6")),
     ):
-        thread.run()
-
-    qtbot.wait(10)
-    assert emitted == []
+        assert fetch_newer_release() is None
 
 
-@pytest.mark.gui
-def test_rc_build_is_offered_the_final_release(qtbot) -> None:
+def test_an_rc_build_is_offered_the_final_release() -> None:
     """
     Given  the installed version is the pre-release 0.5.7rc1 and the latest release is v0.5.7
-    When   UpdateCheckThread.run() is called
-    Then   update_available is emitted with 0.5.7
+    When   the release is fetched
+    Then   it is offered with its version 0.5.7
     """
-    emitted: list[tuple[str, str]] = []
-    thread = UpdateCheckThread()
-    thread.update_available.connect(lambda v, u: emitted.append((v, u)))
-
     with (
         patch("teachers_teammate.__version__", "0.5.7rc1"),
         patch("urllib.request.urlopen", return_value=_fake_response("v0.5.7")),
     ):
-        thread.run()
-
-    qtbot.wait(10)
-    assert emitted == [("0.5.7", "https://example.com/rel")]
+        assert fetch_newer_release() == ("0.5.7", "https://example.com/rel")
 
 
-@pytest.mark.gui
-def test_final_build_is_offered_the_next_release(qtbot) -> None:
+def test_a_final_build_is_offered_the_next_release() -> None:
     """
     Given  the installed version is 0.5.6 and the latest release is v0.5.7
-    When   UpdateCheckThread.run() is called
-    Then   update_available is emitted with 0.5.7
+    When   the release is fetched
+    Then   it is offered with its version 0.5.7
     """
-    emitted: list[tuple[str, str]] = []
-    thread = UpdateCheckThread()
-    thread.update_available.connect(lambda v, u: emitted.append((v, u)))
-
     with (
         patch("teachers_teammate.__version__", "0.5.6"),
         patch("urllib.request.urlopen", return_value=_fake_response("v0.5.7")),
     ):
-        thread.run()
-
-    qtbot.wait(10)
-    assert emitted == [("0.5.7", "https://example.com/rel")]
+        assert fetch_newer_release() == ("0.5.7", "https://example.com/rel")
 
 
-@pytest.mark.gui
-def test_a_tag_that_is_not_a_version_is_not_offered(qtbot) -> None:
+def test_a_tag_that_is_not_a_version_is_not_offered() -> None:
     """
     Given  the latest release carries a tag that is not a version
-    When   UpdateCheckThread.run() is called
-    Then   update_available is not emitted
+    When   the release is fetched
+    Then   nothing is offered
     """
-    emitted: list[tuple[str, str]] = []
-    thread = UpdateCheckThread()
-    thread.update_available.connect(lambda v, u: emitted.append((v, u)))
-
     with (
         patch("teachers_teammate.__version__", "0.5.6"),
         patch("urllib.request.urlopen", return_value=_fake_response("nightly")),
     ):
-        thread.run()
-
-    qtbot.wait(10)
-    assert emitted == []
+        assert fetch_newer_release() is None
 
 
-@pytest.mark.gui
 @pytest.mark.parametrize("installed", ["0.5.7.dev0", "0.5.7+abc", "0.5.7.post1", "garbage"])
-def test_a_build_of_the_latest_release_is_not_offered_it(qtbot, installed: str) -> None:
+def test_a_build_of_the_latest_release_is_not_offered_it(installed: str) -> None:
     """
     Given  an installed version that is a dev, post or local build of v0.5.7, or unreadable
-    When   UpdateCheckThread.run() is called and v0.5.7 is the latest release
-    Then   update_available is not emitted
+    When   the release is fetched and v0.5.7 is the latest release
+    Then   nothing is offered
     """
-    emitted: list[tuple[str, str]] = []
-    thread = UpdateCheckThread()
-    thread.update_available.connect(lambda v, u: emitted.append((v, u)))
-
     with (
         patch("teachers_teammate.__version__", installed),
         patch("urllib.request.urlopen", return_value=_fake_response("v0.5.7")),
     ):
-        thread.run()
-
-    qtbot.wait(10)
-    assert emitted == []
+        assert fetch_newer_release() is None
 
 
-@pytest.mark.gui
-def test_network_failure_is_silent(qtbot) -> None:
+def test_a_network_failure_is_silent() -> None:
     """
     Given  urllib raises an OSError when contacting the GitHub API
-    When   UpdateCheckThread.run() is called
-    Then   update_available is not emitted and no exception escapes run()
+    When   the release is fetched
+    Then   nothing is offered and no exception escapes
     """
-    emitted: list[tuple[str, str]] = []
-    thread = UpdateCheckThread()
-    thread.update_available.connect(lambda v, u: emitted.append((v, u)))
-
     with patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
-        thread.run()  # must not raise
-
-    qtbot.wait(10)
-    assert emitted == []
+        assert fetch_newer_release() is None
 
 
-@pytest.mark.gui
-def test_malformed_response_is_silent(qtbot) -> None:
+def test_a_malformed_answer_is_silent() -> None:
     """
     Given  the GitHub API returns JSON with no tag_name field
-    When   UpdateCheckThread.run() is called
-    Then   update_available is not emitted
+    When   the release is fetched
+    Then   nothing is offered
     """
-    emitted: list[tuple[str, str]] = []
-    thread = UpdateCheckThread()
-    thread.update_available.connect(lambda v, u: emitted.append((v, u)))
-
     resp = MagicMock()
     resp.read.return_value = json.dumps({"error": "not found"}).encode()
     resp.__enter__ = lambda s: s
@@ -337,34 +260,46 @@ def test_malformed_response_is_silent(qtbot) -> None:
         patch("teachers_teammate.__version__", "0.9.0"),
         patch("urllib.request.urlopen", return_value=resp),
     ):
-        thread.run()
-
-    qtbot.wait(10)
-    assert emitted == []
+        assert fetch_newer_release() is None
 
 
 @pytest.mark.gui
-def test_running_thread_is_kept_alive_until_finished(qtbot) -> None:
+def test_the_answer_arrives_on_the_gui_thread(qtbot) -> None:
     """
-    Given  an UpdateCheckThread blocked on a slow network request
-    When   the caller drops its only reference
-    Then   the thread stays alive (no Qt abort) and is released once it finishes
+    Given  the check run on the background pool
+    When   a newer release is found
+    Then   the callback is called on the GUI thread with the version and its URL
     """
     import threading  # noqa: PLC0415
 
-    from teachers_teammate.gui import _update_check  # noqa: PLC0415
+    offered: list[tuple[str, str, int]] = []
 
-    release = threading.Event()
+    def on_available(version: str, url: str) -> None:
+        offered.append((version, url, threading.get_ident()))
 
-    def _slow_urlopen(*_args, **_kwargs):
-        release.wait(timeout=5)
-        raise OSError("offline")
+    newer = ("1.0.0", "https://example.com/rel")
+    with patch.object(_update_check, "fetch_newer_release", lambda: newer):
+        check_for_update(on_available)
+        assert wait_for_background_tasks(5000)
+        qtbot.waitUntil(lambda: bool(offered), timeout=5000)
 
-    thread = _update_check.UpdateCheckThread()
-    with patch("urllib.request.urlopen", _slow_urlopen):
-        _REAL_START(thread)
-        assert thread in _update_check._RUNNING
-        assert thread.isRunning()
-        del thread
-        release.set()
-        qtbot.waitUntil(lambda: not _update_check._RUNNING, timeout=3000)
+    version, url, thread = offered[0]
+    assert (version, url) == ("1.0.0", "https://example.com/rel")
+    assert thread == threading.get_ident()
+
+
+@pytest.mark.gui
+def test_nothing_is_reported_when_there_is_no_newer_release(qtbot) -> None:
+    """
+    Given  the installed version is the latest release
+    When   the check runs
+    Then   the callback is never called
+    """
+    offered: list[tuple[str, str]] = []
+
+    with patch.object(_update_check, "fetch_newer_release", lambda: None):
+        check_for_update(lambda version, url: offered.append((version, url)))
+        assert wait_for_background_tasks(5000)
+        qtbot.wait(50)
+
+    assert offered == []

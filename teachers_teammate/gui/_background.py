@@ -8,10 +8,17 @@ a result for an owner that has been closed in the meantime is dropped silently.
 
 * :func:`run_in_background` — fire-and-forget; ``on_done(result, error)`` runs on
   the GUI thread.
+* :func:`run_streaming` — the same for a task that reports as it goes; every item
+  reaches ``on_item`` on the GUI thread, then ``on_done(result, error)``.
 * :class:`LatestTask` — "latest wins": starting a new task makes the results of
   all earlier ones stale, so a slow, outdated answer can never overwrite a newer
   one.
 * :func:`wait_for_background_tasks` — called when the application closes.
+
+Tasks that wait on a remote server (model lists, the update check, a server search) pass
+``network=True`` and run on a pool of their own: a task cannot be interrupted, so a stale
+fetch keeps its thread until it ends, and it must not hold up the local tasks (hardware,
+export, the GPU read) while it does.
 """
 
 from __future__ import annotations
@@ -19,25 +26,31 @@ from __future__ import annotations
 import atexit
 from collections.abc import Callable
 import functools
+import time
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 #: Upper bound of simultaneous background tasks.  The tasks are I/O bound
 #: (subprocesses, HTTP), so a small fixed number is plenty.
 _MAX_THREADS = 4
+#: Upper bound of simultaneous tasks that wait on a remote server.
+_MAX_NETWORK_THREADS = 4
 #: How long :func:`wait_for_background_tasks` waits by default.
 _DEFAULT_WAIT_MS = 3000
 
 # Deliveries stay referenced until their result arrived on the GUI thread; an
 # unreferenced QObject would be destroyed together with its pending signal.
-_active: set[_Delivery] = set()
+_active: set[QObject] = set()
 
 
 @functools.cache
-def _get_pool() -> QThreadPool:
-    """Return the process-wide pool, created on first use (from the GUI thread)."""
+def _get_pool(network: bool) -> QThreadPool:
+    """Return the process-wide pool, created on first use (from the GUI thread).
+
+    The ``network`` pool is for tasks that wait on a remote server; the other one for the rest.
+    """
     pool = QThreadPool()
-    pool.setMaxThreadCount(_MAX_THREADS)
+    pool.setMaxThreadCount(_MAX_NETWORK_THREADS if network else _MAX_THREADS)
     return pool
 
 
@@ -94,11 +107,62 @@ class _Task(QRunnable):
         self._delivery.arrived.emit(result, error)
 
 
+class _Stream(QObject):
+    """Carries a streaming task's items, and then its end, to the GUI thread."""
+
+    item = Signal(object)
+    ended = Signal(object, object)  # result, error
+
+    def __init__(
+        self,
+        on_item: Callable[[object], None],
+        on_done: Callable[[object, BaseException | None], None],
+        owner: QObject | None,
+    ) -> None:
+        super().__init__()  # no parent: lives until the task ended
+        self._on_item = on_item
+        self._on_done = on_done
+        self._owner = owner
+        self.item.connect(self._deliver_item)
+        self.ended.connect(self._deliver_end)
+
+    @Slot(object)
+    def _deliver_item(self, payload: object) -> None:
+        if _owner_alive(self._owner):
+            self._on_item(payload)
+
+    @Slot(object, object)
+    def _deliver_end(self, result: object, error: object) -> None:
+        _active.discard(self)
+        if not _owner_alive(self._owner):
+            return
+        self._on_done(result, error if isinstance(error, BaseException) else None)
+
+
+class _StreamTask(QRunnable):
+    """Runs one callable that reports items while it works."""
+
+    def __init__(self, fn: Callable[[Callable[[object], None]], object], stream: _Stream) -> None:
+        super().__init__()
+        self._fn = fn
+        self._stream = stream
+
+    def run(self) -> None:
+        result: object = None
+        error: BaseException | None = None
+        try:
+            result = self._fn(self._stream.item.emit)
+        except Exception as exc:  # noqa: BLE001  # any failure is reported to on_done, never raised in the pool
+            error = exc
+        self._stream.ended.emit(result, error)
+
+
 def run_in_background(
     fn: Callable[[], object],
     on_done: Callable[[object, BaseException | None], None],
     *,
     owner: QObject | None = None,
+    network: bool = False,
 ) -> None:
     """Run *fn* in a pool thread and call ``on_done(result, error)`` on the GUI thread.
 
@@ -107,17 +171,48 @@ def run_in_background(
         on_done: Receives ``(result, None)`` or ``(None, exception)``.
         owner: Optional widget the result belongs to.  When it has been destroyed
             by the time the task finishes, *on_done* is not called.
+        network: Run on the pool of the tasks that wait on a remote server.
     """
     delivery = _Delivery(on_done, owner)
     _active.add(delivery)
-    _get_pool().start(_Task(fn, delivery))
+    _get_pool(network).start(_Task(fn, delivery))
+
+
+def run_streaming(
+    fn: Callable[[Callable[[object], None]], object],
+    on_item: Callable[[object], None],
+    on_done: Callable[[object, BaseException | None], None],
+    *,
+    owner: QObject | None = None,
+    network: bool = False,
+) -> None:
+    """Run *fn* in a pool thread, handing every item it reports to the GUI thread.
+
+    *fn* is given an ``emit(item)`` callable; each call reaches *on_item* on the GUI
+    thread in the order it was made, and ``on_done(result, error)`` comes last.
+
+    Args:
+        fn: Callable taking ``emit``; must not touch widgets.
+        on_item: Receives each item, in order, before *on_done*.
+        on_done: Receives ``(result, None)`` or ``(None, exception)``.
+        owner: Optional widget the results belong to.  When it has been destroyed
+            by the time an item or the end arrives, nothing is called.
+        network: Run on the pool of the tasks that wait on a remote server.
+    """
+    stream = _Stream(on_item, on_done, owner)
+    _active.add(stream)
+    _get_pool(network).start(_StreamTask(fn, stream))
 
 
 class LatestTask:
-    """Run background tasks where only the most recently started one counts."""
+    """Run background tasks where only the most recently started one counts.
 
-    def __init__(self, owner: QObject | None = None) -> None:
+    ``network=True`` puts them on the pool of the tasks that wait on a remote server.
+    """
+
+    def __init__(self, owner: QObject | None = None, *, network: bool = False) -> None:
         self._owner = owner
+        self._network = network
         self._sequence = 0
 
     def submit(
@@ -137,7 +232,28 @@ class LatestTask:
             if ticket == self._sequence:
                 on_done(result, error)
 
-        run_in_background(fn, deliver, owner=self._owner)
+        run_in_background(fn, deliver, owner=self._owner, network=self._network)
+        return ticket
+
+    def submit_streaming(
+        self,
+        fn: Callable[[Callable[[object], None]], object],
+        on_item: Callable[[object], None],
+        on_done: Callable[[object, BaseException | None], None],
+    ) -> int:
+        """Start a reporting *fn*; items of earlier submissions are dropped as well."""
+        self._sequence += 1
+        ticket = self._sequence
+
+        def deliver_item(payload: object) -> None:
+            if ticket == self._sequence:
+                on_item(payload)
+
+        def deliver(result: object, error: BaseException | None) -> None:
+            if ticket == self._sequence:
+                on_done(result, error)
+
+        run_streaming(fn, deliver_item, deliver, owner=self._owner, network=self._network)
         return ticket
 
     def cancel(self) -> None:
@@ -147,7 +263,10 @@ class LatestTask:
 
 def wait_for_background_tasks(timeout_ms: int = _DEFAULT_WAIT_MS) -> bool:
     """Wait up to *timeout_ms* for running tasks; return whether all finished."""
-    return _get_pool().waitForDone(timeout_ms)
+    deadline = time.monotonic() + timeout_ms / 1000
+    local_done = _get_pool(False).waitForDone(timeout_ms)
+    left_ms = max(0, int((deadline - time.monotonic()) * 1000))
+    return _get_pool(True).waitForDone(left_ms) and local_done
 
 
 atexit.register(wait_for_background_tasks, 2000)

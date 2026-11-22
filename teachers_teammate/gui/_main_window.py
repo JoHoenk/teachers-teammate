@@ -78,7 +78,7 @@ from ._settings_launcher import SettingsHooks, SettingsLauncher
 from ._setup_launcher import SetupHooks, SetupLauncher
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
-from ._update_check import UpdateCheckThread
+from ._update_check import check_for_update
 from .settings import SettingsPage
 from .settings._page import FOCUS_DETECTION
 
@@ -186,7 +186,6 @@ class MainWindow(QMainWindow):
         self._preflight_running = False
         # The same for the expected cache keys of the queue: they depend on the card.
         self._cache_state_task = LatestTask(self)
-        self._update_thread: UpdateCheckThread | None = None
         self._declare_widgets()
 
     def _declare_widgets(self) -> None:
@@ -262,14 +261,11 @@ class MainWindow(QMainWindow):
             ),
         )
 
-        # No parent: the thread outlives the window if it is closed during the request.
         # The switch is read once, at start: turning it off takes effect at the next start.
         if self._config_panel.get_settings_dict().get(
             "check_for_updates", DEFAULTS["check_for_updates"]
         ):
-            self._update_thread = UpdateCheckThread()
-            self._update_thread.update_available.connect(self._show_update_banner)
-            QTimer.singleShot(0, self._update_thread.start)
+            check_for_update(self._show_update_banner, owner=self)
 
     def _build_widgets(self) -> None:
         """Build what the window shows and the controllers work on."""

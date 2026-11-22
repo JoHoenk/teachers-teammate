@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 import pytest
 from PySide6.QtCore import QMetaMethod, QObject, QThread, Signal
 
-from teachers_teammate.gui import _addon_installer_dialog, _install_round, _model_fetch
+from teachers_teammate.gui import _addon_installer_dialog, _install_round, _long_job
 from teachers_teammate.gui._install_round import InstallRound
 
 from ._gui_harness import real_service
@@ -66,12 +66,17 @@ class _Manager(QObject):
         self.aborted = True
 
 
-class _FakePipThread(FinishedThreadStub, QObject):
-    """Reports the package list back at once, as the real pip thread does."""
+class _FakeJob(QObject):
+    """The four signals of ``LongJobThread``, for a fake that reports inside ``start()``."""
 
     log_line = Signal(str)
-    finished_ok = Signal(list)
+    progress = Signal(object)
+    finished_ok = Signal(object)
     finished_err = Signal(str)
+
+
+class _FakePipThread(FinishedThreadStub, _FakeJob):
+    """Reports the package list back at once, as the real pip thread does."""
 
     def __init__(self, _service: Any, packages: list[str]) -> None:
         super().__init__()
@@ -86,12 +91,8 @@ class _FakePipThread(FinishedThreadStub, QObject):
         self.finished_ok.emit(self._packages)
 
 
-class _FakeSpacyThread(FinishedThreadStub, QObject):
+class _FakeSpacyThread(FinishedThreadStub, _FakeJob):
     """Reports a downloaded spaCy model at once."""
-
-    log_line = Signal(str)
-    finished_ok = Signal()
-    finished_err = Signal(str)
 
     def __init__(self, _service: Any, model: str, _target: Any) -> None:
         super().__init__()
@@ -103,15 +104,11 @@ class _FakeSpacyThread(FinishedThreadStub, QObject):
         if _fails(item):
             self.finished_err.emit(_Script.fail_with)
             return
-        self.finished_ok.emit()
+        self.finished_ok.emit(None)
 
 
-class _FakePullThread(FinishedThreadStub, QObject):
+class _FakePullThread(FinishedThreadStub, _FakeJob):
     """Reports a pulled Ollama model at once."""
-
-    progress = Signal(str, float, float)
-    finished_ok = Signal(str)
-    finished_err = Signal(str)
 
     def __init__(self, _service: Any, _url: str, model: str) -> None:
         super().__init__()
@@ -125,36 +122,29 @@ class _FakePullThread(FinishedThreadStub, QObject):
         self.finished_ok.emit(self._model)
 
 
-class _FakeReaderThread(FinishedThreadStub, QObject):
-    """Reports a downloaded built-in reader at once (or fails, or waits to be cancelled)."""
+class _FakeReaderThread(FinishedThreadStub, _FakeJob):
+    """Reports a downloaded built-in reader at once (or fails, or waits to be stopped)."""
 
-    progress = Signal(int, int)
-    finished_ok = Signal()
-    finished_err = Signal(str)
-    cancelled: ClassVar[bool] = False
+    stopped: ClassVar[bool] = False
 
     def __init__(self, _service: Any, method: str = "download_reader") -> None:
         super().__init__()
         self._item = "page_models:all" if method == "download_page_models" else "reader:ppocr"
 
-    def cancel(self) -> None:
-        _FakeReaderThread.cancelled = True
+    def stop(self) -> None:
+        _FakeReaderThread.stopped = True
 
     def start(self) -> None:
         _Script.order.append("page_models" if self._item == "page_models:all" else "reader")
         if _fails(self._item):
             self.finished_err.emit(_Script.fail_with)
             return
-        self.progress.emit(1_000_000, 2_000_000)
-        self.finished_ok.emit()
+        self.progress.emit((1_000_000, 2_000_000))
+        self.finished_ok.emit(None)
 
 
-class _FakeUpdateThread(FinishedThreadStub, QObject):
+class _FakeUpdateThread(FinishedThreadStub, _FakeJob):
     """Runs the service's add-on update at once, as the real thread does in the background."""
-
-    log_line = Signal(str)
-    finished_ok = Signal()
-    finished_err = Signal(str)
 
     def __init__(self, service: Any) -> None:
         super().__init__()
@@ -166,7 +156,7 @@ class _FakeUpdateThread(FinishedThreadStub, QObject):
             self.finished_err.emit(_Script.fail_with)
             return
         self._service.addons.update_addons(self.log_line.emit)
-        self.finished_ok.emit()
+        self.finished_ok.emit(None)
 
 
 class _BlockingPipThread(QThread):
@@ -195,7 +185,7 @@ def fake_threads(monkeypatch) -> type[_Script]:
     monkeypatch.setattr(_addon_installer_dialog, "_ModelDownloadThread", _FakeSpacyThread)
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePullThread)
     monkeypatch.setattr(_addon_installer_dialog, "_ReaderDownloadThread", _FakeReaderThread)
-    _FakeReaderThread.cancelled = False
+    _FakeReaderThread.stopped = False
     return _Script
 
 
@@ -392,11 +382,11 @@ def test_a_failed_reader_download_stops_the_round_with_its_sentence(qtbot, fake_
 
 
 @pytest.mark.use_case("Runtime_Addon_Installation")
-def test_abort_cancels_a_running_reader_download(qtbot, monkeypatch) -> None:
+def test_abort_stops_a_running_reader_download(qtbot, monkeypatch) -> None:
     """
     Given  a round that is downloading the reader
     When   abort() is called
-    Then   the reader's download thread is told to cancel
+    Then   the reader's download thread is told to stop
     """
 
     class _Waiting(_FakeReaderThread):
@@ -404,13 +394,13 @@ def test_abort_cancels_a_running_reader_download(qtbot, monkeypatch) -> None:
             _Script.order.append("reader")
 
     monkeypatch.setattr(_addon_installer_dialog, "_ReaderDownloadThread", _Waiting)
-    _FakeReaderThread.cancelled = False
+    _FakeReaderThread.stopped = False
     round_, _service = _round()
     round_.start(reader=True)
 
     round_.abort()
 
-    assert _FakeReaderThread.cancelled is True
+    assert _FakeReaderThread.stopped is True
 
 
 @pytest.mark.use_case("Runtime_Addon_Installation")
@@ -714,79 +704,49 @@ def test_without_a_manager_the_round_pulls_by_itself(qtbot, fake_threads) -> Non
     assert service.changed_urls == ["http://127.0.0.1:11434", "http://127.0.0.1:11434"]
 
 
-def _still_running(fake: type[QObject]) -> type[QObject]:
-    """Return *fake* as a thread that was started and never ends: ``start()`` does nothing."""
-
-    class _StillRunning(fake):  # ty: ignore[unsupported-base]  # fake is one of the fakes above
-        def start(self) -> None:
-            pass
-
-        def isRunning(self) -> bool:
-            return True
-
-        def isFinished(self) -> bool:
-            return False
-
-    return _StillRunning
-
-
 @pytest.mark.parametrize(
-    ("module", "attribute", "fake", "start_kwargs"),
+    ("module", "attribute", "start_kwargs"),
     [
-        pytest.param(
-            _install_round,
-            "_AddonUpdateThread",
-            _FakeUpdateThread,
-            {"update_addons": True},
-            id="update",
-        ),
-        pytest.param(
-            _install_round, "_PipInstallThread", _FakePipThread, {"packages": ["spacy"]}, id="pip"
-        ),
+        pytest.param(_install_round, "_AddonUpdateThread", {"update_addons": True}, id="update"),
+        pytest.param(_install_round, "_PipInstallThread", {"packages": ["spacy"]}, id="pip"),
         pytest.param(
             _addon_installer_dialog,
             "_ModelDownloadThread",
-            _FakeSpacyThread,
             {"spacy_models": ["en_core_web_sm"]},
             id="spacy",
         ),
         pytest.param(
-            _addon_installer_dialog,
-            "_ReaderDownloadThread",
-            _FakeReaderThread,
-            {"reader": True},
-            id="reader",
+            _addon_installer_dialog, "_ReaderDownloadThread", {"reader": True}, id="reader"
         ),
         pytest.param(
             _addon_installer_dialog,
             "_ReaderDownloadThread",
-            _FakeReaderThread,
             {"page_models": True},
             id="page-models",
         ),
         pytest.param(
             _addon_installer_dialog,
             "_OllamaPullThread",
-            _FakePullThread,
             {"ollama_models": ["a:1b"], "ollama_url": "http://host:11434"},
             id="pull",
         ),
     ],
 )
 @pytest.mark.use_case("Runtime_Addon_Installation")
-def test_every_thread_a_round_starts_is_held_until_it_ends(
-    qtbot, monkeypatch, module, attribute, fake, start_kwargs
+def test_every_job_a_round_starts_is_held_until_it_ends(
+    qtbot, monkeypatch, module, attribute, start_kwargs
 ) -> None:
     """
-    Given  a round that starts a thread of one kind, a thread that is still running
+    Given  a round that starts a job of one kind, a job that runs until it is stopped
     When   the round has started it
-    Then   the thread is held until it ends, so the round's next step (it sets ``_thread`` to
-           ``None`` or to the next thread from the slot of this thread's own "done" signal,
-           while the thread is in its last lines) cannot drop the last reference to a running
-           QThread — Qt aborts the whole process when one is destroyed
+    Then   the job is held until it ends, so the round's next step (it sets ``_thread`` to
+           ``None`` or to the next job from the slot of this job's own "done" signal, while
+           the job is in its last lines) cannot drop the last reference to a running QThread
+           — Qt aborts the whole process when one is destroyed
     """
-    held_before = set(_model_fetch._RETIRED_THREADS)
-    monkeypatch.setattr(module, attribute, _still_running(fake))
+    held_before = set(_long_job._LIVE)
+    real = getattr(module, attribute)
+    monkeypatch.setattr(real, "work", lambda self: self.stop_event.wait(10))
     round_, _service = _round()
 
     round_.start(**start_kwargs)
@@ -794,22 +754,32 @@ def test_every_thread_a_round_starts_is_held_until_it_ends(
     thread = round_._thread
     try:
         assert thread is not None
-        assert thread in _model_fetch._RETIRED_THREADS
+        assert isinstance(thread, _long_job.LongJobThread)
+        assert thread in _long_job._LIVE
     finally:
-        _model_fetch._RETIRED_THREADS.intersection_update(held_before)
+        thread.stop()
+        thread.wait(5000)
+        _long_job._LIVE.intersection_update(held_before)
 
 
 # ── the fakes say what the real threads say ──────────────────────────────────
 
 
+#: The signals a long job reports with; ``LongJobThread`` declares them once.
+_JOB_SIGNALS = ("log_line", "progress", "finished_ok", "finished_err")
+
+
 def _signals(cls: type[QObject]) -> dict[str, str]:
-    """Return the signals a QObject class declares itself, name → full signature."""
+    """Return the job signals of a class, name → full signature."""
     meta = cls.staticMetaObject
     found: dict[str, str] = {}
-    for index in range(meta.methodOffset(), meta.methodCount()):
+    for index in range(meta.methodCount()):
         method = meta.method(index)
-        if method.methodType() == QMetaMethod.MethodType.Signal:
-            found[bytes(method.name().data()).decode()] = bytes(method.methodSignature()).decode()
+        if method.methodType() != QMetaMethod.MethodType.Signal:
+            continue
+        name = bytes(method.name().data()).decode()
+        if name in _JOB_SIGNALS:
+            found[name] = bytes(method.methodSignature()).decode()
     return found
 
 

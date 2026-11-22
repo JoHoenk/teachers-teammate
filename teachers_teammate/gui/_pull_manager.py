@@ -7,11 +7,12 @@ unsubscribes when the window closes, so pulls continue in the background.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, Signal
 
 from ..application.composition import AppServices
-from ._model_fetch import _start_thread
+from ._long_job import LongJobThread
 
 
 class PullManager(QObject):
@@ -30,7 +31,7 @@ class PullManager(QObject):
     ) -> None:
         super().__init__(parent)
         self._service = service
-        self._thread: QThread | None = None
+        self._thread: LongJobThread | None = None
         self._current_model: str = ""
         self._current_url: str = ""
         #: Models waiting for the running pull; pulled one after the other, also after the
@@ -77,20 +78,25 @@ class PullManager(QObject):
         self._current_model = model_name
         self._current_url = url
         thread = _OllamaPullThread(self._service, url, model_name)
-        thread.progress.connect(self.progress)
+        thread.progress.connect(self._on_progress)
         thread.finished_ok.connect(self._on_finished_ok)
         thread.finished_err.connect(self._on_finished_err)
-        # Kept alive until it ends: the thread reports from run(), so the reference dropped
-        # in _on_finished_ok may be the last one while the thread is still running.
-        _start_thread(thread)
+        # Set before start(): the thread reports at once when it fails, and the reference
+        # dropped in _on_finished_ok may be the last one while the thread is still running.
         self._thread = thread
+        thread.start()
         self.started.emit(model_name)
 
     def abort(self) -> None:
         """Request the active pull to stop after the current chunk (and drop the queue)."""
         self._queue.clear()
         if self._thread is not None:
-            self._thread.request_abort()  # ty: ignore[unresolved-attribute]  # _thread holds an abortable _OllamaPullThread; base QThread lacks request_abort
+            self._thread.stop()
+
+    def _on_progress(self, payload: object) -> None:
+        # Bytes travel as floats: a Qt ``int`` is 32 bits and a model is often over 2 GB.
+        status, done, total = cast("tuple[str, float, float]", payload)
+        self.progress.emit(status, done, total)
 
     def _on_finished_ok(self, model_name: str) -> None:
         self._thread = None

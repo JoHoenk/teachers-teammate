@@ -1,15 +1,16 @@
 """The preprocessing preview: how a scan looks before and after the image preparation.
 
-Preparing a full-resolution scan (denoise, deskew, …) takes seconds, so it runs in a thread; the
-dialog shows the two pictures side by side.
+Preparing a full-resolution scan (denoise, deskew, …) takes seconds, so it runs on the shared
+background pool; the dialog shows the two pictures side by side.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 import shutil
+from typing import cast
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -24,42 +25,11 @@ from ..application.composition import AppServices
 from ..config import OcrConfig
 from ..texts import dialogs as dlg
 from . import _dialogs
+from ._background import run_in_background
 from ._config_panel import ConfigPanel
 from ._image_utils import load_pixmap
 from ._image_view import ZoomableImageView
 from ._results_table import ResultsTable
-
-
-class _PreprocessPreviewThread(QThread):
-    """Run preprocess_preview() in a background thread for the preprocessing preview dialog.
-
-    Preprocessing a full-resolution scan (denoise, deskew, ...) can take several
-    seconds; running it on the GUI thread would freeze the window until it returns.
-    """
-
-    done = Signal(object, object, object, str)  # original_path, processed_path, steps, error
-
-    def __init__(
-        self,
-        app_service: AppServices,
-        source_path: Path,
-        ocr_config: OcrConfig,
-        tmp_dir: Path,
-    ) -> None:
-        super().__init__()
-        self._svc = app_service
-        self._source_path = source_path
-        self._ocr_config = ocr_config
-        self._tmp_dir = tmp_dir
-
-    def run(self) -> None:
-        try:
-            orig, proc, steps = self._svc.reader.preprocess_preview(
-                self._source_path, self._ocr_config, self._tmp_dir
-            )
-            self.done.emit(orig, proc, steps, "")
-        except Exception as exc:  # noqa: BLE001  # preprocess_preview raises for unsupported files, missing deps, or I/O errors; report via the done signal
-            self.done.emit(None, None, None, str(exc))
 
 
 def _is_shown(widget: QWidget) -> bool:
@@ -86,13 +56,13 @@ class PreprocessPreview(QObject):
         self._services = services
         self._panel = panel
         self._table = table
-        self._thread: _PreprocessPreviewThread | None = None
+        #: True while a preview is being made: a second click would start a second one.
+        self._busy = False
 
     def request(self, ocr_config: OcrConfig, *, parent: QWidget | None = None) -> None:
         """Preview *ocr_config*'s image preparation; dialogs open on top of *parent*."""
         owner = parent or self._window
-        thread = self._thread
-        if thread is not None and thread.isRunning():
+        if self._busy:
             return  # a preview is already in flight; ignore the extra click
 
         image_suffixes = self._services.run.list_supported_suffixes() - {".txt"}
@@ -129,19 +99,28 @@ class PreprocessPreview(QObject):
 
         tmp_dir = self._services.reader.resolve_preview_tmp_dir()
 
-        thread = _PreprocessPreviewThread(self._services, source_path, ocr_config, tmp_dir)
-        self._thread = thread
-        # QueuedConnection: guarantees the callback (which builds widgets) runs on the
-        # GUI thread even though the lambda itself isn't a QObject the auto-connection
-        # logic can use to infer that.
-        thread.done.connect(
-            lambda orig, proc, steps, error: self._on_done(
-                orig, proc, steps, error, ocr_config, tmp_dir, parent=owner
-            ),
-            Qt.ConnectionType.QueuedConnection,
-        )
+        def prepare() -> tuple[Path, Path, list[str]]:
+            return self._services.reader.preprocess_preview(source_path, ocr_config, tmp_dir)
+
+        def arrived(result: object, error: BaseException | None) -> None:
+            if error is None:
+                orig, proc, steps = cast("tuple[Path, Path, list[str]]", result)
+            else:
+                orig, proc, steps = None, None, None
+            self._on_done(
+                orig,
+                proc,
+                steps,
+                "" if error is None else str(error),
+                ocr_config,
+                tmp_dir,
+                parent=owner,
+            )
+
+        self._busy = True
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        thread.start()
+        # *self* outlives the Settings window that asked: the picture then opens over the window.
+        run_in_background(prepare, arrived, owner=self)
 
     def _on_done(
         self,
@@ -154,6 +133,7 @@ class PreprocessPreview(QObject):
         *,
         parent: QWidget | None = None,
     ) -> None:
+        self._busy = False
         QApplication.restoreOverrideCursor()
         # The Settings window may have been closed while the preview was being made.
         owner = parent if parent is not None and _is_shown(parent) else self._window

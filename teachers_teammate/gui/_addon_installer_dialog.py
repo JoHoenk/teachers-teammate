@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
-import threading
-from typing import Any
+from typing import Any, cast
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -31,6 +30,7 @@ from ..exceptions import ModelDownloadCancelledError
 from ..texts.settings import WHERE_ADDONS
 from . import _user_text as txt
 from ._constants import _SPACY_MODEL_CHOICES
+from ._long_job import ABORTED, LongJobThread
 
 
 def _model_for_system_language(service: AppServices) -> str:
@@ -52,10 +52,8 @@ _ADDON_META: dict[str, dict] = {
 }
 
 
-class _InstallThread(QThread):
-    log_line = Signal(str)
-    finished_ok = Signal()
-    finished_err = Signal(str)
+class _InstallThread(LongJobThread):
+    """Installs one add-on's pip packages and reports the log as it arrives."""
 
     def __init__(self, service: Any, addon: str, target: Path) -> None:
         super().__init__()
@@ -63,12 +61,11 @@ class _InstallThread(QThread):
         self._addon = addon
         self._target = target
 
-    def run(self) -> None:
-        try:
-            self._service.addons.install_addon(self._addon, self._target, self.log_line.emit)
-            self.finished_ok.emit()
-        except Exception as exc:  # noqa: BLE001  # surface any pip/subprocess failure to the UI via the error signal
-            self.finished_err.emit(txt.addon_error_text(exc))
+    def work(self) -> None:
+        self._service.addons.install_addon(self._addon, self._target, self.log_line.emit)
+
+    def error_text(self, exc: BaseException) -> str:
+        return txt.addon_error_text(exc)
 
 
 class AddonInstallerDialog(QDialog):
@@ -190,35 +187,23 @@ class AddonInstallerDialog(QDialog):
 # ── The built-in reader's model files ──────────────────────────────────────────
 
 
-class _ReaderDownloadThread(QThread):
-    """Downloads a set of model files in a background thread.
+class _ReaderDownloadThread(LongJobThread):
+    """Downloads a set of model files.
 
     The built-in reader's by default; ``method`` names another download of the reader
     (``"download_page_models"``).
     """
 
-    progress = Signal(int, int)  # bytes done, bytes total
-    finished_ok = Signal()
-    finished_err = Signal(str)
-
     def __init__(self, service: AppServices, method: str = "download_reader") -> None:
         super().__init__()
         self._service = service
         self._method = method
-        self._cancel = threading.Event()
 
-    def cancel(self) -> None:
-        """Stop after the chunk that is arriving; no partial file is kept."""
-        self._cancel.set()
+    def work(self) -> None:
+        getattr(self._service.reader, self._method)(self._report, self.stop_event)
 
-    def run(self) -> None:
-        try:
-            getattr(self._service.reader, self._method)(self.progress.emit, self._cancel)
-            self.finished_ok.emit()
-        except ModelDownloadCancelledError:
-            self.finished_err.emit("aborted")
-        except Exception as exc:  # noqa: BLE001  # any failure reaches the UI as a sentence
-            self.finished_err.emit(str(exc))
+    def _report(self, done: int, total: int) -> None:
+        self.progress.emit((done, total))
 
 
 class ReaderDownloadDialog(QDialog):
@@ -283,11 +268,12 @@ class ReaderDownloadDialog(QDialog):
     def _on_cancel(self) -> None:
         if self._thread is not None and self._thread.isRunning():
             self._cancel_btn.setEnabled(False)
-            self._thread.cancel()
+            self._thread.stop()
             return
         self.reject()
 
-    def _on_progress(self, done: int, total: int) -> None:
+    def _on_progress(self, payload: object) -> None:
+        done, total = cast("tuple[int, int]", payload)
         if total > 0:
             self._bar.setValue(int(100 * done / total))
             self._status.setText(f"{done / 1_000_000:.1f} / {total / 1_000_000:.1f} MB")
@@ -301,7 +287,7 @@ class ReaderDownloadDialog(QDialog):
         self.downloaded.emit()
 
     def _on_err(self, message: str) -> None:
-        text = "The download was cancelled." if message == "aborted" else message
+        text = "The download was cancelled." if message == ABORTED else message
         self._status.setText(f'<span style="color:#c0392b;"><b>Error:</b> {text}</span>')
         self._start_btn.setEnabled(True)
         self._start_btn.setText("Retry")
@@ -338,10 +324,8 @@ class PageModelsDownloadDialog(ReaderDownloadDialog):
 # ── spaCy model download ───────────────────────────────────────────────────────
 
 
-class _ModelDownloadThread(QThread):
-    log_line = Signal(str)
-    finished_ok = Signal()
-    finished_err = Signal(str)
+class _ModelDownloadThread(LongJobThread):
+    """Downloads a spaCy model package and reports the log as it arrives."""
 
     def __init__(self, service: Any, model: str, target: Path) -> None:
         super().__init__()
@@ -349,14 +333,13 @@ class _ModelDownloadThread(QThread):
         self._model = model
         self._target = target
 
-    def run(self) -> None:
-        try:
-            self._service.anonymization.download_spacy_model(
-                self._model, self._target, self.log_line.emit
-            )
-            self.finished_ok.emit()
-        except Exception as exc:  # noqa: BLE001  # surface any download/subprocess failure to the UI via the error signal
-            self.finished_err.emit(txt.addon_error_text(exc))
+    def work(self) -> None:
+        self._service.anonymization.download_spacy_model(
+            self._model, self._target, self.log_line.emit
+        )
+
+    def error_text(self, exc: BaseException) -> str:
+        return txt.addon_error_text(exc)
 
 
 class SpacyModelDownloadDialog(QDialog):
@@ -497,31 +480,23 @@ class SpacyModelDownloadDialog(QDialog):
 # ── Ollama model pull dialog ───────────────────────────────────────────────────
 
 
-class _OllamaPullThread(QThread):
-    """Downloads an Ollama model in a background thread, reporting streamed progress."""
-
-    progress = Signal(str, float, float)  # (status, completed_bytes, total_bytes)
-    finished_ok = Signal(str)  # model_name
-    finished_err = Signal(str)  # error message
+class _OllamaPullThread(LongJobThread):
+    """Pulls one Ollama model, reporting the stream as it arrives."""
 
     def __init__(self, service: Any, url: str, model_name: str) -> None:
         super().__init__()
         self._service = service
         self._url = url
         self._model_name = model_name
-        self._abort_event = threading.Event()
 
-    def request_abort(self) -> None:
-        self._abort_event.set()
+    def work(self) -> str:
+        self._service.ollama.pull_ollama_model(
+            self._url, self._model_name, self._report, self.stop_event
+        )
+        if self.stopped:  # the stream just ends when the pull is stopped
+            raise ModelDownloadCancelledError(ABORTED)
+        return self._model_name
 
-    def run(self) -> None:
-        try:
-            self._service.ollama.pull_ollama_model(
-                self._url, self._model_name, self.progress.emit, self._abort_event
-            )
-            if self._abort_event.is_set():
-                self.finished_err.emit("aborted")
-            else:
-                self.finished_ok.emit(self._model_name)
-        except Exception as exc:  # noqa: BLE001  # surface any pull/subprocess failure to the UI via the error signal
-            self.finished_err.emit(str(exc))
+    def _report(self, status: str, done: float, total: float) -> None:
+        # Bytes travel as floats: a Qt ``int`` is 32 bits and a model is often over 2 GB.
+        self.progress.emit((status, done, total))

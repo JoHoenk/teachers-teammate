@@ -2,25 +2,24 @@
 
 The Text Recognition picker and the Proofreading / Content Review sections all ask a
 service which models it offers, show a busy bar and a status line meanwhile, and must not
-leave a running ``QThread`` behind when their window closes.  That machinery lives here
-once: the fetch thread, the "retire an orphaned thread" bookkeeping, the status-line
-renderers and the small combo helpers.
+leave anything running when their window closes.  That machinery lives here once: the
+fetch (on the shared background pool), the status-line renderers and the small combo
+helpers.
 
 The widgets themselves (``gui._ocr_config_selector``, ``gui.settings``) contain
-presentation only; every query is delegated to the injected service, described by the
-:class:`SettingsAppService` protocol below.
+presentation only; every query is delegated to the injected service.
 """
 
 from __future__ import annotations
 
-import atexit
 from collections.abc import Callable
 import html
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QComboBox, QProgressBar, QWidget
 
 from ..domain.model_listing import ModelGroup, ModelListing
+from ._background import LatestTask
 from ._model_wording import models_from_text
 
 # ── busy bar ──────────────────────────────────────────────────────────────────
@@ -40,48 +39,58 @@ class _BusyIndicator(QProgressBar):
 # ── the service the widgets query ─────────────────────────────────────────────
 
 
-# ── background threads ────────────────────────────────────────────────────────
+# ── background fetches ────────────────────────────────────────────────────────
 
 
-class _ModelFetchThread(QThread):
-    """Fetches model names in a background thread via a caller-supplied callable.
+class ModelFetcher:
+    """Fetches one service's model list on the background pool.
 
     The callable returns the names, or a :class:`ModelListing` that also says whether they
     are live.  It is handed a ``report(text)`` callback for saying what it is doing, since a
     slow fetch (one HTTP request per model) otherwise looks like a hung window.  *tag* (the
-    provider the fetch is for) comes back with the answer and with each progress text, so a
-    late answer for a provider the user has already left can be told apart and dropped.
+    service the fetch is for) comes back with the answer and with each progress text, so a
+    late answer for a service the user has already left can be told apart and dropped.
+
+    Only the newest fetch counts: starting another one, or :meth:`cancel` (the widget closed),
+    drops everything the earlier ones still report.
     """
 
-    models_ready = Signal(list)
-    listing_ready = Signal(str, object)  # (tag, ModelListing)
-    progress = Signal(str, str)  # (tag, text)
-    error = Signal(str)
+    def __init__(self, owner: QObject | None = None) -> None:
+        self._task = LatestTask(owner, network=True)
 
-    def __init__(
+    def start(
         self,
         fetch_fn: Callable[[Callable[[str], None]], list[str] | ModelListing],
+        on_listing: Callable[[str, ModelListing], None],
+        on_progress: Callable[[str, str], None] | None = None,
+        *,
         tag: str = "",
     ) -> None:
-        super().__init__()
-        self._fetch_fn = fetch_fn
-        self._tag = tag
+        """Ask *fetch_fn* off the GUI thread; *on_listing* gets ``(tag, listing)``."""
 
-    def _report(self, text: str) -> None:
-        """Say what the fetch is doing (called from the worker thread)."""
-        self.progress.emit(self._tag, text)
+        def fetch(emit: Callable[[object], None]) -> list[str] | ModelListing:
+            return fetch_fn(emit)
 
-    def run(self) -> None:
-        try:
-            result = self._fetch_fn(self._report)
-        except Exception as exc:  # noqa: BLE001  # provider model fetch may raise any network/auth error; report via signals
-            self.error.emit(str(exc))
-            self.models_ready.emit([])
-            self.listing_ready.emit(self._tag, ModelListing([], "failed", str(exc)))
-            return
-        listing = result if isinstance(result, ModelListing) else ModelListing(list(result))
-        self.models_ready.emit(listing.models)
-        self.listing_ready.emit(self._tag, listing)
+        def report(payload: object) -> None:
+            if on_progress is not None:
+                on_progress(tag, str(payload))
+
+        def deliver(result: object, error: BaseException | None) -> None:
+            if error is not None:
+                listing = ModelListing([], "failed", str(error))
+            elif isinstance(result, ModelListing):
+                listing = result
+            elif isinstance(result, list):
+                listing = ModelListing([str(model) for model in result])
+            else:
+                listing = ModelListing([])
+            on_listing(tag, listing)
+
+        self._task.submit_streaming(fetch, report, deliver)
+
+    def cancel(self) -> None:
+        """Stop showing answers: whatever a running fetch still finds is dropped."""
+        self._task.cancel()
 
 
 # ── status label helpers ──────────────────────────────────────────────────────
@@ -141,72 +150,3 @@ def _set_combo(combo: QComboBox, value: str) -> None:
     idx = combo.findText(value)
     if idx >= 0:
         combo.setCurrentIndex(idx)
-
-
-# ── retired threads ───────────────────────────────────────────────────────────
-
-
-#: Threads that are running and may outlive the widget that started them.  A running
-#: ``QThread`` must not be destroyed (that aborts the whole process) and these run a plain
-#: function with no event loop, so they cannot be interrupted either: ``_start_thread``
-#: parks every thread here from its start, ``_retire_thread`` adds a thread whose widget
-#: lets go of it, and ``_purge_retired_threads`` drops the finished ones.
-_RETIRED_THREADS: set[QThread] = set()
-_THREAD_RESULT_SIGNALS = (
-    "models_ready",
-    "listing_ready",
-    "progress",
-    "error",
-    "detect_done",
-    "found",
-    "search_done",
-    "finished",
-)
-_RETIRED_WAIT_MS = 3000
-
-
-def _purge_retired_threads() -> None:
-    """Drop retired threads that have finished."""
-    for thread in [t for t in _RETIRED_THREADS if t.isFinished()]:
-        _RETIRED_THREADS.discard(thread)
-
-
-def _start_thread(thread: QThread) -> None:
-    """Start *thread* and keep it alive until it ends, whatever happens to its widget.
-
-    A widget that is closed, deleted or garbage-collected without calling its ``shutdown()``
-    would otherwise drop the last reference to a thread that is still running, and Qt
-    aborts the process ("QThread: Destroyed while thread is still running").
-    """
-    _purge_retired_threads()
-    _RETIRED_THREADS.add(thread)
-    thread.start()
-
-
-def _retire_thread(thread: QThread | None) -> None:
-    """Detach *thread* from its dialog without blocking the GUI thread.
-
-    Its results are disconnected — a stale answer can no longer touch a widget —
-    and a thread that is still running is kept alive until it ends on its own.
-    """
-    _purge_retired_threads()
-    if thread is None or not thread.isRunning():
-        return
-    for name in _THREAD_RESULT_SIGNALS:
-        signal = getattr(thread, name, None)
-        if signal is None:
-            continue
-        try:
-            signal.disconnect()
-        except RuntimeError, TypeError:
-            pass  # nothing was connected
-    _RETIRED_THREADS.add(thread)
-
-
-def _wait_for_retired_threads() -> None:
-    """Give retired threads a moment to finish before the interpreter shuts down."""
-    for thread in list(_RETIRED_THREADS):
-        thread.wait(_RETIRED_WAIT_MS)
-
-
-atexit.register(_wait_for_retired_threads)

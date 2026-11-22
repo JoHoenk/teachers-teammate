@@ -1440,21 +1440,18 @@ def test_finished_pull_shows_model_as_downloaded_without_waiting_for_cache(
     Then   the model shows as downloaded at once (review finding #1: the stale
            5-minute cache used to hide it, so it was offered for download again)
     """
-    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
-
     import teachers_teammate.gui._addon_installer_dialog as installer  # noqa: PLC0415
+    from teachers_teammate.gui._long_job import LongJobThread  # noqa: PLC0415
 
-    class _FakePullThread(FinishedThreadStub, QObject):
-        progress = Signal(str, float, float)
-        finished_ok = Signal(str)
-        finished_err = Signal(str)
+    class _FakePullThread(LongJobThread):
+        """Pulls the model without a server: it is installed at once."""
 
         def __init__(self, _service: Any, _url: str, model: str) -> None:
             super().__init__()
             self._model = model
 
-        def start(self) -> None:
-            self.finished_ok.emit(self._model)
+        def work(self) -> str:
+            return self._model
 
     monkeypatch.setattr(installer, "_OllamaPullThread", _FakePullThread)
     dlg = _make_dialog(qtbot, service=_real_service(), ollama_url=fake_ollama.url)
@@ -1481,22 +1478,19 @@ def test_pulled_custom_models_stay_in_other_with_their_abilities(
     When   the pulls run one after the other through the real pull pipeline
     Then   all three stay in "Other models" and each row says what the model can do
     """
-    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
-
     import teachers_teammate.gui._addon_installer_dialog as installer  # noqa: PLC0415
+    from teachers_teammate.gui._long_job import LongJobThread  # noqa: PLC0415
 
-    class _FakePullThread(FinishedThreadStub, QObject):
-        progress = Signal(str, float, float)
-        finished_ok = Signal(str)
-        finished_err = Signal(str)
+    class _FakePullThread(LongJobThread):
+        """Puts the model into the fake server and reports it pulled."""
 
         def __init__(self, _service: Any, _url: str, model: str) -> None:
             super().__init__()
             self._model = model
 
-        def start(self) -> None:
+        def work(self) -> str:
             fake_ollama.install(self._model, capabilities[self._model], size=1_000_000)
-            self.finished_ok.emit(self._model)
+            return self._model
 
     monkeypatch.setattr(installer, "_OllamaPullThread", _FakePullThread)
     capabilities = {

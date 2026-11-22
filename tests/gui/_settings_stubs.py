@@ -39,6 +39,26 @@ from teachers_teammate.domain.performance_estimate import TimeRange
 from ._service_stubs import RecommendationServiceStub, context_choice_from
 
 
+class InertLatestTask:
+    """Stand-in for ``LatestTask`` that runs nothing and answers nothing.
+
+    Replaced for one module's ``LatestTask`` name so a page built in a test starts no
+    background work without touching the class every other page uses.
+    """
+
+    def __init__(self, _owner=None) -> None:
+        pass
+
+    def submit(self, _fn, _on_done) -> int:
+        return 0
+
+    def submit_streaming(self, _fn, _on_item, _on_done) -> int:
+        return 0
+
+    def cancel(self) -> None:
+        pass
+
+
 class DummyAppService(RecommendationServiceStub):
     """Minimal app-service stub for settings dialog tests."""
 

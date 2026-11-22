@@ -37,6 +37,7 @@ from teachers_teammate.gui import _preprocess_preview as preprocess_module
 from teachers_teammate.gui import _readiness_controller as readiness_controller_module
 from teachers_teammate.gui import _run_controller as run_controller_module
 from teachers_teammate.gui import _run_session as run_session_module
+from teachers_teammate.gui._background import wait_for_background_tasks
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
@@ -67,16 +68,18 @@ from teachers_teammate.texts._types import Answer, Notice, Question, StandardBut
 from tests.conftest import make_config
 
 from ._gui_harness import (
-    DummyUpdateThread,
     DummyWorker,
+    fake_pull_threads,
     install_scripted_settings_window,
     main_window,
     no_network_in_gui_tests,
     no_privacy_prompt,
+    no_update_check,
     pretend_a_run_is_going,
     queue_row,
     real_service,
     record_notices,
+    record_update_checks,
     SharedMemorySettings,
     store_document,
     stored,
@@ -1279,38 +1282,7 @@ def test_the_pull_manager_pulls_the_whole_queue_on_its_own(qtbot, monkeypatch) -
     Then   the next model starts by itself, subscribers see the queue as it was when a pull
            ended, and a failed pull drops the rest
     """
-    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
-
-    from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
-
-    threads: list[Any] = []
-
-    class _FakePull(QObject):
-        progress = Signal(str, float, float)
-        finished_ok = Signal(str)
-        finished_err = Signal(str)
-
-        def __init__(self, _service: Any, url: str, model: str) -> None:
-            super().__init__()
-            self.url, self.model = url, model
-            threads.append(self)
-
-        def start(self) -> None:
-            pass
-
-        def isRunning(self) -> bool:
-            return True
-
-        def isFinished(self) -> bool:
-            return False
-
-        def wait(self, _timeout: int = 0) -> bool:
-            return True
-
-        def request_abort(self) -> None:
-            pass
-
-    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    threads = fake_pull_threads(monkeypatch)
     manager = main_window_module.PullManager(service=real_service())
     started: list[str] = []
     queue_seen: list[list[str]] = []
@@ -1340,36 +1312,11 @@ def test_a_pull_thread_outlives_the_manager_that_started_it(qtbot, monkeypatch) 
     Then   the thread is still held (it is parked until it ends), because dropping the last
            reference to a running QThread aborts the whole process
     """
-    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
+    from teachers_teammate.gui import _long_job  # noqa: PLC0415
 
-    from teachers_teammate.gui import _addon_installer_dialog, _model_fetch  # noqa: PLC0415
-
-    threads: list[Any] = []
-
-    class _FakePull(QObject):
-        progress = Signal(str, float, float)
-        finished_ok = Signal(str)
-        finished_err = Signal(str)
-
-        def __init__(self, _service: Any, url: str, model: str) -> None:
-            super().__init__()
-            threads.append(self)
-
-        def start(self) -> None:
-            pass
-
-        def isRunning(self) -> bool:
-            return True
-
-        def isFinished(self) -> bool:
-            return False
-
-        def wait(self, _timeout: int = 0) -> bool:
-            return True
-
-    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    threads = fake_pull_threads(monkeypatch)
     manager = main_window_module.PullManager(service=real_service())
-    held_before = set(_model_fetch._RETIRED_THREADS)
+    held_before = set(_long_job._LIVE)
 
     manager.start("http://host:11434", "a:1b")
     thread = threads[0]
@@ -1377,9 +1324,10 @@ def test_a_pull_thread_outlives_the_manager_that_started_it(qtbot, monkeypatch) 
 
     try:
         assert manager._thread is None
-        assert thread in _model_fetch._RETIRED_THREADS
+        assert thread in _long_job._LIVE
     finally:
-        _model_fetch._RETIRED_THREADS.intersection_update(held_before)
+        thread.wait(5000)  # the hold may only go once the native thread has ended
+        _long_job._LIVE.intersection_update(held_before)
 
 
 @pytest.mark.gui
@@ -1389,34 +1337,7 @@ def test_aborting_a_pull_drops_the_queue(qtbot, monkeypatch) -> None:
     When   it is aborted
     Then   nothing else is queued, so the aborted round does not go on with the next model
     """
-    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
-
-    from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
-
-    class _FakePull(QObject):
-        progress = Signal(str, float, float)
-        finished_ok = Signal(str)
-        finished_err = Signal(str)
-
-        def __init__(self, _service: Any, url: str, model: str) -> None:
-            super().__init__()
-
-        def start(self) -> None:
-            pass
-
-        def isRunning(self) -> bool:
-            return True
-
-        def isFinished(self) -> bool:
-            return False
-
-        def wait(self, _timeout: int = 0) -> bool:
-            return True
-
-        def request_abort(self) -> None:
-            pass
-
-    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    fake_pull_threads(monkeypatch)
     manager = main_window_module.PullManager(service=real_service())
     manager.start("http://host:11434", "a:1b", ["b:1b", "c:1b"])
 
@@ -2109,10 +2030,8 @@ def test_main_window_on_preprocess_preview_no_source_user_cancels(
     """
     Given  input dir has no images and user cancels the file dialog
     When   PreprocessPreview.request is called
-    Then   method returns without error and no background thread is started
+    Then   method returns without error and nothing is prepared
     """
-    from unittest.mock import patch  # noqa: PLC0415
-
     from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
     monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(tmp_path))
@@ -2120,7 +2039,7 @@ def test_main_window_on_preprocess_preview_no_source_user_cancels(
     main_window._preprocess_preview.request(
         OcrConfig(preprocess_method=PreprocessMethod.NONE)
     )  # should not raise
-    assert main_window._preprocess_preview._thread is None
+    assert not main_window._preprocess_preview._busy
 
 
 @pytest.mark.gui
@@ -2129,14 +2048,12 @@ def test_main_window_on_preprocess_preview_preprocess_error(
 ) -> None:
     """
     Given  preprocess_preview raises an exception
-    When   PreprocessPreview.request runs its background thread to completion
+    When   PreprocessPreview.request runs its background task to completion
     Then   a warning dialog is shown and no crash occurs
 
-    preprocess_preview runs off the GUI thread (see _PreprocessPreviewThread), so
-    the warning only appears once the thread's done signal has been delivered.
+    The preparation runs off the GUI thread, so the warning only appears once its
+    answer has been delivered.
     """
-    from unittest.mock import patch  # noqa: PLC0415
-
     from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
     img_file = tmp_path / "test.png"
@@ -2149,9 +2066,8 @@ def test_main_window_on_preprocess_preview_preprocess_error(
     )
     shown = record_notices(monkeypatch)
     main_window._preprocess_preview.request(OcrConfig(preprocess_method=PreprocessMethod.NONE))
-    thread = main_window._preprocess_preview._thread
-    assert thread is not None
-    assert thread.wait(THREAD_WAIT_MS), "the preview thread never finished"
+    assert main_window._preprocess_preview._busy
+    assert wait_for_background_tasks(THREAD_WAIT_MS), "the preview never finished"
     qtbot.waitUntil(lambda: bool(shown), timeout=THREAD_WAIT_MS)
 
     assert [notice.title for notice in shown] == ["Preview failed"]
@@ -2164,11 +2080,10 @@ def test_main_window_on_preprocess_preview_ignores_concurrent_click(
     """
     Given  a preprocessing preview already running in the background
     When   PreprocessPreview.request is called again before it finishes
-    Then   the second call is ignored: no second thread replaces the first, and the
-           error dialog for the one background run appears exactly once
+    Then   the second call is ignored: the preparation runs once, and the error dialog
+           for it appears exactly once
     """
     import time  # noqa: PLC0415
-    from unittest.mock import patch  # noqa: PLC0415
 
     from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
@@ -2189,11 +2104,10 @@ def test_main_window_on_preprocess_preview_ignores_concurrent_click(
 
     shown = record_notices(monkeypatch)
     main_window._preprocess_preview.request(OcrConfig(preprocess_method=PreprocessMethod.NONE))
-    first_thread = main_window._preprocess_preview._thread
+    assert main_window._preprocess_preview._busy
     main_window._preprocess_preview.request(OcrConfig(preprocess_method=PreprocessMethod.NONE))
-    assert main_window._preprocess_preview._thread is first_thread
 
-    assert first_thread.wait(THREAD_WAIT_MS), "the preview thread never finished"
+    assert wait_for_background_tasks(THREAD_WAIT_MS), "the preview never finished"
     qtbot.waitUntil(lambda: bool(shown), timeout=THREAD_WAIT_MS)
     assert call_count["n"] == 1
     assert len(shown) == 1
@@ -2435,7 +2349,7 @@ def _make_first_start_window(qtbot, monkeypatch, tmp_path: Path, detection) -> M
     from PySide6.QtWidgets import QDialog  # noqa: PLC0415
     from teachers_teammate.gui.setup import SetupAssistant  # noqa: PLC0415
 
-    monkeypatch.setattr(main_window_module, "UpdateCheckThread", DummyUpdateThread)
+    no_update_check(monkeypatch)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(SetupAssistant, "exec", lambda self: QDialog.DialogCode.Rejected)
     monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, explicit: None)
@@ -2467,7 +2381,7 @@ def test_a_settings_file_from_the_installer_is_still_a_first_start(
     settings = tmp_path / "ocr.toml"
     settings.write_text("check_for_updates = false\n", encoding="utf-8")
     opened: list[bool] = []
-    monkeypatch.setattr(main_window_module, "UpdateCheckThread", DummyUpdateThread)
+    no_update_check(monkeypatch)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(
         SetupLauncher, "_apply_first_start_defaults", lambda self: self._hooks.save()
@@ -2533,7 +2447,7 @@ def test_existing_config_models_untouched(qtbot, monkeypatch, tmp_path: Path) ->
         profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
     )
     detect_calls: list = []
-    monkeypatch.setattr(main_window_module, "UpdateCheckThread", DummyUpdateThread)
+    no_update_check(monkeypatch)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, explicit: config_path)
     monkeypatch.setattr(
@@ -4105,38 +4019,7 @@ def test_a_pull_requested_while_one_runs_is_queued_not_dropped(qtbot, monkeypatc
     Then   they wait in the queue once each and are pulled after the running one, instead of
            the request being ignored
     """
-    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
-
-    from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
-
-    threads: list[Any] = []
-
-    class _FakePull(QObject):
-        progress = Signal(str, float, float)
-        finished_ok = Signal(str)
-        finished_err = Signal(str)
-
-        def __init__(self, _service: Any, url: str, model: str) -> None:
-            super().__init__()
-            self.model = model
-            threads.append(self)
-
-        def start(self) -> None:
-            pass
-
-        def isRunning(self) -> bool:
-            return True
-
-        def isFinished(self) -> bool:
-            return False
-
-        def wait(self, _timeout: int = 0) -> bool:
-            return True
-
-        def request_abort(self) -> None:
-            pass
-
-    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    threads = fake_pull_threads(monkeypatch)
     manager = main_window_module.PullManager(service=real_service())
     manager.start("http://host:11434", "a:1b")
 
@@ -4235,7 +4118,7 @@ def test_main_window_does_not_probe_again_and_again_when_the_probe_fails(
 def ready_window(qtbot, monkeypatch) -> MainWindow:
     """A MainWindow whose readiness check is the real one (the shared fixture silences it)."""
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(main_window_module, "UpdateCheckThread", DummyUpdateThread)
+    no_update_check(monkeypatch)
     win = MainWindow(app_service=real_service(), worker_factory=DummyWorker)
     qtbot.addWidget(win)
     return win
@@ -4934,24 +4817,14 @@ def test_the_time_left_is_estimated_for_the_steps_the_run_really_runs(
 # ── The update check switch ──────────────────────────────────────────────────
 
 
-class _RecordingUpdateThread(DummyUpdateThread):
-    """A stand-in that records every construction, so a test can count the checks."""
-
-    built: ClassVar[list[_RecordingUpdateThread]] = []
-
-    def __init__(self, _parent=None) -> None:
-        super().__init__(_parent)
-        _RecordingUpdateThread.built.append(self)
-
-
-def _window_with_update_setting(qtbot, monkeypatch, value: bool | None) -> MainWindow:
+def _window_with_update_setting(qtbot, monkeypatch, value: bool | None) -> tuple[MainWindow, list]:
     """Build a MainWindow whose panel reports *value* for ``check_for_updates``.
 
     ``None`` leaves the key out of the settings dict, which is what an ``ocr.toml``
-    written before the switch existed looks like.
+    written before the switch existed looks like.  Returns the window and the list of
+    update checks it asked for.
     """
-    _RecordingUpdateThread.built = []
-    monkeypatch.setattr(main_window_module, "UpdateCheckThread", _RecordingUpdateThread)
+    asked = record_update_checks(monkeypatch)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     real = ConfigPanel.get_settings_dict
@@ -4967,7 +4840,7 @@ def _window_with_update_setting(qtbot, monkeypatch, value: bool | None) -> MainW
     monkeypatch.setattr(ConfigPanel, "get_settings_dict", settings_dict)
     win = MainWindow(app_service=real_service(), worker_factory=DummyWorker)
     qtbot.addWidget(win)
-    return win
+    return win, asked
 
 
 @pytest.mark.gui
@@ -4975,12 +4848,11 @@ def test_the_update_check_runs_when_the_switch_is_on(qtbot, monkeypatch) -> None
     """
     Given  settings with check_for_updates on
     When   the main window is built
-    Then   one UpdateCheckThread is created and kept on the window
+    Then   the window asks for a newer release once, with the banner as its callback
     """
-    win = _window_with_update_setting(qtbot, monkeypatch, True)
+    win, asked = _window_with_update_setting(qtbot, monkeypatch, True)
 
-    assert len(_RecordingUpdateThread.built) == 1
-    assert win._update_thread is _RecordingUpdateThread.built[0]
+    assert asked == [win._show_update_banner]
 
 
 @pytest.mark.gui
@@ -4988,12 +4860,11 @@ def test_no_update_check_runs_when_the_switch_is_off(qtbot, monkeypatch) -> None
     """
     Given  settings with check_for_updates off
     When   the main window is built
-    Then   no UpdateCheckThread is created and the window holds none
+    Then   the window does not ask for a newer release
     """
-    win = _window_with_update_setting(qtbot, monkeypatch, False)
+    _win, asked = _window_with_update_setting(qtbot, monkeypatch, False)
 
-    assert _RecordingUpdateThread.built == []
-    assert win._update_thread is None
+    assert asked == []
 
 
 @pytest.mark.gui
@@ -5003,10 +4874,9 @@ def test_an_old_config_without_the_key_still_checks(qtbot, monkeypatch) -> None:
     When   the main window is built
     Then   the check runs, because the default is on
     """
-    win = _window_with_update_setting(qtbot, monkeypatch, None)
+    win, asked = _window_with_update_setting(qtbot, monkeypatch, None)
 
-    assert len(_RecordingUpdateThread.built) == 1
-    assert win._update_thread is not None
+    assert asked == [win._show_update_banner]
 
 
 def _answer_with(monkeypatch, *, index: int = 0, cancel: bool = False) -> list[Question]:

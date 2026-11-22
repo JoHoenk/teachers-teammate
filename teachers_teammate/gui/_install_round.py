@@ -11,14 +11,14 @@ importable before anything uses it); the pulls are handed to the main window's
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, Signal
 
 from ..application.addons import PAGE_MODELS_STATUS_KEY, READER_STATUS_KEY
 from ..application.composition import AppServices, inject_addon_packages_dir
 from . import _user_text as txt
-from ._model_fetch import _start_thread
+from ._long_job import LongJobThread
 from ._model_guidance import SPACY_PREFIX
 
 #: How an item is named in :attr:`InstallRound.item_started` and ``item_done``.
@@ -57,43 +57,34 @@ class _PullManager(Protocol):
     def abort(self) -> None: ...
 
 
-class _PipInstallThread(QThread):
-    """Installs pip packages in a background thread."""
-
-    log_line = Signal(str)
-    finished_ok = Signal(list)  # installed packages
-    finished_err = Signal(str)
+class _PipInstallThread(LongJobThread):
+    """Installs pip packages; the result is the packages that were installed."""
 
     def __init__(self, app_service: AppServices, packages: list[str]) -> None:
         super().__init__()
         self._svc = app_service
         self._packages = packages
 
-    def run(self) -> None:
-        try:
-            self._svc.addons.install_packages(self._packages, self.log_line.emit)
-            self.finished_ok.emit(self._packages)
-        except Exception as exc:  # noqa: BLE001  # surface any pip/subprocess failure to the UI via the error signal
-            self.finished_err.emit(txt.addon_error_text(exc))
+    def work(self) -> list[str]:
+        self._svc.addons.install_packages(self._packages, self.log_line.emit)
+        return self._packages
+
+    def error_text(self, exc: BaseException) -> str:
+        return txt.addon_error_text(exc)
 
 
-class _AddonUpdateThread(QThread):
-    """Installs the add-ons again after an app update, in a background thread."""
-
-    log_line = Signal(str)
-    finished_ok = Signal()
-    finished_err = Signal(str)
+class _AddonUpdateThread(LongJobThread):
+    """Installs the add-ons again after an app update."""
 
     def __init__(self, app_service: AppServices) -> None:
         super().__init__()
         self._svc = app_service
 
-    def run(self) -> None:
-        try:
-            self._svc.addons.update_addons(self.log_line.emit)
-            self.finished_ok.emit()
-        except Exception as exc:  # noqa: BLE001  # surface any pip/subprocess failure to the UI via the error signal
-            self.finished_err.emit(txt.addon_error_text(exc))
+    def work(self) -> None:
+        self._svc.addons.update_addons(self.log_line.emit)
+
+    def error_text(self, exc: BaseException) -> str:
+        return txt.addon_error_text(exc)
 
 
 class InstallRound(QObject):
@@ -121,11 +112,10 @@ class InstallRound(QObject):
         self._svc = app_service
         self._pull_manager = pull_manager  # owned by MainWindow; outlives this round
         self._pull_connected = False  # subscribed to the pull manager's signals
-        # Every thread starts through ``_start_thread``, which keeps it alive until it ends: this
-        # reference is dropped (set to ``None``, or replaced by the next step's thread) from the
-        # slot of the thread's own "done" signal, while that thread is still in its last lines —
-        # and Qt aborts the whole process when a running ``QThread`` is destroyed.
-        self._thread: QThread | None = None
+        # The thread itself is held until it ends (``LongJobThread``): this reference is
+        # dropped — set to ``None`` or replaced by the next step's thread — from the slot of
+        # its own "done" signal, while it is still in its last lines.
+        self._thread: LongJobThread | None = None
         # "update", "pip", "spacy", "reader", "page_models" or "pull" — what the running thread does
         self._phase = ""
         self._reader = False
@@ -221,20 +211,14 @@ class InstallRound(QObject):
 
     def abort(self) -> None:
         """Stop the downloads; a pip install or spaCy download cannot be stopped once it runs."""
-        from ._addon_installer_dialog import (  # noqa: PLC0415
-            _OllamaPullThread,
-            _ReaderDownloadThread,
-        )
-
         if not self.can_abort():
             return
-        if isinstance(self._thread, _ReaderDownloadThread):
-            self._thread.cancel()
-            return
-        if self._pull_manager is not None:
+        if self._phase in ("reader", "page_models") and self._thread is not None:
+            self._thread.stop()
+        elif self._pull_manager is not None:
             self._pull_manager.abort()
-        elif isinstance(self._thread, _OllamaPullThread):
-            self._thread.request_abort()
+        elif self._thread is not None:
+            self._thread.stop()
 
     def detach(self) -> None:
         """Stop following the pull manager; a running pull goes on in the main window."""
@@ -263,7 +247,7 @@ class InstallRound(QObject):
         thread.finished_ok.connect(self._on_update_done)
         thread.finished_err.connect(self._on_error)
         self._thread = thread
-        _start_thread(thread)
+        thread.start()
 
     def _on_update_done(self) -> None:
         self.log_line.emit("✓ Add-ons updated.")
@@ -288,7 +272,7 @@ class InstallRound(QObject):
         thread.finished_err.connect(self._on_error)
         # Set before start(): a thread that finishes at once must not be overwritten.
         self._thread = thread
-        _start_thread(thread)
+        thread.start()
 
     def _on_pip_done(self, packages: list[str]) -> None:
         self.log_line.emit("✓ pip install complete.")
@@ -315,7 +299,7 @@ class InstallRound(QObject):
         thread.finished_ok.connect(self._on_spacy_done)
         thread.finished_err.connect(self._on_error)
         self._thread = thread
-        _start_thread(thread)
+        thread.start()
 
     def _on_spacy_done(self) -> None:
         self.log_line.emit("✓ spaCy model downloaded.")
@@ -350,12 +334,13 @@ class InstallRound(QObject):
         thread = _ReaderDownloadThread(self._svc)
         thread.progress.connect(self.pull_progress_from_reader)
         thread.finished_ok.connect(self._on_reader_done)
-        thread.finished_err.connect(self._on_reader_error)
+        thread.finished_err.connect(self._on_error)
         self._thread = thread
-        _start_thread(thread)
+        thread.start()
 
-    def pull_progress_from_reader(self, done: int, total: int) -> None:
+    def pull_progress_from_reader(self, payload: object) -> None:
         """Forward the reader's download progress as a pull progress line."""
+        done, total = cast("tuple[int, int]", payload)
         self.pull_progress.emit(READER_PROGRESS_STATUS, done, total)
 
     def _on_reader_done(self) -> None:
@@ -368,9 +353,6 @@ class InstallRound(QObject):
         self._thread = None
         self._after_spacy()
 
-    def _on_reader_error(self, message: str) -> None:
-        self._on_error(message)
-
     # ── the page models ──────────────────────────────────────────────────────────
 
     def _start_page_models(self) -> None:
@@ -380,13 +362,16 @@ class InstallRound(QObject):
         self._phase = "page_models"
         self._begin(PAGE_MODELS_ITEM)
         thread = _ReaderDownloadThread(self._svc, "download_page_models")
-        thread.progress.connect(
-            lambda done, total: self.pull_progress.emit(PAGE_MODELS_PROGRESS_STATUS, done, total)
-        )
+        thread.progress.connect(self.page_models_progress)
         thread.finished_ok.connect(self._on_page_models_done)
         thread.finished_err.connect(self._on_error)
         self._thread = thread
-        _start_thread(thread)
+        thread.start()
+
+    def page_models_progress(self, payload: object) -> None:
+        """Forward the page models' download progress as a pull progress line."""
+        done, total = cast("tuple[int, int]", payload)
+        self.pull_progress.emit(PAGE_MODELS_PROGRESS_STATUS, done, total)
 
     def _on_page_models_done(self) -> None:
         self.log_line.emit("✓ Page models downloaded.")
@@ -417,12 +402,16 @@ class InstallRound(QObject):
         from ._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
 
         thread = _OllamaPullThread(self._svc, self._ollama_url, model)
-        # Bytes travel as floats: a Qt ``int`` is 32 bits and a model is often over 2 GB.
-        thread.progress.connect(self.pull_progress)
+        thread.progress.connect(self.pull_stream_progress)
         thread.finished_ok.connect(self._on_pull_done)
         thread.finished_err.connect(self._on_error)
         self._thread = thread
-        _start_thread(thread)
+        thread.start()
+
+    def pull_stream_progress(self, payload: object) -> None:
+        """Re-send one progress line of a pull this round runs itself."""
+        status, done, total = cast("tuple[str, float, float]", payload)
+        self.pull_progress.emit(status, done, total)
 
     def _on_pull_done(self, _model: str) -> None:
         self._pull_arrived(self._current)

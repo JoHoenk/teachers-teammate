@@ -1037,20 +1037,49 @@ on macOS, `systemd-inhibit --list` on Linux.
 
 ### Background tasks in the GUI
 
-New background work uses `gui/_background.py` instead of a `QThread` subclass:
+There are two kinds of background work, one module each.
+
+**A query or a fetch** — no window waits for it, and only the newest answer counts — uses
+`gui/_background.py`:
 
 ```python
 self._task = LatestTask(owner=self)            # "latest wins" per widget
 self._task.submit(lambda: service.slow_call(), self._on_done)   # on_done(result, error)
+run_streaming(fetch, on_item, on_done, owner=self)              # items as they arrive
 ```
 
 Tasks run on a shared `QThreadPool`; results arrive on the GUI thread through a queued
 signal, results for a destroyed `owner` are dropped, and superseded results of a
 `LatestTask` are ignored. There is no thread object to destroy, so closing a dialog while
 a task runs cannot abort the process. The main window waits a bounded moment for running
-tasks when it closes (`wait_for_background_tasks`). A remaining `QThread` subclass is moved
-to it when it is touched. In GUI tests, patch
-`LatestTask.submit` to keep a smoke test offline (see `neutralize_gui_threads`).
+tasks when it closes (`wait_for_background_tasks`). A task that waits on a remote server (model
+lists, the update check, a server search) passes `network=True` and runs on a second pool: it
+cannot be interrupted, so a stale one keeps its thread until it ends, and it must not hold up the
+local tasks meanwhile. In GUI tests, `neutralize_gui_threads` keeps a smoke test offline: it
+patches `LatestTask.submit` and `submit_streaming` and the `run_in_background` of the modules that
+call it directly.
+
+**A long job** — a pip install, a model download, an Ollama pull: it reports while it runs, its
+thread must not be destroyed before it ended even if the window that asked is closed, and it can
+be stopped only between two chunks — subclasses `LongJobThread` (`gui/_long_job.py`) and
+implements `work()` alone:
+
+```python
+class _PipInstallThread(LongJobThread):
+    def work(self) -> None:                     # the result travels with finished_ok
+        self._svc.addons.install_packages(self._packages, self.log_line.emit)
+```
+
+The base carries `log_line`, `progress`, `finished_ok`, `finished_err`, a stop event that
+`work()` watches where it waits, and `stop()`. A job that ended unfinished because it was stopped
+raises `ModelDownloadCancelledError` from `work()` and reports `ABORTED`; one that finished anyway
+reports its result. It holds every started job until it has ended, so a window may let go of
+one that is still running — destroying a running `QThread` aborts the process — and the
+application waits a bounded moment for them when it closes (`wait_for_long_jobs`).
+
+A `QThread` subclass of its own is refused by `tests/unit/test_thread_kinds.py`. The two that
+stay are `OCRWorker` and `BenchmarkWorker`: a run of their own, with a worker thread that has
+to be stopped and detached as a whole.
 
 ### The evaluation tools
 
@@ -2086,8 +2115,9 @@ round's result, a pending restart, or what the detection found.  The log is behi
 opens by itself on a failure, and "Copy" puts it on the clipboard.  Abort appears only while it
 can stop something (`InstallRound.can_abort()`): a download, not a pip install.
 
-**Closing.**  `done()` calls `shutdown()` on every built page (a running model fetch is parked in
-`_model_fetch._RETIRED_THREADS`, never destroyed while running).  A pip install or
+**Closing.**  `done()` calls `shutdown()` on every built page (a running model fetch is
+cancelled; a long job it started is held by `LongJobThread` until it ends, never destroyed
+while running).  A pip install or
 language-model download on Add-ons blocks closing (`close_blocker()`), because the new package
 must be made importable first; an Ollama pull belongs to the main window's
 `PullManager` and keeps going.  Dialogs opened from inside the window (the

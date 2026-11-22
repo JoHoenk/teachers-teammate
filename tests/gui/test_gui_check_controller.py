@@ -39,7 +39,6 @@ from tests.conftest import make_config
 
 from ._gui_harness import (
     MemorySettings,
-    DummyUpdateThread,
     DummyWorker,
     main_window,
     no_network_in_gui_tests,
@@ -1139,7 +1138,6 @@ def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
     monkeypatch.setattr(main_window_module, "QSettings", SharedMemorySettings)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
-    monkeypatch.setattr(main_window_module, "UpdateCheckThread", DummyUpdateThread)
     first = MainWindow(app_service=real_service(), worker_factory=DummyWorker)
     qtbot.addWidget(first)
 

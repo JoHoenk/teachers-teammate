@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from ... import _user_text as txt
 from ..._install_round import PACKAGE_PREFIX, UPDATE_ADDONS_ITEM, InstallRound
+from ..._long_job import ABORTED
 from ..._model_guidance import SPACY_PREFIX
 
 #: The status line and the hint under it: small and grey, so the page's content stays first.
@@ -374,7 +375,7 @@ class InstallStatusPane(QWidget):
     def _on_round_failed(self, item: str, message: str) -> None:
         self._elapsed_timer.stop()
         self._status_parts = None
-        if message == "aborted":
+        if message == ABORTED:
             self._round_result = txt.ADDONS_ABORTED
             self._round_result_warning = False
             self._dl_log.appendPlainText(txt.ADDONS_ABORTED)

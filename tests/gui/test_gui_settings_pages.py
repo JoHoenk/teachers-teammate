@@ -15,8 +15,8 @@ import pytest
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
 from teachers_teammate.domain.model_listing import ModelListing
-from teachers_teammate.gui import _dialogs
-from teachers_teammate.gui import _model_fetch
+from teachers_teammate.gui import _anonymizer_config_widget, _dialogs
+from teachers_teammate.gui._background import wait_for_background_tasks
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
@@ -56,6 +56,7 @@ from ._settings_stubs import (
     CatalogAppService,
     DummyAppService,
     FakeKeyring,
+    InertLatestTask,
     MeasuredCatalogAppService,
     NonListableService,
     ProviderAppService,
@@ -125,21 +126,27 @@ def _items(section: AiServiceSection) -> list[str]:
 def _wait_for_fetch(qtbot, section, svc: ProviderAppService, calls: int) -> None:
     """Wait until the section asked the service *calls* times and showed the answer."""
     qtbot.waitUntil(lambda: len(svc.checked_calls) >= calls, timeout=5000)
-    thread = section._fetch_thread
-    if thread is not None:
-        thread.wait(5000)
     # The busy bar is hidden again once the answer is in.
     qtbot.waitUntil(lambda: section._busy.isHidden(), timeout=5000)
 
 
+def _count_asks(monkeypatch, service) -> list[str]:
+    """Record every model list *service* is asked for; return the list."""
+    asked: list[str] = []
+    real = service.list_provider_models
+
+    def counted(provider: str, *, base_url: str = "") -> list[str]:
+        asked.append(provider)
+        return real(provider, base_url=base_url)
+
+    monkeypatch.setattr(service, "list_provider_models", counted)
+    return asked
+
+
 @pytest.fixture(autouse=True)
 def _no_spacy_discovery(monkeypatch) -> None:
-    """The Privacy page lists spaCy models on a thread; these tests never need it."""
-    from teachers_teammate.gui._anonymizer_config_widget import (  # noqa: PLC0415
-        _SpacyModelFetchThread,
-    )
-
-    monkeypatch.setattr(_SpacyModelFetchThread, "start", lambda self: None)
+    """The Privacy page lists spaCy models in the background; these tests never need it."""
+    monkeypatch.setattr(_anonymizer_config_widget, "LatestTask", InertLatestTask)
 
 
 # ── page protocol ──────────────────────────────────────────────────────────────
@@ -1680,49 +1687,45 @@ def test_changing_the_provider_preselects_its_default_model(qtbot, monkeypatch) 
 
 
 @pytest.mark.gui
-def test_cache_hit_skips_a_new_thread_for_a_cloud_provider(qtbot, monkeypatch) -> None:
+def test_cache_hit_skips_a_new_fetch_for_a_cloud_provider(qtbot, monkeypatch) -> None:
     """
     Given  models are already cached for a cloud provider (openai)
     When   _auto_fetch is called
-    Then   the cached list is used (no new thread is started)
+    Then   the cached list is shown and the service is not asked again
     """
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     svc = CachingDummyAppService()
     section = _proofreading(
         qtbot, svc, {"correction_provider": "openai", "ollama_url": DEFAULTS["ollama_url"]}
     )
-    if section._fetch_thread is not None:
-        section._fetch_thread.wait(5000)
+    qtbot.waitUntil(lambda: section._busy.isHidden(), timeout=5000)
     svc.seed_cache("openai", ["gpt-4o"], "")
-    old_thread = section._fetch_thread
+    asked = _count_asks(monkeypatch, svc)
 
     section._auto_fetch()
 
-    assert section._fetch_thread is old_thread
+    assert asked == []
+    assert "gpt-4o" in _items(section)
 
 
 @pytest.mark.gui
-def test_ollama_always_fetches_in_a_thread(qtbot) -> None:
+def test_ollama_always_asks_the_server_in_the_background(qtbot, monkeypatch) -> None:
     """
     Given  Ollama models are already cached
     When   _auto_fetch is called
-    Then   a thread is started anyway: classifying custom models must never run on the GUI
+    Then   the server is asked anyway: classifying custom models must never run on the GUI
            thread, so Ollama has no synchronous cache shortcut
     """
     svc = CachingDummyAppService()
     url = DEFAULTS["ollama_url"]
     section = _proofreading(qtbot, svc, {"correction_provider": "ollama", "ollama_url": url})
-    first = section._fetch_thread
-    assert first is not None
-    first.wait(5000)
+    qtbot.waitUntil(lambda: section._busy.isHidden(), timeout=5000)
     svc.seed_cache("ollama", ["llama3:latest"], url)
+    asked = _count_asks(monkeypatch, svc)
 
     section._auto_fetch()
 
-    second = section._fetch_thread
-    assert second is not None
-    assert second is not first
-    second.wait(5000)
+    qtbot.waitUntil(lambda: asked == ["ollama"], timeout=5000)
 
 
 @pytest.mark.gui
@@ -2409,18 +2412,19 @@ def test_same_model_tip_visibility(
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
-def test_closing_parks_a_running_fetch_thread_without_waiting(qtbot) -> None:
+def test_shutdown_drops_a_running_fetch_without_waiting(qtbot) -> None:
     """
     Given  a proofreading section whose model list is still being fetched
-    When   the section shuts down
-    Then   it does not block on the thread, the thread is parked (so it is never destroyed
-           while running) and its late answer no longer reaches the section
+    When   the section shuts down and the list arrives afterwards
+    Then   shutdown did not wait for it, and the late answer no longer reaches the section
     """
+    started = threading.Event()
     release = threading.Event()
 
     class _SlowService(DummyAppService):
         def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
             _ = base_url
+            started.set()
             release.wait(10)
             return [f"{provider}-model"]
 
@@ -2430,51 +2434,14 @@ def test_closing_parks_a_running_fetch_thread_without_waiting(qtbot) -> None:
         {"correction_provider": "ollama", "ollama_url": DEFAULTS["ollama_url"]},
         hardware_profile="8gb",
     )
-    thread = section._fetch_thread
-    assert thread is not None and thread.isRunning()
+    assert started.wait(5), "the model list was never asked for"
 
     section.shutdown()
-    assert thread in _model_fetch._RETIRED_THREADS
-
     release.set()
-    qtbot.waitUntil(thread.isFinished, timeout=5000)
-    qtbot.wait(50)  # let a (disconnected) late result be delivered, if it were
+    assert wait_for_background_tasks(5000)
+    qtbot.wait(50)  # let a (dropped) late answer arrive, if it were
+
     assert section._guidance._models == []
-    _model_fetch._purge_retired_threads()
-    assert thread not in _model_fetch._RETIRED_THREADS
-
-
-@pytest.mark.use_case("Model_Category_Guidance")
-def test_a_running_fetch_thread_survives_a_section_that_is_never_shut_down(qtbot) -> None:
-    """
-    Given  a proofreading section whose model list is still being fetched
-    When   the section is dropped without calling shutdown()
-    Then   the thread is already parked, so collecting the section cannot destroy it while it
-           runs (Qt would abort the whole process) and it leaves the registry once finished
-    """
-    release = threading.Event()
-
-    class _SlowService(DummyAppService):
-        def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
-            _ = base_url
-            release.wait(10)
-            return [f"{provider}-model"]
-
-    section = _proofreading(
-        qtbot,
-        _SlowService(),
-        {"correction_provider": "ollama", "ollama_url": DEFAULTS["ollama_url"]},
-        hardware_profile="8gb",
-    )
-    thread = section._fetch_thread
-    assert thread is not None and thread.isRunning()
-
-    assert thread in _model_fetch._RETIRED_THREADS
-
-    release.set()
-    qtbot.waitUntil(thread.isFinished, timeout=5000)
-    _model_fetch._purge_retired_threads()
-    assert thread not in _model_fetch._RETIRED_THREADS
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -2521,8 +2488,6 @@ def test_download_best_choice_asks_for_add_ons_and_hints_follow_the_profile(qtbo
         open_downloads=open_downloads,
     )
     qtbot.waitUntil(lambda: section._guidance._models == ["ollama-model"], timeout=5000)
-    assert section._fetch_thread is not None
-    section._fetch_thread.wait(5000)
     assert section._guidance._best_btn.text() == "Download best choice…"
 
     section._guidance._best_btn.click()
@@ -3218,7 +3183,8 @@ def test_a_review_that_is_not_loaded_asks_no_service(qtbot) -> None:
     page.set_ollama_url("http://192.168.1.50:11434")
     page.on_packages_changed()
 
-    assert page._review._fetch_thread is None
+    assert page._review._busy.isHidden()
+    assert page._review._guidance._models == []
     assert not page._review._loaded
 
 
@@ -3738,7 +3704,7 @@ def test_a_section_that_was_never_loaded_asks_no_service_for_a_key(qtbot, no_key
 
     drafts.set("MISTRAL_API_KEY", "k-elsewhere")
 
-    assert section._fetch_thread is None
+    assert section._busy.isHidden()
     assert service.checked_calls == []
 
 
@@ -3894,6 +3860,37 @@ def test_the_network_search_starts_only_after_the_question_is_answered_yes(
 
     assert dialog.list.count() == 1
     assert dialog.cards()[0].place == "on the network · 192.168.1.20"
+
+
+@pytest.mark.gui
+def test_closing_the_search_dialog_drops_a_late_answer(qtbot) -> None:
+    """
+    Given  a server search still running
+    When   the dialog is closed and the search answers afterwards
+    Then   the dialog did not wait for it, and its late hits are not listed
+    """
+    from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class _SlowSearch(_SearchService):
+        def discover_ollama_servers(self, scope=None, **_kw):
+            started.set()
+            release.wait(10)
+            return [_windows_server()]
+
+    dialog = ServerSearchDialog(services_of(_SlowSearch()))
+    qtbot.addWidget(dialog)
+    assert started.wait(5), "the search never started"
+
+    dialog.reject()
+    release.set()
+    assert wait_for_background_tasks(5000)
+    qtbot.wait(50)  # let a (dropped) late answer arrive, if it were
+
+    assert dialog.list.count() == 0
+    assert not dialog.searching
 
 
 @pytest.mark.gui

@@ -5,11 +5,10 @@ Provides:
 * :class:`FakeGuiService` — one in-memory stand-in implementing every query the
   windows/dialogs/widgets call, so they can be constructed without network,
   subprocess, or a real pipeline.  ``get_cached_models`` returns a list (not
-  ``None``) so the model-fetch thread of non-Ollama providers never starts.
+  ``None``) so the model fetch of non-Ollama providers never starts.
 * :func:`neutralize_gui_threads` — monkeypatches the few components that start
-  background threads/subprocess on construct or show (and the shared
-  ``LatestTask`` background pool), so a smoke test never hits the network and
-  leaves no thread running.
+  background work on construct or show (and the shared background pool), so a
+  smoke test never hits the network and leaves nothing running.
 * :func:`assert_no_running_threads` / :func:`exercise_lifecycle` — drive a widget
   through construct → show → close and assert nothing is left running.
 * The ``main_window`` and ``stored`` fixtures and the helpers around them, which the
@@ -45,13 +44,15 @@ from teachers_teammate.domain.model_catalog import (
 )
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.proofreading.review import CorrectionReview
-from teachers_teammate.gui import _anonymizer_config_widget, _dialogs, _install_round, _model_fetch
+from teachers_teammate.gui import _addon_installer_dialog, _anonymizer_config_widget, _dialogs
+from teachers_teammate.gui import _install_round
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui._background import LatestTask
+from teachers_teammate.gui._long_job import LongJobThread
 from teachers_teammate.gui._privacy_settings import FlowAcknowledgements
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._readiness_controller import ReadinessController
-from teachers_teammate.gui._update_check import UpdateCheckThread
+from teachers_teammate.gui import _preprocess_preview, _update_check
 from teachers_teammate.gui.settings import SettingsContext, SettingsResult
 from teachers_teammate.infrastructure.state_repository import StateRepository, compute_file_hash
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
@@ -230,23 +231,56 @@ class FakeGuiService(LocalDataFlowStub):
         return compare_pair(getattr(a, "raw_text", ""), getattr(b, "raw_text", ""))
 
 
-def neutralize_gui_threads(monkeypatch: Any) -> None:
-    """Patch every construct/show-time background thread + network seam to a no-op.
+class FakePullThread(LongJobThread):
+    """An Ollama pull whose signals the test emits itself.
 
-    Keeps the smoke harness offline and prevents "QThread destroyed while
-    running" by ensuring no infrastructure thread starts during the test.
+    It looks like it is running (a pull outlives the window that asked for it) and reports
+    nothing on its own, so a test decides when progress and the end arrive.
     """
-    for thread_cls in (
-        UpdateCheckThread,
-        _model_fetch._ModelFetchThread,
-        _install_round._PipInstallThread,
-        _anonymizer_config_widget._SpacyModelFetchThread,
-    ):
-        monkeypatch.setattr(thread_cls, "start", lambda self: None)
 
-    # Background tasks (hardware detection, installed-model checks, first start)
-    # run on a shared pool: do not start any of them in the smoke harness.
+    instances: ClassVar[list[FakePullThread]] = []
+
+    def __init__(self, _service: Any, url: str, model: str) -> None:
+        super().__init__()
+        self.url = url
+        self.model = model
+        FakePullThread.instances.append(self)
+
+    def work(self) -> None:
+        """Never called: :meth:`run` is replaced, so the test alone reports this pull."""
+
+    def run(self) -> None:
+        """Report nothing: the test emits this pull's signals."""
+
+    def isRunning(self) -> bool:  # Qt's spelling
+        return True
+
+
+def fake_pull_threads(monkeypatch: Any) -> list[FakePullThread]:
+    """Replace the Ollama pull thread with :class:`FakePullThread`; return the ones started."""
+    for earlier in FakePullThread.instances:
+        earlier.wait(5000)  # letting go of one whose native thread still runs aborts Qt
+    FakePullThread.instances = []
+    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", FakePullThread)
+    return FakePullThread.instances
+
+
+def neutralize_gui_threads(monkeypatch: Any) -> None:
+    """Patch every construct/show-time background task + network seam to a no-op.
+
+    Keeps the smoke harness offline and starts nothing that would outlive the test.
+    """
+    monkeypatch.setattr(_install_round._PipInstallThread, "start", lambda self: None)
+
+    # Everything else runs on the shared pool (model lists, spaCy models, the update check,
+    # hardware detection, installed-model checks): do not start any of it in the harness.
     monkeypatch.setattr(LatestTask, "submit", lambda self, fn, on_done: 0)
+    monkeypatch.setattr(LatestTask, "submit_streaming", lambda self, fn, on_item, on_done: 0)
+    monkeypatch.setattr(
+        _anonymizer_config_widget.AnonymizerConfigWidget, "_start_spacy_fetch", lambda self: None
+    )
+    for module in (_update_check, _preprocess_preview):
+        monkeypatch.setattr(module, "run_in_background", lambda *a, **k: None)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(ProviderService, "check_connection", lambda *a, **k: (True, True, "✓ OK"))
@@ -493,21 +527,24 @@ def no_privacy_prompt(monkeypatch) -> None:
     )
 
 
-class DummyUpdateThread:
-    """Stand-in for UpdateCheckThread that never touches the network or starts a QThread.
+def no_update_check(monkeypatch) -> None:
+    """Keep a MainWindow from asking GitHub for a newer release."""
+    monkeypatch.setattr(
+        main_window_module,
+        "check_for_update",
+        lambda _on_available, *, owner=None: None,
+    )
 
-    Without this, MainWindow.__init__ schedules a real UpdateCheckThread via
-    QTimer.singleShot(0, ...); if a test only spins the event loop briefly, that timer
-    never fires within the test, but it can fire during a *later* test's event-loop
-    spin (the same QApplication persists across the whole session) and touch a
-    MainWindow instance whose widgets are already torn down, crashing the process.
-    """
 
-    def __init__(self, _parent=None) -> None:
-        self.update_available = DummySignal()
-
-    def start(self) -> None:
-        pass
+def record_update_checks(monkeypatch) -> list[object]:
+    """Silence the update check and return the list it appends its callback to."""
+    asked: list[object] = []
+    monkeypatch.setattr(
+        main_window_module,
+        "check_for_update",
+        lambda on_available, *, owner=None: asked.append(on_available),
+    )
+    return asked
 
 
 @pytest.fixture
@@ -515,7 +552,7 @@ def main_window(qtbot, monkeypatch) -> MainWindow:
     """Create a MainWindow with startup side effects disabled."""
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
-    monkeypatch.setattr(main_window_module, "UpdateCheckThread", DummyUpdateThread)
+    no_update_check(monkeypatch)
     win = MainWindow(app_service=real_service(), worker_factory=DummyWorker)
     qtbot.addWidget(win)
     return win

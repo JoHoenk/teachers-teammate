@@ -3863,6 +3863,37 @@ def test_the_network_search_starts_only_after_the_question_is_answered_yes(
 
 
 @pytest.mark.gui
+def test_closing_the_search_dialog_drops_a_late_answer(qtbot) -> None:
+    """
+    Given  a server search still running
+    When   the dialog is closed and the search answers afterwards
+    Then   the dialog did not wait for it, and its late hits are not listed
+    """
+    from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class _SlowSearch(_SearchService):
+        def discover_ollama_servers(self, scope=None, **_kw):
+            started.set()
+            release.wait(10)
+            return [_windows_server()]
+
+    dialog = ServerSearchDialog(services_of(_SlowSearch()))
+    qtbot.addWidget(dialog)
+    assert started.wait(5), "the search never started"
+
+    dialog.reject()
+    release.set()
+    assert wait_for_background_tasks(5000)
+    qtbot.wait(50)  # let a (dropped) late answer arrive, if it were
+
+    assert dialog.list.count() == 0
+    assert not dialog.searching
+
+
+@pytest.mark.gui
 def test_choosing_a_found_server_fills_the_address_field_and_tells_the_other_pages(
     computer_page, qtbot
 ) -> None:

@@ -8,9 +8,10 @@ which server the person picked (:attr:`ServerSearchDialog.server_chosen`).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import threading
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -28,7 +29,7 @@ from ...application.composition import AppServices
 from ...domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
 from ...texts import dialogs as dlg
 from .. import _dialogs
-from .._model_fetch import _retire_thread, _start_thread
+from .._background import run_streaming
 from .._server_card import ServerCard
 
 TITLE = "Find the AI server"
@@ -63,32 +64,6 @@ _NETWORK_TOOLTIP = (
 )
 
 
-class _SearchThread(QThread):
-    """Runs one search off the GUI thread and reports hits as they come."""
-
-    found = Signal(object)  # DiscoveredServer
-    progress = Signal(int, int)  # asked, total
-    search_done = Signal(list)
-
-    def __init__(self, service: AppServices, scope: DiscoveryScope) -> None:
-        super().__init__()
-        self._service = service
-        self._scope = scope
-        self.stop_event = threading.Event()
-
-    def run(self) -> None:
-        try:
-            servers = self._service.ollama.discover_ollama_servers(
-                self._scope,
-                stop_event=self.stop_event,
-                on_found=self.found.emit,
-                on_progress=self.progress.emit,
-            )
-        except Exception:  # noqa: BLE001  # a search that fails finds nothing; it never raises into Qt
-            servers = []
-        self.search_done.emit(servers)
-
-
 class ServerSearchDialog(QDialog):
     """Lists the servers a search found and lets the person pick one."""
 
@@ -108,7 +83,8 @@ class ServerSearchDialog(QDialog):
         self.setWindowTitle(TITLE)
         self.setMinimumWidth(480)
         self._service = app_service
-        self._thread: _SearchThread | None = None
+        self._searching = False
+        self._stop_event = threading.Event()
         self._scope = DiscoveryScope.THIS_COMPUTER
         self._network_searched = False
 
@@ -163,10 +139,12 @@ class ServerSearchDialog(QDialog):
     @property
     def searching(self) -> bool:
         """Whether a search is running."""
-        return self._thread is not None and self._thread.isRunning()
+        return self._searching
 
     def _start(self, scope: DiscoveryScope) -> None:
         self._scope = scope
+        self._searching = True
+        self._stop_event = threading.Event()
         self.progress.setVisible(scope is DiscoveryScope.NETWORK)
         self.progress.setRange(0, 0)
         self.status.setText(
@@ -174,12 +152,27 @@ class ServerSearchDialog(QDialog):
         )
         self.network_button.setEnabled(False)
         self.stop_button.setVisible(scope is DiscoveryScope.NETWORK)
-        thread = _SearchThread(self._service, scope)
-        thread.found.connect(self._add_server)
-        thread.progress.connect(self._on_progress)
-        thread.search_done.connect(self._on_done)
-        self._thread = thread
-        _start_thread(thread)
+
+        def search(emit: Callable[[object], None]) -> list[DiscoveredServer]:
+            return self._service.ollama.discover_ollama_servers(
+                scope,
+                stop_event=self._stop_event,
+                on_found=lambda server: emit(("server", server)),
+                on_progress=lambda asked, total: emit(("progress", asked, total)),
+            )
+
+        # *self* outlives the search: a dialog closed meanwhile drops what it still reports.
+        run_streaming(search, self._on_item, self._on_done, owner=self)
+
+    def _on_item(self, payload: object) -> None:
+        """Show one thing the search reports: a server it found, or how far it got."""
+        if not self._searching or not isinstance(payload, tuple):
+            return
+        kind, *rest = payload
+        if kind == "server":
+            self._add_server(rest[0] if rest else None)
+        elif kind == "progress":
+            self._on_progress(int(rest[0]), int(rest[1]))
 
     def _on_network_clicked(self) -> None:
         if _dialogs.ask(self, dlg.search_network()):
@@ -187,8 +180,8 @@ class ServerSearchDialog(QDialog):
             self._start(DiscoveryScope.NETWORK)
 
     def _stop(self) -> None:
-        if self._thread is not None:
-            self._thread.stop_event.set()
+        if self._searching:
+            self._stop_event.set()
             self.status.setText("Stopping…")
 
     def _on_progress(self, asked: int, total: int) -> None:
@@ -214,9 +207,13 @@ class ServerSearchDialog(QDialog):
         if self.list.currentRow() < 0:
             self.list.setCurrentRow(0)
 
-    def _on_done(self, servers: object) -> None:
-        if isinstance(servers, list):
-            for server in servers:
+    def _on_done(self, result: object, error: BaseException | None) -> None:
+        """Show what the search ended with, unless the dialog has moved on."""
+        if not self._searching:
+            return
+        self._searching = False
+        if error is None and isinstance(result, list):
+            for server in result:
                 self._add_server(server)
         self.progress.setVisible(False)
         self.stop_button.setVisible(False)
@@ -261,8 +258,7 @@ class ServerSearchDialog(QDialog):
         self.reject()
 
     def done(self, result: int) -> None:  # Qt override
-        """Cut the running search loose before the dialog goes away."""
-        if self._thread is not None:
-            self._thread.stop_event.set()
-            _retire_thread(self._thread)
+        """Stop a running search and drop what it still reports."""
+        self._searching = False
+        self._stop_event.set()
         super().done(result)

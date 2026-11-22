@@ -119,6 +119,67 @@ pytest tests/ -m "not needs_ollama" -v
 
 ---
 
+## The app walkthrough
+
+`tests/e2e/walkthrough.py` plays teacher in the real main window: it writes an `ocr.toml` and
+three input files into one temporary folder, builds the window the app builds, and then clicks,
+types and answers exactly what a teacher does. It covers the settings file, choosing the input
+folder, a run over a PNG, a scanned PDF and a TXT file, opening a document in the Check tab,
+correcting it, exporting one DOCX, a second run that hits the cache, both clicks of the Stop
+button, closing and reopening the window, every other window behind the settings, and closing
+down. Each step checks what a teacher would see — the rows of the queue, the stored texts, the
+Word files on disk, the summary of every run — and the first failure ends the walk with a message
+that names the step and what it waited for.
+
+Guards replace the teacher's eyes: an unexpected dialog is declined and recorded, a window a step
+did not open is closed, an exception in a slot fails its step, warnings are collected, and a
+watchdog ends a hung walk with a result instead of running into the CI job's limit. Every guard
+lives in the script, so a bundle run reports the same way a test run does.
+
+The walk writes one JSON file (steps, dialogs, modals, exceptions, warnings, screenshots,
+platform and versions) and exits 0 only when every step passed. It writes that file on failure
+too, because a windowed build has no console.
+
+### From source
+
+```bash
+bazel test //tests:test_gui_main_walkthrough --test_output=errors
+```
+
+The test links the real reader and page models into one root via `models_store(tmp_path)` and
+runs `walkthrough.main`, the same entry point the bundle runner calls, on the three documents.
+It also replaces one thing per test and checks the report: a reader that raises, an unexpected
+dialog, an unexpected window, a raising slot, a saved config, and that no thread is left running.
+The target is `large` (about three and a half minutes on a fast machine).
+
+### Against a bundle
+
+The app runs the script itself: `--_run_script` takes the file, so a downloaded bundle runs the
+script from the same commit as the bundle.
+
+```bash
+gh run download <run-id> -n teachers-teammate-linux    # then unpack
+./teachers-teammate --_run_script tests/e2e/walkthrough.py e2e.json --screenshots shots
+```
+
+An older bundle that lacks a handle a newer script uses fails the first step, naming the handle.
+
+### Adding a step
+
+One method on `Walk`, one row in `STEPS` (`tests/e2e/walkthrough.py`). The step clicks what a
+teacher clicks through `_handles`, and declares the dialogs it expects with `self._answers.expect`
+before it triggers them — any other dialog fails the step. Waits are conditions with a deadline
+(`_settle`), never sleeps. New settings go into `write_settings`; new input files into
+`write_inputs`.
+
+### What the script may import
+
+`tests/unit/test_walkthrough_imports.py` holds the list: the standard library, Qt, Pillow,
+python-docx and `teachers_teammate`, and nothing from `tests`. The bundle carries no test
+framework, so a test-only helper in the script breaks the bundle run; teach the script instead.
+
+---
+
 
 ## Test case specification — Given-When-Then
 

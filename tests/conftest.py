@@ -474,24 +474,11 @@ def page_models_store(tmp_path: Path):
     Like :func:`reader_store`: the files Bazel fetched are linked into the store's layout.  Only
     for tests marked ``skip_no_page_models``.
     """
-    import json  # noqa: PLC0415
-
     from teachers_teammate.domain.local_models import PAGE_MODELS  # noqa: PLC0415
     from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
 
-    files = _page_model_files()
     store = ModelStore(tmp_path / "page_models")
-    for model in PAGE_MODELS:
-        folder = store.folder(model)
-        folder.mkdir(parents=True)
-        for var, (key, name) in PAGE_MODEL_ENV.items():
-            if key != model.key:
-                continue
-            try:
-                (folder / name).symlink_to(files[var])
-            except OSError:
-                shutil.copy(files[var], folder / name)
-        (folder / ".verified").write_text(json.dumps({}), encoding="utf-8")
+    _link_models(store, PAGE_MODELS, PAGE_MODEL_ENV, _page_model_files())
     return store
 
 
@@ -519,24 +506,19 @@ def fake_page_models_store(tmp_path: Path, *, installed: bool = True):
     return store
 
 
-def reader_store(tmp_path: Path):
-    """Return a :class:`ModelStore` under *tmp_path* holding the pinned reader models.
+def _link_models(
+    store, models, env_map: dict[str, tuple[str, str]], files: dict[str, Path]
+) -> None:
+    """Link (or copy) the fetched *files* into *store*'s layout for *models*.
 
-    The files Bazel fetched are linked (copied where links are not possible) into the store's
-    layout, so the real reader runs on the real models.  Only for tests marked
-    ``skip_no_reader_models``.
+    *env_map* names the file each model needs: variable name → (model key, file name).
     """
     import json  # noqa: PLC0415
 
-    from teachers_teammate.domain.local_models import READER_MODELS  # noqa: PLC0415
-    from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
-
-    files = _reader_model_files()
-    store = ModelStore(tmp_path / "models")
-    for model in READER_MODELS:
+    for model in models:
         folder = store.folder(model)
-        folder.mkdir(parents=True)
-        for var, (key, name) in READER_MODEL_ENV.items():
+        folder.mkdir(parents=True, exist_ok=True)
+        for var, (key, name) in env_map.items():
             if key != model.key:
                 continue
             try:
@@ -544,6 +526,40 @@ def reader_store(tmp_path: Path):
             except OSError:
                 shutil.copy(files[var], folder / name)
         (folder / ".verified").write_text(json.dumps({}), encoding="utf-8")
+
+
+def reader_store(tmp_path: Path):
+    """Return a :class:`ModelStore` under *tmp_path* holding the pinned reader models.
+
+    The files Bazel fetched are linked (copied where links are not possible) into the store's
+    layout, so the real reader runs on the real models.  Only for tests marked
+    ``skip_no_reader_models``.
+    """
+    from teachers_teammate.domain.local_models import READER_MODELS  # noqa: PLC0415
+    from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
+
+    store = ModelStore(tmp_path / "models")
+    _link_models(store, READER_MODELS, READER_MODEL_ENV, _reader_model_files())
+    return store
+
+
+def models_store(tmp_path: Path):
+    """Return a :class:`ModelStore` holding the reader's and the page models' real files.
+
+    One store, because the app reads both from ``TEACHERS_TEAMMATE_MODELS_DIR``: a test that
+    runs the app as it is built (``tests/e2e/walkthrough.py``) points that variable at
+    ``store.root``.  A set Bazel fetched no files for is left out, which is what the callers skip on.
+    """
+    from teachers_teammate.domain.local_models import PAGE_MODELS, READER_MODELS  # noqa: PLC0415
+    from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
+
+    store = ModelStore(tmp_path / "models")
+    reader_files = _reader_model_files()
+    page_files = _page_model_files()
+    if reader_files:
+        _link_models(store, READER_MODELS, READER_MODEL_ENV, reader_files)
+    if page_files:
+        _link_models(store, PAGE_MODELS, PAGE_MODEL_ENV, page_files)
     return store
 
 

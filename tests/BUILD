@@ -134,6 +134,7 @@ py_library(
             "gui/*.py",
             "tools/*.py",
             "fakes/*.py",
+            "e2e/*.py",
         ],
     ),
     visibility = ["//visibility:public"],
@@ -244,6 +245,9 @@ _READER_MODEL_ENV = {
     "PPOCR_SMALL_REC_ONNX": "$(rlocationpath @ppocr_small_rec_onnx//file)",
     "PPOCR_SMALL_REC_YML": "$(rlocationpath @ppocr_small_rec_yml//file)",
 }
+
+# Both sets, for the test that walks the app with the real reader and the real page models.
+_MODEL_ENV = dict(list(_READER_MODEL_ENV.items()) + list(_PAGE_MODEL_ENV.items()))
 
 # ── Individual py_test targets ────────────────────────────────────────────
 
@@ -2833,6 +2837,39 @@ py_test(
     deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
+# The whole app as a teacher uses it: the walkthrough script builds the real main window, runs
+# the real reader and page models over three documents, and checks what the app did.  Large
+# because the run over the documents is the slow part.
+py_test(
+    name = "test_gui_main_walkthrough",
+    size = "large",
+    timeout = "eternal",  # several walks in one process, each ended by its own watchdog
+    srcs = _COMMON_SRCS + [
+        "e2e/__init__.py",
+        "e2e/walkthrough.py",
+        "gui/test_gui_main_walkthrough.py",
+    ],
+    args = ["gui/test_gui_main_walkthrough.py"],
+    data = _READER_MODEL_DATA + _PAGE_MODEL_DATA,
+    env = _MODEL_ENV,
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+# What that script may import: it also runs inside the shipped bundle, which carries no tests.
+py_test(
+    name = "test_walkthrough_imports",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "e2e/__init__.py",
+        "e2e/walkthrough.py",
+        "unit/test_walkthrough_imports.py",
+    ],
+    args = ["unit/test_walkthrough_imports.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
 # ── Test suite ────────────────────────────────────────────────────────────
 
 test_suite(
@@ -2986,6 +3023,7 @@ test_suite(
         ":test_texts_types",
         ":test_thread_kinds",
         ":test_user_text_centralised",
+        ":test_walkthrough_imports",
         ":test_wheel",
         ":test_windows_installer_floor",
         ":test_windows_installer_script",
@@ -3019,6 +3057,7 @@ test_suite(
         ":test_gui_install_round",
         ":test_gui_lifecycle",
         ":test_gui_long_job",
+        ":test_gui_main_walkthrough",
         ":test_gui_main_window",
         ":test_gui_plain_map",
         ":test_gui_privacy_settings",

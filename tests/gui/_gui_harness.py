@@ -44,9 +44,11 @@ from teachers_teammate.domain.model_catalog import (
 )
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.proofreading.review import CorrectionReview
-from teachers_teammate.gui import _anonymizer_config_widget, _dialogs, _install_round
+from teachers_teammate.gui import _addon_installer_dialog, _anonymizer_config_widget, _dialogs
+from teachers_teammate.gui import _install_round
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui._background import LatestTask
+from teachers_teammate.gui._long_job import LongJobThread
 from teachers_teammate.gui._privacy_settings import FlowAcknowledgements
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._readiness_controller import ReadinessController
@@ -227,6 +229,38 @@ class FakeGuiService(LocalDataFlowStub):
 
     def compare(self, a: Any, b: Any) -> PairComparison:
         return compare_pair(getattr(a, "raw_text", ""), getattr(b, "raw_text", ""))
+
+
+class FakePullThread(LongJobThread):
+    """An Ollama pull whose signals the test emits itself.
+
+    It looks like it is running (a pull outlives the window that asked for it) and reports
+    nothing on its own, so a test decides when progress and the end arrive.
+    """
+
+    instances: ClassVar[list[FakePullThread]] = []
+
+    def __init__(self, _service: Any, url: str, model: str) -> None:
+        super().__init__()
+        self.url = url
+        self.model = model
+        FakePullThread.instances.append(self)
+
+    def work(self) -> None:
+        """Never called: :meth:`run` is replaced, so the test alone reports this pull."""
+
+    def run(self) -> None:
+        """Report nothing: the test emits this pull's signals."""
+
+    def isRunning(self) -> bool:  # Qt's spelling
+        return True
+
+
+def fake_pull_threads(monkeypatch: Any) -> list[FakePullThread]:
+    """Replace the Ollama pull thread with :class:`FakePullThread`; return the ones started."""
+    FakePullThread.instances = []
+    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", FakePullThread)
+    return FakePullThread.instances
 
 
 def neutralize_gui_threads(monkeypatch: Any) -> None:

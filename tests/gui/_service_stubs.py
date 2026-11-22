@@ -393,10 +393,10 @@ class RecommendationServiceStub(LocalDataFlowStub):
 class FinishedThreadStub:
     """The ``QThread`` methods the app calls on a thread it started, for a fake that is done.
 
-    The app parks every thread it starts until it ends (``_model_fetch._start_thread``) and asks
-    it whether it is finished, so a fake ``QObject`` that does its work inside ``start()`` needs
-    these three.  Mix it in before ``QObject``; a fake that must look like a thread that is still
-    running overrides them.
+    The app holds every :class:`~teachers_teammate.gui._long_job.LongJobThread` it starts until
+    it ends and asks it whether it is finished, so a fake ``QObject`` that does its work inside
+    ``start()`` needs these three.  Mix it in before ``QObject``; a fake that must look like a
+    thread that is still running overrides them.
     """
 
     def isRunning(self) -> bool:  # Qt's spelling

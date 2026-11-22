@@ -241,6 +241,7 @@ _GUI_SRCS = [
     "gui/_input_selection.py",
     "gui/_install_round.py",
     "gui/_log_widget.py",
+    "gui/_long_job.py",
     "gui/_main_window.py",
     "gui/_menu_bar.py",
     "gui/_model_fetch.py",

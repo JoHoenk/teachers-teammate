@@ -2162,6 +2162,15 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_long_job",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_long_job.py"],
+    args = ["gui/test_gui_long_job.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+py_test(
     name = "test_gui_ollama_status_line",
     size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_ollama_status_line.py"],
@@ -2978,6 +2987,7 @@ test_suite(
         ":test_gui_general_page",
         ":test_gui_install_round",
         ":test_gui_lifecycle",
+        ":test_gui_long_job",
         ":test_gui_main_window",
         ":test_gui_plain_map",
         ":test_gui_privacy_settings",

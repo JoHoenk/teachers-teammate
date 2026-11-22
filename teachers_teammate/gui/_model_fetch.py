@@ -12,11 +12,10 @@ presentation only; every query is delegated to the injected service.
 
 from __future__ import annotations
 
-import atexit
 from collections.abc import Callable
 import html
 
-from PySide6.QtCore import QObject, QThread
+from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QComboBox, QProgressBar, QWidget
 
 from ..domain.model_listing import ModelGroup, ModelListing
@@ -151,62 +150,3 @@ def _set_combo(combo: QComboBox, value: str) -> None:
     idx = combo.findText(value)
     if idx >= 0:
         combo.setCurrentIndex(idx)
-
-
-# ── retired threads ───────────────────────────────────────────────────────────
-
-
-#: Long jobs that are running and may outlive the widget that started them.  A running
-#: ``QThread`` must not be destroyed (that aborts the whole process) and these run a plain
-#: function with no event loop, so they cannot be interrupted either: ``_start_thread``
-#: parks every thread here from its start, ``_retire_thread`` adds a thread whose widget
-#: lets go of it, and ``_purge_retired_threads`` drops the finished ones.
-_RETIRED_THREADS: set[QThread] = set()
-_RETIRED_WAIT_MS = 3000
-
-
-def _purge_retired_threads() -> None:
-    """Drop retired threads that have finished."""
-    for thread in [t for t in _RETIRED_THREADS if t.isFinished()]:
-        _RETIRED_THREADS.discard(thread)
-
-
-def _start_thread(thread: QThread) -> None:
-    """Start *thread* and keep it alive until it ends, whatever happens to its widget.
-
-    A widget that is closed, deleted or garbage-collected without calling its ``shutdown()``
-    would otherwise drop the last reference to a thread that is still running, and Qt
-    aborts the process ("QThread: Destroyed while thread is still running").
-    """
-    _purge_retired_threads()
-    _RETIRED_THREADS.add(thread)
-    thread.start()
-
-
-def _retire_thread(thread: QThread | None) -> None:
-    """Detach *thread* from its dialog without blocking the GUI thread.
-
-    Its results are disconnected — a stale answer can no longer touch a widget —
-    and a thread that is still running is kept alive until it ends on its own.
-    """
-    _purge_retired_threads()
-    if thread is None or not thread.isRunning():
-        return
-    for name in ("log_line", "progress", "finished_ok", "finished_err", "finished"):
-        signal = getattr(thread, name, None)
-        if signal is None:
-            continue
-        try:
-            signal.disconnect()
-        except RuntimeError, TypeError:
-            pass  # nothing was connected
-    _RETIRED_THREADS.add(thread)
-
-
-def _wait_for_retired_threads() -> None:
-    """Give retired threads a moment to finish before the interpreter shuts down."""
-    for thread in list(_RETIRED_THREADS):
-        thread.wait(_RETIRED_WAIT_MS)
-
-
-atexit.register(_wait_for_retired_threads)

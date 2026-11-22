@@ -69,6 +69,7 @@ from tests.conftest import make_config
 
 from ._gui_harness import (
     DummyWorker,
+    fake_pull_threads,
     install_scripted_settings_window,
     main_window,
     no_network_in_gui_tests,
@@ -1281,38 +1282,7 @@ def test_the_pull_manager_pulls_the_whole_queue_on_its_own(qtbot, monkeypatch) -
     Then   the next model starts by itself, subscribers see the queue as it was when a pull
            ended, and a failed pull drops the rest
     """
-    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
-
-    from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
-
-    threads: list[Any] = []
-
-    class _FakePull(QObject):
-        progress = Signal(str, float, float)
-        finished_ok = Signal(str)
-        finished_err = Signal(str)
-
-        def __init__(self, _service: Any, url: str, model: str) -> None:
-            super().__init__()
-            self.url, self.model = url, model
-            threads.append(self)
-
-        def start(self) -> None:
-            pass
-
-        def isRunning(self) -> bool:
-            return True
-
-        def isFinished(self) -> bool:
-            return False
-
-        def wait(self, _timeout: int = 0) -> bool:
-            return True
-
-        def request_abort(self) -> None:
-            pass
-
-    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    threads = fake_pull_threads(monkeypatch)
     manager = main_window_module.PullManager(service=real_service())
     started: list[str] = []
     queue_seen: list[list[str]] = []
@@ -1342,36 +1312,11 @@ def test_a_pull_thread_outlives_the_manager_that_started_it(qtbot, monkeypatch) 
     Then   the thread is still held (it is parked until it ends), because dropping the last
            reference to a running QThread aborts the whole process
     """
-    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
+    from teachers_teammate.gui import _long_job  # noqa: PLC0415
 
-    from teachers_teammate.gui import _addon_installer_dialog, _model_fetch  # noqa: PLC0415
-
-    threads: list[Any] = []
-
-    class _FakePull(QObject):
-        progress = Signal(str, float, float)
-        finished_ok = Signal(str)
-        finished_err = Signal(str)
-
-        def __init__(self, _service: Any, url: str, model: str) -> None:
-            super().__init__()
-            threads.append(self)
-
-        def start(self) -> None:
-            pass
-
-        def isRunning(self) -> bool:
-            return True
-
-        def isFinished(self) -> bool:
-            return False
-
-        def wait(self, _timeout: int = 0) -> bool:
-            return True
-
-    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    threads = fake_pull_threads(monkeypatch)
     manager = main_window_module.PullManager(service=real_service())
-    held_before = set(_model_fetch._RETIRED_THREADS)
+    held_before = set(_long_job._LIVE)
 
     manager.start("http://host:11434", "a:1b")
     thread = threads[0]
@@ -1379,9 +1324,9 @@ def test_a_pull_thread_outlives_the_manager_that_started_it(qtbot, monkeypatch) 
 
     try:
         assert manager._thread is None
-        assert thread in _model_fetch._RETIRED_THREADS
+        assert thread in _long_job._LIVE
     finally:
-        _model_fetch._RETIRED_THREADS.intersection_update(held_before)
+        _long_job._LIVE.intersection_update(held_before)
 
 
 @pytest.mark.gui
@@ -1391,34 +1336,7 @@ def test_aborting_a_pull_drops_the_queue(qtbot, monkeypatch) -> None:
     When   it is aborted
     Then   nothing else is queued, so the aborted round does not go on with the next model
     """
-    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
-
-    from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
-
-    class _FakePull(QObject):
-        progress = Signal(str, float, float)
-        finished_ok = Signal(str)
-        finished_err = Signal(str)
-
-        def __init__(self, _service: Any, url: str, model: str) -> None:
-            super().__init__()
-
-        def start(self) -> None:
-            pass
-
-        def isRunning(self) -> bool:
-            return True
-
-        def isFinished(self) -> bool:
-            return False
-
-        def wait(self, _timeout: int = 0) -> bool:
-            return True
-
-        def request_abort(self) -> None:
-            pass
-
-    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    fake_pull_threads(monkeypatch)
     manager = main_window_module.PullManager(service=real_service())
     manager.start("http://host:11434", "a:1b", ["b:1b", "c:1b"])
 
@@ -4100,38 +4018,7 @@ def test_a_pull_requested_while_one_runs_is_queued_not_dropped(qtbot, monkeypatc
     Then   they wait in the queue once each and are pulled after the running one, instead of
            the request being ignored
     """
-    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
-
-    from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
-
-    threads: list[Any] = []
-
-    class _FakePull(QObject):
-        progress = Signal(str, float, float)
-        finished_ok = Signal(str)
-        finished_err = Signal(str)
-
-        def __init__(self, _service: Any, url: str, model: str) -> None:
-            super().__init__()
-            self.model = model
-            threads.append(self)
-
-        def start(self) -> None:
-            pass
-
-        def isRunning(self) -> bool:
-            return True
-
-        def isFinished(self) -> bool:
-            return False
-
-        def wait(self, _timeout: int = 0) -> bool:
-            return True
-
-        def request_abort(self) -> None:
-            pass
-
-    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    threads = fake_pull_threads(monkeypatch)
     manager = main_window_module.PullManager(service=real_service())
     manager.start("http://host:11434", "a:1b")
 

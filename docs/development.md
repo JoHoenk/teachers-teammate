@@ -1037,20 +1037,39 @@ on macOS, `systemd-inhibit --list` on Linux.
 
 ### Background tasks in the GUI
 
-New background work uses `gui/_background.py` instead of a `QThread` subclass:
+There are two kinds of background work, one module each.
+
+**A query or a fetch** — no window waits for it, and only the newest answer counts — uses
+`gui/_background.py`:
 
 ```python
 self._task = LatestTask(owner=self)            # "latest wins" per widget
 self._task.submit(lambda: service.slow_call(), self._on_done)   # on_done(result, error)
+run_streaming(fetch, on_item, on_done, owner=self)              # items as they arrive
 ```
 
 Tasks run on a shared `QThreadPool`; results arrive on the GUI thread through a queued
 signal, results for a destroyed `owner` are dropped, and superseded results of a
 `LatestTask` are ignored. There is no thread object to destroy, so closing a dialog while
 a task runs cannot abort the process. The main window waits a bounded moment for running
-tasks when it closes (`wait_for_background_tasks`). A remaining `QThread` subclass is moved
-to it when it is touched. In GUI tests, patch
+tasks when it closes (`wait_for_background_tasks`). In GUI tests, patch
 `LatestTask.submit` to keep a smoke test offline (see `neutralize_gui_threads`).
+
+**A long job** — a pip install, a model download, an Ollama pull: it reports while it runs,
+the window that asked must not close before it ended, and it can be stopped only between two
+chunks — subclasses `LongJobThread` (`gui/_long_job.py`) and implements `work()` alone:
+
+```python
+class _PipInstallThread(LongJobThread):
+    def work(self) -> None:                     # the result travels with finished_ok
+        self._svc.addons.install_packages(self._packages, self.log_line.emit)
+```
+
+The base carries `log_line`, `progress`, `finished_ok`, `finished_err`, a stop event that
+`work()` watches where it waits, and `stop()`; a cancelled download and a stopped job both
+report `ABORTED`. It holds every started job until it has ended, so a window may let go of
+one that is still running — destroying a running `QThread` aborts the process — and the
+application waits a bounded moment for them when it closes (`wait_for_long_jobs`).
 
 ### The evaluation tools
 

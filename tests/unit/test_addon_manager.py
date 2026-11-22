@@ -27,6 +27,7 @@ from teachers_teammate.infrastructure.addon_manager import (
 )
 from teachers_teammate.infrastructure.spacy_models import spacy_model_url
 from teachers_teammate.infrastructure.storage_root import app_data_folder
+from teachers_teammate.messages import MessageKey
 
 #: The add-on of the OpenAI provider package: an install that needs the network.
 ADDON_LLM_OPENAI = "llm_openai"
@@ -1265,8 +1266,10 @@ def test_foreign_check_is_off_outside_the_installed_app(
 
     assert addon_manager.foreign_python_packages(pkg_dir) == []
     assert addon_manager.addons_outdated() is False
-    with pytest.raises(RuntimeError, match="installed app"):
+    with pytest.raises(RuntimeError) as raised:
         addon_manager.update_installed_addons(lambda _line: None)
+
+    assert raised.value.args[0].key is MessageKey.ADDONS_UPDATE_NEEDS_INSTALL
     assert (pkg_dir / "spacy-3.8.0.dist-info").is_dir()
 
 

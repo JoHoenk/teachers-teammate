@@ -32,12 +32,11 @@ from ..domain.model_listing import ModelListing
 from ..domain.providers import ProviderInfo
 from ..exceptions import ProviderNotAvailableError
 from ..interfaces import LLMProviderModule
+from ..messages import provider_not_loaded, unknown_provider_error
 from ..texts.addons import (
     MODEL_LIST_UNREADABLE,
     NO_HEALTH_CHECK,
     provider_check_failed,
-    provider_not_loaded,
-    unknown_provider_error,
 )
 
 _logger = logging.getLogger(__name__)

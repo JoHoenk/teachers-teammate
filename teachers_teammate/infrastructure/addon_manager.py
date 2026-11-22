@@ -49,7 +49,7 @@ from types import MappingProxyType
 from ..domain.local_models import PRIVACY_ADDON_ID
 from ..domain.providers import AddonPackage
 from ..exceptions import AddonInstallError, AddonUpdateError, InstallFailure
-from ..texts.addons import ADDONS_UPDATE_NEEDS_INSTALL
+from ..messages import addons_update_needs_install
 from .llm_factory import get_provider_info, list_providers
 from .spacy_models import spacy_model_url
 from .storage_root import app_data_folder
@@ -889,7 +889,7 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
             bundle, ...); each failure is an :class:`AddonInstallError` when its reason is known.
     """
     if not getattr(sys, "frozen", False):
-        raise RuntimeError(ADDONS_UPDATE_NEEDS_INSTALL)
+        raise RuntimeError(addons_update_needs_install())
     pkg_dir = get_packages_dir()
     failures: list[tuple[str, RuntimeError]] = []
     for requirement in installed_addon_requirements(pkg_dir):

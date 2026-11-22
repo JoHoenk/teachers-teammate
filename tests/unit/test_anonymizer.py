@@ -25,6 +25,7 @@ from teachers_teammate.infrastructure.anonymizer import (
     _trim_street,
 )
 from teachers_teammate.infrastructure.spacy_models import SpacyModels
+from teachers_teammate.messages import MessageKey
 
 
 # ── AnonymizerConfig ───────────────────────────────────────────────────────
@@ -623,14 +624,18 @@ def test_anonymizer_names_the_cause_when_installed_spacy_cannot_load(monkeypatch
     """
     Given  spacy is found on the path but importing it fails (a module of a dependency is missing)
     When   SpacyAnonymizer is instantiated
-    Then   the ImportError says spacy is installed and carries the original cause
+    Then   the ImportError carries the not-loadable key and the original cause
     """
     import importlib.util  # noqa: PLC0415
 
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
     with patch.dict("sys.modules", {"spacy": None}):
-        with pytest.raises(ImportError, match="installed but cannot be loaded"):
+        with pytest.raises(ImportError) as raised:
             SpacyAnonymizer("English")
+
+    message = raised.value.args[0]
+    assert message.key is MessageKey.SPACY_NOT_LOADABLE
+    assert message.args["reason"].key is MessageKey.DETAIL
 
 
 def test_anonymizer_raises_os_error_when_model_missing() -> None:

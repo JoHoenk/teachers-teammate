@@ -16,6 +16,7 @@ from teachers_teammate.infrastructure.llm_factory import (
     provider_package,
     provider_package_required,
 )
+from teachers_teammate.messages import MessageKey
 
 
 def test_list_providers_returns_non_empty_list() -> None:
@@ -155,10 +156,13 @@ def test_build_llm_raises_value_error_for_unknown_provider() -> None:
     """
     Given  a provider name that does not match any module
     When   build_llm() is called
-    Then   a ValueError is raised
+    Then   a ValueError naming the unknown provider and the known ones is raised
     """
-    with pytest.raises(ValueError, match="Unknown correction provider"):
+    with pytest.raises(ValueError, match="nonexistent_provider_xyz") as raised:
         build_llm("nonexistent_provider_xyz", "some-model", base_url="")
+
+    assert raised.value.args[0].key is MessageKey.UNKNOWN_PROVIDER_ERROR
+    assert raised.value.args[0].args["provider"] == "nonexistent_provider_xyz"
 
 
 def test_build_llm_says_so_when_a_listed_provider_cannot_be_imported(mocker) -> None:
@@ -186,8 +190,10 @@ def test_build_llm_catches_system_exit_from_provider(mocker) -> None:
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
     )
 
-    with pytest.raises(RuntimeError, match="could not be loaded"):
+    with pytest.raises(RuntimeError) as raised:
         build_llm("openai", "gpt-4o", base_url="")
+
+    assert raised.value.args[0].key is MessageKey.PROVIDER_NOT_LOADED
 
 
 def test_build_llm_passes_base_url_when_provider_needs_it(mocker) -> None:

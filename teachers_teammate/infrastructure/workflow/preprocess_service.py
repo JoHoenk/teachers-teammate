@@ -14,7 +14,7 @@ from ...interfaces import (
     InputProvider,
     TextOrigin,
 )
-from ...texts.run import input_without_content, input_without_units
+from ...messages import input_without_content, input_without_units
 from ..input_provider_factory import get_input_provider
 
 

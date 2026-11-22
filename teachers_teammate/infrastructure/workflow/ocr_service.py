@@ -9,7 +9,7 @@ import threading
 from ...domain.stages import Stage
 from ...exceptions import OCRError, RunStoppedError, StageError, stop_requested
 from ...interfaces import OCRProcessor
-from ...texts.run import OCR_IMAGE_LABEL, ocr_failed, ocr_page_label
+from ...messages import message_of, ocr_failed
 from ..ocr_text_cleaner import clean_ocr_text
 
 
@@ -58,8 +58,10 @@ class OCRStageService:
                     # The request was cut off by the stop (or failed while stopping): not the
                     # engine's fault.
                     raise RunStoppedError from exc
-                label = ocr_page_label(i + 1) if len(ocr_inputs) > 1 else OCR_IMAGE_LABEL
-                raise StageError(ocr_failed(label, exc), kind=exc.kind, stage=Stage.OCR) from exc
+                page = i + 1 if len(ocr_inputs) > 1 else None
+                raise StageError(
+                    ocr_failed(page, message_of(exc)), kind=exc.kind, stage=Stage.OCR
+                ) from exc
             page_text = clean_ocr_text(result)
             page_texts.append(page_text)
             if on_page_done is not None:

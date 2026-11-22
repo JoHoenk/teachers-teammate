@@ -50,7 +50,7 @@ from platformdirs import user_cache_dir
 
 from ..config import override_root
 from ..exceptions import ConfigFileNotFoundError, StorageResolutionError
-from ..texts.run import config_file_missing, storage_root_unresolved
+from ..messages import config_file_missing, storage_root_unresolved
 
 # StorageResolutionError is defined in exceptions.py; re-exported here for
 # backwards-compatibility with any code that imported it from this module.

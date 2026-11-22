@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 
-from ..texts.dialogs import cli_error
+from ..messages import cli_error
 
 
 class StdoutReporter:
@@ -25,4 +25,4 @@ class StdoutReporter:
         print(line, file=sys.stderr, flush=True)
 
     def error(self, line: str) -> None:
-        print(cli_error(line), file=sys.stderr, flush=True)
+        print(str(cli_error(line)), file=sys.stderr, flush=True)

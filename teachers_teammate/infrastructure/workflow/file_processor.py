@@ -50,15 +50,12 @@ from ...interfaces import (
     OnStageStartedFn,
     Reporter,
 )
-from ...texts import report as report_text
-from ...texts.review import personal_info_still_hidden
-from ...texts.run import (
-    EMPTY_OCR_ANSWER,
-    RESULTS_CACHED,
+from ...messages import (
+    Message,
     cache_save_failed,
-    docx_failed,
+    empty_ocr_answer,
     input_read_failed,
-    output_not_saved,
+    message_of,
     output_overwrites_input,
     output_read_back_as_input,
     output_replaces_another,
@@ -68,6 +65,9 @@ from ...texts.run import (
     preview_save_failed,
     text_files_failed,
 )
+from ...texts import report as report_text
+from ...texts.review import personal_info_still_hidden
+from ...texts.run import RESULTS_CACHED, docx_failed, output_not_saved
 from ..ocr_formats import plain_text_of
 from ..reporting import StdoutReporter
 from ..run_stats import RunStatsCollector
@@ -80,6 +80,13 @@ if TYPE_CHECKING:
     from ..ocr_formats import OcrOutputPostprocessor
 
 _logger = logging.getLogger(__name__)
+
+
+def _stage_error(
+    sentence: Callable[[Message], Message], exc: BaseException, kind: StageErrorKind
+) -> StageError:
+    """Return the :class:`StageError` that says *sentence* about *exc*, of *kind*."""
+    return StageError(sentence(message_of(exc)), kind=kind)
 
 
 @dataclass(frozen=True)
@@ -380,7 +387,7 @@ class FileProcessor:
             if isinstance(exc, FileNotFoundError) and not file.exists():
                 self._reporter.status(report_text.file_skipped(FILE_GONE_MESSAGE))
                 raise FileSkipped(FILE_GONE_MESSAGE) from exc
-            raise StageError(input_read_failed(exc), kind=StageErrorKind.STORAGE) from exc
+            raise _stage_error(input_read_failed, exc, StageErrorKind.STORAGE) from exc
 
     def _run_preprocess_or_cache(
         self, file: Path, ctx: CacheContext
@@ -448,7 +455,7 @@ class FileProcessor:
             self._reporter.status(report_text.file_skipped(RECOGNITION_OFF_MESSAGE))
             raise FileSkipped(str(exc)) from exc
         except (OSError, ValueError, RuntimeError, PipelineInputError) as exc:
-            raise StageError(preprocessing_failed(exc), kind=StageErrorKind.PREPROCESSING) from exc
+            raise _stage_error(preprocessing_failed, exc, StageErrorKind.PREPROCESSING) from exc
 
         # The steps of the first page: the preview shows that page.
         ocr_inputs, prep_steps, source_image = (
@@ -482,7 +489,7 @@ class FileProcessor:
                     pages=pages,
                 )
             except OSError as exc:
-                raise StageError(preview_save_failed(exc), kind=StageErrorKind.STORAGE) from exc
+                raise _stage_error(preview_save_failed, exc, StageErrorKind.STORAGE) from exc
 
         if not ocr_inputs:
             self._reporter.status(report_text.PREPROCESSING_TEXT_INPUT)
@@ -584,7 +591,7 @@ class FileProcessor:
                 raw_text = join_labelled_pages(page_texts)
 
         if not raw_text:
-            raise StageError(EMPTY_OCR_ANSWER, kind=StageErrorKind.ENGINE, stage=Stage.OCR)
+            raise StageError(empty_ocr_answer(), kind=StageErrorKind.ENGINE, stage=Stage.OCR)
 
         try:
             ctx = self._cache_service.record_ocr(
@@ -596,7 +603,7 @@ class FileProcessor:
                 raw_text_format=raw_text_format,
             )
         except OSError as exc:
-            raise StageError(cache_save_failed(exc), kind=StageErrorKind.STORAGE) from exc
+            raise _stage_error(cache_save_failed, exc, StageErrorKind.STORAGE) from exc
 
         if raw_text_hint is None:
             self._reporter.status(report_text.ocr_done(page_count))
@@ -630,7 +637,9 @@ class FileProcessor:
         try:
             anonymized, anon_map = self._anonymizer.anonymize(text)
         except Exception as exc:  # spaCy and name-model errors vary; report them per file
-            raise AnonymizerError(personal_info_removal_failed(exc), stage=stage) from exc
+            raise AnonymizerError(
+                personal_info_removal_failed(message_of(exc)), stage=stage
+            ) from exc
         if before_model:
             self._reporter.status(report_text.anonymized_before(stage))
         else:
@@ -646,7 +655,9 @@ class FileProcessor:
         try:
             return self._anonymizer.restore(text, anon_map)
         except (ValueError, KeyError) as exc:
-            raise AnonymizerError(personal_info_restore_failed(exc), stage=stage) from exc
+            raise AnonymizerError(
+                personal_info_restore_failed(message_of(exc)), stage=stage
+            ) from exc
 
     @staticmethod
     def _left_hidden(text: str, anon_map: AnonymizationMap) -> str:

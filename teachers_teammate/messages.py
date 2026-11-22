@@ -61,10 +61,8 @@ class MessageKey(StrEnum):
     PERSONAL_INFO_SETUP_FAILED = "personal_info_setup_failed"
     STORAGE_ROOT_UNRESOLVED = "storage_root_unresolved"
     OCR_FAILED = "ocr_failed"
-    IMAGE_UNIT_WITHOUT_PATH = "image_unit_without_path"
     INPUT_WITHOUT_CONTENT = "input_without_content"
     INPUT_WITHOUT_UNITS = "input_without_units"
-    UNSUPPORTED_UNIT_KIND = "unsupported_unit_kind"
 
     # ── A server and the answers it gives ─────────────────────────────────────────
     EMPTY_ANSWER = "empty_answer"
@@ -341,11 +339,6 @@ def ocr_failed(page: int | None, reason: Message) -> Message:
     return Message(MessageKey.OCR_FAILED, {"page": page, "reason": reason})
 
 
-def image_unit_without_path(name: str) -> Message:
-    """Return what a run says about a unit that came out of a provider without its image."""
-    return Message(MessageKey.IMAGE_UNIT_WITHOUT_PATH, {"name": name})
-
-
 def input_without_content(name: str) -> Message:
     """Return what a run says about an input file that had neither an image nor text."""
     return Message(MessageKey.INPUT_WITHOUT_CONTENT, {"name": name})
@@ -354,11 +347,6 @@ def input_without_content(name: str) -> Message:
 def input_without_units(name: str) -> Message:
     """Return what a run says about an input file that yielded no unit at all."""
     return Message(MessageKey.INPUT_WITHOUT_UNITS, {"name": name})
-
-
-def unsupported_unit_kind(kind: str, name: str) -> Message:
-    """Return what a run says about a unit whose kind no stage of the pipeline knows."""
-    return Message(MessageKey.UNSUPPORTED_UNIT_KIND, {"kind": kind, "name": name})
 
 
 # ── A server and the answers it gives ──────────────────────────────────────

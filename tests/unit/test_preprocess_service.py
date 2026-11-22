@@ -8,9 +8,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from teachers_teammate.exceptions import RecognitionSwitchedOffError
+from teachers_teammate.exceptions import PipelineInputError, RecognitionSwitchedOffError
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreprocessService
 from teachers_teammate.interfaces import ImageUnit, InputPayload, TextUnit
+from teachers_teammate.messages import MessageKey
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -188,27 +189,31 @@ def test_preprocess_input_empty_units_raises_value_error(tmp_path: Path) -> None
     """
     Given  a payload with no units
     When   preprocess_input is called
-    Then   ValueError is raised
+    Then   PipelineInputError (a ValueError) with the no-units key is raised
     """
     payload = InputPayload(units=(), source_image=None)
     svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
 
-    with pytest.raises(ValueError, match="no units"):
+    with pytest.raises(PipelineInputError) as raised:
         svc.preprocess_input(tmp_path / "doc.png")
+
+    assert raised.value.args[0].key is MessageKey.INPUT_WITHOUT_UNITS
 
 
 def test_preprocess_input_no_content_raises_value_error(tmp_path: Path) -> None:
     """
     Given  a text unit whose text is empty (falsy)
     When   preprocess_input is called and produces no images and no text
-    Then   ValueError is raised
+    Then   PipelineInputError with the no-content key is raised
     """
     unit = TextUnit("")
     payload = InputPayload(units=(unit,), source_image=None)
     svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
 
-    with pytest.raises(ValueError, match="no usable"):
+    with pytest.raises(PipelineInputError) as raised:
         svc.preprocess_input(tmp_path / "empty.txt")
+
+    assert raised.value.args[0].key is MessageKey.INPUT_WITHOUT_CONTENT
 
 
 # ── load_input ─────────────────────────────────────────────────────────────

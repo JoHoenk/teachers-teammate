@@ -71,10 +71,8 @@ _RENDERERS: dict[MessageKey, Callable[..., str]] = {
     MessageKey.PERSONAL_INFO_SETUP_FAILED: run.personal_info_setup_failed,
     MessageKey.STORAGE_ROOT_UNRESOLVED: run.storage_root_unresolved,
     MessageKey.OCR_FAILED: run.ocr_failed,
-    MessageKey.IMAGE_UNIT_WITHOUT_PATH: run.image_unit_without_path,
     MessageKey.INPUT_WITHOUT_CONTENT: run.input_without_content,
     MessageKey.INPUT_WITHOUT_UNITS: run.input_without_units,
-    MessageKey.UNSUPPORTED_UNIT_KIND: run.unsupported_unit_kind,
     # ── A server and the answers it gives ─────────────────────────────────────
     MessageKey.EMPTY_ANSWER: _constant(servers.EMPTY_ANSWER),
     MessageKey.EMPTY_ANSWER_CUT_OFF: _constant(servers.EMPTY_ANSWER_CUT_OFF),

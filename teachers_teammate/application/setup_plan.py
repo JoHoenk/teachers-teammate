@@ -45,6 +45,7 @@ from ..domain.model_catalog import (
     disk_verdict,
     find_spec,
     normalize_tag,
+    profile_setting,
     suitability_rank,
 )
 from ..domain.ollama_discovery import OllamaState
@@ -694,7 +695,9 @@ class SetupService:
 
         url = answers.ollama_url
         running = self._ollama.ollama_status(url).state is OllamaState.RUNNING
-        hardware = self._recommendations.resolve_hardware_profile(answers.hardware_profile, url)
+        hardware = self._recommendations.resolve_hardware_profile(
+            profile_setting(answers.hardware_profile), url
+        )
         local = self._ollama.is_local(url, include_wsl_host=True)
         return SetupFacts(
             profile=hardware.profile,

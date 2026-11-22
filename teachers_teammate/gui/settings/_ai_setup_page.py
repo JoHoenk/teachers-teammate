@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import DEFAULTS
+from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...texts import review as txt
 from ...texts.settings import PAGE_AI_MODELS, PAGE_AI_SETUP
 from .._hardware_profile_selector import HardwareProfileSelector
@@ -91,7 +92,7 @@ class AiSetupPage(SettingsPageBase):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
         computer = self._build_performance_group(
-            str(settings.get("hardware_profile", DEFAULTS["hardware_profile"]))
+            profile_setting(settings.get("hardware_profile", DEFAULTS["hardware_profile"]))
         )
         # The speed test is part of the same box: both are facts about this computer.
         self._performance_form.addRow(self._build_speed_block(computer))
@@ -191,7 +192,7 @@ class AiSetupPage(SettingsPageBase):
         """Redraw the speed block: the models chosen on *AI models* or a measurement changed."""
         self._speed_panel.refresh()
 
-    def _build_performance_group(self, hardware_profile: str) -> QGroupBox:
+    def _build_performance_group(self, hardware_profile: HardwareProfileSetting) -> QGroupBox:
         group = QGroupBox(PERFORMANCE_GROUP)
         form = QFormLayout(group)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
@@ -217,7 +218,7 @@ class AiSetupPage(SettingsPageBase):
             self._hardware_selector.set_ollama_url(self._url)
             self._speed_panel.set_ollama_url(self._url)
         if "hardware_profile" in values:
-            self._hardware_selector.set_setting(str(values["hardware_profile"]))
+            self._hardware_selector.set_setting(profile_setting(values["hardware_profile"]))
 
     def values(self) -> dict[str, Any]:
         return {

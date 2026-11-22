@@ -89,6 +89,7 @@ from teachers_teammate.domain.model_catalog import (
     FULL_SPEED_SHARE,
     NOMINAL_CARD_GB,
     OLLAMA_CATALOG,
+    HardwareProfile,
     OllamaModelSpec,
     RequestProfile,
 )
@@ -1127,7 +1128,7 @@ def _add_fit_options(parser: argparse.ArgumentParser) -> None:
     """Add the size limit and the memory agent: what a screen needs to check the fit."""
     parser.add_argument(
         "--fit-limit",
-        default="16gb",
+        default=HardwareProfile.CARD_16GB.value,
         metavar="LIMIT",
         help="Fail a setup whose model needs more than this at the checked window: 8gb, 16gb, a "
         "number of GB, or off (default %(default)s).",

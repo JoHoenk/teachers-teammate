@@ -26,7 +26,7 @@ from ._model_defaults import default_model_for_task
 from .application.composition import AppServices, inject_addon_packages_dir
 from .config import Config, load_config_file
 from .domain.correction_prompts import NOTES_LIMIT
-from .domain.data_location import LOCAL_OCR_ENGINES, DataFlow, PrivacyLevel
+from .domain.data_location import LOCAL_OCR_ENGINES, PROVIDER_OLLAMA, DataFlow, PrivacyLevel
 from .domain.local_models import (
     HUGGING_FACE_HOST,
     PAGE_MODELS_SIZE_LABEL,
@@ -109,7 +109,7 @@ def _add_correction_args(parser: argparse.ArgumentParser, providers: list[str] |
         help=(
             "Correction LLM model name. "
             "Auto-selected per provider when omitted: "
-            f"{default_model_for_task('ollama', Stage.CORRECTION)} (ollama), "
+            f"{default_model_for_task(PROVIDER_OLLAMA, Stage.CORRECTION)} (ollama), "
             f"{default_model_for_task('openai', Stage.CORRECTION)} (openai), "
             f"{default_model_for_task('anthropic', Stage.CORRECTION)} (anthropic)."
         ),

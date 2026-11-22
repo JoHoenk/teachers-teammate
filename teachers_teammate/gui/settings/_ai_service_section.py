@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QWidg
 from ...application.composition import AppServices
 from ...config import DEFAULTS
 from ...domain.data_location import PROVIDER_OLLAMA, DataLocation, DataRegion
+from ...domain.model_catalog import HardwareProfile, HardwareProfileSetting
 from ...domain.model_listing import ListedModel, ModelListing
 from ...domain.providers import ProviderInfo
 from ...domain.stages import Stage
@@ -182,7 +183,7 @@ class AiServiceSection(QWidget):
         spec: AiServiceSpec,
         *,
         app_service: AppServices,
-        hardware_profile: str = "auto",
+        hardware_profile: HardwareProfileSetting = HardwareProfileSetting.AUTO,
         ollama_url: str = DEFAULTS["ollama_url"],
         open_downloads: OpenDownloads | None = None,
         key_drafts: ApiKeyDrafts | None = None,
@@ -232,7 +233,7 @@ class AiServiceSection(QWidget):
 
     # ── construction ──────────────────────────────────────────────────────────
 
-    def _build(self, hardware_profile: str) -> None:
+    def _build(self, hardware_profile: HardwareProfileSetting) -> None:
         form = QFormLayout(self)
         form.setContentsMargins(0, 0, 0, 0)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
@@ -550,7 +551,7 @@ class AiServiceSection(QWidget):
         profile = detection.profile if detection is not None else None
         show = (
             self._show_same_model_tip
-            and profile in ("cpu", "8gb")
+            and profile in (HardwareProfile.CPU, HardwareProfile.CARD_8GB)
             and self.provider() == PROVIDER_OLLAMA
             and self._other_provider == PROVIDER_OLLAMA
             and self._model.currentText().strip() != self._other_model

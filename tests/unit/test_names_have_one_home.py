@@ -1,9 +1,10 @@
-"""A stage word and the Ollama address are spelled in one module each.
+"""A stage word, the Ollama address and the Ollama provider id are spelled in one module each.
 
 ``domain/stages.py`` writes the stage words (``Stage.OCR`` is the ``"ocr"`` a stored file
-carries) and ``domain/ollama_discovery.py`` writes the address the app looks at first.  A
-literal elsewhere means a word with a second home: a typo cannot be caught, and a changed
-address silently reaches only the paths that read the constant.
+carries), ``domain/ollama_discovery.py`` writes the address the app looks at first and
+``domain/data_location.py`` writes the provider id.  A literal elsewhere means a name with a
+second home: a typo cannot be caught, and a changed name silently reaches only the paths that
+read the constant.
 """
 
 from __future__ import annotations
@@ -42,6 +43,17 @@ _STAGE_WORDS_LEFT: dict[str, int] = {
 #: The port the address in ``domain/ollama_discovery.py`` names.
 _ADDRESS_MARKER = "11434"
 _ADDRESS_HOME = "domain/ollama_discovery.py"
+
+#: The provider id ``domain/data_location.py`` spells as ``PROVIDER_OLLAMA``.
+_PROVIDER_ID = "ollama"
+_PROVIDER_HOME = "domain/data_location.py"
+
+#: The provider id still spelled elsewhere, per module: it names something that is not the
+#: provider — a package to import or the program on disk.
+_PROVIDER_ID_LEFT: dict[str, int] = {
+    "frozen_modes.py": 2,  # the ``ollama`` package: imported for the check, read for its version
+    "infrastructure/ollama_install.py": 3,  # the program looked for, and started as ``serve``
+}
 
 
 def _package_dir() -> Path:
@@ -114,3 +126,24 @@ def test_the_ollama_address_is_spelled_in_domain_ollama_discovery_only() -> None
         if _ADDRESS_MARKER in value
     }
     assert spelled == {}, f"use DEFAULT_SERVER_URL instead: {spelled}"
+
+
+def test_the_ollama_provider_id_is_spelled_in_domain_data_location_only() -> None:
+    """
+    Given  every module of the package
+    When   the string constants that spell the Ollama provider id are counted per module
+    Then   each module spells exactly as many as pinned, so a freed slot is not reused
+    """
+    counted = {
+        module: sum(1 for value in _strings(path) if value == _PROVIDER_ID)
+        for module, path in _modules()
+        if module != _PROVIDER_HOME
+    }
+    off = {
+        module: (counted.get(module, 0), pinned)
+        for module in counted.keys() | _PROVIDER_ID_LEFT.keys()
+        if (pinned := _PROVIDER_ID_LEFT.get(module, 0)) != counted.get(module, 0)
+    }
+    assert off == {}, (
+        f"use PROVIDER_OLLAMA instead, or fix the pin (`module: (now, pinned)`): {off}"
+    )

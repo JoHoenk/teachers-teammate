@@ -46,7 +46,7 @@ from ..domain.data_location import (
     DataLocation,
 )
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
-from ..domain.model_catalog import OCR_TEMPERATURE
+from ..domain.model_catalog import OCR_TEMPERATURE, HardwareProfileSetting
 from ..domain.pdf_text_layer import (
     PDF_TEXT_LAYER_MODES,
     PdfTextLayerMode,
@@ -94,7 +94,7 @@ class OcrModelPicker(QWidget):
         *,
         app_service: AppServices,
         ollama_url: str = DEFAULTS["ollama_url"],
-        hardware_profile: str = "auto",
+        hardware_profile: HardwareProfileSetting = HardwareProfileSetting.AUTO,
         open_downloads: OpenDownloads | None = None,
         profile_selector: HardwareProfileSelector | None = None,
         parent: QWidget | None = None,
@@ -240,7 +240,7 @@ class OcrModelPicker(QWidget):
             )
         self.refresh()
 
-    def set_hardware_profile(self, setting: str) -> None:
+    def set_hardware_profile(self, setting: HardwareProfileSetting) -> None:
         """Follow another "My computer" choice ("auto", "cpu", "8gb", "16gb").
 
         Does nothing while the picker follows a profile selector it does not own, or when the
@@ -620,7 +620,7 @@ class OcrConfigSelector(QWidget):
         ollama_url: str = DEFAULTS["ollama_url"],
         show_preview_button: bool = True,
         show_pdf_text_layer: bool = True,
-        hardware_profile: str = "auto",
+        hardware_profile: HardwareProfileSetting = HardwareProfileSetting.AUTO,
         expert_collapsed: bool = True,
         open_downloads: OpenDownloads | None = None,
         parent: QWidget | None = None,
@@ -677,7 +677,7 @@ class OcrConfigSelector(QWidget):
         """Re-apply engine-dependent state (visibility, defaults, model fetch)."""
         self._picker.refresh()
 
-    def set_hardware_profile(self, setting: str) -> None:
+    def set_hardware_profile(self, setting: HardwareProfileSetting) -> None:
         """Follow another "My computer" choice."""
         self._picker.set_hardware_profile(setting)
 

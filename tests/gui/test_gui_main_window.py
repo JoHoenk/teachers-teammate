@@ -29,6 +29,7 @@ from teachers_teammate.domain.model_catalog import (
     RECOMMENDED,
     DetectionReason,
     HardwareDetection,
+    HardwareProfile,
 )
 from teachers_teammate.gui import _dialogs, _handles
 from teachers_teammate.gui import _export_controller as export_controller_module
@@ -2412,13 +2413,16 @@ def test_first_start_selects_best_models_for_profile(qtbot, monkeypatch, tmp_pat
            and settings are saved (AC12)
     """
     detection = HardwareDetection(
-        profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
+        profile=HardwareProfile.CARD_16GB,
+        reason=DetectionReason.GPU_DETECTED,
+        gpu_name="RTX 4090",
+        memory_gb=24.0,
     )
     win = _make_first_start_window(qtbot, monkeypatch, tmp_path, detection)
     qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
 
     settings = win._config_panel.get_settings_dict()
-    best_16gb = RECOMMENDED["general"]["16gb"][0]  # not the default: that is the 8 GB pick
+    best_16gb = RECOMMENDED["general"][HardwareProfile.CARD_16GB][0]  # not the default: 8 GB
     assert settings["ocr_model"] == DEFAULT_OCR_MODEL
     assert settings["correction_model"] == best_16gb
     assert settings["evaluate_model"] == best_16gb
@@ -2446,7 +2450,10 @@ def test_existing_config_models_untouched(qtbot, monkeypatch, tmp_path: Path) ->
         encoding="utf-8",
     )
     detection = HardwareDetection(
-        profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
+        profile=HardwareProfile.CARD_16GB,
+        reason=DetectionReason.GPU_DETECTED,
+        gpu_name="RTX 4090",
+        memory_gb=24.0,
     )
     detect_calls: list = []
     no_update_check(monkeypatch)
@@ -2485,7 +2492,10 @@ def test_first_start_non_ollama_correction_provider_untouched(
 
     monkeypatch.setitem(DEFAULTS, "correction_provider", "openai")
     detection = HardwareDetection(
-        profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
+        profile=HardwareProfile.CARD_16GB,
+        reason=DetectionReason.GPU_DETECTED,
+        gpu_name="RTX 4090",
+        memory_gb=24.0,
     )
     win = _make_first_start_window(qtbot, monkeypatch, tmp_path, detection)
     qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
@@ -2506,13 +2516,16 @@ def test_cancelling_the_assistant_on_a_first_start_keeps_todays_setup(
     """
     monkeypatch.setattr(SetupService, "system_language", lambda self: "German")
     detection = HardwareDetection(
-        profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
+        profile=HardwareProfile.CARD_16GB,
+        reason=DetectionReason.GPU_DETECTED,
+        gpu_name="RTX 4090",
+        memory_gb=24.0,
     )
     win = _make_first_start_window(qtbot, monkeypatch, tmp_path, detection)
     qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
 
     saved = (tmp_path / "ocr.toml").read_text(encoding="utf-8")
-    best_16gb = RECOMMENDED["general"]["16gb"][0]
+    best_16gb = RECOMMENDED["general"][HardwareProfile.CARD_16GB][0]
     assert 'language = "German"' in saved
     assert f'correction_model = "{best_16gb}"' in saved
 
@@ -4037,7 +4050,10 @@ def test_a_pull_requested_while_one_runs_is_queued_not_dropped(qtbot, monkeypatc
 def _detection() -> HardwareDetection:
     """Return a detection of an 8 GB card, as a finished probe would."""
     return HardwareDetection(
-        profile="8gb", reason=DetectionReason.GPU_DETECTED, gpu_name="Test GPU", memory_gb=8.0
+        profile=HardwareProfile.CARD_8GB,
+        reason=DetectionReason.GPU_DETECTED,
+        gpu_name="Test GPU",
+        memory_gb=8.0,
     )
 
 

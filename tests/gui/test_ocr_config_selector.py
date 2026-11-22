@@ -11,7 +11,7 @@ from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.data_location import DataLocation, StageLocation
-from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
+from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL, HardwareProfileSetting
 from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 
@@ -212,7 +212,7 @@ def _ollama_selector(
         app_service=services_of(
             _OllamaCatalogAppService(models if models is not None else _INSTALLED)
         ),
-        hardware_profile="8gb",
+        hardware_profile=HardwareProfileSetting.CARD_8GB,
         open_downloads=open_downloads,
     )
     qtbot.addWidget(widget)
@@ -351,7 +351,8 @@ def test_ollama_cloud_models_are_not_offered_for_reading_pages(qtbot) -> None:
     """
     models = ["qwen3-vl:8b", "qwen3-vl:235b-cloud"]
     selector = OcrConfigSelector(
-        app_service=services_of(_OllamaCatalogAppService(models)), hardware_profile="8gb"
+        app_service=services_of(_OllamaCatalogAppService(models)),
+        hardware_profile=HardwareProfileSetting.CARD_8GB,
     )
     qtbot.addWidget(selector)
     with qtbot.waitSignal(selector._picker._hw_selector.resolved_changed, timeout=5000):

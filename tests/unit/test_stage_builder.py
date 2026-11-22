@@ -10,7 +10,11 @@ import pytest
 
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.setting_values import PreprocessMethod
-from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection
+from teachers_teammate.domain.model_catalog import (
+    DetectionReason,
+    HardwareDetection,
+    HardwareProfile,
+)
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.exceptions import OnlineOcrNotAllowedError
@@ -507,7 +511,7 @@ def test_missing_spacy_with_proofreading_stops_the_run(tmp_path: Path) -> None:
 def _hardware() -> HardwareDetection:
     """A computer with a 16 GB graphics card (13.6 GB usable) and 32 GB of main memory."""
     return HardwareDetection(
-        profile="16gb",
+        profile=HardwareProfile.CARD_16GB,
         reason=DetectionReason.GPU_DETECTED,
         memory_gb=12.0,
         system_memory_gb=32.0,

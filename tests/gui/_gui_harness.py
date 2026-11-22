@@ -40,7 +40,9 @@ from teachers_teammate.domain.model_catalog import (
     OLLAMA_CATALOG,
     DetectionReason,
     HardwareDetection,
+    HardwareProfile,
     ModelUses,
+    concrete_profile,
 )
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.proofreading.review import CorrectionReview
@@ -137,13 +139,14 @@ class FakeGuiService(LocalDataFlowStub):
 
     def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
         _ = ollama_url
-        if setting in ("cpu", "8gb", "16gb"):
+        profile = concrete_profile(setting)
+        if profile is not None:
             return HardwareDetection(
-                profile=setting,
+                profile=profile,
                 reason=DetectionReason.MANUAL,
             )
         return HardwareDetection(
-            profile="8gb",
+            profile=HardwareProfile.CARD_8GB,
             reason=DetectionReason.GPU_DETECTED,
             gpu_name="Test GPU",
             memory_gb=8.0,

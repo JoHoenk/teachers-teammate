@@ -33,7 +33,8 @@ from .domain.data_location import (
 from .domain.model_catalog import (
     DEFAULT_OCR_MODEL,
     DEFAULT_WRITING_MODEL,
-    PROFILE_SETTINGS,
+    HardwareProfileSetting,
+    parse_profile_setting,
 )
 from .domain.ollama_discovery import DEFAULT_SERVER_URL
 from .domain.output_files import DocxFormat
@@ -122,16 +123,13 @@ def _secondary_model(value: object) -> str:
     return str(value) if value else SECONDARY_MODEL_NONE
 
 
-def _one_of(allowed: tuple[str, ...]) -> Callable[[object], str]:
-    """Return a normaliser that accepts only *allowed* (case and whitespace folded)."""
-
-    def normalize(value: object) -> str:
-        cleaned = str(value).strip().lower()
-        if cleaned not in allowed:
-            raise ValueError(f"'{value}' is not one of {', '.join(allowed)}")
-        return cleaned
-
-    return normalize
+def _hardware_profile(value: object) -> HardwareProfileSetting:
+    """Return *value* as a hardware profile setting, raising :exc:`ValueError` otherwise."""
+    setting = parse_profile_setting(value)
+    if setting is None:
+        allowed = ", ".join(member.value for member in HardwareProfileSetting)
+        raise ValueError(f"'{value}' is not one of {allowed}")
+    return setting
 
 
 def _member_of[E: StrEnum](kind: type[E]) -> Callable[[object], E]:
@@ -304,9 +302,15 @@ SETTINGS: tuple[Setting, ...] = (
     # [] = no regex patterns.
     Setting("anonymizer_patterns", None, SettingScope.RUN, _anonymizer_patterns),
     # ── Hardware recommendations ──────────────────────────────────────────────
-    # "auto" | "cpu" | "8gb" | "16gb".  The pipeline never reads it, but the run-start memory
-    # warning does: a hand-picked profile decides how much of a model has to fit where.
-    Setting("hardware_profile", "auto", SettingScope.RUN, _one_of(PROFILE_SETTINGS)),
+    # Detect this computer, or pin one of the three tiers.  The pipeline never reads it, but
+    # the run-start memory warning does: a hand-picked profile decides how much of a model has
+    # to fit where.
+    Setting(
+        "hardware_profile",
+        HardwareProfileSetting.AUTO,
+        SettingScope.RUN,
+        _hardware_profile,
+    ),
     # ── Context window ────────────────────────────────────────────────────────
     # "auto" = as large as the graphics card still holds at full speed (8192 / 16384 / 32768,
     # never smaller than 8192).  Sized from the card's total memory, not from the memory free

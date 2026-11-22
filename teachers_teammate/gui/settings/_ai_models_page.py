@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 
 from ...application.correction_options import review_has_own_model
 from ...config import DEFAULTS, OcrConfig
+from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...domain.stages import Stage
 from ...settings_schema import CONTEXT_SETTINGS
 from ...texts import review as txt
@@ -138,7 +139,7 @@ class AiModelsPage(SettingsPageBase):
         super().__init__(context, parent)
         settings = context.settings
         self._app_service = context.app_service
-        hardware = str(settings.get("hardware_profile", DEFAULTS["hardware_profile"]))
+        hardware = profile_setting(settings.get("hardware_profile", DEFAULTS["hardware_profile"]))
         self._ollama_url = str(settings.get("ollama_url") or DEFAULTS["ollama_url"])
         self._loading = False
         self._drafts = context.key_drafts or ApiKeyDrafts(context.app_service, parent=self)
@@ -342,7 +343,7 @@ class AiModelsPage(SettingsPageBase):
 
     # ── shared state ──────────────────────────────────────────────────────────
 
-    def set_hardware_setting(self, setting: str) -> None:
+    def set_hardware_setting(self, setting: HardwareProfileSetting) -> None:
         # The picker and both sections follow the profile line's selector.
         self._computer_box.set_setting(setting)
 

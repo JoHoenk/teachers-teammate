@@ -26,6 +26,7 @@ from teachers_teammate.application.setup_plan import (
 from teachers_teammate.domain.data_location import DataRegion, StageLocation
 from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
+    HardwareProfile,
     ModelCategory,
     best_model,
 )
@@ -425,7 +426,7 @@ class SetupAppService(DummyAppService):
     def setup_facts(self, answers: SetupAnswers, current: Mapping[str, object]) -> SetupFacts:
         """Answer with canned facts about this computer."""
         return SetupFacts(
-            profile="16gb",
+            profile=HardwareProfile.CARD_16GB,
             system_memory_gb=32.0,
             card_gb=16.0,
             ollama_running=self.ollama_running,

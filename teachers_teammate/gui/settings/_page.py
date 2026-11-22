@@ -20,6 +20,7 @@ from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QWidget
 
 from ...config import DEFAULTS
+from ...domain.model_catalog import HardwareProfileSetting
 from ...texts.settings import (
     PAGE_ADDONS,
     PAGE_AI_MODELS,
@@ -178,7 +179,7 @@ class SettingsPageBase(QWidget):
     def on_packages_changed(self) -> None:
         """An add-on, AI model or language model was installed: look again."""
 
-    def set_hardware_setting(self, setting: str) -> None:
+    def set_hardware_setting(self, setting: HardwareProfileSetting) -> None:
         """Follow the computer profile chosen on *This computer* (read-only elsewhere)."""
         _ = setting
 

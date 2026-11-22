@@ -34,12 +34,14 @@ from PySide6.QtWidgets import (
 from ....application.composition import AppServices
 from ....domain.model_catalog import (
     HardwareProfile,
+    HardwareProfileSetting,
     ModelCategory,
     ModelRating,
     ModelUses,
     OllamaModelSpec,
     Suitability,
     best_model,
+    concrete_profile,
     find_spec,
     normalize_tag,
     suitability_rank,
@@ -107,7 +109,7 @@ class OllamaModelsTab(QWidget):
         self,
         *,
         app_service: AppServices,
-        hardware_setting: str,
+        hardware_setting: HardwareProfileSetting,
         ollama_url: str,
         pull_manager: Any = None,
         parent: QWidget | None = None,
@@ -138,7 +140,7 @@ class OllamaModelsTab(QWidget):
         self._group_items: dict[str, QTreeWidgetItem] = {}
         self._model_items: dict[str, QTreeWidgetItem] = {}  # tag → child row
 
-    def _build_body(self, hardware_setting: str) -> None:
+    def _build_body(self, hardware_setting: HardwareProfileSetting) -> None:
         """Build the computer line, the tree and the fields for the teacher's own models."""
         layout = QVBoxLayout(self)
         group = QGroupBox("AI models for this computer (Ollama)")
@@ -303,7 +305,7 @@ class OllamaModelsTab(QWidget):
             return True
         return _dialogs.ask(self.window(), dlg.model_does_not_fit(messages))
 
-    def set_hardware_setting(self, setting: str) -> None:
+    def set_hardware_setting(self, setting: HardwareProfileSetting) -> None:
         """Follow the computer profile chosen on *This computer*."""
         self._hardware_selector.set_setting(setting)
 
@@ -401,12 +403,11 @@ class OllamaModelsTab(QWidget):
     # ── the computer the rows are rated for ──────────────────────────────────────
 
     def _active_profile(self) -> HardwareProfile:
-        """Return the currently active hardware profile ("8gb" until detection lands)."""
+        """Return the currently active hardware profile (8 GB until detection lands)."""
         detection = self._hardware_selector.resolved()
         if detection is not None:
             return detection.profile
-        setting = self._hardware_selector.setting()
-        return cast(HardwareProfile, setting if setting != "auto" else "8gb")
+        return concrete_profile(self._hardware_selector.setting()) or HardwareProfile.CARD_8GB
 
     def _best_model(self, category: ModelCategory, profile: HardwareProfile) -> str:
         """Return the BEST model of *category* on the active computer."""

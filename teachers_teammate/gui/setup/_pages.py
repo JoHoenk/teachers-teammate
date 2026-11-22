@@ -56,7 +56,13 @@ from ...domain.data_location import (
 )
 from ...domain.language import LANGUAGES
 from ...domain.local_models import PAGE_MODELS_ADDON_ID
-from ...domain.model_catalog import DiskVerdict, Suitability, short_model_name
+from ...domain.model_catalog import (
+    DiskVerdict,
+    HardwareProfileSetting,
+    Suitability,
+    profile_setting,
+    short_model_name,
+)
 from ...domain.stages import Stage
 from ...texts import review as txt
 from ...texts.models import compact_suitability_text
@@ -435,11 +441,13 @@ class LocalAiPage(SetupPage):
             return DEFAULTS["ollama_url"]
         return text or DEFAULTS["ollama_url"]
 
-    def hardware_profile(self) -> str:
+    def hardware_profile(self) -> HardwareProfileSetting:
         """Return the computer profile the suggestions follow."""
         if self._profile is not None:
             return self._profile.setting()
-        return str(self._context.settings.get("hardware_profile") or DEFAULTS["hardware_profile"])
+        return profile_setting(
+            self._context.settings.get("hardware_profile") or DEFAULTS["hardware_profile"]
+        )
 
     # ── life cycle ────────────────────────────────────────────────────────────
 
@@ -656,7 +664,7 @@ class ProofreadingPage(SetupPage):
         section = AiServiceSection(
             PROOFREADING,
             app_service=self._context.app_service,
-            hardware_profile=answers.hardware_profile,
+            hardware_profile=profile_setting(answers.hardware_profile),
             ollama_url=answers.ollama_url,
             open_downloads=self._install_package,
             key_drafts=self.assistant().key_drafts(),
@@ -695,7 +703,7 @@ class ProofreadingPage(SetupPage):
             hand_in=answers.hand_in,
             proofreading=ProofreadingPlace.LOCAL,
             ollama_url=answers.ollama_url,
-            hardware_profile=answers.hardware_profile,
+            hardware_profile=profile_setting(answers.hardware_profile),
             local_ai_shown=answers.local_ai_shown,
         )
         current = dict(self._context.settings)
@@ -1170,7 +1178,7 @@ class DonePage(SetupPage):
             return
         selector = HardwareProfileSelector(
             app_service=self._context.app_service,
-            setting=str(self._settings().get("hardware_profile", "auto")),
+            setting=profile_setting(self._settings().get("hardware_profile")),
             ollama_url=self._ollama_url(),
             parent=self,
         )

@@ -21,6 +21,7 @@ from teachers_teammate.application.ports import OllamaServer
 from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     DetectionReason,
+    HardwareProfile,
     ServerFacts,
     request_profile,
 )
@@ -68,7 +69,7 @@ def _speed(*, write_tps: float = 100.0, on_card: float | None = 0.8) -> ModelSpe
 def _hardware(*, gpu: str | None = "AMD Radeon RX 9070 XT") -> HardwareDetection:
     """Return a detection of a computer with (or without) a graphics card."""
     return HardwareDetection(
-        profile="16gb",
+        profile=HardwareProfile.CARD_16GB,
         reason=DetectionReason.GPU_DETECTED if gpu else DetectionReason.NO_GPU_FOUND,
         gpu_name=gpu,
         memory_gb=16.0 if gpu else None,

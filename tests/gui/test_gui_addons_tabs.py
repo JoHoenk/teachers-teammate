@@ -10,6 +10,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QCheckBox
 import pytest
 
+from teachers_teammate.domain.model_catalog import HardwareProfileSetting
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.texts import addons as txt
 from teachers_teammate.gui._install_round import PACKAGE_PREFIX, PAGE_MODELS_ITEM, READER_ITEM
@@ -225,7 +226,7 @@ def test_the_ollama_tab_lists_the_catalog_and_marks_a_downloaded_model(qtbot) ->
     context = settings_context(RecommendationServiceStub())
     tab = OllamaModelsTab(
         app_service=context.app_service,
-        hardware_setting="8gb",
+        hardware_setting=HardwareProfileSetting.CARD_8GB,
         ollama_url="http://127.0.0.1:11434",
     )
     qtbot.addWidget(tab)

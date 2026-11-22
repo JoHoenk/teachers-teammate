@@ -27,13 +27,13 @@ from urllib.parse import urlparse
 
 from ..config import DEFAULTS
 from ..domain.model_catalog import (
-    HARDWARE_PROFILES,
     OLLAMA_CATALOG,
     DetectionReason,
     GpuInfo,
     GpuUsage,
     HardwareDetection,
     HardwareProfile,
+    HardwareProfileSetting,
     LocalHardware,
     ModelCategory,
     ModelRating,
@@ -42,6 +42,7 @@ from ..domain.model_catalog import (
     best_model,
     catalog_uses,
     choose_profile,
+    concrete_profile,
     find_spec,
     normalize_tag,
     rate_model,
@@ -187,22 +188,26 @@ class ModelRecommendationService:
         _logger.info("Hardware profile for %s: %s", url, detection)
         return detection
 
-    def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
+    def resolve_hardware_profile(
+        self, setting: HardwareProfileSetting, ollama_url: str
+    ) -> HardwareDetection:
         """Resolve the ``hardware_profile`` *setting* into a concrete detection.
 
-        A concrete profile ("cpu"/"8gb"/"16gb") is returned as a MANUAL choice
-        without any detection.  ``"auto"`` — and, defensively, any unknown value —
-        runs detection for *ollama_url*.
+        A profile chosen by hand is returned as a MANUAL choice without any detection.
+        ``"auto"`` — and, defensively, any unknown value — runs detection for *ollama_url*.
         """
-        if setting in HARDWARE_PROFILES:
+        profile = concrete_profile(setting)
+        if profile is not None:
             return HardwareDetection(
-                profile=setting,
+                profile=profile,
                 reason=DetectionReason.MANUAL,
                 system_memory_gb=self._local_system_memory_gb(ollama_url),
             )
         return self.detect_hardware(ollama_url)
 
-    def cached_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection | None:
+    def cached_hardware_profile(
+        self, setting: HardwareProfileSetting, ollama_url: str
+    ) -> HardwareDetection | None:
         """Resolve *setting* without ever probing this computer.
 
         A concrete profile resolves as :meth:`resolve_hardware_profile` does (it reads only the
@@ -211,7 +216,7 @@ class ModelRecommendationService:
         yet: the probe runs ``nvidia-smi`` and the ROCm tools, which must never happen on the GUI
         thread, so the caller asks a background task instead.
         """
-        if setting in HARDWARE_PROFILES:
+        if concrete_profile(setting) is not None:
             return self.resolve_hardware_profile(setting, ollama_url)
         url = normalize_ollama_url(ollama_url)
         if not self._ollama.is_local(url):

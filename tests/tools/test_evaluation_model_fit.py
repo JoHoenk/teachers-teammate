@@ -13,6 +13,7 @@ import pytest
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX, CONTEXT_STEPS
 from teachers_teammate.domain.model_catalog import (
     FULL_SPEED_SHARE,
+    HardwareProfile,
     card_budget_gb,
     runs_at_full_speed,
 )
@@ -546,10 +547,12 @@ def test_a_tier_limit_is_the_apps_own_rule() -> None:
     """
     limit = FitLimit.parse("16gb")
 
-    assert limit.max_size_gb == pytest.approx(card_budget_gb("16gb") / FULL_SPEED_SHARE)
+    assert limit.max_size_gb == pytest.approx(
+        card_budget_gb(HardwareProfile.CARD_16GB) / FULL_SPEED_SHARE
+    )
     assert limit.label == "16gb"
     assert FitLimit.parse("8gb").max_size_gb == pytest.approx(
-        card_budget_gb("8gb") / FULL_SPEED_SHARE
+        card_budget_gb(HardwareProfile.CARD_8GB) / FULL_SPEED_SHARE
     )
 
 

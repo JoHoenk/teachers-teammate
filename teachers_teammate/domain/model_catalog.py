@@ -31,18 +31,41 @@ from .proofreading.result import ExchangeKind, StepName, stored_exchange_id
 if TYPE_CHECKING:
     from .performance_estimate import SpeedBand, SpeedSource
 
-HardwareProfile = Literal["cpu", "8gb", "16gb"]
-HardwareProfileSetting = Literal["auto", "cpu", "8gb", "16gb"]
+
+class HardwareProfile(StrEnum):
+    """The computer types the model suggestions distinguish, from weakest to strongest."""
+
+    CPU = "cpu"
+    """No graphics card worth using: models run on the processor."""
+
+    CARD_8GB = "8gb"
+    """A graphics card with about 8 GB of memory."""
+
+    CARD_16GB = "16gb"
+    """A graphics card with 16 GB of memory or more."""
+
+
+class HardwareProfileSetting(StrEnum):
+    """What the ``hardware_profile`` setting holds: look at the computer, or a profile chosen."""
+
+    AUTO = "auto"
+    """Look at this computer, and at the Ollama server when it runs elsewhere."""
+
+    CPU = HardwareProfile.CPU.value
+    CARD_8GB = HardwareProfile.CARD_8GB.value
+    CARD_16GB = HardwareProfile.CARD_16GB.value
+
+
 ModelCategory = Literal["ocr", "general"]
 #: The tasks a model may be used for: a catalog model has exactly one, a model the
 #: Ollama server reports as able to read images has both.
 ModelUses = frozenset[ModelCategory]
 
 #: The three hardware tiers the GUI distinguishes, ordered from weakest to strongest.
-HARDWARE_PROFILES: tuple[HardwareProfile, ...] = ("cpu", "8gb", "16gb")
+HARDWARE_PROFILES: tuple[HardwareProfile, ...] = tuple(HardwareProfile)
 
 #: Values accepted for the ``hardware_profile`` setting (auto-detect plus the tiers).
-PROFILE_SETTINGS: tuple[HardwareProfileSetting, ...] = ("auto", *HARDWARE_PROFILES)
+PROFILE_SETTINGS: tuple[HardwareProfileSetting, ...] = tuple(HardwareProfileSetting)
 
 #: Share of a graphics card's memory that models can use: the rest holds the operating
 #: system's own windows and the driver's buffers (measured on an 8 GB card, where a model, its
@@ -51,7 +74,11 @@ CARD_USABLE_SHARE = 0.85
 
 #: Memory (GB) of the graphics card a hardware profile stands for when the real size is unknown
 #: (a profile chosen by hand, a graphics card whose memory could not be read, a remote server).
-NOMINAL_CARD_GB: dict[HardwareProfile, float] = {"cpu": 0.0, "8gb": 8.0, "16gb": 16.0}
+NOMINAL_CARD_GB: dict[HardwareProfile, float] = {
+    HardwareProfile.CPU: 0.0,
+    HardwareProfile.CARD_8GB: 8.0,
+    HardwareProfile.CARD_16GB: 16.0,
+}
 
 #: Largest model (GB) that is comfortable on the processor alone, without a graphics card.
 #: "Comfortable" means a page of about 2,000 to 4,000 answer tokens in under five minutes on an
@@ -604,17 +631,17 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
 #: exist in :data:`OLLAMA_CATALOG` with the matching category (tests enforce this).
 RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
     "ocr": {
-        "cpu": ("glm-ocr:q8_0",),
+        HardwareProfile.CPU: ("glm-ocr:q8_0",),
         # 16 GB reading list intentionally equals the 8 GB list until a larger
         # vision model has been validated with the Benchmark app.
-        "8gb": (
+        HardwareProfile.CARD_8GB: (
             DEFAULT_OCR_MODEL,
             "qwen3-vl:8b",
             "deepseek-ocr:latest",
             "qwen3.5:9b",
             "glm-ocr:q8_0",
         ),
-        "16gb": (
+        HardwareProfile.CARD_16GB: (
             DEFAULT_OCR_MODEL,
             "qwen3-vl:8b",
             "deepseek-ocr:latest",
@@ -626,9 +653,9 @@ RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
         # gemma4:e4b passes gate 1 and writes the shortest pages.  qwen3:4b is not offered
         # without a graphics card: it fails gate 1 (empty answers) and thinks for about 4,000
         # tokens a page, which is 7 minutes on the Ryzen.
-        "cpu": ("gemma4:e4b",),
-        "8gb": ("gemma4:e4b", "qwen3.5:9b"),
-        "16gb": ("gemma4:12b", "qwen3.5:9b"),
+        HardwareProfile.CPU: ("gemma4:e4b",),
+        HardwareProfile.CARD_8GB: ("gemma4:e4b", "qwen3.5:9b"),
+        HardwareProfile.CARD_16GB: ("gemma4:12b", "qwen3.5:9b"),
     },
 }
 
@@ -1238,13 +1265,37 @@ class LocalHardware:
     system_memory_gb: float | None = None
 
 
+def parse_profile_setting(value: object) -> HardwareProfileSetting | None:
+    """Return the setting *value* spells (case and surrounding spaces folded), else ``None``."""
+    try:
+        return HardwareProfileSetting(str(value).strip().lower())
+    except ValueError:
+        return None
+
+
+def profile_setting(value: object) -> HardwareProfileSetting:
+    """Return the setting *value* spells; a value the setting does not accept is ``"auto"``."""
+    return parse_profile_setting(value) or HardwareProfileSetting.AUTO
+
+
+def concrete_profile(setting: object) -> HardwareProfile | None:
+    """Return the profile *setting* names, or ``None`` when it leaves the choice to the app.
+
+    ``None`` covers ``"auto"`` and any value the setting does not accept.
+    """
+    parsed = parse_profile_setting(setting)
+    if parsed is None or parsed is HardwareProfileSetting.AUTO:
+        return None
+    return HardwareProfile(parsed.value)
+
+
 def _profile_for_memory_gb(memory_gb: float) -> HardwareProfile:
     """Map a known GPU memory size to a profile using the documented thresholds."""
     if memory_gb >= GPU_16GB_THRESHOLD_GB:
-        return "16gb"
+        return HardwareProfile.CARD_16GB
     if memory_gb >= GPU_8GB_THRESHOLD_GB:
-        return "8gb"
-    return "cpu"
+        return HardwareProfile.CARD_8GB
+    return HardwareProfile.CPU
 
 
 def choose_profile(
@@ -1279,7 +1330,9 @@ def choose_profile(
             into a second time.
     """
     if ollama_is_remote:
-        return HardwareDetection(profile="8gb", reason=DetectionReason.REMOTE_SERVER, host=host)
+        return HardwareDetection(
+            profile=HardwareProfile.CARD_8GB, reason=DetectionReason.REMOTE_SERVER, host=host
+        )
 
     known = [(name, mem) for name, mem in gpus if mem is not None]
     if known:
@@ -1296,7 +1349,7 @@ def choose_profile(
 
     if gpus:
         return HardwareDetection(
-            profile="8gb",
+            profile=HardwareProfile.CARD_8GB,
             reason=DetectionReason.GPU_MEMORY_UNKNOWN,
             gpu_name=gpus[0][0],
             memory_gb=None,
@@ -1315,7 +1368,9 @@ def choose_profile(
         )
 
     return HardwareDetection(
-        profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=system_memory_gb
+        profile=HardwareProfile.CPU,
+        reason=DetectionReason.NO_GPU_FOUND,
+        system_memory_gb=system_memory_gb,
     )
 
 

@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 
 from teachers_teammate.domain.model_catalog import (
+    PROFILE_SETTINGS,
     DetectionReason,
     HardwareDetection,
+    HardwareProfile,
     Suitability,
     choose_profile,
 )
@@ -56,18 +58,26 @@ def test_remote_status_names_the_host() -> None:
     [
         (
             HardwareDetection(
-                profile="8gb",
+                profile=HardwareProfile.CARD_8GB,
                 reason=DetectionReason.GPU_DETECTED,
                 gpu_name="RTX 4060",
                 memory_gb=7.8,
             ),
             "Graphics card: RTX 4060 with 8 GB graphics memory",
         ),
-        (HardwareDetection(profile="cpu", reason=DetectionReason.NO_GPU_FOUND), "No graphics card"),
-        (HardwareDetection(profile="16gb", reason=DetectionReason.MANUAL), "Chosen by you."),
+        (
+            HardwareDetection(profile=HardwareProfile.CPU, reason=DetectionReason.NO_GPU_FOUND),
+            "No graphics card",
+        ),
+        (
+            HardwareDetection(profile=HardwareProfile.CARD_16GB, reason=DetectionReason.MANUAL),
+            "Chosen by you.",
+        ),
         (
             HardwareDetection(
-                profile="8gb", reason=DetectionReason.GPU_MEMORY_UNKNOWN, gpu_name="AMD GPU"
+                profile=HardwareProfile.CARD_8GB,
+                reason=DetectionReason.GPU_MEMORY_UNKNOWN,
+                gpu_name="AMD GPU",
             ),
             "assume about 8 GB",
         ),
@@ -88,7 +98,7 @@ def test_status_text_per_reason(detection: HardwareDetection, fragment: str) -> 
     [
         (
             HardwareDetection(
-                profile="cpu",
+                profile=HardwareProfile.CPU,
                 reason=DetectionReason.GPU_DETECTED,
                 gpu_name="RTX 3050",
                 memory_gb=4.0,
@@ -98,7 +108,7 @@ def test_status_text_per_reason(detection: HardwareDetection, fragment: str) -> 
         ),
         (
             HardwareDetection(
-                profile="8gb",
+                profile=HardwareProfile.CARD_8GB,
                 reason=DetectionReason.GPU_DETECTED,
                 gpu_name="RTX 3060",
                 memory_gb=12.0,
@@ -129,7 +139,7 @@ def test_the_status_is_one_line_per_fact() -> None:
            free figure the memory line is shorter, and without the memory it is gone
     """
     detection = HardwareDetection(
-        profile="8gb",
+        profile=HardwareProfile.CARD_8GB,
         reason=DetectionReason.GPU_DETECTED,
         gpu_name="RTX 4060",
         memory_gb=8.0,
@@ -143,7 +153,10 @@ def test_the_status_is_one_line_per_fact() -> None:
     ]
     assert wording.detection_lines(detection)[1] == "Computer memory: 16 GB"
     without_memory = HardwareDetection(
-        profile="8gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4060", memory_gb=8.0
+        profile=HardwareProfile.CARD_8GB,
+        reason=DetectionReason.GPU_DETECTED,
+        gpu_name="RTX 4060",
+        memory_gb=8.0,
     )
     assert len(wording.detection_lines(without_memory)) == 2
 
@@ -157,7 +170,7 @@ def test_a_second_graphics_card_is_named_after_the_one_that_decides() -> None:
            teacher who knows their card sees that it was found
     """
     detection = HardwareDetection(
-        profile="8gb",
+        profile=HardwareProfile.CARD_8GB,
         reason=DetectionReason.GPU_DETECTED,
         gpu_name="NVIDIA GeForce RTX 4060",
         memory_gb=8.0,
@@ -180,7 +193,7 @@ def test_too_large_text_for_graphics_card_tiers() -> None:
     When   the explanation is rendered
     Then   it compares the model's need with what computers of this type have
     """
-    text = wording.too_large_text(14.0, "8gb")
+    text = wording.too_large_text(14.0, HardwareProfile.CARD_8GB)
     assert text == (
         "This model needs about 14 GB of graphics memory; computers of this type have about 8 GB."
     )
@@ -194,7 +207,7 @@ def test_too_large_text_for_basic_computers() -> None:
     When   the explanation is rendered
     Then   it talks about running without a graphics card, with no GB comparison
     """
-    text = wording.too_large_text(14.0, "cpu")
+    text = wording.too_large_text(14.0, HardwareProfile.CPU)
     assert text == "This model is too large to run quickly without a graphics card."
 
 
@@ -205,7 +218,7 @@ def test_too_large_text_without_known_size() -> None:
     When   the explanation is rendered
     Then   it still reads as a sentence (no "None GB")
     """
-    assert "None" not in wording.too_large_text(None, "16gb")
+    assert "None" not in wording.too_large_text(None, HardwareProfile.CARD_16GB)
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -217,7 +230,7 @@ def test_confirmation_paragraph_names_the_model_and_the_consequence() -> None:
            not run properly
     """
     text = wording.too_large_confirmation(
-        "gpt-oss:20b", 14.0, "8gb", system_memory_gb=8.0, card_gb=6.8
+        "gpt-oss:20b", 14.0, HardwareProfile.CARD_8GB, system_memory_gb=8.0, card_gb=6.8
     )
     assert text.startswith("gpt-oss:20b: ")
     assert "about 14 GB" in text and "about 6.5 GB" in text
@@ -232,7 +245,7 @@ def test_too_large_text_gives_the_numbers_when_the_computers_memory_is_known() -
     Then   it says what the computer can offer, how much main memory stays free for the system
            and that the model does not fit
     """
-    text = wording.too_large_text(14.0, "8gb", system_memory_gb=8.0, card_gb=6.8)
+    text = wording.too_large_text(14.0, HardwareProfile.CARD_8GB, system_memory_gb=8.0, card_gb=6.8)
 
     assert text == (
         "This model needs about 14 GB of memory. This computer can offer about 6.5 GB "
@@ -248,7 +261,7 @@ def test_too_large_text_without_a_card_talks_about_main_memory_only() -> None:
     When   the explanation is rendered
     Then   it names main memory only, with 8 GB kept free for the system
     """
-    text = wording.too_large_text(9.5, "cpu", system_memory_gb=12.0)
+    text = wording.too_large_text(9.5, HardwareProfile.CPU, system_memory_gb=12.0)
 
     assert "(main memory)" in text
     assert "about 4 GB" in text and "8 GB of its 12 GB main memory" in text
@@ -324,7 +337,11 @@ def test_wrong_kind_hint_suggests_a_reading_model() -> None:
     Then   it is a warning that names a reading model as an example
     """
     hint = wording.model_hint(
-        Suitability.WRONG_KIND, "8gb", task="ocr", memory_gb=None, best_for_task="qwen3-vl:8b"
+        Suitability.WRONG_KIND,
+        HardwareProfile.CARD_8GB,
+        task="ocr",
+        memory_gb=None,
+        best_for_task="qwen3-vl:8b",
     )
     assert hint.startswith("⚠")
     assert "cannot read scans" in hint
@@ -341,7 +358,11 @@ def test_reading_model_for_writing_hint_suggests_a_writing_model() -> None:
     Then   it is a warning that the model is not meant for it and names a writing model
     """
     hint = wording.model_hint(
-        Suitability.WRONG_KIND, "8gb", task="general", memory_gb=None, best_for_task="qwen3.5:9b"
+        Suitability.WRONG_KIND,
+        HardwareProfile.CARD_8GB,
+        task="general",
+        memory_gb=None,
+        best_for_task="qwen3.5:9b",
     )
     assert hint.startswith("⚠")
     assert "reading model" in hint
@@ -356,9 +377,9 @@ def test_profile_texts_cover_every_setting() -> None:
     When   their UI texts are looked up
     Then   each has its own, non-empty text
     """
-    for setting in ("auto", "cpu", "8gb", "16gb"):
-        assert wording.profile_text(setting)
-    assert len({wording.profile_text(s) for s in ("auto", "cpu", "8gb", "16gb")}) == 4
+    texts = [wording.profile_text(setting) for setting in PROFILE_SETTINGS]
+    assert all(texts)
+    assert len(set(texts)) == len(PROFILE_SETTINGS) == 4
 
 
 # ── memory of the computer and slow models ──────────────────────────────────
@@ -373,14 +394,14 @@ def test_status_line_names_the_computers_memory_when_known() -> None:
            sentence is the same as before
     """
     detection = HardwareDetection(
-        profile="16gb",
+        profile=HardwareProfile.CARD_16GB,
         reason=DetectionReason.GPU_DETECTED,
         gpu_name="NVIDIA GeForce RTX 3080 Laptop GPU",
         memory_gb=16.0,
         system_memory_gb=32.0,
     )
     plain = HardwareDetection(
-        profile="16gb",
+        profile=HardwareProfile.CARD_16GB,
         reason=DetectionReason.GPU_DETECTED,
         gpu_name="NVIDIA GeForce RTX 3080 Laptop GPU",
         memory_gb=16.0,

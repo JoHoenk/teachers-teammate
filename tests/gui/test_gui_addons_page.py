@@ -14,10 +14,12 @@ import pytest
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
     DEFAULT_WRITING_MODEL,
-    OLLAMA_CATALOG,
     DetectionReason,
     HardwareDetection,
+    HardwareProfile,
+    HardwareProfileSetting,
     ModelUses,
+    OLLAMA_CATALOG,
 )
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.gui import _dialogs
@@ -215,7 +217,7 @@ def test_switching_profile_updates_suitability(qtbot) -> None:
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
     with qtbot.waitSignal(dlg.ollama_models._hardware_selector.resolved_changed, timeout=5000):
-        dlg.set_hardware_setting("16gb")
+        dlg.set_hardware_setting(HardwareProfileSetting.CARD_16GB)
     writing = dlg.ollama_models._group_items["general"]
     # The first entry of every profile is a writing model that supports explanations.
     assert writing.child(0).text(0) == "gemma4:12b"
@@ -973,7 +975,7 @@ def test_the_page_follows_a_profile_chosen_on_this_computer(qtbot) -> None:
     assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL}
 
     with qtbot.waitSignal(dlg.ollama_models._hardware_selector.resolved_changed, timeout=5000):
-        dlg.set_hardware_setting("cpu")
+        dlg.set_hardware_setting(HardwareProfileSetting.CPU)
 
     assert _ticked(dlg) == {"glm-ocr:q8_0", "gemma4:e4b"}
 
@@ -1302,7 +1304,10 @@ def _choose_computer(qtbot, dlg: AddonsPage, text: str) -> None:
 _CPU_TEXT = "Basic computer or small graphics card (under 8 GB)"
 _16GB_TEXT = "Graphics card with 16 GB memory or more"
 #: The page follows the profile chosen on This computer, passed on as the setting value.
-_SETTING_OF_TEXT = {_CPU_TEXT: "cpu", _16GB_TEXT: "16gb"}
+_SETTING_OF_TEXT = {
+    _CPU_TEXT: HardwareProfileSetting.CPU,
+    _16GB_TEXT: HardwareProfileSetting.CARD_16GB,
+}
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -1316,7 +1321,9 @@ def test_pre_ticking_waits_for_hardware_detection(qtbot) -> None:
     """
     service = _StubService()
     service.detection_gate = threading.Event()
-    service.detection = HardwareDetection(profile="cpu", reason=DetectionReason.NO_GPU_FOUND)
+    service.detection = HardwareDetection(
+        profile=HardwareProfile.CPU, reason=DetectionReason.NO_GPU_FOUND
+    )
     dlg = _make_dialog(qtbot, hardware_profile="auto", service=service, wait_for_profile=False)
 
     dlg._on_detection_done(_detection_results(dlg, set()))

@@ -84,7 +84,7 @@ FREE_DISK_GB = 200.0
 #: The memory the setup plan sees, so no test depends on the runner's RAM.
 SYSTEM_MEMORY_GB = 32.0
 #: The profile the setup plan sees, so no test depends on the runner's graphics card.
-PROFILE: HardwareProfile = "16gb"
+PROFILE: HardwareProfile = HardwareProfile.CARD_16GB
 #: The language the walkthroughs answer with, so the expected spaCy model is known.
 LANGUAGE = "English"
 #: The online service S7 picks, and the model it offers.

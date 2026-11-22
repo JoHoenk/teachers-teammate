@@ -168,11 +168,11 @@ class OllamaModelGuidance(QWidget):
         self._update_button()
 
     def active_profile(self) -> HardwareProfile:
-        """Return the active hardware profile ("8gb" until detection lands)."""
+        """Return the active hardware profile (8 GB until detection lands)."""
         detection = self._selector.resolved()
         if detection is not None:
             return detection.profile
-        return "8gb"
+        return HardwareProfile.CARD_8GB
 
     def active_system_memory_gb(self) -> float | None:
         """Return the computer's memory in GB when known (it rates models too big for the card)."""

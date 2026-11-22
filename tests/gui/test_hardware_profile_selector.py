@@ -8,6 +8,9 @@ import pytest
 from teachers_teammate.domain.model_catalog import (
     DetectionReason,
     HardwareDetection,
+    HardwareProfile,
+    HardwareProfileSetting,
+    concrete_profile,
 )
 from teachers_teammate.gui._hardware_profile_selector import HardwareProfileSelector
 from teachers_teammate.texts.models import detection_status_text
@@ -34,9 +37,10 @@ class _StubService:
 
     def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
         _ = ollama_url
-        if setting in ("cpu", "8gb", "16gb"):
+        profile = concrete_profile(setting)
+        if profile is not None:
             return HardwareDetection(
-                profile=setting,
+                profile=profile,
                 reason=DetectionReason.MANUAL,
                 system_memory_gb=self.manual_memory_gb,
             )
@@ -44,7 +48,7 @@ class _StubService:
 
 
 _GPU_DETECTED = HardwareDetection(
-    profile="8gb",
+    profile=HardwareProfile.CARD_8GB,
     reason=DetectionReason.GPU_DETECTED,
     gpu_name="NVIDIA GeForce RTX 4060",
     memory_gb=8.0,
@@ -65,7 +69,7 @@ def stub_service() -> _StubService:
     [
         (
             HardwareDetection(
-                profile="8gb",
+                profile=HardwareProfile.CARD_8GB,
                 reason=DetectionReason.GPU_DETECTED,
                 gpu_name="NVIDIA GeForce RTX 4060",
                 memory_gb=8.0,
@@ -74,19 +78,19 @@ def stub_service() -> _StubService:
         ),
         (
             HardwareDetection(
-                profile="8gb",
+                profile=HardwareProfile.CARD_8GB,
                 reason=DetectionReason.APPLE_UNIFIED_MEMORY,
                 memory_gb=16.0,
             ),
             "Apple computer with 16 GB shared memory",
         ),
         (
-            HardwareDetection(profile="cpu", reason=DetectionReason.NO_GPU_FOUND),
+            HardwareDetection(profile=HardwareProfile.CPU, reason=DetectionReason.NO_GPU_FOUND),
             "No graphics card found.",
         ),
         (
             HardwareDetection(
-                profile="8gb",
+                profile=HardwareProfile.CARD_8GB,
                 reason=DetectionReason.GPU_MEMORY_UNKNOWN,
                 gpu_name="AMD GPU",
             ),
@@ -94,13 +98,16 @@ def stub_service() -> _StubService:
         ),
         (
             HardwareDetection(
-                profile="8gb",
+                profile=HardwareProfile.CARD_8GB,
                 reason=DetectionReason.REMOTE_SERVER,
                 host="192.168.1.50",
             ),
             "Ollama runs on another computer (192.168.1.50)",
         ),
-        (HardwareDetection(profile="16gb", reason=DetectionReason.MANUAL), "Chosen by you."),
+        (
+            HardwareDetection(profile=HardwareProfile.CARD_16GB, reason=DetectionReason.MANUAL),
+            "Chosen by you.",
+        ),
     ],
 )
 def test_detection_status_text_per_reason(
@@ -172,7 +179,9 @@ def test_manual_choice_resolves_without_detection(qtbot, stub_service) -> None:
     When   resolution finishes
     Then   the detection is MANUAL with the chosen profile and no detection ran
     """
-    widget = HardwareProfileSelector(app_service=services_of(stub_service), setting="cpu")
+    widget = HardwareProfileSelector(
+        app_service=services_of(stub_service), setting=HardwareProfileSetting.CPU
+    )
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000) as blocker:
         pass
@@ -195,7 +204,7 @@ def test_the_status_line_names_the_memory_free_right_now(qtbot, stub_service) ->
            the page stays visible (it changes all the time)
     """
     stub_service.detection = HardwareDetection(
-        profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=16.0
+        profile=HardwareProfile.CPU, reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=16.0
     )
     stub_service.free_memory_gb = 9.0
     widget = HardwareProfileSelector(app_service=services_of(stub_service))
@@ -220,7 +229,7 @@ def test_a_remote_server_shows_no_free_memory(qtbot, stub_service) -> None:
     Then   no free figure is read: it would be this computer's, not the server's
     """
     stub_service.detection = HardwareDetection(
-        profile="8gb", reason=DetectionReason.REMOTE_SERVER, host="gpu-box.lan"
+        profile=HardwareProfile.CARD_8GB, reason=DetectionReason.REMOTE_SERVER, host="gpu-box.lan"
     )
     stub_service.free_memory_gb = 9.0
     widget = HardwareProfileSelector(app_service=services_of(stub_service))
@@ -241,7 +250,7 @@ def test_the_free_memory_is_not_part_of_the_detection(qtbot, stub_service) -> No
     Then   the detection carries the total memory only, so the suggestions stay stable
     """
     stub_service.detection = HardwareDetection(
-        profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=16.0
+        profile=HardwareProfile.CPU, reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=16.0
     )
     stub_service.free_memory_gb = 9.0
     widget = HardwareProfileSelector(app_service=services_of(stub_service))
@@ -333,7 +342,9 @@ def test_manual_choice_ignores_url_changes(qtbot, stub_service) -> None:
     When   the Ollama URL changes
     Then   no detection runs — a concrete choice does not depend on the server
     """
-    widget = HardwareProfileSelector(app_service=services_of(stub_service), setting="cpu")
+    widget = HardwareProfileSelector(
+        app_service=services_of(stub_service), setting=HardwareProfileSetting.CPU
+    )
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000):
         pass
@@ -407,7 +418,9 @@ def test_a_chosen_profile_is_resolved_through_the_service_and_keeps_the_memory(
            still rates models too big for the card by it), and no graphics probe ran
     """
     stub_service.manual_memory_gb = 32.0
-    widget = HardwareProfileSelector(app_service=services_of(stub_service), setting="8gb")
+    widget = HardwareProfileSelector(
+        app_service=services_of(stub_service), setting=HardwareProfileSetting.CARD_8GB
+    )
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000) as blocker:
         pass

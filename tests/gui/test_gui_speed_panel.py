@@ -17,7 +17,11 @@ from teachers_teammate.application.speed_estimates import (
     StepEstimate,
     UnmeasuredStep,
 )
-from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection
+from teachers_teammate.domain.model_catalog import (
+    DetectionReason,
+    HardwareDetection,
+    HardwareProfile,
+)
 from teachers_teammate.domain.performance_estimate import (
     ProbeResult,
     SpeedBand,
@@ -35,7 +39,7 @@ from ._service_stubs import services_of
 _URL = "http://localhost:11434"
 
 _GPU = HardwareDetection(
-    profile="8gb",
+    profile=HardwareProfile.CARD_8GB,
     reason=DetectionReason.GPU_DETECTED,
     gpu_name="RTX 3070",
     memory_gb=8.0,
@@ -469,7 +473,7 @@ def test_the_panel_says_when_the_test_ran_on_another_computer(qtbot) -> None:
     Then   the note names that server, because other people may be using it
     """
     remote = HardwareDetection(
-        profile="8gb", reason=DetectionReason.REMOTE_SERVER, host="gpu-server"
+        profile=HardwareProfile.CARD_8GB, reason=DetectionReason.REMOTE_SERVER, host="gpu-server"
     )
     panel = _panel(qtbot, _FakeService(_summary(), _choices()), detection=remote)
 

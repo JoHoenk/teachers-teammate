@@ -6,6 +6,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 import shutil
+from teachers_teammate.domain.model_catalog import HardwareProfileSetting
 from teachers_teammate.domain.stages import Stage
 from unittest.mock import MagicMock, patch
 import pytest
@@ -284,7 +285,10 @@ def test_expected_cache_keys_never_probe_this_computer(tmp_path: Path, monkeypat
 
     assert probes == []
     assert (windows.proofreading, windows.evaluation) == (BASE_NUM_CTX, BASE_NUM_CTX)
-    assert svc.recommendations.cached_hardware_profile("auto", cfg.ollama_url) is None
+    assert (
+        svc.recommendations.cached_hardware_profile(HardwareProfileSetting.AUTO, cfg.ollama_url)
+        is None
+    )
 
 
 @pytest.mark.unit

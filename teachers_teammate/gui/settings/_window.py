@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import OcrConfig
+from ...domain.model_catalog import profile_setting
 from ...texts import dialogs as dlg
 from .. import _dialogs
 from .._qsettings import app_settings
@@ -339,7 +340,8 @@ class SettingsWindow(QDialog):
 
     # ── shared state ──────────────────────────────────────────────────────────
 
-    def _on_hardware_setting_changed(self, setting: str) -> None:
+    def _on_hardware_setting_changed(self, value: str) -> None:
+        setting = profile_setting(value)
         self._working["hardware_profile"] = setting
         for built in self._pages.values():
             if not isinstance(built, AiSetupPage):

@@ -28,6 +28,7 @@ from teachers_teammate.domain.data_location import (
 )
 from teachers_teammate.domain.model_catalog import (
     DiskVerdict,
+    HardwareProfile,
     ModelCategory,
     ModelRating,
     Suitability,
@@ -81,7 +82,7 @@ def _answers(**overrides: Any) -> SetupAnswers:
 def _facts(**overrides: Any) -> SetupFacts:
     """Return the facts of a computer with a running Ollama and plenty of disk space."""
     base = SetupFacts(
-        profile="8gb",
+        profile=HardwareProfile.CARD_8GB,
         system_memory_gb=32.0,
         card_gb=8.0,
         ollama_running=True,

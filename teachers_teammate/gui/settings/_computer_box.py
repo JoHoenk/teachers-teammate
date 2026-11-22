@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from ...application.composition import AppServices
 from ...application.speed_estimates import CLASS_SET_FILES
 from ...config import DEFAULTS
+from ...domain.model_catalog import HardwareProfileSetting
 from ...texts import review as txt
 from ...texts.settings import PAGE_AI_SETUP
 from .._hardware_profile_selector import HardwareProfileSelector
@@ -36,7 +37,7 @@ class ProfileLine(QWidget):
         self,
         *,
         app_service: AppServices,
-        setting: str = DEFAULTS["hardware_profile"],
+        setting: HardwareProfileSetting = DEFAULTS["hardware_profile"],
         ollama_url: str = DEFAULTS["ollama_url"],
         with_link: bool = True,
         parent: QWidget | None = None,
@@ -57,7 +58,7 @@ class ProfileLine(QWidget):
             self.change_link.linkActivated.connect(lambda _link: self.change_requested.emit())
             layout.addWidget(self.change_link)
 
-    def set_setting(self, setting: str) -> None:
+    def set_setting(self, setting: HardwareProfileSetting) -> None:
         """Follow the computer profile chosen on *This computer*."""
         self.selector.set_setting(setting)
 
@@ -124,7 +125,7 @@ class ComputerBox(QFrame):
         *,
         app_service: AppServices,
         settings_provider: Callable[[], Mapping[str, object]],
-        setting: str = DEFAULTS["hardware_profile"],
+        setting: HardwareProfileSetting = DEFAULTS["hardware_profile"],
         ollama_url: str = DEFAULTS["ollama_url"],
         parent: QWidget | None = None,
     ) -> None:
@@ -165,7 +166,7 @@ class ComputerBox(QFrame):
         """Return the one resolution of this computer that the page's widgets follow."""
         return self.profile_line.selector
 
-    def set_setting(self, setting: str) -> None:
+    def set_setting(self, setting: HardwareProfileSetting) -> None:
         """Follow the computer profile chosen on *This computer*."""
         self.profile_line.set_setting(setting)
 

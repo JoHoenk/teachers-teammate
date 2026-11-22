@@ -22,7 +22,12 @@ from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidg
 
 from ..application.composition import AppServices
 from ..config import DEFAULTS
-from ..domain.model_catalog import PROFILE_SETTINGS, HardwareDetection
+from ..domain.model_catalog import (
+    PROFILE_SETTINGS,
+    HardwareDetection,
+    HardwareProfileSetting,
+    profile_setting,
+)
 from ..texts.models import (
     CHECK_COMPUTER_FAILED,
     CHECKING_COMPUTER,
@@ -57,7 +62,7 @@ class HardwareProfileSelector(QWidget):
         self,
         *,
         app_service: AppServices,
-        setting: str = DEFAULTS["hardware_profile"],
+        setting: HardwareProfileSetting = DEFAULTS["hardware_profile"],
         ollama_url: str = DEFAULTS["ollama_url"],
         read_only: bool = False,
         parent: QWidget | None = None,
@@ -70,7 +75,7 @@ class HardwareProfileSelector(QWidget):
         self._memory_task = LatestTask(self)
         self._detection: HardwareDetection | None = None
         self._available_memory_gb: float | None = None
-        self._setting: str = setting if setting in PROFILE_SETTINGS else "auto"
+        self._setting = profile_setting(setting)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -118,9 +123,9 @@ class HardwareProfileSelector(QWidget):
 
     # ── public API ─────────────────────────────────────────────────────────
 
-    def set_setting(self, setting: str) -> None:
+    def set_setting(self, setting: HardwareProfileSetting) -> None:
         """Set the current setting without emitting :attr:`setting_changed`."""
-        self._setting = setting if setting in PROFILE_SETTINGS else "auto"
+        self._setting = profile_setting(setting)
         if self._combo is not None:
             idx = self._combo.findData(self._setting)
             if idx >= 0:
@@ -130,11 +135,11 @@ class HardwareProfileSelector(QWidget):
         self._detection = None
         self._start_resolve(refresh=False)
 
-    def setting(self) -> str:
-        """Return the current setting value ("auto" / "cpu" / "8gb" / "16gb")."""
+    def setting(self) -> HardwareProfileSetting:
+        """Return the current setting value."""
         if self._combo is not None:
             data = self._combo.currentData()
-            return str(data) if data else "auto"
+            return profile_setting(data) if data else HardwareProfileSetting.AUTO
         return self._setting
 
     def resolved(self) -> HardwareDetection | None:
@@ -151,7 +156,7 @@ class HardwareProfileSelector(QWidget):
         if new_url == self._ollama_url:
             return
         self._ollama_url = new_url
-        if self.setting() == "auto":
+        if self.setting() is HardwareProfileSetting.AUTO:
             # A concrete choice does not depend on the server.
             self._start_resolve(refresh=False)
 
@@ -195,7 +200,7 @@ class HardwareProfileSelector(QWidget):
         data = self._combo.itemData(index) if self._combo is not None else None
         if data is None:
             return
-        self._setting = str(data)
+        self._setting = profile_setting(data)
         self.setting_changed.emit(self._setting)
         self._detection = None
         self._start_resolve(refresh=False)
@@ -210,7 +215,7 @@ class HardwareProfileSelector(QWidget):
         self._status_lbl.setText(CHECKING_COMPUTER)
 
         def resolve() -> HardwareDetection:
-            if setting != "auto":
+            if setting is not HardwareProfileSetting.AUTO:
                 # Through the service: a chosen profile still carries this computer's memory.
                 return service.recommendations.resolve_hardware_profile(setting, url)
             return service.recommendations.detect_hardware(url, refresh=refresh)

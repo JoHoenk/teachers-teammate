@@ -36,6 +36,7 @@ from typing import Any
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX, CONTEXT_STEPS
 from teachers_teammate.domain.model_catalog import (
     FULL_SPEED_SHARE,
+    HardwareProfile,
     card_budget_gb,
     card_share,
     request_profile,
@@ -71,7 +72,7 @@ SPILL_SHARE = 0.98
 SIZES_PATH = Path("model-fit") / "sizes.jsonl"
 """Where the measurements are kept, below the store root."""
 
-DEFAULT_LIMITS = ("8gb", "16gb")
+DEFAULT_LIMITS = (HardwareProfile.CARD_8GB.value, HardwareProfile.CARD_16GB.value)
 """The tiers a report shows unless other limits are named."""
 
 PROMPT = (
@@ -629,8 +630,8 @@ def growth_figures(
 
 
 _TIER_BUDGET_GB: dict[str, float] = {
-    "8gb": card_budget_gb("8gb"),
-    "16gb": card_budget_gb("16gb"),
+    tier.value: card_budget_gb(tier)
+    for tier in (HardwareProfile.CARD_8GB, HardwareProfile.CARD_16GB)
 }
 """The card sizes the app has a rule for; a limit of one of them is the app's own rule."""
 

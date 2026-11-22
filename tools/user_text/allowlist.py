@@ -59,7 +59,7 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Use a PDF's embedded text instead of OCR. auto = only when every page is clean, text-only (no scans, no handwriting, annotations or form fields) (default); always = whenever every page has any text; never = always OCR. Has no effect on image or TXT inputs.",
             "Where your documents are processed:",
             "f\"'{value}' is not an integer\"",
-            "f\"Correction LLM model name. Auto-selected per provider when omitted: {default_model_for_task('ollama', Stage.CORRECTION)} (ollama), {default_model_for_task('openai', Stage.CORRECTION)} (openai), {default_model_for_task('anthropic', Stage.CORRECTION)} (anthropic).\"",
+            "f\"Correction LLM model name. Auto-selected per provider when omitted: {default_model_for_task(PROVIDER_OLLAMA, Stage.CORRECTION)} (ollama), {default_model_for_task('openai', Stage.CORRECTION)} (openai), {default_model_for_task('anthropic', Stage.CORRECTION)} (anthropic).\"",
             'f"Download the built-in reader\'s model files once ({READER_SIZE_LABEL}, from {HUGGING_FACE_HOST}) and exit."',
             "f'  => {_LEVEL_TEXT[flow.level]}'",
             "f'  {marker} {stage.title}: {stage.badge}'",

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-from teachers_teammate.domain.data_location import DataRegion
+from teachers_teammate.domain.data_location import PROVIDER_OLLAMA, DataRegion
 from teachers_teammate.domain.ollama_address import normalize_ollama_url
 from teachers_teammate.domain.ollama_discovery import DEFAULT_SERVER_URL
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
@@ -16,7 +16,7 @@ from teachers_teammate.exceptions import ProviderNotAvailableError
 # Metadata consumed by the GUI (and any other caller of llm_factory.get_provider_info).
 # ``models`` is intentionally empty: Ollama's model list is fetched live via the API.
 PROVIDER = ProviderInfo(
-    name="ollama",
+    name=PROVIDER_OLLAMA,
     display_name="Ollama",
     # Runs on the server at base_url (usually this computer), not at a vendor.
     self_hosted=True,

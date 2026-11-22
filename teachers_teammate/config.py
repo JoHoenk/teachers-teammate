@@ -143,8 +143,8 @@ class Config:
     text_anonymized_enabled: bool = DEFAULTS["text_anonymized_enabled"]
 
     # ── Hardware ─────────────────────────────────────────────────────────────
-    # "auto" (detect) or a profile chosen by hand ("cpu" / "8gb" / "16gb").  Only the
-    # recommendations and the run-start memory warning read it.
+    # Detect this computer, or a profile chosen by hand.  Only the recommendations and the
+    # run-start memory warning read it.
     hardware_profile: HardwareProfileSetting = DEFAULTS["hardware_profile"]
 
     # ── Context window ───────────────────────────────────────────────────────

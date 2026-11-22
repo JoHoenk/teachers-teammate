@@ -18,6 +18,7 @@ from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.model_catalog import (
     DetectionReason,
     HardwareDetection,
+    HardwareProfile,
     ModelRating,
     Suitability,
 )
@@ -104,7 +105,7 @@ def test_the_setup_plan_comes_from_the_facts_and_the_ratings() -> None:
         hardware_profile="auto",
         local_ai_shown=True,
     )
-    hardware = HardwareDetection(profile="8gb", reason=DetectionReason.MANUAL)
+    hardware = HardwareDetection(profile=HardwareProfile.CARD_8GB, reason=DetectionReason.MANUAL)
     recommended = {"ocr": "qwen2.5vl:7b", "general": "gemma4:e4b"}
     asked_cached_only: list[bool] = []
 
@@ -176,7 +177,7 @@ def test_the_plan_and_the_model_choices_are_made_from_one_set_of_facts() -> None
         hardware_profile="auto",
         local_ai_shown=True,
     )
-    hardware = HardwareDetection(profile="8gb", reason=DetectionReason.MANUAL)
+    hardware = HardwareDetection(profile=HardwareProfile.CARD_8GB, reason=DetectionReason.MANUAL)
 
     def rate(tags, task, profile, url, **kwargs):
         return [

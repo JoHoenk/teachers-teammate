@@ -22,6 +22,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QPushButton, QTabWidget, QVBoxLayout, QWidget
 
 from ...config import DEFAULTS
+from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...texts import addons as txt
 from ...texts import dialogs as dlg
 from ...texts.settings import TAB_READING_MODELS
@@ -123,7 +124,9 @@ class AddonsPage(SettingsPageBase):
         main.addWidget(self._tabs, stretch=1)
         self.ollama_models = OllamaModelsTab(
             app_service=self._svc,
-            hardware_setting=str(settings.get("hardware_profile", DEFAULTS["hardware_profile"])),
+            hardware_setting=profile_setting(
+                settings.get("hardware_profile", DEFAULTS["hardware_profile"])
+            ),
             ollama_url=self._ollama_url,
             pull_manager=context.pull_manager,
         )
@@ -332,7 +335,7 @@ class AddonsPage(SettingsPageBase):
             # Detection is done: tick now (otherwise it ticks once detection finished).
             self._tick_pending()
 
-    def set_hardware_setting(self, setting: str) -> None:
+    def set_hardware_setting(self, setting: HardwareProfileSetting) -> None:
         self.ollama_models.set_hardware_setting(setting)
 
     def set_ollama_url(self, url: str) -> None:

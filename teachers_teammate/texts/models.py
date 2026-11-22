@@ -17,6 +17,7 @@ from ..domain.model_catalog import (
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
+    HardwareProfileSetting,
     ModelCategory,
     ModelUses,
     Suitability,
@@ -28,21 +29,24 @@ from .settings import WHERE_AI_SETUP
 
 # ── "My computer" ─────────────────────────────────────────────────────────────
 
-PROFILE_TEXT: dict[str, str] = {
-    "auto": "Detect automatically (recommended)",
-    "cpu": "Basic computer or small graphics card (under 8 GB)",
-    "8gb": "Graphics card with about 8 GB memory",
-    "16gb": "Graphics card with 16 GB memory or more",
+PROFILE_TEXT: dict[HardwareProfileSetting, str] = {
+    HardwareProfileSetting.AUTO: "Detect automatically (recommended)",
+    HardwareProfileSetting.CPU: "Basic computer or small graphics card (under 8 GB)",
+    HardwareProfileSetting.CARD_8GB: "Graphics card with about 8 GB memory",
+    HardwareProfileSetting.CARD_16GB: "Graphics card with 16 GB memory or more",
 }
 
 #: Graphics memory (GB) that computers of a profile are assumed to have.
-_TIER_MEMORY_GB: dict[str, int] = {"8gb": 8, "16gb": 16}
+_TIER_MEMORY_GB: dict[HardwareProfile, int] = {
+    HardwareProfile.CARD_8GB: 8,
+    HardwareProfile.CARD_16GB: 16,
+}
 
 #: How a profile is named in a sentence ("models for … are suggested").
-_TIER_PHRASE: dict[str, str] = {
-    "cpu": "a basic computer",
-    "8gb": "a graphics card with about 8 GB",
-    "16gb": "a graphics card with 16 GB or more",
+_TIER_PHRASE: dict[HardwareProfile, str] = {
+    HardwareProfile.CPU: "a basic computer",
+    HardwareProfile.CARD_8GB: "a graphics card with about 8 GB",
+    HardwareProfile.CARD_16GB: "a graphics card with 16 GB or more",
 }
 
 CHECKING_COMPUTER = "Checking your computer…"
@@ -55,12 +59,12 @@ CHECK_COMPUTER_FAILED = (
 READ_ONLY_PROFILE_TOOLTIP = f"You can change this under {WHERE_AI_SETUP}."
 
 
-def profile_text(value: str) -> str:
+def profile_text(value: HardwareProfile | HardwareProfileSetting) -> str:
     """Return the UI text for a hardware profile or profile setting."""
-    return PROFILE_TEXT.get(value, value)
+    return PROFILE_TEXT[HardwareProfileSetting(value.value)]
 
 
-def read_only_profile_text(profile: str) -> str:
+def read_only_profile_text(profile: HardwareProfile | HardwareProfileSetting) -> str:
     """Return the line shown where the computer type cannot be edited."""
     return f"Models are suggested for: {profile_text(profile)}"
 

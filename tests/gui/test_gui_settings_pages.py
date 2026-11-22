@@ -14,7 +14,11 @@ from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton
 import pytest
 
 from teachers_teammate.config import DEFAULTS
-from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
+from teachers_teammate.domain.model_catalog import (
+    DEFAULT_WRITING_MODEL,
+    HardwareProfileSetting,
+    profile_setting,
+)
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.gui import _anonymizer_config_widget, _dialogs
@@ -85,7 +89,7 @@ def _section(
     section = AiServiceSection(
         spec,
         app_service=services_of(service),
-        hardware_profile=hardware_profile,
+        hardware_profile=profile_setting(hardware_profile),
         ollama_url=str(values.get("ollama_url", DEFAULTS["ollama_url"])),
         open_downloads=open_downloads,
     )
@@ -1065,6 +1069,7 @@ def test_the_context_row_follows_the_detected_card(qtbot, monkeypatch) -> None:
     from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
         DetectionReason,
         HardwareDetection,
+        HardwareProfile,
         OllamaModelSpec,
     )
 
@@ -1080,7 +1085,9 @@ def test_the_context_row_follows_the_detected_card(qtbot, monkeypatch) -> None:
         choice_module, "find_spec", lambda tag: spec if tag == "gemma4:e4b" else None
     )
     service = DummyAppService()
-    service.detection = HardwareDetection(profile="cpu", reason=DetectionReason.NO_GPU_FOUND)
+    service.detection = HardwareDetection(
+        profile=HardwareProfile.CPU, reason=DetectionReason.NO_GPU_FOUND
+    )
     page = _models_page(qtbot, service, _own_model_settings())
     _wait_for_detection(qtbot, page)
     qtbot.waitUntil(lambda: not page._context_row.isHidden(), timeout=5000)
@@ -1090,7 +1097,10 @@ def test_the_context_row_follows_the_detected_card(qtbot, monkeypatch) -> None:
     )
 
     service.detection = HardwareDetection(
-        profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="Test GPU", memory_gb=16.0
+        profile=HardwareProfile.CARD_16GB,
+        reason=DetectionReason.GPU_DETECTED,
+        gpu_name="Test GPU",
+        memory_gb=16.0,
     )
     page._computer_box.selector.refresh_status()
 
@@ -2278,7 +2288,9 @@ def test_hint_for_a_model_too_big_for_the_card_depends_on_the_computers_memory(
     )
     qtbot.waitUntil(lambda: len(section._guidance._models) == 2, timeout=5000)
     with qtbot.waitSignal(section._hw_selector.resolved_changed, timeout=5000):
-        section._hw_selector.set_setting("8gb")  # resolve again, now with the memory known
+        section._hw_selector.set_setting(
+            HardwareProfileSetting.CARD_8GB
+        )  # resolve again, now with the memory known
 
     section._model.setCurrentText("gpt-oss:20b")
     hint = section._guidance._hint_lbl.text()
@@ -2490,7 +2502,7 @@ def test_download_best_choice_asks_for_add_ons_and_hints_follow_the_profile(qtbo
     section._guidance._best_btn.click()
 
     assert received == [([DEFAULT_WRITING_MODEL], section.window())]  # best writing model, 8 GB
-    section._hw_selector.set_setting("16gb")
+    section._hw_selector.set_setting(HardwareProfileSetting.CARD_16GB)
     assert section._hw_selector.setting() == "16gb"
     qtbot.waitUntil(lambda: section._guidance.active_profile() == "16gb", timeout=5000)
 

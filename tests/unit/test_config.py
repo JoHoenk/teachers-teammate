@@ -16,7 +16,7 @@ from teachers_teammate.config import (
     load_config_file,
 )
 from teachers_teammate.domain.settings_notice import SettingNoticeKind
-from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
+from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL, HardwareProfileSetting
 from teachers_teammate.exceptions import ConfigFileNotFoundError, ConfigFileParseError
 from teachers_teammate.infrastructure.storage_root import (
     compute_cache_key,
@@ -600,6 +600,19 @@ def test_load_config_file_keeps_valid_hardware_profile(tmp_path: Path) -> None:
     path.write_text('hardware_profile = "16gb"\n', encoding="utf-8")
     values = _load(path)
     assert values["hardware_profile"] == "16gb"
+    assert type(values["hardware_profile"]) is HardwareProfileSetting
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_load_config_file_folds_case_and_spaces_of_the_hardware_profile(tmp_path: Path) -> None:
+    """
+    Given  an ocr.toml whose hardware_profile is spelled " 16GB "
+    When   load_config_file is called
+    Then   the profile setting is the 16 GB tier, as the GUI and the service read it too
+    """
+    path = tmp_path / "ocr.toml"
+    path.write_text('hardware_profile = " 16GB "\n', encoding="utf-8")
+    assert _load(path)["hardware_profile"] is HardwareProfileSetting.CARD_16GB
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")

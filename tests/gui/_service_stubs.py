@@ -41,6 +41,7 @@ from teachers_teammate.domain.model_catalog import (
     ModelRating,
     ModelUses,
     catalog_uses,
+    concrete_profile,
     find_spec,
     rate_model,
 )
@@ -298,7 +299,7 @@ class RecommendationServiceStub(LocalDataFlowStub):
     """
 
     detection: HardwareDetection = HardwareDetection(
-        profile="8gb",
+        profile=HardwareProfile.CARD_8GB,
         reason=DetectionReason.GPU_DETECTED,
         gpu_name="Test GPU",
         memory_gb=8.0,
@@ -360,9 +361,10 @@ class RecommendationServiceStub(LocalDataFlowStub):
         return self.detection
 
     def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
-        if setting in ("cpu", "8gb", "16gb"):
+        profile = concrete_profile(setting)
+        if profile is not None:
             return HardwareDetection(
-                profile=setting,
+                profile=profile,
                 reason=DetectionReason.MANUAL,
                 system_memory_gb=self.system_memory_gb,
             )

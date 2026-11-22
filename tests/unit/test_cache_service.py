@@ -1387,6 +1387,7 @@ def test_todays_catalog_keeps_the_cache_key_of_a_pinned_base_window(tmp_path: Pa
         FULL_SPEED_SHARE,
         DetectionReason,
         HardwareDetection,
+        HardwareProfile,
         find_spec,
     )
     from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
@@ -1405,7 +1406,7 @@ def test_todays_catalog_keeps_the_cache_key_of_a_pinned_base_window(tmp_path: Pa
         proofreading_context="8192",
     )
     detection = HardwareDetection(
-        profile="16gb", reason=DetectionReason.GPU_DETECTED, memory_gb=16.0
+        profile=HardwareProfile.CARD_16GB, reason=DetectionReason.GPU_DETECTED, memory_gb=16.0
     )
     windows = run_windows(
         auto.proofreading_context,

@@ -21,11 +21,14 @@ from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.model_catalog import (
     DetectionReason,
     GpuInfo,
+    HARDWARE_PROFILES,
     HardwareDetection,
     HardwareProfile,
+    HardwareProfileSetting,
     ModelCategory,
     ModelUses,
     best_model,
+    profile_setting,
 )
 
 _URL = "http://127.0.0.1:11434"
@@ -101,7 +104,7 @@ def test_resolve_hardware_profile_manual_setting_skips_detection(monkeypatch) ->
     service = _service()
     calls: list[str] = []
     monkeypatch.setattr(service, "detect_hardware", lambda url, **_kw: calls.append(url))
-    detection = service.resolve_hardware_profile("16gb", _URL)
+    detection = service.resolve_hardware_profile(HardwareProfileSetting.CARD_16GB, _URL)
     assert detection.profile == "16gb"
     assert detection.reason is DetectionReason.MANUAL
     assert calls == []
@@ -175,7 +178,7 @@ def test_resolve_hardware_profile_unknown_setting_treated_as_auto(monkeypatch) -
     monkeypatch.setattr(gpu_detector, "detect_gpus", lambda: [GpuInfo("nvidia", "RTX 4060", 8188)])
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
 
-    detection = _service().resolve_hardware_profile("bogus", _URL)
+    detection = _service().resolve_hardware_profile(profile_setting("bogus"), _URL)
     assert detection.profile == "8gb"
     assert detection.reason is DetectionReason.GPU_DETECTED
 
@@ -197,12 +200,12 @@ def test_detect_hardware_reports_the_computers_memory_from_the_probe(monkeypatch
     detection = service.detect_hardware(_URL)
 
     assert (detection.profile, detection.memory_gb, detection.system_memory_gb) == (
-        "16gb",
+        HardwareProfile.CARD_16GB,
         16.0,
         32.0,
     )
     rating = service.rate_ollama_models(
-        ["gpt-oss:20b"], "general", "8gb", _URL, system_memory_gb=32.0
+        ["gpt-oss:20b"], "general", HardwareProfile.CARD_8GB, _URL, system_memory_gb=32.0
     )[0]
     assert rating.suitability.value == "slow"
 
@@ -225,8 +228,8 @@ def test_a_chosen_profile_carries_the_memory_only_for_a_local_server(monkeypatch
     monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 32.0)
     service = _service()
 
-    local = service.resolve_hardware_profile("8gb", _URL)
-    remote = service.resolve_hardware_profile("8gb", _REMOTE_URL)
+    local = service.resolve_hardware_profile(HardwareProfileSetting.CARD_8GB, _URL)
+    remote = service.resolve_hardware_profile(HardwareProfileSetting.CARD_8GB, _REMOTE_URL)
 
     assert local.system_memory_gb == 32.0
     assert remote.system_memory_gb is None
@@ -245,7 +248,7 @@ def test_a_chosen_profile_on_apple_silicon_carries_no_separate_memory(monkeypatc
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: 16.0)
     monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 16.0)
 
-    detection = _service().resolve_hardware_profile("8gb", _URL)
+    detection = _service().resolve_hardware_profile(HardwareProfileSetting.CARD_8GB, _URL)
 
     assert detection.system_memory_gb is None
 
@@ -424,7 +427,9 @@ def test_rate_ollama_models_rates_catalog_and_custom_models() -> None:
     from teachers_teammate.domain.model_catalog import Suitability  # noqa: PLC0415
 
     service = _service(server=_FakeServer(lambda _tag: frozenset({"vision"})))
-    ratings = service.rate_ollama_models(["qwen3-vl:8b", "my-vision:latest"], "ocr", "8gb", _URL)
+    ratings = service.rate_ollama_models(
+        ["qwen3-vl:8b", "my-vision:latest"], "ocr", HardwareProfile.CARD_8GB, _URL
+    )
     best, custom = ratings
     assert best.suitability is Suitability.GOOD  # BEST on 8 GB is the default reading model
     assert best.memory_gb == 7.0
@@ -444,9 +449,11 @@ def test_a_rating_carries_how_much_slower_this_computer_is() -> None:
     """
     from teachers_teammate.domain.performance_estimate import SpeedBand, SpeedSource  # noqa: PLC0415
 
-    unknown = _service().rate_ollama_models(["gemma4:e4b"], "general", "8gb", _URL)[0]
+    unknown = _service().rate_ollama_models(
+        ["gemma4:e4b"], "general", HardwareProfile.CARD_8GB, _URL
+    )[0]
     measured = _service(machine_factor=0.5).rate_ollama_models(
-        ["gemma4:e4b"], "general", "8gb", _URL
+        ["gemma4:e4b"], "general", HardwareProfile.CARD_8GB, _URL
     )[0]
 
     assert unknown.speed is None  # nothing measured on this server: no guess
@@ -477,21 +484,18 @@ def test_on_ollama_models_changed_evicts_list_classification_and_server_facts() 
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
-@pytest.mark.parametrize(
-    "profile",
-    ["cpu", "8gb", "16gb"],
-)
-def test_first_run_model_settings_return_best_models(profile: str) -> None:
+@pytest.mark.parametrize("profile", HARDWARE_PROFILES)
+def test_first_run_model_settings_return_best_models(profile: HardwareProfile) -> None:
     """
     Given  a hardware profile
     When   first_run_model_settings is called
     Then   ocr_model is the BEST reading model and correction/evaluate are the
            BEST writing model for that profile
     """
-    settings = _service().first_run_model_settings(cast(HardwareProfile, profile))
-    assert settings["ocr_model"] == best_model("ocr", cast(HardwareProfile, profile))
-    assert settings["correction_model"] == best_model("general", cast(HardwareProfile, profile))
-    assert settings["evaluate_model"] == best_model("general", cast(HardwareProfile, profile))
+    settings = _service().first_run_model_settings(profile)
+    assert settings["ocr_model"] == best_model("ocr", profile)
+    assert settings["correction_model"] == best_model("general", profile)
+    assert settings["evaluate_model"] == best_model("general", profile)
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -502,7 +506,7 @@ def test_first_run_model_settings_respect_the_main_memory() -> None:
     Then   the writing steps get gemma4:e4b, the only writing model the app offers without a
            card: the smaller one it used to offer (qwen3:4b) fails gate 1
     """
-    settings = _service().first_run_model_settings("cpu", system_memory_gb=12.0)
+    settings = _service().first_run_model_settings(HardwareProfile.CPU, system_memory_gb=12.0)
     assert settings["correction_model"] == "gemma4:e4b"
     assert settings["evaluate_model"] == "gemma4:e4b"
 

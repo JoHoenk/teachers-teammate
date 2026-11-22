@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from teachers_teammate.application import providers as providers_module
 from teachers_teammate.application.composition import build_app_services
+from teachers_teammate.application.ports import OllamaServer
 from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.providers import ProviderInfo
@@ -14,6 +17,19 @@ from teachers_teammate.domain.providers import ProviderInfo
 def _as_listing(fake):
     """Wrap a fake that returns model names as the checked listing the service asks for."""
     return lambda provider, **kwargs: ModelListing(list(fake(provider, **kwargs)))
+
+
+class _NoServer:
+    """An Ollama server nothing here asks: these tests are about the providers and their keys."""
+
+    def check_connection(self, url: str, model: str = "") -> tuple[bool, bool, str]:
+        """Fail loudly: a test that reaches the server needs the fake below instead."""
+        raise AssertionError(f"the server at {url} was asked about {model!r}")
+
+
+def _service(**kwargs) -> ProviderService:
+    """Return the service over a server that is never asked."""
+    return ProviderService(ollama=cast(OllamaServer, _NoServer()), **kwargs)
 
 
 # ── the model lists ───────────────────────────────────────────────────────
@@ -34,7 +50,7 @@ def test_list_provider_models_uses_ttl_cache(monkeypatch: pytest.MonkeyPatch) ->
         return ["model-a", "model-b"]
 
     monkeypatch.setattr(providers_module, "list_provider_models_checked", _as_listing(_fake_list))
-    providers = ProviderService()
+    providers = _service()
 
     first = providers.list_provider_models("openai")
     second = providers.list_provider_models("openai")
@@ -59,7 +75,7 @@ def test_invalidate_model_cache_forces_refetch(monkeypatch: pytest.MonkeyPatch) 
         return ["model-a"]
 
     monkeypatch.setattr(providers_module, "list_provider_models_checked", _as_listing(_fake_list))
-    providers = ProviderService()
+    providers = _service()
 
     providers.list_provider_models("openai")
     providers.invalidate_model_cache("openai")
@@ -82,7 +98,7 @@ def test_ollama_model_cache_key_ignores_url_spelling(monkeypatch: pytest.MonkeyP
         return ["a:latest"]
 
     monkeypatch.setattr(providers_module, "list_provider_models_checked", _as_listing(fake_list))
-    providers = ProviderService()
+    providers = _service()
 
     providers.list_provider_models("ollama", base_url="http://host:11434/")
     providers.list_provider_models("ollama", base_url="http://host:11434")
@@ -106,7 +122,7 @@ def test_empty_model_list_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> None
         "list_provider_models_checked",
         _as_listing(lambda *_a, **_k: answers.pop(0)),
     )
-    providers = ProviderService()
+    providers = _service()
 
     first = providers.list_provider_models("ollama", base_url="http://127.0.0.1:11434")
     second = providers.list_provider_models("ollama", base_url="http://127.0.0.1:11434")
@@ -137,7 +153,7 @@ def test_failed_listing_is_asked_again_while_a_live_one_is_remembered(
         return answers.pop(0)
 
     monkeypatch.setattr(providers_module, "list_provider_models_checked", fake)
-    providers = ProviderService()
+    providers = _service()
 
     first = providers.list_provider_models_checked("mistral")
     second = providers.list_provider_models_checked("mistral")
@@ -161,7 +177,7 @@ def test_missing_provider_package_names_the_pip_package_only_when_absent() -> No
            connector is optional) name none
     """
     absent = {"langchain_mistralai"}
-    providers = ProviderService(importable_module=lambda module: module not in absent)
+    providers = _service(importable_module=lambda module: module not in absent)
 
     assert providers.missing_provider_package("mistral") == "langchain-mistralai"
     assert providers.missing_provider_package("mistral_eu") == "langchain-mistralai"
@@ -176,7 +192,7 @@ def test_provider_packages_list_a_shared_package_once() -> None:
     When   list_provider_packages() is read
     Then   the package appears once, and every other provider has its own entry
     """
-    packages = ProviderService().list_provider_packages()
+    packages = _service().list_provider_packages()
 
     pip_names = [pip for _module, pip in packages.values()]
     assert pip_names.count("langchain-mistralai") == 1
@@ -214,7 +230,7 @@ def test_provider_key_missing_follows_the_provider_and_environment(
         monkeypatch.setenv("TT_TEST_KEY", "k")
     monkeypatch.setattr(providers_module, "get_provider_info", lambda _provider: info)
 
-    assert ProviderService().provider_key_missing("any") is missing
+    assert _service().provider_key_missing("any") is missing
 
 
 # ── what a provider declares ──────────────────────────────────────────────
@@ -227,7 +243,7 @@ def test_names_and_key_answers_come_from_the_declaration() -> None:
     When   the service is asked for a display name, a key variable and a key page
     Then   each answer is what the provider declares, and an unknown name has none
     """
-    service = ProviderService()
+    service = _service()
 
     assert service.display_name("mistral_eu") == "Mistral (EU)"
     assert service.env_key("mistral_eu") == "MISTRAL_API_KEY"
@@ -244,7 +260,7 @@ def test_a_shared_package_names_every_service_that_needs_it() -> None:
     When   the service is asked which services need that package
     Then   both are named, and a package nobody declares has none
     """
-    service = ProviderService()
+    service = _service()
 
     assert service.package_services("langchain-mistralai") == ["Mistral", "Mistral (EU)"]
     assert service.package_services("langchain-openai") == ["OpenAI (ChatGPT)"]
@@ -258,7 +274,7 @@ def test_only_ollamas_package_is_an_optional_connector() -> None:
     When   the service is asked whether a provider's package is an optional connector
     Then   it is for Ollama, which the app talks to directly, and not for an online service
     """
-    service = ProviderService()
+    service = _service()
 
     assert service.package_is_connector("ollama") is True
     assert service.package_is_connector("openai") is False
@@ -272,7 +288,7 @@ def test_provider_needs_key_follows_the_declaration() -> None:
     When   the service is asked whether the provider needs an API key
     Then   only the online service does
     """
-    service = ProviderService()
+    service = _service()
 
     assert service.provider_needs_key("ollama") is False
     assert service.provider_needs_key("openai") is True
@@ -362,7 +378,7 @@ def test_refreshing_the_ollama_model_list_drops_the_classifications_of_that_serv
     When   the model list of that server is refreshed
     Then   the recommendations forget that server's classifications, and no other's
     """
-    from teachers_teammate.infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
+    from teachers_teammate.domain.ollama_address import normalize_ollama_url  # noqa: PLC0415
 
     services = build_app_services()
     kept = {"qwen3.5:9b": frozenset()}

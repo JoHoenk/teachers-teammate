@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ..domain.anonymization import AnonymizerConfig
-    from ..domain.model_catalog import GpuInfo, GpuUsage
+    from ..domain.model_catalog import GpuInfo, GpuUsage, ServerFacts
     from ..domain.ollama_discovery import WaitDetail
     from ..infrastructure.ollama_utils import ServerActivity
     from ..interfaces import Anonymizer
@@ -63,6 +63,21 @@ class OllamaServer(Protocol):
         """Drop *model* out of the server's memory."""
         ...
 
+    def check_connection(self, url: str, model: str = "") -> tuple[bool, bool, str]:
+        """Return ``(connected, model_ok, message)`` for the server at *url*."""
+        ...
+
+    def model_capabilities(self, url: str, tag: str, *, timeout: float) -> frozenset[str] | None:
+        """Return the capabilities the server reports for *tag* (``{"completion", "vision"}``, …).
+
+        ``None`` when it cannot say.
+        """
+        ...
+
+    def server_facts(self, url: str) -> ServerFacts:
+        """Return the version, the model digests and the loaded models at *url*."""
+        ...
+
     def is_local(self, url: str, *, include_wsl_host: bool = False) -> bool:
         """Return whether *url* points at this computer (or the Windows host behind WSL)."""
         ...
@@ -74,6 +89,11 @@ class OllamaServer(Protocol):
     def can_start(self) -> bool:
         """Return whether the app can start Ollama from here."""
         ...
+
+
+#: Builds the Ollama client of one address; *cancel_event* makes a waiting request abandonable.
+#: The client is opaque here: only the probe that drives it knows its shape.
+OllamaClientFactory = Callable[[str, threading.Event | None], object]
 
 
 class AddonState(Protocol):

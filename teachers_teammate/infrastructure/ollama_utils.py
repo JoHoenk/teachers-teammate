@@ -1,7 +1,8 @@
-"""Shared Ollama utilities: URL normalisation and the OllamaClient HTTP wrapper.
+"""The OllamaClient HTTP wrapper, and the names this computer answers to.
 
-Centralises all Ollama HTTP access so pipeline stages, GUI helpers, and
-connection-check threads use the same code path.
+Centralises all Ollama HTTP access so pipeline stages, GUI helpers, and connection-check threads
+use the same code path.  What an address *is* — its normal form, its host, whether it points at
+this computer — is :mod:`~teachers_teammate.domain.ollama_address`.
 """
 
 from __future__ import annotations
@@ -9,21 +10,25 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 import functools
-import ipaddress
 import logging
 import queue
 import socket
 import threading
 import time
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
 
 from ..domain.context_budget import (
     ContextBudget,
     answers_with_the_same_text,
 )
 from ..domain.model_catalog import LoadedModel, ServerFacts, normalize_tag
-from ..domain.ollama_discovery import DEFAULT_SERVER_URL, WaitDetail, WaitKind, is_private_host
+from ..domain.ollama_address import (
+    is_local_ollama_url,
+    models_include,
+    normalize_ollama_url,
+    ollama_host,
+)
+from ..domain.ollama_discovery import WaitDetail, WaitKind, is_private_host
 from ..exceptions import OllamaConnectionError, RunStoppedError, stop_requested
 from ..interfaces import Reporter
 from .reporting import StdoutReporter
@@ -102,28 +107,8 @@ def proofreading_options(
     return {**(sampling or {}), "temperature": temperature, "num_ctx": num_ctx}
 
 
-def normalize_ollama_url(url: str) -> str:
-    """Return a normalized Ollama base URL.
-
-    Accepts bare host:port inputs (for example ``127.0.0.1:11434``) and
-    prepends ``http://`` so HTTP clients can use it directly.
-    """
-    cleaned = (url or "").strip()
-    if not cleaned:
-        return DEFAULT_SERVER_URL
-    if "://" not in cleaned:
-        cleaned = f"http://{cleaned}"
-    return cleaned.rstrip("/")
-
-
-def ollama_host(url: str) -> str:
-    """Return the host name of the Ollama server at *url* (the default server when empty)."""
-    normalized = normalize_ollama_url(url)
-    return urlparse(normalized).hostname or normalized
-
-
 @functools.cache
-def _own_host_names() -> frozenset[str]:
+def own_host_names() -> frozenset[str]:
     """Return the names and addresses under which this computer knows itself.
 
     Only the machine's own host name is resolved — never an arbitrary host — so
@@ -143,36 +128,7 @@ def _own_host_names() -> frozenset[str]:
 
 def warm_up_own_host_names() -> None:
     """Resolve this computer's own names in a background thread (idempotent, non-blocking)."""
-    threading.Thread(target=_own_host_names, name="own-host-names", daemon=True).start()
-
-
-def is_local_ollama_url(url: str, *, include_wsl_host: bool = False) -> bool:
-    """Return whether *url* points at this computer.
-
-    True for ``localhost``, the whole loopback range (``127.0.0.0/8``, ``::1``),
-    ``0.0.0.0`` and this computer's own host name or address (so the machine's LAN
-    IP counts as local too); false for anything else.
-
-    With *include_wsl_host*, the Windows computer behind a WSL session counts too: it is the
-    same physical computer, so nothing sent to it leaves the teacher's computer.  Callers that
-    read this computer's graphics card or memory leave it off: from inside WSL those figures
-    are the Linux side's, not the Windows computer's that actually runs Ollama.
-    """
-    host = (urlparse(normalize_ollama_url(url)).hostname or "").lower()
-    if not host:
-        return False
-    if host in ("localhost", "0.0.0.0"):
-        return True
-    try:
-        if ipaddress.ip_address(host).is_loopback:
-            return True
-    except ValueError:
-        pass
-    # Only now look up the computer's own names: the cheap checks above answer the
-    # common (default) URL without ever waiting on the network.
-    if host in _own_host_names():
-        return True
-    return include_wsl_host and host in windows_host_addresses()
+    threading.Thread(target=own_host_names, name="own-host-names", daemon=True).start()
 
 
 @dataclass(frozen=True)
@@ -195,22 +151,11 @@ def ollama_server(url: str) -> OllamaServer:
     host = ollama_host(url)
     return OllamaServer(
         host=host,
-        is_this_computer=is_local_ollama_url(url, include_wsl_host=True),
+        is_this_computer=is_local_ollama_url(
+            url, own_addresses=own_host_names, windows_hosts=windows_host_addresses
+        ),
         is_private=is_private_host(host),
     )
-
-
-def models_include(model_name: str, available: list[str]) -> bool:
-    """Return whether *model_name* is present in *available*.
-
-    Matches an exact name (``"llama3:8b"``) and also a bare base name
-    (``"llama3"``) against any installed tag, since Ollama model identifiers
-    carry an optional ``:tag`` suffix that callers may omit.
-    """
-    if not model_name:
-        return False
-    model_base = model_name.split(":", maxsplit=1)[0]
-    return any(m == model_name or m.split(":", maxsplit=1)[0] == model_base for m in available)
 
 
 def _mapped_stream[T](stream: Iterator[T], base_url: str) -> Iterator[T]:

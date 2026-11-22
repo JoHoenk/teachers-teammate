@@ -47,10 +47,11 @@ from ..domain.model_catalog import (
     rate_model,
     uses_from_capabilities,
 )
+from ..domain.ollama_address import normalize_ollama_url
 from ..domain.stages import Stage
 from ..exceptions import OllamaConnectionError
 from .context_choice import ContextChoice, context_choice
-from .ports import HardwareProbe
+from .ports import HardwareProbe, OllamaServer
 
 _logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class ModelRecommendationService:
         invalidate_speed_facts: Callable[[str], None] | None = None,
         machine_factor: Callable[[str, ModelCategory], float | None] | None = None,
         hardware: HardwareProbe,
+        ollama: OllamaServer,
     ) -> None:
         """Create the service.
 
@@ -108,8 +110,11 @@ class ModelRecommendationService:
                 of :meth:`rate_ollama_models` may carry.
             hardware: What this computer is: its graphics cards and its memory.  The
                 probe runs once per process, however often the URL changes.
+            ollama: The server the models live on: whether it is this computer, and what a
+                model the catalogue does not know can do.
         """
         self._effective_model = effective_model
+        self._ollama = ollama
         self._invalidate_model_list = invalidate_model_list or (lambda _url: None)
         self._invalidate_speed_facts = invalidate_speed_facts or (lambda _url: None)
         self._machine_factor_of = machine_factor or (lambda _url, _category: None)
@@ -164,13 +169,8 @@ class ModelRecommendationService:
         process-wide probe, so calling this for every keystroke in the URL field
         costs nothing; ``refresh=True`` probes again ("Detect again").
         """
-        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
-            is_local_ollama_url,
-            normalize_ollama_url,
-        )
-
         url = normalize_ollama_url(ollama_url)
-        if not is_local_ollama_url(url):
+        if not self._ollama.is_local(url):
             return choose_profile(
                 gpus=(),
                 apple_unified_memory_gb=None,
@@ -211,15 +211,10 @@ class ModelRecommendationService:
         yet: the probe runs ``nvidia-smi`` and the ROCm tools, which must never happen on the GUI
         thread, so the caller asks a background task instead.
         """
-        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
-            is_local_ollama_url,
-            normalize_ollama_url,
-        )
-
         if setting in HARDWARE_PROFILES:
             return self.resolve_hardware_profile(setting, ollama_url)
         url = normalize_ollama_url(ollama_url)
-        if not is_local_ollama_url(url):
+        if not self._ollama.is_local(url):
             return self.detect_hardware(url)
         if self._probe is None:
             return None
@@ -232,12 +227,7 @@ class ModelRecommendationService:
         card is still rated by the memory the computer has, so that is read separately and
         once: it is a quick query, unlike the graphics probe.
         """
-        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
-            is_local_ollama_url,
-            normalize_ollama_url,
-        )
-
-        if not is_local_ollama_url(normalize_ollama_url(ollama_url)):
+        if not self._ollama.is_local(ollama_url):
             return None
         if self._hardware.apple_unified_memory_gb() is not None:
             return None  # the graphics share is carved out of this memory: no second helping
@@ -326,8 +316,6 @@ class ModelRecommendationService:
             cached_only: Never contact the server — unknown tags map to ``None``.
                 Use this from the GUI thread.
         """
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
         url = normalize_ollama_url(ollama_url)
         result: dict[str, ModelUses | None] = {}
         unknown: list[str] = []
@@ -351,15 +339,14 @@ class ModelRecommendationService:
             result.update(dict.fromkeys(unknown, None))
             return result
 
-        from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-
-        client = OllamaClient(url, timeout=_CLASSIFY_TIMEOUT_S)
         reachable = True
         for tag in unknown:
             uses: ModelUses | None = None
             if reachable:
                 try:
-                    capabilities = client.model_capabilities(normalize_tag(tag))
+                    capabilities = self._ollama.model_capabilities(
+                        url, normalize_tag(tag), timeout=_CLASSIFY_TIMEOUT_S
+                    )
                 except OllamaConnectionError:
                     reachable = False
                 else:
@@ -419,8 +406,6 @@ class ModelRecommendationService:
 
     def invalidate_classification(self, ollama_url: str) -> None:
         """Forget the classifications for *ollama_url* only."""
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
         with self._cache_lock:
             self._classification.pop(normalize_ollama_url(ollama_url), None)
 
@@ -431,8 +416,6 @@ class ModelRecommendationService:
         the classifications and the stored server facts are stale from that moment
         on — a pull changes the digest a measurement is keyed by.
         """
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
         url = normalize_ollama_url(ollama_url)
         self._invalidate_model_list(url)
         self.invalidate_classification(url)

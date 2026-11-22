@@ -16,6 +16,7 @@ import time
 from .._model_defaults import default_model_for_task
 from ..domain.data_location import PROVIDER_OLLAMA, StageLocation
 from ..domain.model_listing import ModelListing
+from ..domain.ollama_address import normalize_ollama_url
 from ..domain.providers import ProviderInfo, display_name_of
 from ..infrastructure.llm_factory import (
     check_provider_connection,
@@ -27,6 +28,7 @@ from ..infrastructure.llm_factory import (
     provider_package_required,
 )
 from .data_flow import llm_location, text_goes_online
+from .ports import OllamaServer
 
 
 def importable(module: str) -> bool:
@@ -44,7 +46,13 @@ class ProviderService:
 
     _MODEL_CACHE_TTL_S: float = 300.0
 
-    def __init__(self, *, importable_module: Callable[[str], bool] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        ollama: OllamaServer,
+        importable_module: Callable[[str], bool] | None = None,
+    ) -> None:
+        self._ollama = ollama
         self._importable = importable_module or importable
         self._model_cache: dict[str, tuple[float, ModelListing]] = {}
         # Told when an Ollama model list is forgotten, so what was derived from it is forgotten
@@ -177,9 +185,7 @@ class ProviderService:
         tuple is ``(ok, ok, message)``: the model-level distinction does not apply to them.
         """
         if provider == PROVIDER_OLLAMA:
-            from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-
-            return OllamaClient(url).check_connection(model)
+            return self._ollama.check_connection(url, model)
         # Unknown providers are not blocked — assume OK by default.
         if provider not in list_providers():
             return True, True, "✓ OK"
@@ -200,8 +206,6 @@ class ProviderService:
         invalidation could miss the entry that was cached under the other spelling.
         """
         if provider == PROVIDER_OLLAMA:
-            from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
             return f"ollama:{normalize_ollama_url(base_url)}"
         return f"{provider}:{base_url}" if base_url else provider
 

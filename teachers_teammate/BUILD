@@ -30,6 +30,7 @@ _DOMAIN_SRCS = [
     "domain/name_models.py",
     "domain/notation.py",
     "domain/offset_map.py",
+    "domain/ollama_address.py",
     "domain/ollama_discovery.py",
     "domain/output_files.py",
     "domain/pdf_text_layer.py",

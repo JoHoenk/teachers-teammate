@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
 from teachers_teammate.domain.data_location import DataRegion
+from teachers_teammate.domain.ollama_address import normalize_ollama_url
 from teachers_teammate.domain.ollama_discovery import DEFAULT_SERVER_URL
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.exceptions import ProviderNotAvailableError
@@ -57,10 +58,6 @@ def create(
     try:
         # optional dep; lazy import to avoid startup ImportError when not installed
         from langchain_ollama import ChatOllama  # noqa: PLC0415
-
-        from teachers_teammate.infrastructure.ollama_utils import (  # noqa: PLC0415
-            normalize_ollama_url,
-        )
     except ImportError as exc:
         raise ProviderNotAvailableError(
             "langchain-ollama is not installed. Run: pip install langchain-ollama"

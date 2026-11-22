@@ -18,17 +18,16 @@ from teachers_teammate.exceptions import (
     ResponseTruncatedError,
     RunStoppedError,
 )
+from teachers_teammate.domain.ollama_address import ollama_host
 from teachers_teammate.infrastructure import ollama_utils
 from teachers_teammate.infrastructure.ollama_utils import (
     ChatStats,
     OllamaClient,
     _consume_iterator_with_first_token_timeout,
-    is_local_ollama_url,
-    normalize_ollama_url,
 )
 
 
-_REAL_OWN_HOST_NAMES = ollama_utils._own_host_names  # tests below monkeypatch the module name
+_REAL_OWN_HOST_NAMES = ollama_utils.own_host_names  # tests below monkeypatch the module name
 
 
 @pytest.fixture(autouse=True)
@@ -37,46 +36,6 @@ def _fresh_own_host_names():
     _REAL_OWN_HOST_NAMES.cache_clear()
     yield
     _REAL_OWN_HOST_NAMES.cache_clear()
-
-
-# ── normalize_ollama_url ───────────────────────────────────────────────────
-
-
-def test_normalize_ollama_url_prepends_scheme_to_bare_host_port() -> None:
-    """
-    Given  a bare host:port string with no scheme
-    When   normalize_ollama_url() is called
-    Then   http:// is prepended and the result has no trailing slash
-    """
-    assert normalize_ollama_url("127.0.0.1:11434") == "http://127.0.0.1:11434"
-
-
-def test_normalize_ollama_url_returns_default_for_empty_string() -> None:
-    """
-    Given  an empty string
-    When   normalize_ollama_url() is called
-    Then   the default URL "http://127.0.0.1:11434" is returned
-    """
-    assert normalize_ollama_url("") == "http://127.0.0.1:11434"
-
-
-def test_normalize_ollama_url_strips_trailing_slash() -> None:
-    """
-    Given  a fully-qualified URL with a trailing slash
-    When   normalize_ollama_url() is called
-    Then   the trailing slash is removed
-    """
-    assert normalize_ollama_url("http://localhost:11434/") == "http://localhost:11434"
-
-
-def test_normalize_ollama_url_leaves_well_formed_url_unchanged() -> None:
-    """
-    Given  a URL that already has a scheme and no trailing slash
-    When   normalize_ollama_url() is called
-    Then   the URL is returned as-is
-    """
-    url = "http://192.168.1.10:11434"
-    assert normalize_ollama_url(url) == url
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -982,7 +941,7 @@ def test_pull_no_callback(monkeypatch) -> None:
     OllamaClient("http://127.0.0.1:11434").pull("tinyllama")  # no exception
 
 
-# ── is_local_ollama_url ────────────────────────────────────────────────────
+# ── ollama_server, and the names this computer answers to ──────────────────
 
 
 @pytest.mark.parametrize(
@@ -1007,85 +966,13 @@ def test_ollama_server_says_where_the_address_is(
     Then   it names the host, and says whether it is this computer and whether it is on a
            local network, the one reading every privacy rule starts from
     """
-    monkeypatch.setattr(ollama_utils, "_own_host_names", lambda: frozenset())
+    monkeypatch.setattr(ollama_utils, "own_host_names", lambda: frozenset())
     monkeypatch.setattr(ollama_utils, "windows_host_addresses", lambda: ("172.28.0.1",))
 
     server = ollama_utils.ollama_server(url)
 
-    assert server.host == ollama_utils.ollama_host(url)
+    assert server.host == ollama_host(url)
     assert (server.is_this_computer, server.is_private) == (this_computer, private)
-
-
-@pytest.mark.use_case("Hardware_Profile_Override")
-@pytest.mark.parametrize(
-    ("url", "expected"),
-    [
-        ("http://localhost:11434", True),
-        ("127.0.0.1:11434", True),
-        ("http://127.0.0.1:11434", True),
-        ("http://127.8.8.8:11434", True),  # whole 127.0.0.0/8 loopback range
-        ("http://[::1]:11434", True),
-        ("http://0.0.0.0:11434", True),
-        ("", True),  # default URL is local
-        ("http://192.168.1.50:11434", False),
-        ("myserver.lan:11434", False),
-        ("http://ollama.example.com", False),
-        ("http://127.example.com:11434", False),  # a host NAME that merely starts with "127."
-    ],
-)
-def test_is_local_ollama_url(url: str, expected: bool, monkeypatch) -> None:
-    """
-    Given  an Ollama server URL (and a computer that knows itself under no other name)
-    When   is_local_ollama_url is called
-    Then   loopback addresses (and the default URL) count as local, hosts do not
-    """
-    monkeypatch.setattr(ollama_utils, "_own_host_names", lambda: frozenset())
-    assert is_local_ollama_url(url) is expected
-
-
-@pytest.mark.parametrize(
-    "url", ["", "localhost:11434", "http://127.0.0.1:11434", "http://[::1]:11434"]
-)
-def test_is_local_ollama_url_answers_loopback_without_looking_up_own_names(
-    url: str, monkeypatch
-) -> None:
-    """
-    Given  a lookup of the computer's own names that must never run
-    When   is_local_ollama_url is called with the default or a loopback URL
-    Then   it answers True without that (possibly slow) lookup
-    """
-
-    def forbidden() -> frozenset[str]:
-        raise AssertionError("own names looked up for a loopback URL")
-
-    monkeypatch.setattr(ollama_utils, "_own_host_names", forbidden)
-    assert is_local_ollama_url(url) is True
-
-
-@pytest.mark.use_case("Hardware_Profile_Override")
-@pytest.mark.parametrize(
-    ("url", "expected"),
-    [
-        ("http://studio-pc:11434", True),  # this computer's host name
-        ("http://STUDIO-PC.local:11434", True),  # case does not matter
-        ("http://10.0.0.7:11434", True),  # this computer's own LAN address
-        ("http://10.0.0.8:11434", False),  # another computer on the same network
-    ],
-)
-def test_is_local_ollama_url_recognises_the_computers_own_names(
-    url: str, expected: bool, monkeypatch
-) -> None:
-    """
-    Given  a computer that knows itself as "studio-pc", "studio-pc.local" and 10.0.0.7
-    When   the Ollama URL names one of these
-    Then   it counts as local (the GPU of this computer is the one that runs the models)
-    """
-    monkeypatch.setattr(
-        ollama_utils,
-        "_own_host_names",
-        lambda: frozenset({"studio-pc", "studio-pc.local", "10.0.0.7"}),
-    )
-    assert is_local_ollama_url(url) is expected
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
@@ -1100,8 +987,8 @@ def test_own_host_names_collects_name_and_addresses_and_survives_lookup_errors(
     """
 
     def uncached() -> frozenset[str]:
-        ollama_utils._own_host_names.cache_clear()
-        return ollama_utils._own_host_names()
+        ollama_utils.own_host_names.cache_clear()
+        return ollama_utils.own_host_names()
 
     monkeypatch.setattr(ollama_utils.socket, "gethostname", lambda: "Studio-PC")
     monkeypatch.setattr(ollama_utils.socket, "getfqdn", lambda: "Studio-PC.local")
@@ -1133,13 +1020,13 @@ def test_warm_up_resolves_own_names_once_in_the_background(monkeypatch) -> None:
         calls.append(threading.current_thread().name)
         return "studio-pc"
 
-    ollama_utils._own_host_names.cache_clear()
+    ollama_utils.own_host_names.cache_clear()
     monkeypatch.setattr(ollama_utils.socket, "gethostname", hostname)
     monkeypatch.setattr(ollama_utils.socket, "getfqdn", lambda: "studio-pc")
     monkeypatch.setattr(ollama_utils.socket, "gethostbyname_ex", lambda _h: ("", [], []))
 
     ollama_utils.warm_up_own_host_names()
-    names = ollama_utils._own_host_names()
+    names = ollama_utils.own_host_names()
 
     assert names == frozenset({"studio-pc"})
     assert calls == ["own-host-names"]

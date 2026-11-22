@@ -41,8 +41,8 @@ import threading
 import time
 from typing import Any, cast
 
+from ..domain.ollama_address import normalize_ollama_url
 from ..domain.performance_estimate import ModelSpeed, SpeedStep, StepOutcome
-from .ollama_utils import normalize_ollama_url
 from .storage_root import resolve_data_folder
 
 _logger = logging.getLogger(__name__)

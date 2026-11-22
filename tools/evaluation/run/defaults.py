@@ -22,7 +22,7 @@ def default_ollama_url() -> str:
     so it is normalised exactly as the app normalises it.  Both tools used to treat the variable
     differently; they now share this function.
     """
-    from teachers_teammate.infrastructure.ollama_utils import (  # noqa: PLC0415
+    from teachers_teammate.domain.ollama_address import (  # noqa: PLC0415
         normalize_ollama_url,
     )
 

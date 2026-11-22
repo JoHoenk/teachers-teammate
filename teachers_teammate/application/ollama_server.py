@@ -10,14 +10,23 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import threading
 
+from ..domain.model_catalog import ServerFacts
+from ..domain.ollama_address import is_local_ollama_url, normalize_ollama_url
 from ..domain.ollama_discovery import (
     DiscoveredServer,
     DiscoveryScope,
     OllamaState,
     WaitDetail,
+    WaitKind,
     ollama_state,
 )
-from ..infrastructure.ollama_utils import ServerActivity, warm_up_own_host_names
+from ..infrastructure.ollama_utils import (
+    OllamaClient,
+    ServerActivity,
+    own_host_names,
+    warm_up_own_host_names,
+)
+from ..infrastructure.wsl import windows_host_addresses
 
 
 @dataclass(frozen=True)
@@ -80,17 +89,13 @@ class OllamaServerService:
             can_start_ollama,
             find_ollama_program,
         )
-        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
-            is_local_ollama_url,
-            normalize_ollama_url,
-        )
 
         normalized = normalize_ollama_url(url)
         info = ollama_discovery.probe_server(normalized)
         program = None if info is not None else find_ollama_program()
         state = ollama_state(
             answered=info is not None,
-            local_address=is_local_ollama_url(normalized, include_wsl_host=True),
+            local_address=self.is_local(normalized, include_wsl_host=True),
             program_found=program is not None,
         )
         return OllamaStatus(
@@ -102,8 +107,6 @@ class OllamaServerService:
 
     def list_ollama_model_sizes(self, url: str) -> dict[str, int]:
         """Return ``{model_name: size_bytes}`` for models installed in Ollama."""
-        from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-
         return dict(OllamaClient(url).list_models_with_size())
 
     def listed_models(self, url: str) -> tuple[list[str], str]:
@@ -113,8 +116,6 @@ class OllamaServerService:
         downloaded yet — and the connection message otherwise.  Makes one request: a caller
         that asks repeatedly keeps the answer.
         """
-        from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-
         return OllamaClient(url).list_models_or_error()
 
     def activity(self, url: str, model: str = "") -> ServerActivity:
@@ -122,15 +123,28 @@ class OllamaServerService:
 
         Never raises: an unreachable server reports nothing loaded and nothing busy.
         """
-        from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-
         return OllamaClient(url).activity(model)
 
     def unload(self, url: str, model: str) -> None:
         """Drop *model* out of the server's memory at *url*, so it costs no memory any more."""
-        from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-
         OllamaClient(url).unload(model)
+
+    def check_connection(self, url: str, model: str = "") -> tuple[bool, bool, str]:
+        """Return ``(connected, model_ok, message)`` for the server at *url*."""
+        return OllamaClient(url).check_connection(model)
+
+    def model_capabilities(self, url: str, tag: str, *, timeout: float) -> frozenset[str] | None:
+        """Return what *tag* can do on the server at *url*, or ``None`` when it cannot say.
+
+        Raises:
+            :exc:`~teachers_teammate.exceptions.OllamaConnectionError`: *url* is unreachable,
+                so a caller asking about several tags can stop asking.
+        """
+        return OllamaClient(url, timeout=timeout).model_capabilities(tag)
+
+    def server_facts(self, url: str) -> ServerFacts:
+        """Return the version, the model digests and the loaded models of the server at *url*."""
+        return OllamaClient(url).server_facts()
 
     def wait_for(self, url: str, model: str) -> WaitDetail:
         """Return why *model* has to wait for another one at *url*, or nothing.
@@ -138,8 +152,6 @@ class OllamaServerService:
         A note, not a refusal: another model is in memory and busy, so the server finishes it
         and loads *model* before the first answer.
         """
-        from ..domain.ollama_discovery import WaitKind  # noqa: PLC0415
-
         activity = self.activity(url, model)
         if activity.has(model):
             return WaitDetail()
@@ -156,8 +168,6 @@ class OllamaServerService:
         abort_event: threading.Event | None = None,
     ) -> None:
         """Pull (download) *model_name* from Ollama at *url*."""
-        from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-
         OllamaClient(url).pull(model_name, progress_cb, abort_event)
 
     @staticmethod
@@ -203,13 +213,13 @@ class OllamaServerService:
     @staticmethod
     def is_local(url: str, *, include_wsl_host: bool = False) -> bool:
         """Return whether *url* points at this computer (or the Windows host behind WSL)."""
-        from ..infrastructure.ollama_utils import is_local_ollama_url  # noqa: PLC0415
-
-        return is_local_ollama_url(url, include_wsl_host=include_wsl_host)
+        return is_local_ollama_url(
+            url,
+            own_addresses=own_host_names,
+            windows_hosts=windows_host_addresses if include_wsl_host else tuple,
+        )
 
     @staticmethod
     def normalize(url: str) -> str:
         """Return *url* in the form the app compares and stores."""
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
         return normalize_ollama_url(url)

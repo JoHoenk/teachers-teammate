@@ -331,18 +331,22 @@ def test_network_search_stops_when_asked() -> None:
 def test_the_wsl_host_counts_as_this_computer_for_privacy_only() -> None:
     """
     Given  a WSL session whose Windows host is 172.31.0.1
-    When   is_local_ollama_url is asked about that address
+    When   the service is asked about that address
     Then   it is local only when the caller asks for the WSL host to count (data location),
            not for hardware probing
     """
     from unittest.mock import patch  # noqa: PLC0415
 
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
+    from teachers_teammate.application.ollama_server import OllamaServerService  # noqa: PLC0415
 
-    with patch.object(ollama_utils, "windows_host_addresses", return_value=("172.31.0.1",)):
+    module = "teachers_teammate.application.ollama_server"
+    with (
+        patch(f"{module}.windows_host_addresses", return_value=("172.31.0.1",)),
+        patch(f"{module}.own_host_names", return_value=frozenset()),
+    ):
         url = "http://172.31.0.1:11434"
-        assert ollama_utils.is_local_ollama_url(url) is False
-        assert ollama_utils.is_local_ollama_url(url, include_wsl_host=True) is True
+        assert OllamaServerService.is_local(url) is False
+        assert OllamaServerService.is_local(url, include_wsl_host=True) is True
 
 
 @pytest.mark.parametrize(

@@ -17,6 +17,7 @@ from teachers_teammate.application.speed_estimates import (
     SpeedEstimateService,
     SpeedSource,
 )
+from teachers_teammate.application.ports import OllamaServer
 from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     DetectionReason,
@@ -190,17 +191,27 @@ def _exchange_time(
     )
 
 
-class _FakeClient:
-    """A stand-in for :class:`OllamaClient` that answers with fixed server facts."""
+class _FakeServer:
+    """A stand-in for the Ollama server port: fixed facts, and a count of the calls."""
 
     def __init__(self, facts: ServerFacts) -> None:
         self.facts = facts
         self.calls = 0
 
-    def server_facts(self) -> ServerFacts:
+    def server_facts(self, url: str) -> ServerFacts:
         """Return the scripted facts and count the call."""
+        _ = url
         self.calls += 1
         return self.facts
+
+
+class _FakeClient:
+    """A stand-in for the client the probe drives; a fake probe never uses it."""
+
+
+def _client_factory(_url: str, _cancel: threading.Event | None) -> object:
+    """Return the client the probe of a speed test drives; a fake probe never reads it."""
+    return _FakeClient()
 
 
 class _FakeProbe:
@@ -222,24 +233,25 @@ def _service(
     facts: ServerFacts | None = None,
     probe: _FakeProbe | None = None,
     samples: SampleStore | None = None,
-) -> tuple[SpeedEstimateService, SpeedStore, _FakeClient]:
+) -> tuple[SpeedEstimateService, SpeedStore, _FakeServer]:
     """Return a service over a temporary store, with a fake server.
 
     Both stores live under *tmp_path*, so a test never reads the samples of the machine it runs
     on.
     """
     store = SpeedStore(tmp_path / "measurements.json")
-    client = _FakeClient(facts if facts is not None else ServerFacts())
+    server = _FakeServer(facts if facts is not None else ServerFacts())
     service = SpeedEstimateService(
         effective_model=_effective_model,
+        ollama=cast(OllamaServer, server),
+        client_factory=_client_factory,
         store=store,
         samples=samples if samples is not None else SampleStore(tmp_path / "samples.json"),
-        client_factory=lambda _url, _cancel: client,
         probe_factory=(
             (lambda *_a, **_k: cast(PerformanceProbe, probe)) if probe is not None else None
         ),
     )
-    return service, store, client
+    return service, store, server
 
 
 # ── the choices ────────────────────────────────────────────────────────────
@@ -393,7 +405,7 @@ def test_the_test_stores_one_record_per_model(tmp_path: Path) -> None:
             facts=facts,
         )
     )
-    service, store, _client = _service(tmp_path, probe=probe)
+    service, store, _server = _service(tmp_path, probe=probe)
 
     service.test_speed(_choices(), hardware=_hardware())
 
@@ -412,7 +424,7 @@ def test_the_test_sends_the_choices_to_the_probe(tmp_path: Path) -> None:
     Then   the probe is asked for exactly those models, that language and that window
     """
     probe = _FakeProbe(ProbeResult())
-    service, _store, _client = _service(tmp_path, probe=probe)
+    service, _store, _server = _service(tmp_path, probe=probe)
 
     service.test_speed(_choices(language="French", num_ctx=4096))
 
@@ -430,7 +442,7 @@ def test_a_test_that_measured_nothing_stores_nothing(tmp_path: Path) -> None:
     Then   the store stays empty
     """
     probe = _FakeProbe(ProbeResult(error="cannot connect to Ollama"))
-    service, store, _client = _service(tmp_path, probe=probe)
+    service, store, _server = _service(tmp_path, probe=probe)
 
     service.test_speed(_choices())
 
@@ -452,7 +464,7 @@ def test_the_test_caches_the_server_facts(tmp_path: Path) -> None:
             facts=facts,
         )
     )
-    service, _store, _client = _service(tmp_path, probe=probe)
+    service, _store, _server = _service(tmp_path, probe=probe)
 
     service.test_speed(_choices())
 
@@ -474,8 +486,9 @@ def test_a_stopped_test_stores_nothing(tmp_path: Path) -> None:
     store = SpeedStore(tmp_path / "measurements.json")
     service = SpeedEstimateService(
         effective_model=_effective_model,
+        ollama=cast(OllamaServer, _FakeServer(ServerFacts())),
+        client_factory=_client_factory,
         store=store,
-        client_factory=lambda _url, _cancel: _FakeClient(ServerFacts()),
         probe_factory=lambda *_a, **_k: cast(PerformanceProbe, _StoppingProbe()),
     )
     event = threading.Event()
@@ -497,13 +510,14 @@ def test_the_client_of_the_test_gets_the_stop_event(tmp_path: Path) -> None:
 
     def client_factory(_url: str, cancel: threading.Event | None) -> object:
         seen.append(cancel)
-        return _FakeClient(ServerFacts())
+        return _FakeClient()
 
     service = SpeedEstimateService(
         effective_model=_effective_model,
+        ollama=cast(OllamaServer, _FakeServer(ServerFacts())),
+        client_factory=client_factory,
         store=SpeedStore(tmp_path / "measurements.json"),
         samples=SampleStore(tmp_path / "samples.json"),
-        client_factory=client_factory,
         probe_factory=lambda *_a, **_k: cast(PerformanceProbe, _FakeProbe(ProbeResult())),
     )
     event = threading.Event()
@@ -520,7 +534,7 @@ def test_a_test_that_could_not_reach_the_server_stores_nothing(tmp_path: Path) -
     Then   the stored measurement is unchanged and the empty server facts are not cached
     """
     probe = _FakeProbe(ProbeResult(error="Cannot connect to Ollama"))
-    service, store, _client = _service(tmp_path, probe=probe)
+    service, store, _server = _service(tmp_path, probe=probe)
     store.save(_record())
 
     result = service.test_speed(_choices())
@@ -539,7 +553,7 @@ def test_the_summary_reports_a_measured_step_per_page(tmp_path: Path) -> None:
     When   the summary is asked for
     Then   the proofreading row carries a range of seconds per page and its band
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(
         _record(
             steps=(
@@ -567,7 +581,7 @@ def test_the_summary_has_no_row_for_a_step_that_was_not_measured(tmp_path: Path)
     When   the summary is asked for both steps
     Then   only the proofreading row is there
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record())
 
     summary = service.speed_summary(_choices())
@@ -584,7 +598,7 @@ def test_a_step_that_was_never_measured_keeps_a_row_with_its_expected_band(
     When   the summary is asked for
     Then   the unmeasured step has a row of its own, with the band the catalog expects here
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record())
 
     summary = service.speed_summary(
@@ -604,7 +618,7 @@ def test_an_unmeasured_step_has_no_band_without_a_detection(tmp_path: Path) -> N
     When   the summary is asked for without a hardware detection
     Then   the row is there but says nothing about the speed to expect
     """
-    service, _store, _client = _service(tmp_path)
+    service, _store, _server = _service(tmp_path)
 
     summary = service.speed_summary(_choices(reading_model="", writing_model="qwen3:4b"))
 
@@ -620,7 +634,7 @@ def test_the_class_set_is_unknown_while_a_step_is_unmeasured(tmp_path: Path) -> 
     Then   there is no class set, because a sum that left the reading step out would promise
            a time that is too short
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record())
 
     summary = service.speed_summary(_choices())
@@ -636,7 +650,7 @@ def test_a_review_that_shares_the_proofreading_model_has_its_own_row(tmp_path: P
     When   the summary is asked for
     Then   the review row is there, from the same measurement
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record())
 
     summary = service.speed_summary(_choices(reading_model="", review_model="gemma4:e4b"))
@@ -653,7 +667,7 @@ def test_a_review_that_does_not_run_on_ollama_has_no_row(tmp_path: Path) -> None
     When   the summary is asked for
     Then   there is no review row, and the page time is the proofreading alone
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record())
 
     summary = service.speed_summary(_choices(reading_model="", review_model=""))
@@ -670,7 +684,7 @@ def test_the_summary_reports_the_class_set(tmp_path: Path) -> None:
     When   the summary is asked for
     Then   the class set is the sum of both steps over every page of every file
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record())
     store.save(
         _record(
@@ -691,7 +705,7 @@ def test_swapping_models_lengthen_the_class_set(tmp_path: Path) -> None:
     When   the summary is asked for
     Then   the class set is longer than the same run without swapping
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record(swaps=True))
     swapping = service.speed_summary(_choices(reading_model="")).class_set
 
@@ -707,7 +721,7 @@ def test_the_summary_carries_the_date_and_the_flags(tmp_path: Path) -> None:
     When   the summary is asked for
     Then   it carries the date, the battery flag and the shared flag
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record(shared=True, on_battery=True))
 
     summary = service.speed_summary(_choices())
@@ -741,7 +755,7 @@ def test_unknown_server_facts_do_not_mark_a_measurement_out_of_date(tmp_path: Pa
     When   the summary is asked for
     Then   it is not marked out of date, because nothing says it is
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record())
 
     summary = service.speed_summary(_choices(reading_model=""))
@@ -755,12 +769,12 @@ def test_cached_only_never_contacts_the_server(tmp_path: Path) -> None:
     When   the summary is asked for with ``cached_only``
     Then   the server is not asked, so the GUI thread never waits
     """
-    service, store, client = _service(tmp_path)
+    service, store, server = _service(tmp_path)
     store.save(_record())
 
     service.speed_summary(_choices(), cached_only=True)
 
-    assert client.calls == 0
+    assert server.calls == 0
 
 
 def test_the_summary_asks_the_server_when_it_may(tmp_path: Path) -> None:
@@ -769,12 +783,12 @@ def test_the_summary_asks_the_server_when_it_may(tmp_path: Path) -> None:
     When   the summary is asked for without ``cached_only``
     Then   the server facts are fetched once
     """
-    service, store, client = _service(tmp_path)
+    service, store, server = _service(tmp_path)
     store.save(_record())
 
     service.speed_summary(_choices(), cached_only=False)
 
-    assert client.calls == 1
+    assert server.calls == 1
 
 
 def test_a_share_of_zero_on_a_computer_with_a_card_is_reported(tmp_path: Path) -> None:
@@ -783,7 +797,7 @@ def test_a_share_of_zero_on_a_computer_with_a_card_is_reported(tmp_path: Path) -
     When   the summary is asked for
     Then   it says the card was not used
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(
         _record(
             steps=(
@@ -803,7 +817,7 @@ def test_a_share_of_zero_without_a_card_is_not_reported(tmp_path: Path) -> None:
     When   the summary is asked for
     Then   it says nothing about the card, because there is none to use
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(
         _record(
             steps=(
@@ -823,7 +837,7 @@ def test_a_step_that_hit_the_time_limit_is_reported(tmp_path: Path) -> None:
     When   the summary is asked for
     Then   it says a step was too slow, and the row carries the server's message
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(
         _record(
             tag="glm-ocr:q8_0",
@@ -850,7 +864,7 @@ def test_an_empty_store_gives_an_empty_summary(tmp_path: Path) -> None:
     When   the summary is asked for
     Then   it has no rows and no class set, so the panel shows nothing rather than a guess
     """
-    service, _store, _client = _service(tmp_path)
+    service, _store, _server = _service(tmp_path)
 
     summary = service.speed_summary(_choices())
 
@@ -875,7 +889,7 @@ def test_three_samples_replace_the_exchange_answer_length(tmp_path: Path) -> Non
            class's error level and no test can
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     short = [_sample(answer_tokens=300), _sample(answer_tokens=300)]
     _add_samples(samples, SpeedStep.PROOFREADING, short)
     below = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
@@ -896,7 +910,7 @@ def test_before_samples_the_estimate_comes_from_the_exchange_cost_model(tmp_path
     Then   the per-page range is the exchange's own figures: one request per step, the text read
            once by step ① and twice by step ②, and the three answers added up
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record())
 
     row = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
@@ -912,7 +926,7 @@ def test_the_samples_of_the_old_review_mode_are_ignored(tmp_path: Path) -> None:
     Then   their rates count but their answer length does not: the exchange's figures apply
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=1000)] * 4, mode="review")
 
     row = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
@@ -929,7 +943,7 @@ def test_ten_samples_narrow_the_range_to_the_percentiles(tmp_path: Path) -> None
     Then   the high end is below the runaway answer, which the ends would have taken
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     runaway = _sample(answer_tokens=25000)
     _add_samples(samples, SpeedStep.PROOFREADING, [_sample() for _ in range(8)] + [runaway])
     nine = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
@@ -951,7 +965,7 @@ def test_corrections_only_is_estimated_with_step_one_alone(tmp_path: Path) -> No
     Then   the corrections-only estimate is well below the full one: one request that reads the
            text once and writes the text, instead of three that read it four times
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record())
 
     full = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
@@ -975,7 +989,7 @@ def test_corrections_only_uses_the_answer_length_its_own_samples_measured(
            the full-run ones
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=1000)] * 3)
     _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=700)] * 3, mode="text")
     choices = dataclasses.replace(_choices(reading_model=""), correction_output="text")
@@ -995,7 +1009,7 @@ def test_a_full_run_ignores_the_samples_of_corrections_only(tmp_path: Path) -> N
            the three steps' answers together
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=350)] * 4, mode="text")
     only_text = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
     _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=350)] * 4)
@@ -1013,12 +1027,12 @@ def test_the_rate_is_the_median_of_the_samples(tmp_path: Path) -> None:
     Then   the figure is the one the two quiet samples give, not the mean of all three
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     _add_samples(samples, SpeedStep.PROOFREADING, [_sample(), _sample(), _sample(write_tps=10.0)])
     busy = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
 
     quiet_samples = SampleStore(tmp_path / "quiet.json")
-    quiet_service, _store, _client = _service(tmp_path, samples=quiet_samples)
+    quiet_service, _store, _server = _service(tmp_path, samples=quiet_samples)
     _add_samples(quiet_samples, SpeedStep.PROOFREADING, [_sample(), _sample(), _sample()])
     quiet = quiet_service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
 
@@ -1034,7 +1048,7 @@ def test_samples_win_over_a_stored_measurement(tmp_path: Path) -> None:
     Then   the row reports the runs' figure and counts them, because that is what a run does
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, store, _client = _service(tmp_path, samples=samples)
+    service, store, _server = _service(tmp_path, samples=samples)
     store.save(
         _record(
             steps=(
@@ -1062,7 +1076,7 @@ def test_most_samples_paying_a_load_marks_the_models_as_swapping(tmp_path: Path)
     Then   it says the models evict each other, and how many seconds of loading a file pays
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     _add_samples(
         samples,
         SpeedStep.REVIEW,
@@ -1083,7 +1097,7 @@ def test_a_minority_of_loads_does_not_mark_the_models_as_swapping(tmp_path: Path
     Then   the models are not reported as evicting each other, because they mostly stay loaded
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     _add_samples(
         samples,
         SpeedStep.REVIEW,
@@ -1104,7 +1118,7 @@ def test_the_summary_counts_the_documents_the_samples_came_from(tmp_path: Path) 
     Then   it counts three documents, so the panel can say where its figure comes from
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     _add_samples(samples, SpeedStep.PROOFREADING, [_sample(), _sample(), _sample()])
 
     summary = service.speed_summary(_choices(reading_model=""))
@@ -1120,7 +1134,7 @@ def test_the_summary_counts_pages_when_only_text_recognition_ran(tmp_path: Path)
     Then   it counts three pages, because no document went through the writing model
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     _add_samples(
         samples,
         SpeedStep.READING,
@@ -1141,7 +1155,7 @@ def test_the_summary_adds_up_the_steps_per_page(tmp_path: Path) -> None:
     When   the summary is asked for
     Then   one page takes the sum of the rows, because a page pays every step in turn
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(_record())
     store.save(
         _record(
@@ -1172,7 +1186,7 @@ def test_the_machine_factor_compares_a_measured_model_with_its_reference(tmp_pat
 
     spec = find_spec("gemma4:e4b")
     assert spec is not None and spec.reference_speed is not None
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(
         _record(
             steps=(
@@ -1194,7 +1208,7 @@ def test_the_machine_factor_is_unknown_without_a_measurement(tmp_path: Path) -> 
     When   the machine factors are asked for
     Then   both are ``None``, so a caller cannot mistake them for "the same speed"
     """
-    service, _store, _client = _service(tmp_path)
+    service, _store, _server = _service(tmp_path)
 
     factors = service.machine_factors(_URL)
 
@@ -1208,7 +1222,7 @@ def test_the_machine_factor_ignores_another_server(tmp_path: Path) -> None:
     When   the machine factors are asked for this one
     Then   they are ``None``, because another machine's speed says nothing about this one
     """
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     store.save(
         SpeedRecord(
             key=SpeedKey(server="http://192.168.1.20:11434", tag="gemma4:e4b"),
@@ -1228,7 +1242,7 @@ def test_the_machine_factor_is_the_median_of_several_measured_models(tmp_path: P
     """
     from teachers_teammate.domain.model_catalog import find_spec  # noqa: PLC0415
 
-    service, store, _client = _service(tmp_path)
+    service, store, _server = _service(tmp_path)
     for tag, share in (("qwen3:4b", 0.5), ("gemma4:e4b", 0.5), ("gemma4:12b", 0.1)):
         spec = find_spec(tag)
         assert spec is not None and spec.reference_speed is not None
@@ -1259,7 +1273,7 @@ def test_the_machine_factor_comes_from_real_runs_too(tmp_path: Path) -> None:
     spec = find_spec("gemma4:e4b")
     assert spec is not None and spec.reference_speed is not None
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     _add_samples(
         samples,
         SpeedStep.PROOFREADING,
@@ -1279,7 +1293,7 @@ def test_page_times_answer_for_the_measured_models_only(tmp_path: Path) -> None:
     Then   only the measured model gets a figure, and it is the time per page of its step
     """
     facts = ServerFacts(version="0.40.15", digests={"gemma4:e4b": "sha256:aaa"})
-    service, store, _client = _service(tmp_path, facts=facts)
+    service, store, _server = _service(tmp_path, facts=facts)
     store.save(_record())
     service.refresh_server_facts(_URL)
 
@@ -1297,7 +1311,7 @@ def test_page_times_leave_out_a_measurement_that_no_longer_fits(tmp_path: Path) 
     Then   the model is left out, because a figure that has moved on is worse than none
     """
     facts = ServerFacts(version="0.40.15", digests={"gemma4:e4b": "sha256:new"})
-    service, store, _client = _service(tmp_path, facts=facts)
+    service, store, _server = _service(tmp_path, facts=facts)
     store.save(_record(digest="sha256:old"))
     service.refresh_server_facts(_URL)
 
@@ -1311,7 +1325,7 @@ def test_page_times_use_the_reading_step_for_a_reading_model(tmp_path: Path) -> 
     Then   the figure comes from the reading step, which is the one that reads a page image
     """
     facts = ServerFacts(version="0.40.15", digests={"glm-ocr:q8_0": "sha256:aaa"})
-    service, store, _client = _service(tmp_path, facts=facts)
+    service, store, _server = _service(tmp_path, facts=facts)
     store.save(_record(tag="glm-ocr:q8_0"))
     service.refresh_server_facts(_URL)
 
@@ -1335,8 +1349,9 @@ def test_the_probe_is_told_whether_a_card_was_found(tmp_path: Path) -> None:
     store = SpeedStore(tmp_path / "measurements.json")
     service = SpeedEstimateService(
         effective_model=_effective_model,
+        ollama=cast(OllamaServer, _FakeServer(ServerFacts())),
+        client_factory=_client_factory,
         store=store,
-        client_factory=lambda _url, _cancel: _FakeClient(ServerFacts()),
         probe_factory=factory,
     )
 
@@ -1352,7 +1367,7 @@ def test_page_times_of_a_long_list_read_the_samples_once(tmp_path: Path, monkeyp
     Then   the samples file is read once, not once per tag, and the sampled tag has its time
     """
     samples = SampleStore(tmp_path / "samples.json")
-    service, _store, _client = _service(tmp_path, samples=samples)
+    service, _store, _server = _service(tmp_path, samples=samples)
     _add_samples(samples, SpeedStep.PROOFREADING, [_sample()] * 3)
     reads: list[int] = []
     original = samples.server_samples

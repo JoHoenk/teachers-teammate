@@ -28,6 +28,7 @@ from ..domain.model_catalog import (
     ram_needed_gb,
 )
 from ..domain.model_listing import ModelListing
+from ..domain.ollama_address import models_include
 from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import TEXT_SUFFIX, output_folder_refusal
 from ..domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
@@ -506,8 +507,6 @@ class RunService:
         if ocr_reason:
             return RunPreflight(ocr_not_allowed=ocr_reason)
         if self._ollama_needed(config):
-            from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
-
             if fresh:
                 self._providers.forget_ollama_model_list(config.ollama_url)
             installed, unreachable = self._installed_ollama_models(config.ollama_url)
@@ -750,8 +749,6 @@ class RunService:
             return [RequirementIssue(IssueKind.KEY_MISSING, provider=provider, name=name)]
         if provider != PROVIDER_OLLAMA:
             return []
-        from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
-
         installed, unreachable = self._installed_ollama_models(config.ollama_url)
         models = (model,) if model else ()
         if unreachable:

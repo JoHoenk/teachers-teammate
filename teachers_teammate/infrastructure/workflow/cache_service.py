@@ -16,6 +16,7 @@ from ...domain.freshness import (
     first_stale_stage_for_hashes,
 )
 from ...domain.local_models import reader_fingerprint
+from ...domain.ollama_address import ollama_host
 from ...domain.stages import Stage
 from ...domain.teacher_work import (
     TeacherWork,
@@ -24,7 +25,6 @@ from ...domain.teacher_work import (
 )
 from ..input_provider_factory import InputOptions, input_settings_fingerprint
 from ..ocr_processor import get_ocr_prompt
-from ..ollama_utils import ollama_host
 from ..onnx.store import ModelStore
 from ..preprocessing.identity import auto_identity
 from ..preview_image_store import PreviewImageStore

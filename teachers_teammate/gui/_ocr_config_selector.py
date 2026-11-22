@@ -57,7 +57,19 @@ from ..settings_schema import PREPROCESS_METHODS, normalize_preprocess_method
 from ..texts import addons
 from ..texts import review as txt
 from ..texts.models import (
+    DPI_SUFFIX,
     EXPERT_SETTINGS,
+    IMAGE_PREPARATION_LABEL,
+    MODEL_LABEL,
+    PDF_DPI_TIP,
+    PDF_LABEL,
+    PDF_RESOLUTION_LABEL,
+    PDF_TEXT_LAYER_LABEL,
+    PDF_TEXT_LAYER_TIP,
+    PREVIEW_BUTTON,
+    RECOGNITION_ENGINE_TIP,
+    RECOGNITION_METHOD_LABEL,
+    TEMPERATURE_LABEL,
     TEMPERATURE_TOOLTIP,
     asking_for_models_text,
     checking_models_text,
@@ -138,12 +150,9 @@ class OcrModelPicker(QWidget):
         # Labels for the teacher, engine ids as data: nothing else reads the shown text.
         for engine in self._app_service.reader.list_ocr_engines():
             self._ocr_engine.addItem(addons.OCR_ENGINE_LABELS.get(engine, engine), engine)
-        self._ocr_engine.setToolTip(
-            "Pages are always read on a computer you control. Online services are not offered: "
-            "they would receive the whole page, including names and grades."
-        )
+        self._ocr_engine.setToolTip(RECOGNITION_ENGINE_TIP)
         self._ocr_engine.currentIndexChanged.connect(self._on_engine_index_changed)
-        form.addRow("Recognition method:", self._ocr_engine)
+        form.addRow(RECOGNITION_METHOD_LABEL, self._ocr_engine)
 
         self._engine_hint = QLabel()
         self._engine_hint.setWordWrap(True)
@@ -165,7 +174,7 @@ class OcrModelPicker(QWidget):
         form.addRow("", self._install_btn)
 
     def _build_model_row(self, form: QFormLayout, open_downloads: OpenDownloads | None) -> None:
-        self._ocr_model_label = QLabel("Model:")
+        self._ocr_model_label = QLabel(MODEL_LABEL)
         self._ocr_model_row = QWidget()
         ml = QHBoxLayout(self._ocr_model_row)
         ml.setContentsMargins(0, 0, 0, 0)
@@ -425,11 +434,11 @@ class ScanQualityControls(QWidget):
         self._preprocess.currentIndexChanged.connect(self._update_page_models_line)
         ph.addWidget(self._preprocess, stretch=1)
         if show_preview_button:
-            preview_btn = QPushButton("Preview…")
+            preview_btn = QPushButton(PREVIEW_BUTTON)
             preview_btn.setFixedWidth(72)
             preview_btn.clicked.connect(self.preprocess_preview_requested.emit)
             ph.addWidget(preview_btn)
-        form.addRow("Image preparation:", preprocess_row)
+        form.addRow(IMAGE_PREPARATION_LABEL, preprocess_row)
 
         hint = QLabel(txt.PREPROCESS_HINT)
         hint.setWordWrap(True)
@@ -452,20 +461,16 @@ class ScanQualityControls(QWidget):
         self._pdf_dpi = QSpinBox()
         self._pdf_dpi.setRange(72, 600)
         self._pdf_dpi.setSingleStep(72)
-        self._pdf_dpi.setSuffix(" DPI")
-        self._pdf_dpi.setToolTip(
-            "Resolution for rendering PDF pages to images before OCR.\n"
-            "72 = screen quality, 150 = draft, 300 = recommended, 600 = high quality.\n"
-            "Has no effect on image inputs (JPG, PNG)."
-        )
+        self._pdf_dpi.setSuffix(DPI_SUFFIX)
+        self._pdf_dpi.setToolTip(PDF_DPI_TIP)
         if self._pdf_options_inline:
             dpi_row = QWidget()
             dr = QHBoxLayout(dpi_row)
             dr.setContentsMargins(0, 0, 0, 0)
-            dr.addWidget(QLabel("PDF:"))
+            dr.addWidget(QLabel(PDF_LABEL))
             dr.addWidget(self._pdf_dpi)
             dr.addStretch()
-            form.addRow("PDF resolution:", dpi_row)
+            form.addRow(PDF_RESOLUTION_LABEL, dpi_row)
         self._update_page_models_line()
 
     def _build_temperature_row(
@@ -489,23 +494,15 @@ class ScanQualityControls(QWidget):
         self._expert_section = CollapsibleSection(EXPERT_SETTINGS, collapsed=collapsed)
         inner = QFormLayout(self._expert_section.content_widget)
         inner.setContentsMargins(0, 0, 0, 0)
-        inner.addRow("Temperature:", self._ocr_temperature)
+        inner.addRow(TEMPERATURE_LABEL, self._ocr_temperature)
         form.addRow(self._expert_section)
 
     def _build_pdf_text_layer_row(self, form: QFormLayout) -> None:
         self._pdf_text_layer = QComboBox()
         self._pdf_text_layer.addItems(list(PDF_TEXT_LAYER_MODES))
-        self._pdf_text_layer.setToolTip(
-            "Use the text embedded in a PDF instead of recognising it.\n\n"
-            "auto — only when every page is clean, text-only (no scans, no\n"
-            "  handwriting, annotations or form fields); otherwise the pages\n"
-            "  are recognised.\n"
-            "always — whenever every page contains any text.\n"
-            "never — always recognise the rendered pages.\n"
-            "Has no effect on image or text files."
-        )
+        self._pdf_text_layer.setToolTip(PDF_TEXT_LAYER_TIP)
         if self._pdf_options_inline:
-            form.addRow("PDF text layer:", self._pdf_text_layer)
+            form.addRow(PDF_TEXT_LAYER_LABEL, self._pdf_text_layer)
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -519,9 +516,9 @@ class ScanQualityControls(QWidget):
             form = QFormLayout(holder)
             form.setContentsMargins(0, 0, 0, 0)
             form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
-            form.addRow("PDF resolution:", self._pdf_dpi)
+            form.addRow(PDF_RESOLUTION_LABEL, self._pdf_dpi)
             if self._pdf_text_layer is not None:
-                form.addRow("PDF text layer:", self._pdf_text_layer)
+                form.addRow(PDF_TEXT_LAYER_LABEL, self._pdf_text_layer)
             self._pdf_options = holder
         return self._pdf_options
 

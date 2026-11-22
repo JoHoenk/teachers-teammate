@@ -353,7 +353,7 @@ def test_describe_sent_texts_carries_the_prompts_the_steps_send(tmp_path: Path) 
     """
     Given  a proofreading step with the fixed prompts of the exchange
     When   describe_sent_texts() builds the report
-    Then   the section carries every step's prompt under its title
+    Then   the section carries every step the exchange sends, with its own prompt
     """
     svc, source = _svc_with_document(tmp_path, raw_text="Anna schrieb das.")
     config = dataclasses.replace(make_config(tmp_path, language="German"), correction_enabled=True)
@@ -363,17 +363,15 @@ def test_describe_sent_texts_carries_the_prompts_the_steps_send(tmp_path: Path) 
     report = svc.documents.describe_sent_texts(config, view)
 
     sent = next(s for s in report.sections if s.stage.stage == "correction")
-    for title, prompt in proofreading_prompts(config):
-        assert title in sent.prompt
-        assert prompt in sent.prompt
+    assert sent.instructions == tuple(proofreading_prompts(config))
 
 
 @pytest.mark.unit
-def test_describe_sent_texts_adds_the_notes_for_the_ai(tmp_path: Path) -> None:
+def test_describe_sent_texts_carries_the_notes_for_the_ai(tmp_path: Path) -> None:
     """
     Given  a proofreading step with the teacher's notes
     When   describe_sent_texts() builds the report
-    Then   the notes appear after the prompts, as the requests carry them
+    Then   the notes travel with the section, apart from the prompts
     """
     svc, source = _svc_with_document(tmp_path, raw_text="Anna wrote this.")
     config = dataclasses.replace(
@@ -387,7 +385,8 @@ def test_describe_sent_texts_adds_the_notes_for_the_ai(tmp_path: Path) -> None:
     report = svc.documents.describe_sent_texts(config, view)
 
     sent = next(s for s in report.sections if s.stage.stage == "correction")
-    assert sent.prompt.rstrip().endswith("Year 9, second foreign language.")
+    assert sent.notes.endswith("Year 9, second foreign language.")
+    assert all("Year 9" not in prompt for _step, prompt in sent.instructions)
 
 
 @pytest.mark.unit

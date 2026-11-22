@@ -20,6 +20,8 @@ from typing import Any
 import cv2
 import numpy as np
 
+from ...exceptions import OCRError
+from ...texts.addons import READER_MODEL_MISMATCH
 from ..onnx.runner import OnnxNet
 
 _logger = logging.getLogger(__name__)
@@ -143,7 +145,8 @@ def detect(net: OnnxNet, image: np.ndarray, settings: DetectorSettings) -> list[
     blob, sx, sy = detector_input(image, settings.max_side)
     output = net.run(blob)
     if output.ndim != 4 or output.shape[0] != 1:
-        raise ValueError(f"unexpected detector output shape {tuple(output.shape)}")
+        _logger.debug("detector: unexpected output shape %s", tuple(output.shape))
+        raise OCRError(READER_MODEL_MISMATCH)
     boxes = boxes_from_map(output[0, 0], settings, (sx, sy))
     _logger.debug("detector: %d boxes (map %s)", len(boxes), tuple(output.shape[2:]))
     return boxes

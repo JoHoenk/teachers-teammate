@@ -8,6 +8,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QWidget
 
 from ..domain.output_files import ANONYMIZED_TEXT_SUFFIX, DOCX_SUFFIX, TEXT_SUFFIX
+from ..texts import main_window as txt
 
 
 class ExportKind(Enum):
@@ -20,7 +21,7 @@ class ExportKind(Enum):
     @property
     def label(self) -> str:
         """Menu entry text."""
-        return _LABELS[self]
+        return txt.EXPORT_LABELS[self.value]
 
     @property
     def file_suffix(self) -> str:
@@ -38,11 +39,6 @@ class ExportKind(Enum):
         return self is not ExportKind.DOCX
 
 
-_LABELS = {
-    ExportKind.DOCX: "Word Document…",
-    ExportKind.TEXT: "Text File…",
-    ExportKind.TEXT_ANONYMIZED: "Anonymized Text File…",
-}
 _FILE_SUFFIXES = {
     ExportKind.DOCX: DOCX_SUFFIX,
     ExportKind.TEXT: TEXT_SUFFIX,
@@ -54,7 +50,7 @@ def build_export_menu(
     parent: QWidget | QMenu | None = None,
 ) -> tuple[QMenu, dict[QAction, ExportKind]]:
     """Return an "Export" menu and the export kind each of its entries stands for."""
-    menu = QMenu("Export", parent)
+    menu = QMenu(txt.EXPORT_BUTTON, parent)
     kinds: dict[QAction, ExportKind] = {}
     for kind in ExportKind:
         action = menu.addAction(kind.label)

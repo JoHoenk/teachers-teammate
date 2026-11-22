@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from PySide6.QtWidgets import QCheckBox, QGroupBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QWidget
 
 from ....application.composition import AppServices
 from ....texts import addons as txt
@@ -27,18 +27,16 @@ class ProvidersTab(ScrolledTab):
         super().__init__(parent)
         self._svc = app_service
         self._packages = app_service.providers.list_provider_packages()
-        #: The items of this tab, keyed like the installation check reports them.
-        self.checkboxes: dict[str, QCheckBox] = {}
         self._pending: list[str] = []
 
-        group = QGroupBox("Online AI services")
+        group = QGroupBox(txt.PROVIDERS_GROUP)
         group_layout = QVBoxLayout(group)
         for prov, (_, pip_pkg) in self._packages.items():
             services = self._svc.providers.package_services(pip_pkg)
             connector = self._svc.providers.package_is_connector(prov)
-            cb = QCheckBox(txt.provider_package_label(services, pip_pkg, connector=connector))
+            label = txt.provider_package_label(services, pip_pkg, connector=connector)
+            cb = self.item_box(f"{PROVIDER_PREFIX}{prov}", label)
             cb.setToolTip(license_tooltip(self._svc.addons.addon_license(pip_pkg)))
-            self.checkboxes[f"{PROVIDER_PREFIX}{prov}"] = cb
             group_layout.addWidget(cb)
         self.body_layout.addWidget(group)
         self.body_layout.addStretch(1)
@@ -94,7 +92,7 @@ class ProvidersTab(ScrolledTab):
 
     def mark_installed(self, results: Mapping[str, object]) -> None:
         """Show which packages are importable already and disable their boxes."""
-        apply_installed(self.checkboxes, results)
+        apply_installed(self.checkboxes, self.labels, results)
 
     def _provider_name(self, provider: str) -> str:
         """Return the display name of *provider* (its own name when it has none)."""

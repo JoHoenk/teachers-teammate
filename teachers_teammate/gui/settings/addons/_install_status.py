@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
 )
 
 from ....texts import addons as txt
+from ....texts import dialogs as dlg
+from ... import _html
 from ..._install_round import PACKAGE_PREFIX, UPDATE_ADDONS_ITEM, InstallRound
 from ..._long_job import ABORTED
 from ..._model_guidance import SPACY_PREFIX
@@ -143,7 +145,7 @@ class InstallStatusPane(QWidget):
         layout.addWidget(self._dl_progress)
 
         # Best effort: the package pip is working on now, from its own log lines.
-        self._hint = QLabel("")
+        self._hint = QLabel()
         self._hint.setStyleSheet(_HINT_STYLE)
         self._hint.hide()
         layout.addWidget(self._hint)
@@ -169,7 +171,7 @@ class InstallStatusPane(QWidget):
         self._dl_log = QPlainTextEdit()
         self._dl_log.setReadOnly(True)
         self._dl_log.setMaximumHeight(100)
-        self._dl_log.setPlaceholderText("Install / download log will appear here…")
+        self._dl_log.setPlaceholderText(txt.SAVED_LOG_PLACEHOLDER)
         self._dl_log.hide()
         layout.addWidget(self._dl_log)
 
@@ -382,7 +384,7 @@ class InstallStatusPane(QWidget):
         else:
             self._round_result = txt.addons_failed(self._item_label(item), message)
             self._round_result_warning = True
-            self._dl_log.appendHtml(f'<span style="color:#c0392b;"><b>Error:</b> {message}</span>')
+            self._dl_log.appendHtml(_html.error_line(dlg.ERROR_HEAD, message))
             self.show_details(True)
         self.refresh()
 

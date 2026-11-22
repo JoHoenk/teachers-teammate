@@ -7,12 +7,16 @@ classes, the AI on this computer, Proofreading, Privacy, the summary and the las
 
 from __future__ import annotations
 
+from ..domain.data_location import STAGE_ANONYMIZATION
 from ..domain.model_catalog import Suitability
+from ..domain.stages import Stage
+from .app import NAME
+from .review import REMOVE_PERSONAL_INFO
 from .settings import WHERE_SETUP
 
 # ── Welcome ───────────────────────────────────────────────────────────────────
 
-WELCOME_TITLE = "Welcome to Teacher's Teammate"
+WELCOME_TITLE = f"Welcome to {NAME}"
 WELCOME_TEXT = (
     "The app reads your students' handwritten work, can proofread it and review its content, "
     "and writes the results into Word documents.\n\n"
@@ -48,9 +52,7 @@ CLASSES_TYPED_NOTE = (
 # ── Local AI ──────────────────────────────────────────────────────────────────
 
 LOCAL_AI_TITLE = "The AI on this computer"
-LOCAL_AI_INTRO = (
-    "Teacher's Teammate uses Ollama, a free program that runs AI models on your own computer."
-)
+LOCAL_AI_INTRO = f"{NAME} uses Ollama, a free program that runs AI models on your own computer."
 LOCAL_AI_QUESTION = "Where does Ollama run?"
 LOCAL_AI_HERE = "On this computer"
 LOCAL_AI_SERVER = "On another PC in my network"
@@ -207,3 +209,133 @@ DONE_PROGRESS_MB = "↓ {done:.0f} of {total:.0f} MB"
 READER_NAME = "ppocr"  # the name of the reader's download row (``PlannedDownload.name``)
 DONE_SELECT = "Select documents…"
 DONE_SELECT_TOOLTIP = "Close this window and choose the folder with your students' work."
+
+# ── The summary page's lines ──────────────────────────────────────────────────
+
+#: The window title of the assistant, and the name of its closing button.
+ASSISTANT_TITLE = f"Set up {NAME}"
+ASSISTANT_COMMIT = "Set up"
+
+#: The steps as the summary's lines name them.
+STEP_NAMES: dict[str, str] = {
+    Stage.OCR: "Reading handwriting",
+    Stage.CORRECTION: "Proofreading",
+    Stage.EVALUATION: "Content review",
+    STAGE_ANONYMIZATION: REMOVE_PERSONAL_INFO,
+}
+
+CLASSES_NAME = "Your classes"
+PAGE_MODELS_NAME = "Page models"
+PAGE_MODELS_DETAIL = "turn and flatten photographed pages"
+
+ROW_DOWNLOADED = "✓ downloaded"
+ROW_INSTALLED = "✓ installed"
+ROW_KEY_MISSING = "key missing"
+ROW_OFF = "off (tick it in the main window when you want it)"
+ROW_KEPT = "{engine} (kept)"
+ROW_SAME_MODEL = "same model as proofreading"
+ROW_KEEPS_OWN = "keeps its own model"
+ROW_NAMES_ON = "on · name detection for {language}"
+NAMES_IN_APP_NAME = "Names in this app"
+ROW_NAMES_HIDDEN = "hidden in the texts · name detection for {language}"
+ROW_CLASSES = "{language} · {hand_in}"
+HANDWRITTEN = "handwritten pages"
+TYPED = "typed texts"
+
+#: How a download size is written, and how a tiny one is named.
+SIZE_SMALL = "small"
+SIZE_GB = "{size:.1f} GB"
+SIZE_MB = "{size:.0f} MB"
+
+
+# ── The templates above, filled ───────────────────────────────────────────────
+
+
+def size_mb(size: float) -> str:
+    """Return a download size of *size* megabytes."""
+    return SIZE_MB.format(size=size)
+
+
+def size_gb(size: float) -> str:
+    """Return a download size of *size* gigabytes."""
+    return SIZE_GB.format(size=size)
+
+
+def row_classes(language: str, hand_in: str) -> str:
+    """Return the summary row for the class: its *language* and how work is handed in."""
+    return ROW_CLASSES.format(language=language, hand_in=hand_in)
+
+
+def row_names_hidden(language: str) -> str:
+    """Return the summary row for names that are hidden in the texts."""
+    return ROW_NAMES_HIDDEN.format(language=language)
+
+
+def row_names_on(language: str) -> str:
+    """Return the summary row for name detection that is switched on."""
+    return ROW_NAMES_ON.format(language=language)
+
+
+def row_kept(engine: str) -> str:
+    """Return the summary row for the reading *engine* that stays as it is."""
+    return ROW_KEPT.format(engine=engine)
+
+
+def suggestion(model: str, fit: str, size: str) -> str:
+    """Return the suggested *model*, how it *fit*s this computer and its download *size*."""
+    return SUGGESTION.format(model=model, fit=fit, size=size)
+
+
+def suggestion_downloaded(model: str, fit: str) -> str:
+    """Return the suggested *model* that is already downloaded."""
+    return SUGGESTION_DOWNLOADED.format(model=model, fit=fit)
+
+
+def privacy_multilingual(language: str) -> str:
+    """Return the note that *language* has no name detection of its own."""
+    return PRIVACY_MULTILINGUAL.format(language=language)
+
+
+def privacy_sent(service: str) -> str:
+    """Return the line that says proofreading at the online *service* sends text away."""
+    return PRIVACY_SENT.format(service=service)
+
+
+def privacy_sent_network(host: str) -> str:
+    """Return the line that says proofreading on *host* sends text into the local network."""
+    return PRIVACY_SENT_NETWORK.format(host=host)
+
+
+def summary_disk_short(free: float, needed: float) -> str:
+    """Return the warning that *free* GB do not hold the *needed* GB of downloads."""
+    return SUMMARY_DISK_SHORT.format(free=free, needed=needed)
+
+
+def summary_downloads_needed(needed: float) -> str:
+    """Return the total of the downloads, when the free space is not known."""
+    return SUMMARY_DOWNLOADS_NEEDED.format(needed=needed)
+
+
+def summary_downloads_total(needed: float, free: float) -> str:
+    """Return the total of the downloads next to the free space."""
+    return SUMMARY_DOWNLOADS_TOTAL.format(needed=needed, free=free)
+
+
+def done_overall(done: int, total: int) -> str:
+    """Return how many of the downloads are over."""
+    return DONE_OVERALL.format(done=done, total=total)
+
+
+def done_failed(message: str) -> str:
+    """Return the line of a download that failed with *message*."""
+    return DONE_FAILED.format(message=message)
+
+
+def done_progress(done: float, total: float) -> str:
+    """Return the progress of a download, in gigabytes."""
+    return DONE_PROGRESS.format(done=done, total=total)
+
+
+def done_progress_mb(done: float, total: float) -> str:
+    """Return the progress of a small download, in megabytes."""
+    return DONE_PROGRESS_MB.format(done=done, total=total)

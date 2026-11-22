@@ -18,6 +18,7 @@ from ..application.composition import AppServices
 from ..config import dump_config_file, load_config_file
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..texts import dialogs as dlg
+from ..texts import main_window as win
 from . import _dialogs
 from ._config_panel import ConfigPanel
 from ._log_widget import LogWidget
@@ -113,11 +114,11 @@ class SettingsFile(QObject):
             # final refresh after the full config is loaded so cached state is
             # shown consistently on startup.
             self._hooks.queue_loaded()
-            self._log.append_text(f"Loaded settings from {config_path}\n")
+            self._log.append_text(win.log_settings_loaded(config_path))
             for notice in loaded.notices:
                 self.show_notice(notice)
         except Exception as exc:  # noqa: BLE001  # config file may be missing, malformed, or use an unexpected type; log the warning and continue
-            self._log.append_text(f"WARNING: Could not load {config_path}: {exc}\n")
+            self._log.append_text(win.log_settings_not_loaded(config_path, exc))
 
     def show_notice(self, setting_notice: SettingNotice) -> None:
         """Say what the app changed about a saved setting instead of changing it silently.
@@ -126,7 +127,7 @@ class SettingsFile(QObject):
         the teacher; the other notices are in the log.
         """
         notice = dlg.setting_notice(setting_notice)
-        self._log.append_text(f"NOTICE: {notice.body}\n")
+        self._log.append_text(win.log_notice(notice.body))
         if setting_notice.kind is SettingNoticeKind.ENGINE_REPLACED:
             _dialogs.notify(self._window, notice)
 
@@ -145,7 +146,7 @@ class SettingsFile(QObject):
         try:
             out.write_text(dump_config_file(values), encoding="utf-8")
             if notify:
-                self._log.append_text(f"Settings saved to {out.resolve()}\n")
+                self._log.append_text(win.log_settings_saved(out.resolve()))
         except OSError as exc:
             if not silent_on_error:
                 _dialogs.notify(self._window, dlg.save_failed(str(exc)))

@@ -15,6 +15,7 @@ import urllib.error
 
 from ...domain.model_listing import ModelListing
 from ...exceptions import ProviderNotAvailableError
+from ...texts.addons import package_not_installed
 
 
 def api_key_check(env_key: str) -> Callable[..., tuple[bool, str]]:
@@ -42,9 +43,7 @@ def import_guard(package_name: str) -> Iterator[None]:
     try:
         yield
     except ImportError as exc:
-        raise ProviderNotAvailableError(
-            f"{package_name} is not installed. Run: pip install {package_name}"
-        ) from exc
+        raise ProviderNotAvailableError(package_not_installed(package_name)) from exc
 
 
 def problem_from_exception(exc: BaseException, service: str) -> str:

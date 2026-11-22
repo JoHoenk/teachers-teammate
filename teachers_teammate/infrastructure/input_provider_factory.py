@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from ..domain.pdf_text_layer import PdfTextLayerMode
 from ..exceptions import PipelineInputError
 from ..interfaces import SUPPORTED_SUFFIXES, InputProvider
+from ..texts.run import unsupported_input_suffix
 
 if TYPE_CHECKING:
     from ..config import OcrConfig
@@ -116,5 +117,5 @@ def get_input_provider(
     builder = _SUFFIX_TO_BUILDER.get(normalized)
     if builder is None:
         supported = ", ".join(sorted(_SUFFIX_TO_BUILDER))
-        raise PipelineInputError(f"Unsupported input suffix '{suffix}'. Supported: {supported}")
+        raise PipelineInputError(unsupported_input_suffix(suffix, supported))
     return builder(tmp_dir, options or InputOptions())

@@ -7,12 +7,9 @@ import sys
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
-from ..texts.issues import PACKAGE_MISSING
+from ..texts import addons as addon_text
+from ..texts.issues import package_missing_line
 from ._model_guidance import PROVIDER_PREFIX, OpenDownloads
-
-INSTALL_BUTTON = "Install…"
-INSTALL_BUTTON_TOOLTIP = "Opens Add-ons, where this package can be installed with one click."
-PIP_HINT = "Or run:  pip install {pip}"
 
 
 class PackageHint(QWidget):
@@ -27,8 +24,8 @@ class PackageHint(QWidget):
         open_downloads: OpenDownloads | None,
         parent: QWidget | None = None,
         *,
-        button_text: str = INSTALL_BUTTON,
-        button_tooltip: str = INSTALL_BUTTON_TOOLTIP,
+        button_text: str = addon_text.PACKAGE_BUTTON,
+        button_tooltip: str = addon_text.PACKAGE_BUTTON_TOOLTIP,
     ) -> None:
         """Build the hint.
 
@@ -55,9 +52,9 @@ class PackageHint(QWidget):
     def show_missing(self, provider: str, display_name: str, pip_name: str) -> None:
         """Show that *provider*'s package *pip_name* is missing."""
         self._provider = provider
-        text = f"⚠ {PACKAGE_MISSING.format(name=display_name)}"
+        text = f"⚠ {package_missing_line(display_name)}"
         if not getattr(sys, "frozen", False):
-            text += f"\n{PIP_HINT.format(pip=pip_name)}"
+            text += "\n" + addon_text.package_pip_hint(pip_name)
         self._label.setText(text)
         self.setVisible(True)
 

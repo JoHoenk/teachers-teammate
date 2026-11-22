@@ -4,9 +4,21 @@ from __future__ import annotations
 
 import pytest
 
+from teachers_teammate.domain.data_location import (
+    DataFlow,
+    DataFlowStage,
+    DataLocation,
+    DataRegion,
+    StageLocation,
+)
 from teachers_teammate.domain.requirements import IssueKind, RequirementIssue
+from teachers_teammate.domain.stages import Stage
 from teachers_teammate.texts import dialogs as dlg
+from teachers_teammate.texts import app as app_text
+from teachers_teammate.texts import menus
 from teachers_teammate.texts import privacy
+from teachers_teammate.texts import review as txt
+from teachers_teammate.texts import settings as st
 from teachers_teammate.texts.issues import issue_line, issue_text
 from teachers_teammate.texts._types import (
     Answer,
@@ -200,3 +212,221 @@ def test_the_models_that_are_not_downloaded_are_named_in_the_right_number(
     Then   it is singular, plural or general
     """
     assert issue_text(RequirementIssue(IssueKind.MODEL_MISSING, models=models)) == sentence
+
+
+@pytest.mark.parametrize(
+    ("count", "sentence"),
+    [
+        (1, "1 pattern has errors — fix before saving."),
+        (3, "3 patterns have errors — fix before saving."),
+    ],
+)
+def test_the_invalid_patterns_are_counted_in_the_right_number(count: int, sentence: str) -> None:
+    """
+    Given  one and three patterns that do not compile
+    When   the line above the patterns table is asked for
+    Then   it is singular or plural
+    """
+    assert privacy.invalid_patterns(count) == sentence
+
+
+def test_the_secondary_pass_says_why_it_adds_nothing() -> None:
+    """
+    Given  a system language whose model repeats the primary one, and an unknown one
+    When   the secondary combo's auto entry is asked for
+    Then   it names the model it would add, or says why no second pass happens
+    """
+    assert privacy.model_auto_secondary("en_core_web_sm", "en_core_web_sm") == (
+        "Auto (system language): none, same as document language"
+    )
+    assert privacy.model_auto_secondary("de_core_news_sm", "en_core_web_sm") == (
+        "Auto (system language): de_core_news_sm"
+    )
+    assert privacy.model_auto_secondary(None, "en_core_web_sm") == (
+        "Auto (system language): none, the language is unknown"
+    )
+
+
+def test_the_primary_auto_entry_names_the_model_only_when_it_is_known() -> None:
+    """
+    Given  a known and an unknown language-specific model
+    When   the primary combo's auto entry is asked for
+    Then   the known one is named and the unknown one leaves the generic label
+    """
+    assert privacy.model_auto_primary("de_core_news_sm") == (
+        "Auto (language-specific): de_core_news_sm"
+    )
+    assert privacy.model_auto_primary("") == "Auto (language-specific)"
+
+
+def test_a_menu_entry_that_opens_a_window_ends_in_an_ellipsis() -> None:
+    """
+    Given  the name of a Settings page
+    When   its entry in the main window's menu is built
+    Then   it offers a window: the page's name and an ellipsis
+    """
+    assert menus.entry(st.PAGE_PRIVACY) == "Privacy…"
+
+
+def test_the_about_entry_keeps_the_typographic_apostrophe_of_the_name() -> None:
+    """
+    Given  the app's name and the Help menu's About entry
+    When   the entry is built from the name
+    Then   it reads with the typographic apostrophe, and the name elsewhere stays plain
+    """
+    assert menus.ABOUT == "About Teacher’s Teammate…"  # noqa: RUF001
+    assert "'" in app_text.NAME
+
+
+# ── The names of the steps, and the line that describes a step ────────────────
+
+_CLOUD = StageLocation(DataLocation.ONLINE, "OpenAI", region=DataRegion.NON_EU)
+
+
+def test_a_step_is_named_by_texts_whatever_the_layer_calls_it() -> None:
+    """
+    Given  the keys the layers use for a step
+    When   texts names them
+    Then   every step has the one name the teacher reads, and an unknown key speaks for itself
+    """
+    assert [app_text.stage_title(stage) for stage in app_text.STAGE_TITLES] == [
+        "Text recognition",
+        "Personal info removal",
+        "Proofreading",
+        "Content review",
+    ]
+    assert app_text.stage_title("something-else") == "something-else"
+
+
+def test_stage_summary_for_leaving_step_says_what_is_received() -> None:
+    """
+    Given  an online step that receives text with names visible
+    When   its summary is built
+    Then   the line says where it runs and that names are sent as written
+    """
+    stage = DataFlowStage(Stage.EVALUATION, _CLOUD, "text", False)
+    assert privacy.stage_summary(stage) == (
+        "Content review: Online service (OpenAI) · outside the EU — receives text, "
+        "names sent as written"
+    )
+
+
+def test_stage_summary_does_not_promise_names_are_hidden() -> None:
+    """
+    Given  an online step whose names are replaced automatically
+    When   its summary is built
+    Then   it says "where detected": detection can miss a name
+    """
+    stage = DataFlowStage(Stage.CORRECTION, _CLOUD, "text", True)
+    assert privacy.stage_summary(stage).endswith("names replaced where detected")
+
+
+def test_the_line_of_a_remembered_answer_names_every_step_that_left() -> None:
+    """
+    Given  two steps that leave this computer and one that does not
+    When   the line is built for the list of remembered answers
+    Then   only the two are in it, each with its own summary
+    """
+    flow = DataFlow(
+        (
+            DataFlowStage(Stage.OCR, StageLocation(DataLocation.THIS_COMPUTER, "Ollama"), "pages"),
+            DataFlowStage(Stage.CORRECTION, _CLOUD, "text"),
+            DataFlowStage(
+                Stage.EVALUATION,
+                StageLocation(DataLocation.ONLINE, "Mistral", region=DataRegion.EU),
+                "text",
+            ),
+        )
+    )
+
+    assert privacy.outbound_summary(flow) == (
+        "Proofreading: Online service (OpenAI) · outside the EU — receives text, "
+        "names sent as written; "
+        "Content review: Online service (Mistral) · EU — receives text, names sent as written"
+    )
+
+
+def test_describe_fingerprint_reads_a_v2_fingerprint() -> None:
+    """
+    Given  a stored v2 fingerprint with a region
+    When   it is turned into a readable line
+    Then   the line names the place, including the region
+    """
+    line = privacy.describe_fingerprint("v2|correction:online:eu:Mistral (EU)::1")
+    assert line == (
+        "Proofreading: Online service (Mistral (EU)) · EU — names replaced where detected"
+    )
+
+
+def test_describe_fingerprint_still_reads_a_v1_fingerprint() -> None:
+    """
+    Given  an answer stored before the region existed
+    When   it is turned into a readable line
+    Then   it is understood, without a region in the line
+    """
+    line = privacy.describe_fingerprint("correction:online:OpenAI::0")
+    assert line == "Proofreading: Online service (OpenAI) · outside the EU — names sent as written"
+
+
+def test_describe_fingerprint_keeps_a_part_it_cannot_parse() -> None:
+    """
+    Given  a stored part that does not parse (unknown region or place)
+    When   it is turned into a readable line
+    Then   the part is shown as it is instead of being dropped
+    """
+    assert privacy.describe_fingerprint("v2|correction:online:mars:OpenAI::1") == (
+        "correction:online:mars:OpenAI::1"
+    )
+    assert privacy.describe_fingerprint("garbage") == "garbage"
+
+
+def test_describe_fingerprint_names_every_step_of_an_answer() -> None:
+    """
+    Given  a remembered answer with two steps, one of them on another computer
+    When   it is turned into a readable line
+    Then   both steps are in it, each with its place and how names are handled
+    """
+    flow = DataFlow(
+        (
+            DataFlowStage(Stage.CORRECTION, StageLocation(DataLocation.ONLINE, "Mistral"), "text"),
+            DataFlowStage(
+                Stage.EVALUATION,
+                StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", "school-server"),
+                "text",
+                personal_info_hidden=True,
+            ),
+        )
+    )
+
+    assert privacy.describe_fingerprint(flow.fingerprint) == (
+        "Proofreading: Online service (Mistral) · outside the EU — names sent as written; "
+        "Content review: On another computer (school-server) — names replaced where detected"
+    )
+
+
+# ── The instructions a teacher is shown ─────────────────────────────────────
+
+
+def test_the_instructions_block_puts_a_heading_over_every_step() -> None:
+    """
+    Given  two proofreading steps and the teacher's notes
+    When   the block is built for the read-only view
+    Then   each prompt stands under the name of its step, and the notes come last
+    """
+    block = txt.prompts_block(
+        (("correct", "Fix the spelling."), ("explain", "Say why.")), notes="Year 9."
+    )
+
+    assert block == (
+        "Correct the text\n\nFix the spelling.\n\nExplain the corrections\n\nSay why.\n\nYear 9."
+    )
+
+
+def test_the_instructions_block_gives_a_step_without_a_name_no_heading() -> None:
+    """
+    Given  a content review, which is one request and has no step, and a step that sends none
+    When   the block is built
+    Then   the prompt stands alone, and nothing is shown at all for no prompts
+    """
+    assert txt.prompts_block((("", "Review the content."),)) == "Review the content."
+    assert txt.prompts_block(()) == ""

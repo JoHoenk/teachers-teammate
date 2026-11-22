@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..domain.model_catalog import GpuUsage
+from ..texts import main_window as txt
 from ._background import run_in_background
 
 try:
@@ -40,7 +41,7 @@ class SystemStatsWidget(QGroupBox):
     def __init__(
         self, read_gpu_usage: Callable[[], GpuUsage | None], parent: QWidget | None = None
     ) -> None:
-        super().__init__("System Stats", parent)
+        super().__init__(txt.STATS_GROUP, parent)
         self._read_gpu_usage = read_gpu_usage
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(6, 8, 6, 6)
@@ -51,13 +52,13 @@ class SystemStatsWidget(QGroupBox):
         self._vram_val: QLabel | None = None
 
         if not _PSUTIL_AVAILABLE:
-            self._layout.addWidget(QLabel("Install psutil for live system stats."))
+            self._layout.addWidget(QLabel(txt.STATS_NEEDS_PSUTIL))
             self._enabled = False
             return
 
         self._enabled = True
-        self._cpu_bar, self._cpu_val = self._make_row("CPU")
-        self._ram_bar, self._ram_val = self._make_row("RAM")
+        self._cpu_bar, self._cpu_val = self._make_row(txt.STATS_CPU)
+        self._ram_bar, self._ram_val = self._make_row(txt.STATS_RAM)
         # The card is asked in a pool thread (NVML start-up can take a while, longer when the
         # card sleeps); its rows appear with the first reading, whenever that comes.
         self._gpu_read_pending = False
@@ -91,7 +92,7 @@ class SystemStatsWidget(QGroupBox):
         progress_bar.setRange(0, 100)
         progress_bar.setTextVisible(False)
         progress_bar.setFixedHeight(10)
-        val = QLabel("\u2013")
+        val = QLabel(txt.STATS_NO_READING)
         val.setFixedWidth(100)
         val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         fnt = val.font()
@@ -109,11 +110,11 @@ class SystemStatsWidget(QGroupBox):
 
         cpu = _psutil.cpu_percent(interval=None)
         self._cpu_bar.setValue(int(cpu))
-        self._cpu_val.setText(f"{cpu:.0f} %")
+        self._cpu_val.setText(txt.percent(cpu))
 
         mem = _psutil.virtual_memory()
         self._ram_bar.setValue(int(mem.percent))
-        self._ram_val.setText(f"{mem.used / 2**30:.1f} / {mem.total / 2**30:.1f} GB")
+        self._ram_val.setText(txt.memory_use(mem.used / 2**30, mem.total / 2**30))
 
         self._request_gpu_usage()
 
@@ -131,16 +132,16 @@ class SystemStatsWidget(QGroupBox):
             return  # the driver gave no reading this second (a reset, a busy device)
         usage = result
         if self._gpu_bar is None:
-            self._gpu_bar, self._gpu_val = self._make_row("GPU")
-            self._vram_bar, self._vram_val = self._make_row("VRAM")
+            self._gpu_bar, self._gpu_val = self._make_row(txt.STATS_GPU)
+            self._vram_bar, self._vram_val = self._make_row(txt.STATS_VRAM)
         self._gpu_bar.setValue(usage.busy_percent)
         if self._gpu_val:
-            self._gpu_val.setText(f"{usage.busy_percent} %")
+            self._gpu_val.setText(txt.percent(usage.busy_percent))
         if usage.vram_used_mb is None or not usage.vram_total_mb:
             return
         if self._vram_bar:
             self._vram_bar.setValue(int(100 * usage.vram_used_mb / usage.vram_total_mb))
         if self._vram_val:
             self._vram_val.setText(
-                f"{usage.vram_used_mb / 1024:.1f} / {usage.vram_total_mb / 1024:.1f} GB"
+                txt.memory_use(usage.vram_used_mb / 1024, usage.vram_total_mb / 1024)
             )

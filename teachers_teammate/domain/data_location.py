@@ -51,19 +51,6 @@ RETIRED_ENGINE_NAMES: dict[str, str] = {"tesseract": "Tesseract", "paddleocr": "
 STAGE_ANONYMIZATION = "anonymization"
 
 
-_STAGE_TITLES: dict[str, str] = {
-    Stage.OCR: "Text recognition",
-    STAGE_ANONYMIZATION: "Personal info removal",
-    Stage.CORRECTION: "Proofreading",
-    Stage.EVALUATION: "Content review",
-}
-
-
-def stage_title(stage: str) -> str:
-    """Return the name of a pipeline step as the user knows it."""
-    return _STAGE_TITLES.get(stage, stage)
-
-
 class DataLocation(StrEnum):
     """Where a step's data is processed, from most to least private."""
 
@@ -310,24 +297,9 @@ class DataFlowStage:
     languages: tuple[str, ...] = ()
 
     @property
-    def title(self) -> str:
-        """The step's name as the user knows it."""
-        return stage_title(self.stage)
-
-    @property
     def leaves_computer(self) -> bool:
         """Whether the data leaves the user's own computer for this step."""
         return self.location.location is not DataLocation.THIS_COMPUTER
-
-    @property
-    def badge(self) -> str:
-        """Short line for the status box: where it runs and how names are handled."""
-        if self.detail:
-            return self.detail
-        parts = [self.location.label]
-        if self.leaves_computer:
-            parts.append("names hidden" if self.personal_info_hidden else "names as written")
-        return " · ".join(parts)
 
     @property
     def privacy_level(self) -> PrivacyLevel:
@@ -340,21 +312,6 @@ class DataFlowStage:
         if self.personal_info_hidden:
             return PrivacyLevel.ANON_EU if european else PrivacyLevel.ANON_NON_EU
         return PrivacyLevel.NAMES_EU if european else PrivacyLevel.NAMES_NON_EU
-
-    @property
-    def summary(self) -> str:
-        """One line: the step, where it runs, and (when it leaves) what it receives."""
-        if self.detail:
-            return f"{self.title}: {self.detail}"
-        line = f"{self.title}: {self.location.label}"
-        if not self.leaves_computer:
-            return line
-        names = (
-            "names replaced where detected"
-            if self.personal_info_hidden
-            else "names sent as written"
-        )
-        return f"{line} — receives {self.receives}, {names}"
 
 
 @dataclass(frozen=True)
@@ -404,11 +361,6 @@ class DataFlow:
             for s in self.outbound
         ]
         return f"{_FINGERPRINT_V2_PREFIX}|" + "|".join(parts) if parts else ""
-
-    @property
-    def outbound_summary(self) -> str:
-        """The steps that leave this computer as one line, for a list of remembered answers."""
-        return "; ".join(stage.summary for stage in self.outbound)
 
     @property
     def advice(self) -> tuple[Advice, ...]:
@@ -507,28 +459,35 @@ class SentStatus:
     other_privacy_settings: bool = False
 
 
-def describe_fingerprint(fingerprint: str) -> str:
-    """Return a readable line for a stored :attr:`DataFlow.fingerprint`.
+@dataclass(frozen=True)
+class FingerprintPart:
+    """One step of a stored :attr:`DataFlow.fingerprint`, taken apart again."""
 
-    Answers remembered by an earlier version kept only the fingerprint, which no person can
-    read (``correction:online:Mistral::0``).  The line says the same as
-    :attr:`DataFlowStage.summary` for each step, minus what the fingerprint does not hold; a
-    part that does not parse is kept as it is, so nothing is ever hidden from the list.
+    stage: str
+    location: StageLocation
+    #: ``True`` when the text was sent with names replaced where they were detected.
+    names_hidden: bool
+
+
+def fingerprint_parts(fingerprint: str) -> tuple[FingerprintPart | str, ...]:
+    """Return one entry per step of a stored :attr:`DataFlow.fingerprint`.
+
+    A part that does not parse comes back as the string it is, so a line that describes the
+    fingerprint can show it instead of hiding it.
 
     Both formats are understood: version 1 (``stage:where:service:host:hidden``) and
     version 2, which starts with ``v2|`` and adds the data region.
     """
     parts = fingerprint.split("|")
-    if parts and parts[0] == _FINGERPRINT_V2_PREFIX:
-        parts = parts[1:]
-        lines = [_describe_part(part, with_region=True) for part in parts]
-    else:
-        lines = [_describe_part(part, with_region=False) for part in parts]
-    return "; ".join(line for line in lines if line)
+    with_region = bool(parts) and parts[0] == _FINGERPRINT_V2_PREFIX
+    return tuple(
+        _fingerprint_part(part, with_region=with_region)
+        for part in (parts[1:] if with_region else parts)
+    )
 
 
-def _describe_part(part: str, *, with_region: bool) -> str:
-    """Return one readable step of a stored fingerprint, or *part* when it does not parse."""
+def _fingerprint_part(part: str, *, with_region: bool) -> FingerprintPart | str:
+    """Return one step of a stored fingerprint, or *part* when it does not parse."""
     fields = part.split(":")
     # stage, where, [region], service, host…, hidden: the host is everything before "hidden".
     minimum = 6 if with_region else 5
@@ -545,8 +504,7 @@ def _describe_part(part: str, *, with_region: bool) -> str:
         rest = rest[1:]
     service, host, hidden = rest[0], rest[1:-1], rest[-1]
     try:
-        place = StageLocation(DataLocation(where), service, ":".join(host), region).label
+        location = StageLocation(DataLocation(where), service, ":".join(host), region)
     except ValueError:
         return part
-    names = "names replaced where detected" if hidden == "1" else "names sent as written"
-    return f"{_STAGE_TITLES.get(stage, stage)}: {place} — {names}"
+    return FingerprintPart(stage, location, hidden == "1")

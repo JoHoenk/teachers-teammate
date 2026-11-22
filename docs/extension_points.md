@@ -10,7 +10,8 @@ repository root and are not repeated here; the longer explanations are in {doc}`
 Add ABC to `interfaces.py`, implement in `infrastructure/`, route through `FileProcessor`.
 A stage that cannot do its work raises `StageError` with its `kind` and `stage`
 (`exceptions.py`); `FileProcessor.process()` has the one `except` that turns it into a `FAILED`
-file. What a stage produced with a remark is an outcome, not an exception. See
+file. What a stage produced with a remark is an outcome, not an exception. The name a teacher
+reads for it goes into `texts/app.py:STAGE_TITLES`; the layers pass the stage key. See
 {doc}`development` → "One error contract".
 
 ## New LLM provider
@@ -48,8 +49,8 @@ with the previews.
 ## Where a step runs / what leaves the computer
 
 Rules in `domain/data_location.py` (`StageLocation`, `DataRegion`, `PrivacyLevel`, `DataFlow`),
-classification in `application/data_flow.py`; GUI/CLI only render badges, colours and advice
-wording.
+classification in `application/data_flow.py`; GUI/CLI only render colour, and the badges, lines
+and advice sentences come from `texts/privacy.py`.
 
 ## Text recognition on/off
 
@@ -177,8 +178,11 @@ it with the `WHERE_*` constants in `texts/settings.py`, not a hard-coded menu pa
 ## New user-facing text
 
 Dynamic parts are functions (`dlg.no_files_found(folder)`), one module per surface in `texts/`.
-`tests/unit/test_user_text_centralised.py` fails on a new literal and on a stale allowlist entry
-in `tools/user_text/allowlist.py`: delete the entry when you move the text. See
+`tests/unit/test_user_text_centralised.py` fails on a literal handed to a sink that shows text, on
+a module constant whose name says a teacher reads it and on a template of `texts` filled with
+`.format` at a call site; the sinks and the name suffixes are in `tools/user_text/inventory.py`. The
+allowlist in `tools/user_text/allowlist.py` is empty and stays empty. A constant whose name says
+text but whose value no teacher reads is listed in `inventory.NON_TEXT_CONSTANTS`. See
 {doc}`development` → "Where text lives"
 
 ## The window's tabs
@@ -222,8 +226,9 @@ nothing outside `infrastructure/proofreading/` may see it. See {doc}`development
 The three system prompts (`CORRECT_SYSTEM`, `EXPLAIN_SYSTEM`, `UNCLEAR_SYSTEM`,
 `PROMPT_VERSION`) are in `domain/correction_prompts.py`; languages, level and the teacher's notes
 travel in the user message. Step ① variants: `CORRECT_VARIANTS`, adopted per model in
-`STEP_ONE_PROMPTS`, hashed into the cache key by `prompt_identity()`. Answer schemas of steps ②
-and ③: `infrastructure/proofreading/schemas.py`; retry and repair rules:
+`STEP_ONE_PROMPTS`, hashed into the cache key by `prompt_identity()`. A step's key is what
+travels; the heading a teacher reads over its prompt is `texts/review.py:PROMPT_STEP_TITLES`.
+Answer schemas of steps ② and ③: `infrastructure/proofreading/schemas.py`; retry and repair rules:
 `runner.py:StepRunner`. See {doc}`development` → "Request profiles: temperatures and prompts per
 model"
 

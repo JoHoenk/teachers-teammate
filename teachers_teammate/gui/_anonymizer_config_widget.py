@@ -32,10 +32,6 @@ from . import _dialogs
 from ._background import LatestTask
 
 _INVALID_BG = QColor("#ffd0d0")
-_DETECTING = "Detecting…"
-_AUTO_PRIMARY = "Auto (language-specific)"
-_NO_SECONDARY = "(none — no extra pass)"
-_AUTO_SECONDARY = "Auto (system language)"
 
 
 class AnonymizerConfigWidget(QWidget):
@@ -97,12 +93,7 @@ class AnonymizerConfigWidget(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
 
-        accuracy_warning = QLabel(
-            "<b>Note:</b> Anonymization is a detection aid, not a guarantee. "
-            "NER models and regex patterns may miss PII — always review the output "
-            "before uploading documents to a cloud provider. "
-            "You remain responsible for compliance with data-protection regulations."
-        )
+        accuracy_warning = QLabel(privacy.ANONYMISATION_NOTE)
         accuracy_warning.setWordWrap(True)
         accuracy_warning.setTextFormat(Qt.TextFormat.RichText)
         accuracy_warning.setStyleSheet(
@@ -127,8 +118,8 @@ class AnonymizerConfigWidget(QWidget):
         # ── Preview (lives on the Detection tab) ───────────────────────────────
         self._build_preview(top_layout)
 
-        self._tabs.addTab(detection_tab, "Detection")
-        self._tabs.addTab(self._build_regex_tab(), "Regex Patterns")
+        self._tabs.addTab(detection_tab, privacy.DETECTION_TAB)
+        self._tabs.addTab(self._build_regex_tab(), privacy.PATTERNS_TAB)
 
         # Populate patterns table from config
         self._set_patterns(config.patterns)
@@ -143,18 +134,14 @@ class AnonymizerConfigWidget(QWidget):
         """Build the primary/secondary spaCy model rows on the Detection tab's *layout*."""
         # Primary model row
         primary_row = QHBoxLayout()
-        primary_row.addWidget(QLabel("<b>Primary detection model:</b>"))
+        primary_row.addWidget(QLabel(privacy.PRIMARY_MODEL_LABEL))
         self._primary_model = QComboBox()
         self._primary_model.setEnabled(False)
-        self._primary_model.addItem(_DETECTING, userData="__loading__")
+        self._primary_model.addItem(privacy.MODEL_DETECTING, userData="__loading__")
         primary_row.addWidget(self._primary_model, stretch=1)
         layout.addLayout(primary_row)
 
-        primary_hint = QLabel(
-            "Primary spaCy NER model for person-name detection.  "
-            "<i>Auto</i> picks the language-specific model automatically; "
-            "choose a specific model to override (e.g. force the multilingual model)."
-        )
+        primary_hint = QLabel(privacy.PRIMARY_MODEL_HINT)
         primary_hint.setWordWrap(True)
         primary_hint.setTextFormat(Qt.TextFormat.RichText)
         primary_hint.setStyleSheet("color: #555; font-size: 11px;")
@@ -167,19 +154,14 @@ class AnonymizerConfigWidget(QWidget):
 
         # Secondary model row
         secondary_row = QHBoxLayout()
-        secondary_row.addWidget(QLabel("<b>Extra detection model (optional):</b>"))
+        secondary_row.addWidget(QLabel(privacy.EXTRA_MODEL_LABEL))
         self._secondary_model = QComboBox()
         self._secondary_model.setEnabled(False)
-        self._secondary_model.addItem(_DETECTING, userData="__loading__")
+        self._secondary_model.addItem(privacy.MODEL_DETECTING, userData="__loading__")
         secondary_row.addWidget(self._secondary_model, stretch=1)
         layout.addLayout(secondary_row)
 
-        secondary_hint = QLabel(
-            "An extra spaCy model run after the primary one to catch names it misses "
-            "(e.g. German names in English text). <i>Auto</i> uses the model for the "
-            "language this computer is set to, and nothing when that is the same model as "
-            "the primary one. Choose <i>(none)</i> to skip the second pass entirely."
-        )
+        secondary_hint = QLabel(privacy.EXTRA_MODEL_HINT)
         secondary_hint.setWordWrap(True)
         secondary_hint.setTextFormat(Qt.TextFormat.RichText)
         secondary_hint.setStyleSheet("color: #555; font-size: 11px;")
@@ -202,12 +184,10 @@ class AnonymizerConfigWidget(QWidget):
         regex_layout.setContentsMargins(6, 6, 6, 6)
         regex_layout.setSpacing(4)
 
-        regex_layout.addWidget(
-            QLabel("Patterns applied after NER (clear all rows to disable regex anonymization):")
-        )
+        regex_layout.addWidget(QLabel(privacy.PATTERNS_INTRO))
 
         self._table = QTableWidget(0, 2)
-        self._table.setHorizontalHeaderLabels(["Tag", "Regex pattern"])
+        self._table.setHorizontalHeaderLabels(privacy.PATTERN_COLUMNS)
         self._table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents
         )
@@ -217,15 +197,12 @@ class AnonymizerConfigWidget(QWidget):
         regex_layout.addWidget(self._table, stretch=1)
 
         btn_row = QHBoxLayout()
-        add_btn = QPushButton("Add row")
+        add_btn = QPushButton(privacy.PATTERNS_ADD_ROW)
         add_btn.clicked.connect(self._add_row)
-        remove_btn = QPushButton("Remove selected")
+        remove_btn = QPushButton(privacy.PATTERNS_REMOVE_SELECTED)
         remove_btn.clicked.connect(self._remove_selected)
-        restore_btn = QPushButton("Restore defaults")
-        restore_btn.setToolTip(
-            "Reset patterns to the built-in defaults "
-            "(IBAN, email, phone, dates, and German street and postcode formats)."
-        )
+        restore_btn = QPushButton(privacy.PATTERNS_RESTORE_DEFAULTS)
+        restore_btn.setToolTip(privacy.PATTERNS_RESTORE_TOOLTIP)
         restore_btn.clicked.connect(self._restore_default_patterns)
         btn_row.addWidget(add_btn)
         btn_row.addWidget(remove_btn)
@@ -246,23 +223,19 @@ class AnonymizerConfigWidget(QWidget):
         sep2.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(sep2)
 
-        layout.addWidget(
-            QLabel("<b>Preview</b> — paste sample OCR text to test all active patterns:")
-        )
+        layout.addWidget(QLabel(privacy.PREVIEW_INTRO))
 
         preview_cols = QHBoxLayout()
 
         input_col = QVBoxLayout()
-        input_col.addWidget(QLabel("Sample text:"))
+        input_col.addWidget(QLabel(privacy.PREVIEW_SAMPLE_LABEL))
         self._sample_input = QPlainTextEdit()
-        self._sample_input.setPlaceholderText(
-            "Paste text here, e.g.:\nAlice sent an invoice to bob@example.com (STU-123456)."
-        )
+        self._sample_input.setPlaceholderText(privacy.PREVIEW_SAMPLE_PLACEHOLDER)
         input_col.addWidget(self._sample_input, stretch=1)
         preview_cols.addLayout(input_col)
 
         output_col = QVBoxLayout()
-        output_col.addWidget(QLabel("Anonymized output:"))
+        output_col.addWidget(QLabel(privacy.PREVIEW_OUTPUT_LABEL))
         self._sample_output = QPlainTextEdit()
         self._sample_output.setReadOnly(True)
         output_col.addWidget(self._sample_output, stretch=1)
@@ -271,16 +244,16 @@ class AnonymizerConfigWidget(QWidget):
         layout.addLayout(preview_cols, stretch=1)
 
         run_row = QHBoxLayout()
-        self._run_btn = QPushButton("Run preview")
+        self._run_btn = QPushButton(privacy.PREVIEW_RUN)
         self._run_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._run_btn.clicked.connect(self._run_preview)
         run_row.addWidget(self._run_btn)
         run_row.addStretch()
         layout.addLayout(run_row)
 
-        layout.addWidget(QLabel("Replacement map:"))
+        layout.addWidget(QLabel(privacy.PREVIEW_MAP_LABEL))
         self._mapping_table = QTableWidget(0, 2)
-        self._mapping_table.setHorizontalHeaderLabels(["Placeholder", "Original value"])
+        self._mapping_table.setHorizontalHeaderLabels(privacy.MAP_COLUMNS)
         self._mapping_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._mapping_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._mapping_table.setMaximumHeight(120)
@@ -296,7 +269,7 @@ class AnonymizerConfigWidget(QWidget):
 
     def _on_spacy_fetch_error(self, msg: str) -> None:
         """Show a warning label when spaCy model discovery fails."""
-        self._spacy_status_lbl.setText(f"Could not detect installed spaCy models: {msg}")
+        self._spacy_status_lbl.setText(privacy.spacy_fetch_failed(msg))
         self._spacy_status_lbl.setVisible(True)
 
     def _on_spacy_models_fetched(self, models: list[str]) -> None:
@@ -307,7 +280,7 @@ class AnonymizerConfigWidget(QWidget):
         except Exception:  # noqa: BLE001
             # model lookup is best-effort; fall back to the generic auto label
             auto_model = ""
-        auto_label = f"{_AUTO_PRIMARY}: {auto_model}" if auto_model else _AUTO_PRIMARY
+        auto_label = privacy.model_auto_primary(auto_model)
 
         # Primary combo: Auto + installed models
         self._primary_model.clear()
@@ -322,15 +295,10 @@ class AnonymizerConfigWidget(QWidget):
         # Secondary combo: auto (system language), (none), then the installed models
         self._secondary_model.clear()
         system_model = self._system_spacy_model()
-        if system_model == auto_model and system_model:
-            auto_secondary = f"{_AUTO_SECONDARY}: none, same as document language"
-        elif system_model:
-            auto_secondary = f"{_AUTO_SECONDARY}: {system_model}"
-        else:
-            auto_secondary = f"{_AUTO_SECONDARY}: none, the language is unknown"
+        auto_secondary = privacy.model_auto_secondary(system_model, auto_model)
         self._secondary_model.addItem(auto_secondary, userData=SECONDARY_MODEL_AUTO)
         # An explicit "(none)" is stored as no model at all, so an earlier choice is honoured.
-        self._secondary_model.addItem(_NO_SECONDARY, userData=None)
+        self._secondary_model.addItem(privacy.MODEL_NO_SECONDARY, userData=None)
         for m in models:
             self._secondary_model.addItem(m, userData=m)
         self._select_secondary(self._configured_secondary, models)
@@ -414,7 +382,7 @@ class AnonymizerConfigWidget(QWidget):
             return True
         except re.error as exc:
             item.setBackground(_INVALID_BG)
-            item.setToolTip(f"Invalid regex: {exc}")
+            item.setToolTip(privacy.invalid_regex(str(exc)))
             return False
 
     def _revalidate_all(self) -> None:
@@ -436,10 +404,7 @@ class AnonymizerConfigWidget(QWidget):
     def _update_error_summary(self) -> None:
         n = self._invalid_count()
         if n:
-            self._error_label.setText(
-                f"{n} pattern{'s' if n > 1 else ''} {'have' if n > 1 else 'has'} errors"
-                " — fix before saving."
-            )
+            self._error_label.setText(privacy.invalid_patterns(n))
             self._error_label.setVisible(True)
         else:
             self._error_label.setVisible(False)
@@ -479,15 +444,12 @@ class AnonymizerConfigWidget(QWidget):
             if SpacyModelDownloadDialog.is_available():
                 self._open_download_dialog(needed)
             else:
-                self._preview_error.setText(
-                    f"spaCy model '{needed}' is not downloaded.\n"
-                    f"Run: python -m spacy download {needed}"
-                )
+                self._preview_error.setText(privacy.spacy_model_not_downloaded(needed))
                 self._preview_error.setVisible(True)
             return
         except Exception as exc:  # noqa: BLE001
             # anonymization preview may raise anything; show the error in the panel
-            self._preview_error.setText(f"Preview failed: {exc}")
+            self._preview_error.setText(privacy.preview_failed(str(exc)))
             self._preview_error.setVisible(True)
             return
 

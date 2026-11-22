@@ -20,15 +20,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.composition import AppServices, inject_addon_packages_dir
-from ..domain.local_models import (
-    HUGGING_FACE_HOST,
-    PAGE_MODELS_SIZE_LABEL,
-    PRIVACY_ADDON_ID,
-    READER_SIZE_LABEL,
-)
+from ..domain.local_models import PRIVACY_ADDON_ID
 from ..exceptions import ModelDownloadCancelledError
 from ..texts import addons as txt
-from ..texts.settings import WHERE_ADDONS
+from ..texts import dialogs as dlg
+from ..texts.models import MODEL_LABEL
+from . import _html
 from ._constants import _SPACY_MODEL_CHOICES
 from ._long_job import ABORTED, LongJobThread
 
@@ -41,12 +38,8 @@ def _model_for_system_language(service: AppServices) -> str:
 
 _ADDON_META: dict[str, dict] = {
     PRIVACY_ADDON_ID: {
-        "title": "Install Privacy Add-on",
-        "description": (
-            "This installs <b>spaCy</b>, the NLP library used for PII anonymization.<br><br>"
-            "After installation, download a name detection model for your language under "
-            f"<i>{WHERE_ADDONS}</i> before using anonymization."
-        ),
+        "title": txt.INSTALL_PRIVACY_TITLE,
+        "description": txt.privacy_install_intro(),
         "size_warning": "",
     },
 }
@@ -104,14 +97,14 @@ class AddonInstallerDialog(QDialog):
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setMinimumHeight(160)
-        self._log.setPlaceholderText("Installation log will appear here…")
+        self._log.setPlaceholderText(txt.INSTALL_LOG_PLACEHOLDER)
         layout.addWidget(self._log)
 
         buttons = QDialogButtonBox()
-        self._install_btn = QPushButton("Install")
+        self._install_btn = QPushButton(txt.BUTTON_INSTALL)
         self._install_btn.setDefault(True)
         buttons.addButton(self._install_btn, QDialogButtonBox.ButtonRole.AcceptRole)
-        self._close_btn = QPushButton("Close")
+        self._close_btn = QPushButton(txt.BUTTON_CLOSE)
         buttons.addButton(self._close_btn, QDialogButtonBox.ButtonRole.RejectRole)
         layout.addWidget(buttons)
 
@@ -122,7 +115,7 @@ class AddonInstallerDialog(QDialog):
 
     def _start_install(self) -> None:
         self._install_btn.setEnabled(False)
-        self._install_btn.setText("Installing…")
+        self._install_btn.setText(txt.ADDONS_INSTALLING)
         self._log.clear()
 
         target = self._service.addons.addon_packages_dir()
@@ -140,17 +133,17 @@ class AddonInstallerDialog(QDialog):
     def _on_install_ok(self) -> None:
         self._service.addons.clear_stale_addon_modules(self._addon)
         inject_addon_packages_dir()
-        self._append_log("\n✓ Installation complete.")
-        self._install_btn.setText("Installed ✓")
-        self._close_btn.setText("Close")
+        self._append_log(txt.INSTALL_COMPLETE_LOG)
+        self._install_btn.setText(txt.BUTTON_INSTALLED)
+        self._close_btn.setText(txt.BUTTON_CLOSE)
         self.installed.emit(self._addon)
 
     def _on_install_err(self, msg: str) -> None:
-        self._log.appendHtml(f'<span style="color:#c0392b;"><b>Error:</b> {msg}</span>')
+        self._log.appendHtml(_html.error_line(dlg.ERROR_HEAD, msg))
         sb = self._log.verticalScrollBar()
         sb.setValue(sb.maximum())
         self._install_btn.setEnabled(True)
-        self._install_btn.setText("Retry")
+        self._install_btn.setText(txt.BUTTON_RETRY)
 
     # ── guard against closing while installing ─────────────────────────────────
 
@@ -215,12 +208,8 @@ class ReaderDownloadDialog(QDialog):
 
     downloaded = Signal()
 
-    _TITLE = "Download the built-in reader"
-    _INTRO = (
-        "The built-in reader reads pages on this computer, without a server. Its model "
-        f"files ({READER_SIZE_LABEL}, Apache-2.0, from PaddlePaddle) are downloaded once "
-        f"from {HUGGING_FACE_HOST} and kept in:"
-    )
+    _TITLE = txt.READER_DOWNLOAD_TITLE
+    _INTRO = txt.reader_intro()
     _METHOD = "download_reader"
 
     def __init__(self, service: AppServices, parent: QWidget | None = None) -> None:
@@ -232,7 +221,7 @@ class ReaderDownloadDialog(QDialog):
         self.setMinimumWidth(480)
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
-        desc = QLabel(f"{self._INTRO}<br><tt>{self._service.reader.models_dir()}</tt>")
+        desc = QLabel(_html.with_path(self._INTRO, str(self._service.reader.models_dir())))
         desc.setWordWrap(True)
         desc.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(desc)
@@ -241,15 +230,15 @@ class ReaderDownloadDialog(QDialog):
         self._bar.setRange(0, 100)
         self._bar.setValue(0)
         layout.addWidget(self._bar)
-        self._status = QLabel("")
+        self._status = QLabel()
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
 
         buttons = QDialogButtonBox()
-        self._start_btn = QPushButton("Download")
+        self._start_btn = QPushButton(txt.BUTTON_DOWNLOAD)
         self._start_btn.setDefault(True)
         buttons.addButton(self._start_btn, QDialogButtonBox.ButtonRole.AcceptRole)
-        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn = QPushButton(txt.BUTTON_CANCEL)
         buttons.addButton(self._cancel_btn, QDialogButtonBox.ButtonRole.RejectRole)
         layout.addWidget(buttons)
         self._start_btn.clicked.connect(self._start)
@@ -257,8 +246,8 @@ class ReaderDownloadDialog(QDialog):
 
     def _start(self) -> None:
         self._start_btn.setEnabled(False)
-        self._start_btn.setText("Downloading…")
-        self._status.setText("Starting download…")
+        self._start_btn.setText(txt.BUTTON_DOWNLOADING)
+        self._status.setText(txt.STARTING_DOWNLOAD)
         self._thread = _ReaderDownloadThread(self._service, self._METHOD)
         self._thread.progress.connect(self._on_progress)
         self._thread.finished_ok.connect(self._on_ok)
@@ -276,23 +265,23 @@ class ReaderDownloadDialog(QDialog):
         done, total = cast("tuple[int, int]", payload)
         if total > 0:
             self._bar.setValue(int(100 * done / total))
-            self._status.setText(f"{done / 1_000_000:.1f} / {total / 1_000_000:.1f} MB")
+            self._status.setText(txt.megabytes(done, total))
 
     def _on_ok(self) -> None:
         self._bar.setValue(100)
-        self._status.setText(f'<span style="color:#27ae60;">{txt.READER_DOWNLOADED}</span>')
-        self._start_btn.setText("Done ✓")
-        self._cancel_btn.setText("Close")
+        self._status.setText(_html.green(txt.READER_DOWNLOADED))
+        self._start_btn.setText(txt.BUTTON_DONE)
+        self._cancel_btn.setText(txt.BUTTON_CLOSE)
         self._cancel_btn.setEnabled(True)
         self.downloaded.emit()
 
     def _on_err(self, message: str) -> None:
-        text = "The download was cancelled." if message == ABORTED else message
-        self._status.setText(f'<span style="color:#c0392b;"><b>Error:</b> {text}</span>')
+        text = txt.DOWNLOAD_CANCELLED if message == ABORTED else message
+        self._status.setText(_html.error_line(dlg.ERROR_HEAD, text))
         self._start_btn.setEnabled(True)
-        self._start_btn.setText("Retry")
+        self._start_btn.setText(txt.BUTTON_RETRY)
         self._cancel_btn.setEnabled(True)
-        self._cancel_btn.setText("Close")
+        self._cancel_btn.setText(txt.BUTTON_CLOSE)
 
     def reject(self) -> None:
         if self._thread is not None and self._thread.isRunning():
@@ -312,12 +301,8 @@ class ReaderDownloadDialog(QDialog):
 class PageModelsDownloadDialog(ReaderDownloadDialog):
     """Modal dialog that downloads the page models of the automatic image preparation."""
 
-    _TITLE = "Download the page models"
-    _INTRO = (
-        "The automatic image preparation turns sideways pages and flattens curved ones with two "
-        f"small models ({PAGE_MODELS_SIZE_LABEL}, Apache-2.0, from PaddlePaddle). They are "
-        f"downloaded once from {HUGGING_FACE_HOST} and kept in:"
-    )
+    _TITLE = txt.PAGE_MODELS_DOWNLOAD_TITLE
+    _INTRO = txt.page_models_intro()
     _METHOD = "download_page_models"
 
 
@@ -364,19 +349,14 @@ class SpacyModelDownloadDialog(QDialog):
         # No model given: preselect the one for the language this computer is set to.
         default_model = default_model or _model_for_system_language(self._service)
 
-        self.setWindowTitle("Download spaCy Model")
+        self.setWindowTitle(txt.SPACY_DOWNLOAD_TITLE)
         self.setMinimumWidth(520)
         self.setMinimumHeight(360)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        desc = QLabel(
-            "Select a spaCy NER model to download. The model will be used for "
-            "anonymizing person names in OCR output.<br><br>"
-            "The <i>Multilingual</i> model works as a secondary pass across all "
-            "supported languages and is a good default choice."
-        )
+        desc = QLabel(txt.SPACY_DOWNLOAD_INTRO)
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
@@ -389,20 +369,20 @@ class SpacyModelDownloadDialog(QDialog):
         idx = self._model_combo.findData(default_model)
         if idx >= 0:
             self._model_combo.setCurrentIndex(idx)
-        form.addRow("Model:", self._model_combo)
+        form.addRow(MODEL_LABEL, self._model_combo)
         layout.addLayout(form)
 
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setMinimumHeight(160)
-        self._log.setPlaceholderText("Download log will appear here…")
+        self._log.setPlaceholderText(txt.DOWNLOAD_LOG_PLACEHOLDER)
         layout.addWidget(self._log)
 
         buttons = QDialogButtonBox()
-        self._download_btn = QPushButton("Download")
+        self._download_btn = QPushButton(txt.BUTTON_DOWNLOAD)
         self._download_btn.setDefault(True)
         buttons.addButton(self._download_btn, QDialogButtonBox.ButtonRole.AcceptRole)
-        self._close_btn = QPushButton("Close")
+        self._close_btn = QPushButton(txt.BUTTON_CLOSE)
         buttons.addButton(self._close_btn, QDialogButtonBox.ButtonRole.RejectRole)
         layout.addWidget(buttons)
 
@@ -411,7 +391,7 @@ class SpacyModelDownloadDialog(QDialog):
 
     def _start_download(self) -> None:
         self._download_btn.setEnabled(False)
-        self._download_btn.setText("Downloading…")
+        self._download_btn.setText(txt.BUTTON_DOWNLOADING)
         self._log.clear()
         self._model_combo.setEnabled(False)
 
@@ -431,17 +411,17 @@ class SpacyModelDownloadDialog(QDialog):
     def _on_download_ok(self) -> None:
         inject_addon_packages_dir()
         model = self._model_combo.currentData()
-        self._append_log("\n✓ Model downloaded.")
-        self._download_btn.setText("Downloaded ✓")
-        self._close_btn.setText("Close")
+        self._append_log(txt.MODEL_DOWNLOADED_LOG)
+        self._download_btn.setText(txt.BUTTON_DOWNLOADED)
+        self._close_btn.setText(txt.BUTTON_CLOSE)
         self.model_downloaded.emit(model)
 
     def _on_download_err(self, msg: str) -> None:
-        self._log.appendHtml(f'<span style="color:#c0392b;"><b>Error:</b> {msg}</span>')
+        self._log.appendHtml(_html.error_line(dlg.ERROR_HEAD, msg))
         sb = self._log.verticalScrollBar()
         sb.setValue(sb.maximum())
         self._download_btn.setEnabled(True)
-        self._download_btn.setText("Retry")
+        self._download_btn.setText(txt.BUTTON_RETRY)
         self._model_combo.setEnabled(True)
 
     def reject(self) -> None:

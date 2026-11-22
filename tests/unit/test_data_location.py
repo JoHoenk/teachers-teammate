@@ -27,13 +27,13 @@ from teachers_teammate.domain.data_location import (
     StageLocation,
     anonymization_badge,
     classify_ollama,
-    describe_fingerprint,
     is_ollama_cloud_host,
     is_ollama_cloud_model,
     online_ocr_reason,
 )
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.domain.stages import Stage
+from teachers_teammate.texts import privacy
 from tests.conftest import make_config
 
 _PROVIDERS = {
@@ -320,28 +320,6 @@ def test_data_flow_advice_is_wording_free() -> None:
     for advice in Advice:
         assert "Step" not in advice.value
         assert "Remove" not in advice.value
-
-
-def test_stage_summary_for_leaving_step_says_what_is_received() -> None:
-    """
-    Given  an online step that receives text with names visible
-    When   its summary is built
-    Then   the line says where it runs and that names are sent as written
-    """
-    stage = DataFlowStage(Stage.EVALUATION, _CLOUD, "text", False)
-    assert stage.summary == (
-        "Content review: Online service (OpenAI) · EU — receives text, names sent as written"
-    )
-
-
-def test_stage_summary_does_not_promise_names_are_hidden() -> None:
-    """
-    Given  an online step whose names are replaced automatically
-    When   its summary is built
-    Then   it says "where detected": detection can miss a name
-    """
-    stage = DataFlowStage(Stage.CORRECTION, _CLOUD, "text", True)
-    assert stage.summary.endswith("names replaced where detected")
 
 
 # ── application classification ─────────────────────────────────────────────
@@ -825,7 +803,7 @@ def test_describe_data_flow_lists_anonymization_as_a_local_row(tmp_path: Path) -
     row = off.stage(STAGE_ANONYMIZATION)
     assert row is not None
     assert row.location.location is DataLocation.THIS_COMPUTER
-    assert row.badge == "Off"
+    assert privacy.stage_badge(row) == "Off"
     assert row.privacy_level is PrivacyLevel.LOCAL
 
     on = describe_data_flow(
@@ -833,7 +811,9 @@ def test_describe_data_flow_lists_anonymization_as_a_local_row(tmp_path: Path) -
         _info,
         anonymizer_models=["en_core_web_sm", "de_core_news_sm"],
     )
-    assert on.stage(STAGE_ANONYMIZATION).badge == "On (spaCy en + de)"
+    stage = on.stage(STAGE_ANONYMIZATION)
+    assert stage is not None
+    assert privacy.stage_badge(stage) == "On (spaCy en + de)"
 
 
 def test_describe_data_flow_hides_names_without_proofreading(tmp_path: Path) -> None:
@@ -873,40 +853,6 @@ def test_fingerprint_includes_the_region() -> None:
     european = DataFlow((DataFlowStage(Stage.CORRECTION, _CLOUD, "text", True),))
     outside = DataFlow((DataFlowStage(Stage.CORRECTION, _OUTSIDE, "text", True),))
     assert european.fingerprint != outside.fingerprint
-
-
-def test_describe_fingerprint_reads_a_v2_fingerprint() -> None:
-    """
-    Given  a stored v2 fingerprint with a region
-    When   it is turned into a readable line
-    Then   the line names the place, including the region
-    """
-    line = describe_fingerprint("v2|correction:online:eu:Mistral (EU)::1")
-    assert line == (
-        "Proofreading: Online service (Mistral (EU)) · EU — names replaced where detected"
-    )
-
-
-def test_describe_fingerprint_still_reads_a_v1_fingerprint() -> None:
-    """
-    Given  an answer stored before the region existed
-    When   it is turned into a readable line
-    Then   it is understood, without a region in the line
-    """
-    line = describe_fingerprint("correction:online:OpenAI::0")
-    assert line == "Proofreading: Online service (OpenAI) · outside the EU — names sent as written"
-
-
-def test_describe_fingerprint_keeps_a_part_it_cannot_parse() -> None:
-    """
-    Given  a stored part that does not parse (unknown region or place)
-    When   it is turned into a readable line
-    Then   the part is shown as it is instead of being dropped
-    """
-    assert describe_fingerprint("v2|correction:online:mars:OpenAI::1") == (
-        "correction:online:mars:OpenAI::1"
-    )
-    assert describe_fingerprint("garbage") == "garbage"
 
 
 def test_data_flow_gives_no_region_advice_for_an_own_server() -> None:

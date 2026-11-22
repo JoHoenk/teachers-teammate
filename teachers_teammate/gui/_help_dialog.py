@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..texts import app as app_text
 from ._image_utils import load_pixmap
 
 _MEIPASS = getattr(sys, "_MEIPASS", None)
@@ -38,9 +39,9 @@ _LICENSES_PATH = _ROOT / "teachers_teammate" / "assets" / "third_party_licenses.
 _HOST_LIBRARIES_PATH = _ROOT / "third_party_host_libraries.txt"
 
 _USER_GUIDE_PAGES: list[tuple[str, str]] = [
-    ("Overview", "index.md"),
-    ("Using the App", "using_the_app.md"),
-    ("Advanced Guide", "advanced_user_guide.md"),
+    (app_text.GUIDE_OVERVIEW, "index.md"),
+    (app_text.GUIDE_USING, "using_the_app.md"),
+    (app_text.GUIDE_ADVANCED, "advanced_user_guide.md"),
 ]
 
 
@@ -55,7 +56,7 @@ def _make_browser(path: Path) -> QTextBrowser:
     if path.exists():
         browser.setMarkdown(_SPHINX_DIRECTIVE.sub("", path.read_text(encoding="utf-8")))
     else:
-        browser.setPlainText(f"Page not found: {path.name}")
+        browser.setPlainText(app_text.guide_page_missing(path.name))
     return browser
 
 
@@ -64,7 +65,7 @@ class HelpDialog(QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("User Guide — Teacher's Teammate")
+        self.setWindowTitle(app_text.GUIDE_TITLE)
         self.resize(900, 720)
 
         layout = QVBoxLayout(self)
@@ -89,7 +90,7 @@ class AboutDialog(QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("About Teacher's Teammate")
+        self.setWindowTitle(app_text.ABOUT_TITLE)
         self.setFixedSize(440, 480)
 
         layout = QVBoxLayout(self)
@@ -106,30 +107,18 @@ class AboutDialog(QDialog):
             img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(img_label)
 
-        name_label = QLabel("<h2>Teacher's Teammate</h2>")
+        name_label = QLabel(app_text.ABOUT_NAME)
         name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(name_label)
 
         from teachers_teammate import __version__ as ver  # noqa: PLC0415
 
-        desc = QLabel(
-            f"<p>Version <b>{ver}</b></p>"
-            "<p>Batch OCR pipeline for scanned documents and handwritten notes.<br>"
-            "Extracts text from PDFs and images, optionally produces<br>"
-            "proofread DOCX reports via a local language model.</p>"
-        )
+        desc = QLabel(app_text.about_version(ver) + app_text.ABOUT_DESCRIPTION)
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
-        credits_lbl = QLabel(
-            '<p style="color:#888; font-size:8pt;">'
-            "Powered by Ollama &bull; OpenCV &bull; PaddleOCR models &bull; LangChain<br>"
-            "pypdfium2 &bull; PySide6 &bull; qdarkstyle<br><br>"
-            'Inspired by <a href="https://github.com/imanoop7/Ollama-OCR">'
-            "Ollama-OCR</a> by imanoop7."
-            "</p>"
-        )
+        credits_lbl = QLabel(app_text.ABOUT_CREDITS)
         credits_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         credits_lbl.setOpenExternalLinks(True)
         credits_lbl.setWordWrap(True)
@@ -147,7 +136,7 @@ class ThirdPartyLicensesDialog(QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Third-Party Licenses — Teacher's Teammate")
+        self.setWindowTitle(app_text.LICENSES_TITLE)
         self.resize(860, 680)
 
         layout = QVBoxLayout(self)
@@ -161,10 +150,7 @@ class ThirdPartyLicensesDialog(QDialog):
                 text += "\n" + _HOST_LIBRARIES_PATH.read_text(encoding="utf-8")
             browser.setMarkdown(text)
         else:
-            browser.setPlainText(
-                "Third-party license information is not available in this installation.\n\n"
-                "Run tools/licenses/inventory.py --compile to generate it."
-            )
+            browser.setPlainText(app_text.LICENSES_MISSING)
         layout.addWidget(browser)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)

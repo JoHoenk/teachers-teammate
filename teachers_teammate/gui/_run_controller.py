@@ -25,6 +25,8 @@ from ..domain.run_summary import FileStatus, KeepAwakeState, RunSummary
 from ..domain.stages import Stage
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
+from ..texts import main_window as txt
+from ..texts import run
 from ..texts.run import BATTERY_WARNING
 from . import _dialogs, _handles
 from ._background import LatestTask
@@ -34,12 +36,6 @@ from ._results_table import ResultsTable
 from ._run_session import (
     PROGRESS_RESOLUTION,
     PROGRESS_TICK_MS,
-    STOP_NOW_TEXT,
-    STOP_NOW_TOOLTIP,
-    STOP_TEXT,
-    STOP_TOOLTIP,
-    STOPPING_NOW_TEXT,
-    STOPPING_SUFFIX,
     RunSession,
     StopStage,
     wait_detail_text,
@@ -51,14 +47,6 @@ from ._worker import OCRWorker, detach_running_worker
 #: How long closing the window waits for a stopping run (milliseconds): enough for a cancelled
 #: Ollama request and a state write, never for the run itself.
 CLOSE_GRACE_MS = 3000
-AWAKE_HELD_TEXT = (
-    "Keeping the computer awake while documents are processed. The screen may turn off."
-)
-AWAKE_REFUSED_TEXT = "This computer did not allow staying awake; it may go to sleep during the run."
-AWAKE_UNAVAILABLE_TEXT = (
-    "The app cannot keep this computer awake (the system decides); "
-    "check its power settings if a long run must not be interrupted."
-)
 
 
 class WorkerLike(Protocol):
@@ -142,7 +130,7 @@ class RunController(QObject):
         style = window.style()
         assert style is not None
         #: Run and Stop, and what the window shows around them: a run's own widgets.
-        self.run_button = QPushButton("Run Selected")
+        self.run_button = QPushButton(txt.RUN_SELECTED)
         self.run_button.setObjectName(_handles.RUN_BUTTON)
         self.run_button.setIcon(
             QIcon.fromTheme(
@@ -156,9 +144,9 @@ class RunController(QObject):
             "QPushButton:hover { background: #219a52; } "
             "QPushButton:disabled { background: #95a5a6; }"
         )
-        self.stop_button = QPushButton(STOP_TEXT)
+        self.stop_button = QPushButton(run.STOP)
         self.stop_button.setObjectName(_handles.STOP_BUTTON)
-        self.stop_button.setToolTip(STOP_TOOLTIP)
+        self.stop_button.setToolTip(run.STOP_TOOLTIP)
         self.stop_button.setIcon(
             QIcon.fromTheme(
                 "media-playback-stop",
@@ -314,16 +302,16 @@ class RunController(QObject):
         """Move the Stop button to *stage*: its text, tooltip and whether it can be pressed."""
         self._session.stop_stage = stage
         if stage is StopStage.AFTER_FILE:
-            self.stop_button.setText(STOP_NOW_TEXT)
-            self.stop_button.setToolTip(STOP_NOW_TOOLTIP)
+            self.stop_button.setText(run.STOP_NOW)
+            self.stop_button.setToolTip(run.STOP_NOW_TOOLTIP)
             self.stop_button.setEnabled(True)
             self._set_progress_text(self._session.progress_base)
         elif stage is StopStage.NOW:
             self.stop_button.setEnabled(False)
-            self.progress_bar.setFormat(STOPPING_NOW_TEXT)
+            self.progress_bar.setFormat(run.STOPPING)
         else:
-            self.stop_button.setText(STOP_TEXT)
-            self.stop_button.setToolTip(STOP_TOOLTIP)
+            self.stop_button.setText(run.STOP)
+            self.stop_button.setToolTip(run.STOP_TOOLTIP)
             self.stop_button.setEnabled(stage is StopStage.RUNNING)
         self._hooks.refresh_check_run()
 
@@ -368,7 +356,7 @@ class RunController(QObject):
         self._session.progress_base = text
         if self._session.stop_stage is StopStage.NOW:
             return
-        suffix = STOPPING_SUFFIX if self._session.stop_stage is StopStage.AFTER_FILE else ""
+        suffix = run.STOPPING_SUFFIX if self._session.stop_stage is StopStage.AFTER_FILE else ""
         self.progress_bar.setFormat(text + self._time_left_suffix() + suffix)
 
     def _time_left_suffix(self) -> str:
@@ -413,11 +401,11 @@ class RunController(QObject):
         """Say under the progress bar whether the computer is kept awake, and warn on battery."""
         if state.enabled:
             if state.held:
-                text = AWAKE_HELD_TEXT
+                text = run.AWAKE_HELD
             elif state.available:
-                text = AWAKE_REFUSED_TEXT
+                text = run.AWAKE_REFUSED
             else:
-                text = AWAKE_UNAVAILABLE_TEXT
+                text = run.AWAKE_UNAVAILABLE
             self.awake_note.setText(text)
         self.awake_note.setVisible(state.enabled)
         self.battery_note.setVisible(bool(state.enabled and state.on_battery))

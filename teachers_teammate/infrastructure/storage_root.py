@@ -48,6 +48,7 @@ import shutil
 
 from ..config import override_root
 from ..exceptions import ConfigFileNotFoundError, StorageResolutionError
+from ..texts.run import config_file_missing, storage_root_unresolved
 
 # StorageResolutionError is defined in exceptions.py; re-exported here for
 # backwards-compatibility with any code that imported it from this module.
@@ -252,7 +253,7 @@ def resolve_storage_root() -> StorageRoot:
         failures.append(f"{candidate}: {reason}")
 
     reasons = "\n".join(failures) if failures else "no candidates"
-    raise StorageResolutionError(f"Could not resolve writable storage root:\n{reasons}")
+    raise StorageResolutionError(storage_root_unresolved(reasons))
 
 
 _DEFAULT_CONFIG_NAME = "ocr.toml"
@@ -280,7 +281,7 @@ def resolve_config_path(explicit: str | None) -> Path | None:
     if explicit is not None:
         p = Path(explicit)
         if not p.is_file():
-            raise ConfigFileNotFoundError(f"Config file not found: {p}")
+            raise ConfigFileNotFoundError(config_file_missing(p))
         return p
     storage_default = default_config_path()
     legacy_root = _legacy_cache_root()

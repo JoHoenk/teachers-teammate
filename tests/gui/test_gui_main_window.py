@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QShortcut
-from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget
+from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QWidget
 
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.application.ollama_server import OllamaServerService
@@ -4879,6 +4879,22 @@ def test_no_update_check_runs_when_the_switch_is_off(qtbot, monkeypatch) -> None
     _win, asked = _window_with_update_setting(qtbot, monkeypatch, False)
 
     assert asked == []
+
+
+@pytest.mark.gui
+def test_the_update_banner_escapes_what_the_release_feed_sent(qtbot, monkeypatch) -> None:
+    """
+    Given  a release whose version and address carry markup and a quote
+    When   the banner is shown
+    Then   the markup is text, so the link cannot be broken open or extended
+    """
+    win, _asked = _window_with_update_setting(qtbot, monkeypatch, True)
+
+    win._show_update_banner("1.0<i>", 'https://x.test/"><b>pwn</b>')
+
+    text = win._update_banner.findChild(QLabel, "UpdateBannerLabel").text()
+    assert "<i>" not in text and "<b>pwn</b>" not in text
+    assert "&lt;i&gt;" in text and "&quot;" in text
 
 
 @pytest.mark.gui

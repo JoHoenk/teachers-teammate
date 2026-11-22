@@ -49,13 +49,18 @@ from ....domain.model_catalog import (
 from ....texts import dialogs as dlg
 from ....texts import review as txt
 from ....texts.models import (
+    ADD_BUTTON,
+    ADD_MODEL_LABEL,
     ADD_MODEL_NOTE,
+    ADD_MODEL_PLACEHOLDER,
     BEST_ALREADY_DOWNLOADED,
     DOWNLOADS_INTRO,
     GROUP_OTHER,
     GROUP_READING,
     GROUP_WRITING,
     MODEL_ALREADY_LISTED,
+    OLLAMA_MODELS_GROUP,
+    SELECT_BEST_MODELS,
     abilities_text,
     compact_suitability_text,
     memory_text,
@@ -143,7 +148,7 @@ class OllamaModelsTab(QWidget):
     def _build_body(self, hardware_setting: HardwareProfileSetting) -> None:
         """Build the computer line, the tree and the fields for the teacher's own models."""
         layout = QVBoxLayout(self)
-        group = QGroupBox("AI models for this computer (Ollama)")
+        group = QGroupBox(OLLAMA_MODELS_GROUP)
         group_layout = QVBoxLayout(group)
         group_layout.setSpacing(6)
 
@@ -163,11 +168,11 @@ class OllamaModelsTab(QWidget):
         best_row = QWidget()
         br = QHBoxLayout(best_row)
         br.setContentsMargins(0, 0, 0, 0)
-        self._select_best_btn = QPushButton("Select the best models for my computer")
+        self._select_best_btn = QPushButton(SELECT_BEST_MODELS)
         self._select_best_btn.clicked.connect(self._on_select_best_models)
         br.addWidget(self._select_best_btn)
         br.addStretch(1)
-        self._ollama_hint_lbl = QLabel("")
+        self._ollama_hint_lbl = QLabel()
         self._ollama_hint_lbl.setStyleSheet("color: #888; font-size: 11px;")
         self._ollama_hint_lbl.setWordWrap(True)
         br.addWidget(self._ollama_hint_lbl, stretch=2)
@@ -179,10 +184,10 @@ class OllamaModelsTab(QWidget):
         custom_row = QWidget()
         cmr = QHBoxLayout(custom_row)
         cmr.setContentsMargins(0, 0, 0, 0)
-        add_label = QLabel("Add a model by name:")
+        add_label = QLabel(ADD_MODEL_LABEL)
         self._ollama_custom_input = QLineEdit()
-        self._ollama_custom_input.setPlaceholderText("e.g. llama3.2:latest")
-        add_model_btn = QPushButton("Add")
+        self._ollama_custom_input.setPlaceholderText(ADD_MODEL_PLACEHOLDER)
+        add_model_btn = QPushButton(ADD_BUTTON)
         add_model_btn.setFixedWidth(90)
         add_model_btn.clicked.connect(self._on_add_custom_ollama_model)
         self._ollama_custom_input.returnPressed.connect(self._on_add_custom_ollama_model)

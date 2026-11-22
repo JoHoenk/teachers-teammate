@@ -86,6 +86,32 @@ def test_the_allowlist_has_no_stale_entries() -> None:
     )
 
 
+def test_the_invariant_messages_are_all_still_raised() -> None:
+    """
+    Given  the messages listed as stating an invariant of the code
+    When   they are compared with what the sources raise
+    Then   no entry is left over, so a reworded raise deletes its entry
+    """
+    raised = inventory.raised_messages(_root())
+    stale = sorted(entry for entry in inventory.INVARIANT_MESSAGES if entry not in raised)
+
+    assert not stale, "Delete these entries; the raise is gone or reworded:\n" + "\n".join(
+        f"  {path}  {text!r}" for path, text in stale
+    )
+
+
+def test_an_invariant_raise_is_exempt() -> None:
+    """
+    Given  a module outside ``domain`` that raises one of the listed invariant messages
+    When   the source is scanned under its own path
+    Then   it is no finding, because no teacher reads it
+    """
+    path = "teachers_teammate/infrastructure/gpu_detector.py"
+    source = 'raise RuntimeError("GlobalMemoryStatusEx failed")\n'
+
+    assert inventory.scan_source(source, path=path) == []
+
+
 def test_only_texts_builds_a_notice() -> None:
     """
     Given  every module of the app outside ``teachers_teammate/texts``
@@ -115,6 +141,8 @@ def test_a_literal_handed_to_a_text_function_is_a_finding() -> None:
     Then   each sentence is a finding, so the new route is no way around the ratchet
     """
     source = (
+        "from ..texts import dialogs as dlg\n"
+        "from ..texts import privacy\n"
         "def f(self, name):\n"
         '    _dialogs.notify(self, dlg.copy_failed("Could not copy"))\n'
         '    _dialogs.notify(self, privacy.what_is_sent_failed(reason=f"No {name}"))\n'
@@ -126,6 +154,52 @@ def test_a_literal_handed_to_a_text_function_is_a_finding() -> None:
         ("dlg.copy_failed", inventory.TEXT_CALL),
         ("privacy.what_is_sent_failed", inventory.TEXT_CALL),
     ]
+
+
+def test_a_sentence_handed_to_a_function_imported_by_name_is_a_finding() -> None:
+    """
+    Given  a module that imports a function from a ``texts`` module by name and calls it with a
+           sentence, an id and a model's name
+    When   the source is scanned
+    Then   only the sentence is a finding, whatever alias the module gave the ``texts`` module
+    """
+    source = (
+        "from ..texts.run import image_unreadable\n"
+        "from ..texts import models as m\n"
+        "def f():\n"
+        '    image_unreadable("Cannot read this page")\n'
+        '    m.asking_for_models_text("Ollama")\n'
+        '    m.preview_title("a sentence")\n'
+    )
+
+    found = [(f.sink, f.text) for f in inventory.scan_source(source, path="x.py")]
+
+    assert found == [
+        ("image_unreadable", "Cannot read this page"),
+        ("m.preview_title", "a sentence"),
+    ]
+
+
+def test_a_form_label_a_header_and_an_html_fragment_are_findings() -> None:
+    """
+    Given  a form row, a list of header labels, a suffix and the fragments of ``gui/_html``
+    When   the source is scanned
+    Then   each label is a finding, but not the target of a link or a name put into a fragment
+    """
+    source = (
+        "def f(self, name):\n"
+        '    form.addRow("PDF resolution:", self._dpi)\n'
+        '    form.addRow("", self._hint)\n'
+        '    table.setHorizontalHeaderLabels(["Tag", other])\n'
+        '    spin.setSuffix(" DPI")\n'
+        '    label.setText(_html.green("Done"))\n'
+        '    label.setText(_html.link("retry", "Try again"))\n'
+        "    label.setText(_html.bold(name))\n"
+    )
+
+    found = [f.text for f in inventory.scan_source(source, path="x.py")]
+
+    assert found == ["PDF resolution:", "Tag", " DPI", "Done", "Try again"]
 
 
 def test_a_sentence_in_a_field_or_a_constant_is_a_finding() -> None:
@@ -150,6 +224,102 @@ def test_a_sentence_in_a_field_or_a_constant_is_a_finding() -> None:
     ]
 
 
+def test_a_title_a_label_and_a_tooltip_are_findings() -> None:
+    """
+    Given  module constants named after what a screen shows: a title, a label, a tooltip, a tip,
+         a hint, a note, a heading, an intro and a placeholder
+    When   the source is scanned
+    Then   each is a finding, so a screen's own words live in ``texts`` like a message does
+    """
+    source = (
+        'GENERAL_TITLE = "General settings"\n'
+        'LANGUAGE_LABEL = "Language of your documents"\n'
+        'START_TOOLTIP = "Starts the run."\n'
+        'KEY_TIP = "Where the key is found."\n'
+        'SERVER_HINT = "Ollama runs on this computer."\n'
+        'ADDONS_CANCEL_NOTE = "The download stops."\n'
+        'NOTES_HEADING = "Notes for the review"\n'
+        'PAGE_INTRO = "What this page asks."\n'
+        'FOLDER_PLACEHOLDER = "Choose a folder"\n'
+    )
+
+    found = [f.sink for f in inventory.scan_source(source, path="x.py")]
+
+    assert found == [
+        "GENERAL_TITLE",
+        "LANGUAGE_LABEL",
+        "START_TOOLTIP",
+        "KEY_TIP",
+        "SERVER_HINT",
+        "ADDONS_CANCEL_NOTE",
+        "NOTES_HEADING",
+        "PAGE_INTRO",
+        "FOLDER_PLACEHOLDER",
+    ]
+
+
+def test_a_constant_listed_as_no_text_is_no_finding() -> None:
+    """
+    Given  a heading written for the LLM and a download size written as teachers read it
+    When   each source is scanned under the path the list names
+    Then   neither is a finding, while the same literal elsewhere is one: the entry is by place
+    """
+    heading = 'NOTES_HEADING = "Notes from the teacher (context for the correction):"\n'
+    size = 'READER_SIZE_LABEL = "31 MB"\n'
+
+    assert (
+        inventory.scan_source(heading, path="teachers_teammate/domain/correction_prompts.py") == []
+    )
+    assert inventory.scan_source(size, path="teachers_teammate/domain/local_models.py") == []
+    assert [f.sink for f in inventory.scan_source(heading, path="x.py")] == ["NOTES_HEADING"]
+    assert [f.sink for f in inventory.scan_source(size, path="x.py")] == ["READER_SIZE_LABEL"]
+
+
+def test_the_non_text_constants_are_all_still_there() -> None:
+    """
+    Given  the constants listed as holding no sentence a teacher reads
+    When   they are compared with the constants the sources define
+    Then   no entry is left over, so a renamed constant deletes its entry
+    """
+    defined = inventory.module_constants(_root())
+    stale = sorted(entry for entry in inventory.NON_TEXT_CONSTANTS if entry not in defined)
+
+    assert not stale, "Delete these entries; the constant is gone or renamed:\n" + "\n".join(
+        f"  {path}  {name}" for path, name in stale
+    )
+
+
+def test_an_empty_literal_is_not_a_finding() -> None:
+    """
+    Given  a label, a tooltip and a table cell cleared with an empty string
+    When   the source is scanned
+    Then   nothing is found: an empty literal clears a text instead of wording one
+    """
+    source = (
+        "def f(self):\n"
+        '    self._error.setText("")\n'
+        '    self._table.setToolTip("")\n'
+        '    self._table.setItem(0, 1, QTableWidgetItem(""))\n'
+    )
+
+    assert inventory.scan_source(source, path="x.py") == []
+
+
+def test_an_fstring_that_glues_names_together_is_not_a_finding() -> None:
+    """
+    Given  a status line and a marked label built by putting two names together with a space
+    When   the source is scanned
+    Then   neither is a finding, so a separator alone is no sentence at the call site
+    """
+    source = (
+        "def f(self, head, note, mark):\n"
+        '    self._status.setText(f"{head} {note}")\n'
+        '    box.setText(f"{note}  {mark}")\n'
+    )
+
+    assert inventory.scan_source(source, path="x.py") == []
+
+
 def test_names_and_values_handed_to_a_text_function_are_not_findings() -> None:
     """
     Given  calls of ``texts`` functions with variables, calls, numbers and an empty start folder
@@ -157,6 +327,7 @@ def test_names_and_values_handed_to_a_text_function_are_not_findings() -> None:
     Then   nothing is found: only a sentence is a finding
     """
     source = (
+        "from ..texts import dialogs as dlg\n"
         "def f(self, folder):\n"
         "    dlg.no_files_found(str(folder))\n"
         "    dlg.restore_settings(applies_immediately=True)\n"
@@ -199,3 +370,110 @@ def test_the_csv_is_written_where_bazel_run_was_started(monkeypatch, tmp_path: P
 
     assert inventory.output_path(Path("user_text.csv")) == tmp_path / "user_text.csv"
     assert inventory.output_path(Path("/elsewhere/a.csv")) == Path("/elsewhere/a.csv")
+
+
+def test_a_fix_a_readiness_a_log_line_and_a_report_line_are_findings() -> None:
+    """
+    Given  a fix with its button, a readiness, a tray message, a log line, a log pane line and
+           a reporter line, each carrying a sentence
+    When   the source is scanned
+    Then   every sentence is a finding, so the new routes are no way around the ratchet
+    """
+    source = (
+        "def f(self, reporter, worker):\n"
+        '    Fix("Ollama is not running", (FixAction("Check again", tooltip="Ask again"),))\n'
+        '    Readiness("Select documents to start", Tone.HINT)\n'
+        '    self._tray.showMessage("Title", "Done")\n'
+        '    self.log_line.emit("Installing the add-ons again")\n'
+        '    self._log.append_text("Run stored.")\n'
+        '    reporter.status("Found 3 files")\n'
+        '    self._reporter.warn("Careful")\n'
+        '    other.status("not a reporter")\n'
+        '    self.finished.emit("not a log line")\n'
+    )
+
+    found = [f.text for f in inventory.scan_source(source, path="x.py")]
+
+    assert sorted(found) == sorted(
+        [
+            "Ollama is not running",
+            "Check again",
+            "Ask again",
+            "Select documents to start",
+            "Title",
+            "Done",
+            "Installing the add-ons again",
+            "Run stored.",
+            "Found 3 files",
+            "Careful",
+        ]
+    )
+
+
+def test_a_single_word_label_a_container_and_a_legend_are_findings() -> None:
+    """
+    Given  a one-word ``*_LABEL``, a dict of ``*_LABELS``, a ``*_LEGEND`` of text and colour, a
+           colour named ``*_LABEL`` and a Word label table in the document-language module
+    When   each source is scanned
+    Then   the words are findings but the colour and the document table are not
+    """
+    source = (
+        'MODEL_LABEL = "Model:"\n'
+        'EXPORT_LABELS = {"docx": "Word Document", "text": "Text File"}\n'
+        '_LEGEND = (("OCR", "#27ae60"), ("Proofreading", "#e67e22"))\n'
+        'COLOUR_LABEL = "#888"\n'
+    )
+    table = 'HEADINGS_LABELS = {"english": {"grammar": "Grammar"}}\n'
+
+    found = [f.text for f in inventory.scan_source(source, path="x.py")]
+
+    assert sorted(found) == sorted(["Model:", "Word Document", "Text File", "OCR", "Proofreading"])
+    path = "teachers_teammate/infrastructure/docx_builder.py"
+    assert inventory.scan_source(table, path=path) == []
+
+
+def test_a_name_added_to_a_literal_with_no_words_is_not_a_finding() -> None:
+    """
+    Given  a log line that is a variable plus a newline
+    When   the source is scanned
+    Then   nothing is found: a newline is no sentence
+    """
+    source = 'def f(self, msg):\n    self.log_line.emit(msg + "\\n")\n'
+
+    assert inventory.scan_source(source, path="x.py") == []
+
+
+def test_a_template_of_texts_is_never_filled_at_a_call_site() -> None:
+    """
+    Given  a module that fills a template taken from ``texts`` with ``.format``, by module and by
+           name, and a local template and a plain string filled the same way
+    When   the source is scanned for template calls
+    Then   only the two templates of ``texts`` are reported
+    """
+    source = (
+        "from ..texts import setup as words\n"
+        "from ..texts.setup import DONE_FAILED\n"
+        '_LOCAL = "{x}"\n'
+        "def f(message):\n"
+        "    words.SIZE_MB.format(size=1)\n"
+        "    DONE_FAILED.format(message=message)\n"
+        "    _LOCAL.format(x=1)\n"
+        '    "{a}".format(a=1)\n'
+    )
+
+    found = [name for _path, _line, name in inventory.template_calls_in(source, path="x.py")]
+
+    assert found == ["words.SIZE_MB", "DONE_FAILED"]
+
+
+def test_no_module_fills_a_template_of_texts_itself() -> None:
+    """
+    Given  every scanned module
+    When   its ``.format`` calls on names taken from ``texts`` are collected
+    Then   there are none: the dynamic part is a function of ``texts``
+    """
+    found = inventory.template_calls(_root())
+
+    assert not found, "Make each of these a function in teachers_teammate/texts:\n" + "\n".join(
+        f"  {path}:{line}  {name}.format(…)" for path, line, name in found
+    )

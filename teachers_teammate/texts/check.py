@@ -125,3 +125,45 @@ BADGE_TAKEN_OUT = "taken out"
 def filter_label(label: str, count: int) -> str:
     """Return a filter chip's text with its count, e.g. ``"Grammar 4"``."""
     return f"{label} {count}"
+
+
+# ── The strip of a document's page: queue buttons and Copy ────────────────
+
+PREVIOUS_DOCUMENT = "Previous document in the queue"
+NEXT_DOCUMENT = "Next document in the queue"
+PREVIOUS_ARROW = "\u25c0"
+NEXT_ARROW = "\u25b6"
+COPY = "Copy"
+COPY_TOOLTIP = "Copy the text of this document, or save it as a text file"
+COPIED = "Copied"
+COPY_RAW = "Copy what was read"
+COPY_RAW_ANONYMIZED = "Copy what was read, names hidden"
+COPY_CORRECTED = "Copy corrected text"
+COPY_CORRECTED_ANONYMIZED = "Copy corrected text, names hidden"
+SAVE_RAW = "Save what was read as text file\u2026"
+SAVE_ANONYMIZED = "Save it with names hidden\u2026"
+
+
+def run_proofreading(model: str) -> str:
+    """Return the run strip's line for proofreading with *model*."""
+    return RUN_PROOFREADING.format(model=model)
+
+
+def run_waiting_for_model(other: str) -> str:
+    """Return why a request waits: Ollama still works with the model *other*."""
+    return RUN_WAITING_FOR_MODEL.format(other=other)
+
+
+def run_loading_model(model: str) -> str:
+    """Return why a request waits: *model* is loaded into memory."""
+    return RUN_LOADING_MODEL.format(model=model)
+
+
+def run_queued_for_model(other: str, model: str) -> str:
+    """Return why the first file waits: Ollama finishes with *other*, then loads *model*."""
+    return RUN_QUEUED_FOR_MODEL.format(other=other, model=model)
+
+
+def filter_category_tip(category: str) -> str:
+    """Return the tooltip of the filter chip of the correction *category*."""
+    return FILTER_CATEGORY_TIP.format(category=category)

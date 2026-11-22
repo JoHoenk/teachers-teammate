@@ -16,12 +16,11 @@ from teachers_teammate.domain.proofreading.review import (
 from teachers_teammate.domain.text_chunks import split_for_budget
 from teachers_teammate.exceptions import StageError, StageErrorKind
 from teachers_teammate.infrastructure.proofreading.chunking import (
-    CHUNK_FAILURE,
-    MISSING_REVIEW_WARNING,
     ChunkingCorrector,
 )
 from teachers_teammate.infrastructure.ocr_formats import plain_text_of
 from teachers_teammate.interfaces import Corrector
+from teachers_teammate.texts.review import CHUNK_FAILURE, EXPLANATIONS_MISSING
 
 _SENTENCE = "Das ist ein deutscher Satz. "
 
@@ -260,7 +259,7 @@ def test_a_piece_whose_review_does_not_fit_loses_it_and_warns() -> None:
     assert outcome.failed is False
     assert outcome.review is None
     assert outcome.warning is not None
-    assert MISSING_REVIEW_WARNING in outcome.warning
+    assert EXPLANATIONS_MISSING in outcome.warning
 
 
 @pytest.mark.use_case("Chunking_Corrector")
@@ -371,7 +370,7 @@ def test_a_piece_that_fell_back_to_text_mode_only_warns() -> None:
 
     assert outcome.failed is False
     assert outcome.warning is not None
-    assert MISSING_REVIEW_WARNING in outcome.warning
+    assert EXPLANATIONS_MISSING in outcome.warning
     assert outcome.review is not None
     assert len(outcome.review.edits) == 2  # the two pieces that answered
 

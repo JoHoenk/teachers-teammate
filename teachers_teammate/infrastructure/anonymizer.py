@@ -29,6 +29,12 @@ from ..domain.formatted_text import INLINE_TAG_ALTERNATION
 from ..domain.name_models import spacy_model_for
 from ..interfaces import AnonymizationMap, Anonymizer
 from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
+from ..texts.addons import (
+    SPACY_REQUIRED,
+    extra_model_language_unknown,
+    extra_model_missing,
+    spacy_not_loadable,
+)
 from . import system_locale
 
 _logger = logging.getLogger(__name__)
@@ -142,11 +148,7 @@ def resolve_anonymizer_config(
     primary = config.primary_model or spacy_model_for(document_language)
     if not system_language:
         if warn is not None:
-            warn(
-                "WARNING: the language of this computer could not be determined, so no "
-                f"extra detection model is used (the model for {document_language} is "
-                "enough). Choose a model in the personal-info settings."
-            )
+            warn(extra_model_language_unknown(document_language))
         return replace(config, secondary_model=None)
     system_model = spacy_model_for(system_language)
     if system_model == primary:
@@ -155,12 +157,7 @@ def resolve_anonymizer_config(
         missing = system_model
     if missing is not None:
         if warn is not None:
-            warn(
-                f"WARNING: the extra detection model '{missing}' for the language of this "
-                f"computer ({system_language}) is not downloaded, so only '{primary}' is "
-                f"used. Download it under Add-ons in the app, or with `python -m spacy "
-                f"download {missing}`, to catch names the {document_language} model misses."
-            )
+            warn(extra_model_missing(missing, system_language, primary, document_language))
         return replace(config, secondary_model=None)
     return replace(config, secondary_model=system_model)
 
@@ -322,12 +319,12 @@ class SpacyAnonymizer(Anonymizer):
         except ImportError as exc:
             if importlib.util.find_spec("spacy") is not None:
                 # Installed but broken: say what failed, not that it is missing.
-                raise ImportError(f"spacy is installed but cannot be loaded: {exc}") from exc
+                raise ImportError(spacy_not_loadable(exc)) from exc
             _logger.error(
                 "spacy is not installed. "
                 "Install the privacy extras: pip install 'teachers_teammate[privacy]'"
             )
-            raise ImportError("spacy is required for anonymization") from exc
+            raise ImportError(SPACY_REQUIRED) from exc
         try:
             spacy.prefer_gpu()
             self._nlp = spacy.load(primary_model)

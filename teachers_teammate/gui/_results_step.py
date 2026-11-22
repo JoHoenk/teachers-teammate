@@ -24,14 +24,9 @@ from PySide6.QtWidgets import (
 
 from ..config import DEFAULTS
 from ..texts import dialogs as dlg
-from ..texts import review as txt
+from ..texts import main_window as txt
 from . import _dialogs, _handles
 from ._path_row import PathRow
-
-#: The three choices of the "Text file" row: which text files a run writes.
-TEXT_MODE_AS_WRITTEN = "as written"
-TEXT_MODE_ANONYMIZED = "anonymized"
-TEXT_MODE_BOTH = "both"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -99,17 +94,11 @@ class ResultsStep(QObject):
         docx_row = QWidget()
         drl = QHBoxLayout(docx_row)
         drl.setContentsMargins(0, 0, 0, 0)
-        self._docx_enabled = QCheckBox("Word document")
-        self._docx_enabled.setToolTip(
-            "Generate a Word document for each input file containing the image,\n"
-            "extracted text, and (if enabled) the proofread text."
-        )
+        self._docx_enabled = QCheckBox(txt.RESULTS_WORD_CHECKBOX)
+        self._docx_enabled.setToolTip(txt.RESULTS_WORD_TOOLTIP)
         self._docx_format = QComboBox()
         self._docx_format.addItems(["table", "comments"])
-        self._docx_format.setToolTip(
-            "Table — side-by-side columns: Image | Extracted text | Proofread text.\n"
-            "Comments — two columns with tracked changes shown as Word comments."
-        )
+        self._docx_format.setToolTip(txt.RESULTS_WORD_FORMAT_TOOLTIP)
         drl.addWidget(self._docx_enabled)
         drl.addWidget(self._docx_format)
         drl.addStretch(1)
@@ -118,20 +107,19 @@ class ResultsStep(QObject):
         text_row = QWidget()
         trl = QHBoxLayout(text_row)
         trl.setContentsMargins(0, 0, 0, 0)
-        self._text_enabled = QCheckBox("Text file")
+        self._text_enabled = QCheckBox(txt.RESULTS_TEXT_CHECKBOX)
         self._text_enabled.setToolTip(txt.TEXT_FILE_TOOLTIP)
         self._text_mode = QComboBox()
-        self._text_mode.addItems([TEXT_MODE_AS_WRITTEN, TEXT_MODE_ANONYMIZED, TEXT_MODE_BOTH])
+        self._text_mode.addItems(
+            [txt.TEXT_MODE_AS_WRITTEN, txt.TEXT_MODE_ANONYMIZED, txt.TEXT_MODE_BOTH]
+        )
         self._text_mode.setToolTip(txt.TEXT_MODE_TOOLTIP)
         trl.addWidget(self._text_enabled)
         trl.addWidget(self._text_mode)
         trl.addStretch(1)
         form.addRow(text_row)
 
-        self._text_hint = QLabel(
-            "Text files need an output folder outside the input folder; otherwise the next "
-            "run would read them as new documents."
-        )
+        self._text_hint = QLabel(txt.RESULTS_TEXT_HINT)
         self._text_hint.setWordWrap(True)
         form.addRow(self._text_hint)
 
@@ -211,19 +199,19 @@ class ResultsStep(QObject):
         if not self._text_enabled.isChecked():
             return False, False
         mode = self._text_mode.currentText()
-        return mode in (TEXT_MODE_AS_WRITTEN, TEXT_MODE_BOTH), mode in (
-            TEXT_MODE_ANONYMIZED,
-            TEXT_MODE_BOTH,
+        return mode in (txt.TEXT_MODE_AS_WRITTEN, txt.TEXT_MODE_BOTH), mode in (
+            txt.TEXT_MODE_ANONYMIZED,
+            txt.TEXT_MODE_BOTH,
         )
 
 
 def _mode_text(values: ResultsValues) -> str:
     """Return which of the three "Text file" choices *values* stands for."""
     if values.text_enabled and values.text_anonymized_enabled:
-        return TEXT_MODE_BOTH
+        return txt.TEXT_MODE_BOTH
     if values.text_anonymized_enabled:
-        return TEXT_MODE_ANONYMIZED
-    return TEXT_MODE_AS_WRITTEN
+        return txt.TEXT_MODE_ANONYMIZED
+    return txt.TEXT_MODE_AS_WRITTEN
 
 
 def _show(combo: QComboBox, value: str) -> None:

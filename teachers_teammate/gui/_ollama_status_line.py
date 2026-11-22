@@ -33,8 +33,7 @@ from ..domain.ollama_discovery import (
     OllamaState,
     ServerKind,
 )
-from ..texts import review as txt
-from ..texts.servers import card_found
+from ..texts import servers
 from ._background import LatestTask, run_in_background
 from ._server_card import ServerCard
 
@@ -43,20 +42,6 @@ LOCAL_INTERVAL_MS = 3000
 REMOTE_INTERVAL_MS = 10000
 #: How long Ollama is given to come up after "Start Ollama" before the line looks again.
 START_GRACE_MS = 3000
-
-CHECKING = "Checking…"
-NOT_RUNNING = "● Ollama is installed but isn't running."
-START_FAILED = "{text} It could not be started: {reason}"
-NOT_RUNNING_HINT = f"{NOT_RUNNING} {txt.OLLAMA_SERVICE_HINT}"
-NOT_FOUND = (
-    "● Ollama wasn't found on this computer. Install it like any other program; "
-    "this line turns green by itself."
-)
-NO_ANSWER = "● No answer from {host}. Is the server switched on?"
-
-START_OLLAMA = "Start Ollama"
-GET_OLLAMA = "Get Ollama…"
-CHECK_AGAIN = "Check again"
 
 
 class OllamaStatusLine(QWidget):
@@ -105,7 +90,7 @@ class OllamaStatusLine(QWidget):
         self._text_row = QWidget()
         layout = QHBoxLayout(self._text_row)
         layout.setContentsMargins(0, 0, 0, 0)
-        self._label = QLabel(CHECKING)
+        self._label = QLabel(servers.STATUS_CHECKING)
         self._label.setWordWrap(True)
         layout.addWidget(self._label, stretch=1)
         self._buttons = [QPushButton(""), QPushButton("")]
@@ -231,12 +216,12 @@ class OllamaStatusLine(QWidget):
                 model_count=status.model_count,
                 offer_use=False,
             )
-            self._found_label.setText(card_found(self._url))
+            self._found_label.setText(servers.card_found(self._url))
             self._show_card(True)
             return
         if status is not None and found is not None:
             self._card.show_discovered(found)
-            self._found_label.setText(card_found(found.url))
+            self._found_label.setText(servers.card_found(found.url))
             self._show_card(True)
             return
         self._show_card(False)
@@ -260,19 +245,21 @@ class OllamaStatusLine(QWidget):
         """Return the line and the buttons for a state with no server to show."""
         status = self._status
         if status is None:
-            return CHECKING, []
+            return servers.STATUS_CHECKING, []
         if status.state is OllamaState.NOT_FOUND:
-            return NOT_FOUND, [(GET_OLLAMA, self._open_download_page)]
+            return servers.STATUS_NOT_FOUND, [(servers.BUTTON_GET_OLLAMA, self._open_download_page)]
         if status.state is OllamaState.NOT_RUNNING:
             if status.can_start:
                 text = (
-                    START_FAILED.format(text=NOT_RUNNING, reason=self._start_error)
+                    servers.status_start_failed(servers.STATUS_NOT_RUNNING, self._start_error)
                     if self._start_error
-                    else NOT_RUNNING
+                    else servers.STATUS_NOT_RUNNING
                 )
-                return text, [(START_OLLAMA, self._start_ollama)]
-            return NOT_RUNNING_HINT, []
-        return NO_ANSWER.format(host=_host(self._url)), [(CHECK_AGAIN, self._check)]
+                return text, [(servers.BUTTON_START_OLLAMA, self._start_ollama)]
+            return servers.status_not_running_hint(), []
+        return servers.status_no_answer(_host(self._url)), [
+            (servers.BUTTON_CHECK_AGAIN, self._check)
+        ]
 
     def _on_clicked(self, button: QPushButton) -> None:
         handler = self._handlers.get(button)

@@ -16,13 +16,8 @@ from ...domain.proofreading.result import CorrectionOutcome
 from ...domain.proofreading.review import CorrectionReview, fits, merge_reviews
 from ...domain.text_chunks import Chunk, split_for_budget
 from ...interfaces import Corrector
+from ...texts.review import CHUNK_FAILURE, EXPLANATIONS_MISSING
 from ..ocr_formats import plain_text_of
-
-CHUNK_FAILURE = "Proofreading part of the text failed; keeping the original text."
-"""Warning of a chunked file whose one piece failed: no half-corrected text is ever stored."""
-
-MISSING_REVIEW_WARNING = "Explanations are missing for part of the text."
-"""Warning when only some pieces of a long text got a review answer (the rest lack them)."""
 
 
 class ChunkingCorrector(Corrector):
@@ -109,7 +104,7 @@ class ChunkingCorrector(Corrector):
         incomplete = lost or (bool(reviews) and len(reviews) < len(answerable))
         warning = join_warnings(
             *(outcome.warning for outcome in outcomes),
-            MISSING_REVIEW_WARNING if incomplete else None,
+            EXPLANATIONS_MISSING if incomplete else None,
         )
         return CorrectionOutcome(
             text=_join_text(outcomes, chunks),

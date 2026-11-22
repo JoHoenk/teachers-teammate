@@ -89,3 +89,8 @@ def issue_text(issue: RequirementIssue) -> str:
         return issue.reason or _QUOTING[issue.kind]
     name = issue.name or _UNNAMED.get(issue.kind, "")
     return template.format(name=name, model=issue.models[0] if issue.models else "")
+
+
+def package_missing_line(name: str) -> str:
+    """Return the line that says the support package of *name* is not installed."""
+    return PACKAGE_MISSING.format(name=name)

@@ -27,8 +27,11 @@ from PySide6.QtWidgets import (
 
 from ...config import DEFAULTS
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
+from ...texts import models as mdl
 from ...texts import review as txt
-from ...texts.settings import PAGE_AI_MODELS, PAGE_AI_SETUP
+from ...texts import servers as srv
+from ...texts import settings as st
+from .. import _html
 from .._hardware_profile_selector import HardwareProfileSelector
 from .._ollama_status_line import OllamaStatusLine
 from ._page import (
@@ -42,35 +45,13 @@ from ._page import (
 )
 from ._speed_panel import SpeedPanel
 
-TITLE = PAGE_AI_SETUP
-DESCRIPTION = (
-    f"What {PAGE_AI_MODELS} needs from this computer: how powerful it is (the model "
-    "suggestions follow it), where its local AI server is, and how fast it runs your models. "
-    "Set up once; usually nothing to change."
-)
-SERVER_GROUP = "Local AI server (Ollama)"
-SERVER_NOTE = (
-    "Usually runs on this computer. Only change the address if Ollama runs on another "
-    "computer you use."
-)
-SERVER_URL_LABEL = "Server address:"
-FIND_SERVER = "Find…"
-FIND_SERVER_TOOLTIP = "Look for an Ollama server on this computer, or on your network, and pick it."
-SERVER_URL_TOOLTIP = (
-    "The address of your Ollama server. Used for all text recognition,\n"
-    "proofreading, and content review steps that use Ollama."
-)
-DOWNLOAD_MODEL = "Download a model…"
-DOWNLOAD_MODEL_TOOLTIP = "Opens Add-ons, where AI models for this computer are downloaded."
-PERFORMANCE_GROUP = "Power and speed of this computer"
-
 
 class AiSetupPage(SettingsPageBase):
     """Computer profile and speed test, local AI server address."""
 
     page = SettingsPage.AI_SETUP
-    title = TITLE
-    description = DESCRIPTION
+    title = st.PAGE_AI_SETUP
+    description = st.PAGE_INTRO_AI_SETUP
 
     #: The server address was changed (on editingFinished, never while typing).
     ollama_url_changed = Signal(str)
@@ -113,33 +94,33 @@ class AiSetupPage(SettingsPageBase):
             self._speed_panel.refresh()
 
     def _build_server_group(self) -> QGroupBox:
-        group = QGroupBox(SERVER_GROUP)
+        group = QGroupBox(srv.SERVER_GROUP)
         form = QFormLayout(group)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
-        note = QLabel(SERVER_NOTE)
+        note = QLabel(srv.SERVER_NOTE)
         note.setWordWrap(True)
         note.setStyleSheet("color: #888; font-size: 11px;")
         form.addRow(note)
 
         self._ollama_url = QLineEdit(self._url)
-        self._ollama_url.setToolTip(SERVER_URL_TOOLTIP)
+        self._ollama_url.setToolTip(srv.SERVER_URL_TOOLTIP)
         # editingFinished, not textChanged: a half-typed URL must not trigger detection.
         self._ollama_url.editingFinished.connect(self._on_url_edited)
-        self._find_server_btn = QPushButton(FIND_SERVER)
-        self._find_server_btn.setToolTip(FIND_SERVER_TOOLTIP)
+        self._find_server_btn = QPushButton(srv.FIND_SERVER_BUTTON)
+        self._find_server_btn.setToolTip(srv.FIND_SERVER_TOOLTIP)
         self._find_server_btn.clicked.connect(self._on_find_server)
         url_row = QHBoxLayout()
         url_row.setContentsMargins(0, 0, 0, 0)
         url_row.addWidget(self._ollama_url, stretch=1)
         url_row.addWidget(self._find_server_btn)
-        form.addRow(SERVER_URL_LABEL, url_row)
+        form.addRow(srv.SERVER_URL_LABEL, url_row)
 
         self._status_line = OllamaStatusLine(app_service=self._app_service, url=self._url)
         self._status_line.use_server_requested.connect(self.set_server_url)
         form.addRow("", self._status_line)
 
-        self._download_model_btn = QPushButton(DOWNLOAD_MODEL)
-        self._download_model_btn.setToolTip(DOWNLOAD_MODEL_TOOLTIP)
+        self._download_model_btn = QPushButton(mdl.DOWNLOAD_MODEL)
+        self._download_model_btn.setToolTip(mdl.DOWNLOAD_MODEL_TOOLTIP)
         self._download_model_btn.clicked.connect(
             lambda: self._navigate(SettingsPage.ADDONS, FOCUS_LOCAL_MODELS)
         )
@@ -159,7 +140,7 @@ class AiSetupPage(SettingsPageBase):
         block = QWidget()
         layout = QVBoxLayout(block)
         layout.setContentsMargins(0, 8, 0, 0)
-        heading = QLabel(f"<b>{txt.SPEED_HEADING}</b>")
+        heading = QLabel(_html.bold(txt.SPEED_HEADING))
         layout.addWidget(heading)
         self._speed_panel = SpeedPanel(
             app_service=self._app_service,
@@ -193,7 +174,7 @@ class AiSetupPage(SettingsPageBase):
         self._speed_panel.refresh()
 
     def _build_performance_group(self, hardware_profile: HardwareProfileSetting) -> QGroupBox:
-        group = QGroupBox(PERFORMANCE_GROUP)
+        group = QGroupBox(mdl.PERFORMANCE_GROUP)
         form = QFormLayout(group)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
 

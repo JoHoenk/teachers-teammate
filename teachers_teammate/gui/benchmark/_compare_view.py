@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from ...application.formatting import TextFormatter
 from ...domain.benchmark import PairComparison, StoredRunView
+from ...texts import benchmark as bench_text
 from .._diff_widget import DiffWidget
 from .._formatted_text import render_html
 from .._image_utils import load_pixmap
@@ -42,7 +43,7 @@ class CompareView(QWidget):
         self._formatter = TextFormatter()
         outer = QVBoxLayout(self)
 
-        self._similarity = QLabel("Select run A and run B to compare.")
+        self._similarity = QLabel(bench_text.SELECT_TWO_RUNS)
         self._similarity.setStyleSheet("font-size: 11pt; padding: 2px;")
         outer.addWidget(self._similarity)
 
@@ -53,8 +54,8 @@ class CompareView(QWidget):
         splitter.addWidget(self._image)
 
         texts = QSplitter(Qt.Orientation.Horizontal)
-        box_a, self._text_a = _text_pane("Run A")
-        box_b, self._text_b = _text_pane("Run B")
+        box_a, self._text_a = _text_pane(bench_text.PANE_RUN_A)
+        box_b, self._text_b = _text_pane(bench_text.PANE_RUN_B)
         texts.addWidget(box_a)
         texts.addWidget(box_b)
         splitter.addWidget(texts)
@@ -62,7 +63,7 @@ class CompareView(QWidget):
         diff_box = QWidget()
         diff_layout = QVBoxLayout(diff_box)
         diff_layout.setContentsMargins(0, 0, 0, 0)
-        diff_label = QLabel("Diff (A → B)")
+        diff_label = QLabel(bench_text.DIFF_LABEL)
         diff_label.setStyleSheet("font-weight: bold;")
         self._diff = DiffWidget()
         diff_layout.addWidget(diff_label)
@@ -76,7 +77,7 @@ class CompareView(QWidget):
         self._text_a.clear()
         self._text_b.clear()
         self._diff.clear_diff()
-        self._similarity.setText("Select run A and run B to compare.")
+        self._similarity.setText(bench_text.SELECT_TWO_RUNS)
 
     def show_comparison(
         self, run_a: StoredRunView, run_b: StoredRunView, comparison: PairComparison
@@ -91,9 +92,13 @@ class CompareView(QWidget):
         self._set_image(run_a.preview_img or run_b.preview_img)
         pct = comparison.similarity * 100.0
         self._similarity.setText(
-            f"Similarity: {pct:.1f}%   ·   "
-            f"A: {comparison.stats_a.words} words / {comparison.stats_a.chars} chars   ·   "
-            f"B: {comparison.stats_b.words} words / {comparison.stats_b.chars} chars"
+            bench_text.similarity(
+                pct,
+                comparison.stats_a.words,
+                comparison.stats_a.chars,
+                comparison.stats_b.words,
+                comparison.stats_b.chars,
+            )
         )
 
     def _show_text(self, editor: QTextEdit, run: StoredRunView) -> None:

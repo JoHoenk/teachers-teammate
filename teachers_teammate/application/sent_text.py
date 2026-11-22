@@ -1,8 +1,9 @@
 """What each step that leaves this computer receives, exactly as it is sent.
 
 Answers the only question a teacher still has after the status box: "which text does the
-service see?".  Pure rules plus two callables (anonymize, the prompt strings the stages
-send), so a dialog can show it and a test can prove it without spaCy or a model.
+service see?".  Pure rules plus the anonymizer and the requests the steps send, so a dialog
+can show it and a test can prove it without spaCy or a model.  What is carried is data — the
+text, the ``(step, system prompt)`` pairs, the teacher's notes — never a finished sentence.
 """
 
 from __future__ import annotations
@@ -23,24 +24,28 @@ Anonymize = Callable[[str], tuple[str, Mapping[str, str]]]
 
 
 @dataclass(frozen=True)
+class CorrectionInstructions:
+    """What every proofreading request is told: the prompts of the steps, and the notes."""
+
+    #: ``(step, system prompt)`` of each step that runs, in step order.
+    prompts: tuple[tuple[str, str], ...] = ()
+    #: The teacher's own notes, which every proofreading request carries.
+    notes: str = ""
+
+
+@dataclass(frozen=True)
 class SentText:
     """One step that leaves this computer: what it receives and what it is told."""
 
     stage: DataFlowStage
     text: str
-    prompt: str = ""
+    #: The requests the step makes, as ``(step, system prompt)``: the view names each step.
+    #: A content review makes one and has no step, so it gets no heading.
+    instructions: tuple[tuple[str, str], ...] = ()
+    #: The teacher's own notes, which every proofreading request carries.
+    notes: str = ""
     #: The placeholder tokens inside :attr:`text`, so a view can highlight them.
     placeholders: tuple[str, ...] = ()
-
-    @property
-    def title(self) -> str:
-        """The step's name as the user knows it."""
-        return self.stage.title
-
-    @property
-    def badge(self) -> str:
-        """Short line: where the text goes and how names are handled."""
-        return self.stage.badge
 
     @property
     def details(self) -> str:
@@ -51,13 +56,6 @@ class SentText:
     def names_hidden(self) -> bool:
         """Whether personal data is replaced before this step sees the text."""
         return self.stage.personal_info_hidden
-
-    @property
-    def names_note(self) -> str:
-        """One sentence about names, for the section under its title."""
-        if self.names_hidden:
-            return "Names are hidden before the text is sent."
-        return "Names are sent as written."
 
 
 @dataclass(frozen=True)
@@ -98,7 +96,7 @@ def describe_sent_texts(
     correction_text: str = "",
     anonymize: Anonymize | None = None,
     preview_extracted: bool = False,
-    correction_prompt: str = "",
+    correction: CorrectionInstructions | None = None,
     evaluation_prompt: str = "",
     stored: Mapping[str, SentStatus] | None = None,
 ) -> SentTexts:
@@ -111,11 +109,18 @@ def describe_sent_texts(
     and the comparison view share one spaCy pass per text.
 
     *preview_extracted* asks for the anonymized extracted text even when no step needs it,
-    for the dialog's original-vs-anonymized comparison.  *stored* says how the results that
-    are already stored were sent; it is reported next to what the next run would send.
+    for the dialog's original-vs-anonymized comparison.  *correction* is what the proofreading
+    steps are told and *evaluation_prompt* what the content review is told; a view words them.
+    *stored* says how the results that are already stored were sent; it is reported next to
+    what the next run would send.
     """
+    asked = correction or CorrectionInstructions()
     corpus = {Stage.CORRECTION: raw_text, Stage.EVALUATION: correction_text}
-    prompts = {Stage.CORRECTION: correction_prompt, Stage.EVALUATION: evaluation_prompt}
+    prompts = {
+        Stage.CORRECTION: asked.prompts,
+        Stage.EVALUATION: (("", evaluation_prompt),) if evaluation_prompt else (),
+    }
+    notes = {Stage.CORRECTION: asked.notes, Stage.EVALUATION: ""}
     hidden_texts: dict[str, tuple[str, Mapping[str, str]]] = {}
 
     def hidden(text: str) -> tuple[str, Mapping[str, str]]:
@@ -135,7 +140,9 @@ def describe_sent_texts(
         if stage.personal_info_hidden:
             text, mapping = hidden(text)
             placeholders = tuple(mapping)
-        sections.append(SentText(stage, text, prompts[stage.stage], placeholders))
+        sections.append(
+            SentText(stage, text, prompts[stage.stage], notes[stage.stage], placeholders)
+        )
 
     anonymized_raw, preview_placeholders = "", ()
     if preview_extracted and raw_text:

@@ -21,6 +21,7 @@ from ...application.composition import inject_addon_packages_dir
 from ...application.ollama_server import OllamaServerService
 from ...config import DEFAULTS
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
+from ...texts import benchmark as bench_text
 from ...texts import dialogs as dlg
 from .. import _dialogs
 from .._app_bootstrap import create_app, finish_process
@@ -43,7 +44,7 @@ class BenchmarkWindow(QMainWindow):
         worker_factory=None,
     ) -> None:
         super().__init__()
-        self.setWindowTitle("Teacher's Teammate — OCR Benchmark")
+        self.setWindowTitle(bench_text.WINDOW_TITLE)
         self.setObjectName(BENCHMARK_WINDOW)
         self.resize(1100, 720)
         self._service = app_service
@@ -67,17 +68,17 @@ class BenchmarkWindow(QMainWindow):
         panel.setMaximumWidth(420)
         layout = QVBoxLayout(panel)
 
-        src_box = QGroupBox("Document")
+        src_box = QGroupBox(bench_text.DOCUMENT_GROUP)
         src_layout = QVBoxLayout(src_box)
-        self._source_label = QLabel("No document selected.")
+        self._source_label = QLabel(bench_text.NO_DOCUMENT)
         self._source_label.setWordWrap(True)
-        choose_btn = QPushButton("Choose document…")
+        choose_btn = QPushButton(bench_text.CHOOSE_DOCUMENT)
         choose_btn.clicked.connect(self._on_choose_document)
         src_layout.addWidget(self._source_label)
         src_layout.addWidget(choose_btn)
         layout.addWidget(src_box)
 
-        cfg_box = QGroupBox("OCR configuration")
+        cfg_box = QGroupBox(bench_text.CONFIGURATION_GROUP)
         cfg_layout = QVBoxLayout(cfg_box)
         self._selector = OcrConfigSelector(
             app_service=self._service.services,
@@ -90,9 +91,9 @@ class BenchmarkWindow(QMainWindow):
         self._selector.refresh()  # apply default engine's preprocess/model on open
         cfg_layout.addWidget(self._selector)
         run_row = QHBoxLayout()
-        self._run_btn = QPushButton("Run && store")
+        self._run_btn = QPushButton(bench_text.RUN_AND_STORE)
         self._run_btn.clicked.connect(self._on_run)
-        self._stop_btn = QPushButton("Stop")
+        self._stop_btn = QPushButton(bench_text.STOP)
         self._stop_btn.setEnabled(False)
         self._stop_btn.clicked.connect(self._on_stop)
         run_row.addWidget(self._run_btn)
@@ -111,8 +112,8 @@ class BenchmarkWindow(QMainWindow):
         tabs = QTabWidget()
         self._compare = CompareView()
         self._log = LogWidget()
-        tabs.addTab(self._compare, "Compare")
-        tabs.addTab(self._log, "Log")
+        tabs.addTab(self._compare, bench_text.COMPARE_TAB)
+        tabs.addTab(self._log, bench_text.LOG_TAB)
         return tabs
 
     # ── actions ─────────────────────────────────────────────────────────────
@@ -133,7 +134,7 @@ class BenchmarkWindow(QMainWindow):
             return
         ocr = self._selector.get_ocr_config()
         self._set_running(True)
-        self._log.append_text(f"Starting OCR run for {self._source.name}…\n")
+        self._log.append_text(bench_text.log_run_started(self._source.name))
         worker = self._worker_factory(
             self._source,
             ocr,
@@ -150,15 +151,15 @@ class BenchmarkWindow(QMainWindow):
     def _on_stop(self) -> None:
         if self._worker is not None and self._worker.isRunning():
             self._worker.stop_event.set()
-            self._log.append_text("Stop requested…\n")
+            self._log.append_text(bench_text.LOG_STOP_REQUESTED)
 
     def _on_run_ok(self, _run: object) -> None:
-        self._log.append_text("Run stored.\n")
+        self._log.append_text(bench_text.LOG_RUN_STORED)
         self._set_running(False)
         self._refresh_runs()
 
     def _on_run_err(self, message: str) -> None:
-        self._log.append_text(f"ERROR: {message}\n")
+        self._log.append_text(bench_text.log_run_failed(message))
         self._set_running(False)
 
     def _on_selection_changed(self, run_id_a: str, run_id_b: str) -> None:

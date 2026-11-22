@@ -31,12 +31,15 @@ from ..domain.model_catalog import (
 from ..texts.models import (
     CHECK_COMPUTER_FAILED,
     CHECKING_COMPUTER,
+    DETECT_AGAIN,
+    MY_COMPUTER_LABEL,
     NO_SUGGESTION_FOR_COMPUTER,
     READ_ONLY_PROFILE_TOOLTIP,
     detection_status_text,
     profile_text,
     read_only_profile_text,
 )
+from . import _html
 from ._background import LatestTask
 
 _logger = logging.getLogger(__name__)
@@ -92,7 +95,7 @@ class HardwareProfileSelector(QWidget):
             combo_row = QWidget()
             combo_layout = QHBoxLayout(combo_row)
             combo_layout.setContentsMargins(0, 0, 0, 0)
-            combo_layout.addWidget(QLabel("My computer:"))
+            combo_layout.addWidget(QLabel(MY_COMPUTER_LABEL))
             self._combo = QComboBox()
             for value in PROFILE_SETTINGS:
                 self._combo.addItem(profile_text(value), userData=value)
@@ -109,7 +112,7 @@ class HardwareProfileSelector(QWidget):
             self._status_lbl.setWordWrap(True)
             self._status_lbl.setStyleSheet(_STATUS_STYLE)
             status_layout.addWidget(self._status_lbl, stretch=1)
-            self._detect_again_lbl = QLabel('<a href="detect">Detect again</a>')
+            self._detect_again_lbl = QLabel(_html.link("detect", DETECT_AGAIN))
             self._detect_again_lbl.linkActivated.connect(self._on_detect_again)
             status_layout.addWidget(self._detect_again_lbl)
             layout.addWidget(status_row)

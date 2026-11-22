@@ -22,35 +22,8 @@ from ...domain.data_location import (
 )
 from ...domain.model_catalog import licence_note
 from ...domain.stages import Stage
-from ...texts import review as txt
+from ...texts import setup as words
 
-#: The step names the summary uses; the same words as the "uses" lines in the main window.
-STEP_NAMES: dict[str, str] = {
-    Stage.OCR: "Reading handwriting",
-    Stage.CORRECTION: "Proofreading",
-    Stage.EVALUATION: "Content review",
-    STAGE_ANONYMIZATION: txt.REMOVE_PERSONAL_INFO,
-}
-CLASSES_NAME = "Your classes"
-PAGE_MODELS_NAME = "Page models"
-PAGE_MODELS_DETAIL = "turn and flatten photographed pages"
-
-ROW_DOWNLOADED = "✓ downloaded"
-ROW_INSTALLED = "✓ installed"
-ROW_KEY_MISSING = "key missing"
-ROW_OFF = "off (tick it in the main window when you want it)"
-ROW_KEPT = "{engine} (kept)"
-ROW_SAME_MODEL = "same model as proofreading"
-ROW_KEEPS_OWN = "keeps its own model"
-ROW_NAMES_ON = "on · name detection for {language}"
-NAMES_IN_APP_NAME = "Names in this app"
-ROW_NAMES_HIDDEN = "hidden in the texts · name detection for {language}"
-ROW_CLASSES = "{language} · {hand_in}"
-HANDWRITTEN = "handwritten pages"
-TYPED = "typed texts"
-SIZE_SMALL = "small"
-SIZE_GB = "{size:.1f} GB"
-SIZE_MB = "{size:.0f} MB"
 _MB_BELOW_GB = 0.1
 
 #: How wide the step name column is, so the details line up.
@@ -75,10 +48,10 @@ class SummaryRow:
 def size_text(download: PlannedDownload) -> str:
     """Return the download's size as the row shows it: ``"6.0 GB"`` or ``"small"``."""
     if download.size_gb is not None and download.size_gb < _MB_BELOW_GB:
-        return SIZE_MB.format(size=download.size_gb * 1000)
+        return words.size_mb(download.size_gb * 1000)
     if download.size_gb is None:
-        return SIZE_SMALL
-    return SIZE_GB.format(size=download.size_gb)
+        return words.SIZE_SMALL
+    return words.size_gb(download.size_gb)
 
 
 def summary_rows(
@@ -108,15 +81,19 @@ def _page_models_rows(plan: SetupPlan) -> list[SummaryRow]:
     downloads = tuple(item for item in plan.downloads if item.kind is DownloadKind.PAGE_MODELS)
     if not downloads:
         return []
-    return [SummaryRow(name=PAGE_MODELS_NAME, detail=PAGE_MODELS_DETAIL, downloads=downloads)]
+    return [
+        SummaryRow(
+            name=words.PAGE_MODELS_NAME, detail=words.PAGE_MODELS_DETAIL, downloads=downloads
+        )
+    ]
 
 
 def _classes_row(plan: SetupPlan) -> SummaryRow:
     """Return the row that says what the teacher answered about their classes."""
-    hand_in = HANDWRITTEN if plan.panel.get("recognition_enabled") else TYPED
+    hand_in = words.HANDWRITTEN if plan.panel.get("recognition_enabled") else words.TYPED
     return SummaryRow(
-        name=CLASSES_NAME,
-        detail=ROW_CLASSES.format(language=str(plan.panel.get("language", "")), hand_in=hand_in),
+        name=words.CLASSES_NAME,
+        detail=words.row_classes(str(plan.panel.get("language", "")), hand_in),
     )
 
 
@@ -128,33 +105,35 @@ def _step_row(
     key_missing: Collection[str],
 ) -> SummaryRow:
     """Return the row for one step of the setup plan."""
-    name = STEP_NAMES.get(step.stage, step.stage)
+    name = words.STEP_NAMES.get(step.stage, step.stage)
     downloads = _downloads_for(step, plan)
     if step.stage == STAGE_ANONYMIZATION:
         language = str(plan.panel.get("language", ""))
         if step.view_only:
             return SummaryRow(
-                name=NAMES_IN_APP_NAME,
-                detail=ROW_NAMES_HIDDEN.format(language=language),
+                name=words.NAMES_IN_APP_NAME,
+                detail=words.row_names_hidden(language),
                 downloads=downloads,
             )
-        return SummaryRow(
-            name=name, detail=ROW_NAMES_ON.format(language=language), downloads=downloads
-        )
+        return SummaryRow(name=name, detail=words.row_names_on(language), downloads=downloads)
     if step.kept:
         if step.stage == Stage.OCR:
-            detail = ROW_KEPT.format(engine=OCR_ENGINE_NAMES.get(step.provider, step.provider))
+            engine = OCR_ENGINE_NAMES.get(step.provider, step.provider)
+            detail = words.row_kept(engine)
         else:
-            detail = ROW_KEEPS_OWN
+            detail = words.ROW_KEEPS_OWN
         # A kept reader that is not downloaded yet lists its download (and no "installed").
         return SummaryRow(
-            name=name, detail=detail, downloads=downloads, note="" if downloads else ROW_INSTALLED
+            name=name,
+            detail=detail,
+            downloads=downloads,
+            note="" if downloads else words.ROW_INSTALLED,
         )
     if not step.provider:
-        return SummaryRow(name=name, detail=ROW_OFF)
+        return SummaryRow(name=name, detail=words.ROW_OFF)
     if _same_as_correction(step, correction):
-        return SummaryRow(name=name, detail=ROW_SAME_MODEL)
-    note = ROW_KEY_MISSING if step.provider in key_missing else _note(step, downloads)
+        return SummaryRow(name=name, detail=words.ROW_SAME_MODEL)
+    note = words.ROW_KEY_MISSING if step.provider in key_missing else _note(step, downloads)
     return SummaryRow(
         name=name,
         detail=f"{step.model} · {place_of(step.provider)}",
@@ -183,7 +162,7 @@ def _note(step: PlannedStep, downloads: Sequence[PlannedDownload]) -> str:
     """Return the note a row ends in when it has nothing to download."""
     if downloads:
         return ""
-    return ROW_DOWNLOADED if step.installed else ""
+    return words.ROW_DOWNLOADED if step.installed else ""
 
 
 def _download_tooltip(download: PlannedDownload) -> str:

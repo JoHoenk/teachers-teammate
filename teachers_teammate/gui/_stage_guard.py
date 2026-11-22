@@ -18,6 +18,7 @@ from ..application.composition import AppServices
 from ..config import Config
 from ..domain.requirements import RequirementIssue
 from ..domain.stages import Stage
+from ..texts import main_window as win
 from ..texts import review as txt
 from ._background import LatestTask
 from ._dependency_guard_dialog import DependencyGuardDialog
@@ -26,9 +27,9 @@ from .settings._page import SettingsPage
 
 #: The step the teacher sees for each stage the requirement guard can untick.
 _STAGE_STEP_TITLES: dict[str, str] = {
-    Stage.OCR: txt.RECOGNIZE_TEXT,
-    Stage.CORRECTION: txt.PROOFREAD,
-    Stage.EVALUATION: txt.REVIEW_CONTENT,
+    Stage.OCR: win.RECOGNIZE_TEXT,
+    Stage.CORRECTION: win.PROOFREAD,
+    Stage.EVALUATION: win.REVIEW_CONTENT,
     "anonymizer": txt.REMOVE_PERSONAL_INFO,
 }
 
@@ -111,7 +112,7 @@ class StageGuard(QObject):
         checkbox.blockSignals(False)
         hooks.unticked(stage)
 
-        title = txt.GUARD_TITLE.format(step=_STAGE_STEP_TITLES.get(stage, stage))
+        title = win.guard_title(_STAGE_STEP_TITLES.get(stage, stage))
         service = hooks.service()
         if service is None:
             return  # no service, no check that could have failed

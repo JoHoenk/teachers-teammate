@@ -19,8 +19,7 @@ from ..application.composition import AppServices
 from ..config import DEFAULTS
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import HardwareDetection
-from ..texts.models import profile_text
-from ..texts.settings import WHERE_ADDONS
+from ..texts.models import first_start_log
 from ._background import LatestTask
 from ._config_panel import ConfigPanel
 from ._log_widget import LogWidget
@@ -197,10 +196,6 @@ class SetupLauncher(QObject):
         general_model = apply.get("correction_model") or apply.get(
             "evaluate_model", best["correction_model"]
         )
-        self._log.append_text(
-            f"First start: chose reading model {ocr_model} and writing model "
-            f"{general_model} for your computer ({profile_text(detection.profile)}). "
-            f"You can download them under {WHERE_ADDONS}.\n"
-        )
+        self._log.append_text(first_start_log(ocr_model, general_model, detection.profile))
         self._hooks.save()
         self._hooks.applied()

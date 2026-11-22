@@ -48,9 +48,9 @@ from ..domain.output_files import folder_problem
 from ..domain.stages import Stage
 from ..settings_schema import SECONDARY_MODEL_NONE, normalize_notes, normalize_settings
 from ..texts import dialogs as dlg
+from ..texts import main_window as win
 from ..texts import review as txt
 from ..texts.privacy import uses_tooltip
-from ..texts.settings import WHERE_ADDONS, WHERE_AI_MODELS
 from . import _anonymizer_settings
 from ._constants import _LANGUAGES
 from ._data_flow_summary import (
@@ -189,7 +189,7 @@ class _ProofreadingDialog(QDialog):
         index = self._explanation_language.findData(language)
         self._explanation_language.setCurrentIndex(max(index, 0))
         self._explanation_language.setToolTip(txt.EXPLANATION_LANGUAGE_TOOLTIP)
-        form.addRow("Explanation language:", self._explanation_language)
+        form.addRow(win.EXPLANATION_LANGUAGE_LABEL, self._explanation_language)
 
         self._corrections_only = QCheckBox(txt.CORRECTIONS_ONLY)
         self._corrections_only.setToolTip(txt.CORRECTIONS_ONLY_TOOLTIP)
@@ -220,7 +220,7 @@ class _ProofreadingDialog(QDialog):
         box = QWidget()
         vbox = QVBoxLayout(box)
         vbox.setContentsMargins(0, 0, 0, 0)
-        self._prompts_toggle = QPushButton(f"▸ {txt.PROMPTS_HEADING}")
+        self._prompts_toggle = QPushButton(win.collapsed(txt.PROMPTS_HEADING))
         self._prompts_toggle.setFlat(True)
         self._prompts_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self._prompts_toggle.setStyleSheet("text-align: left; font-weight: bold;")
@@ -252,14 +252,14 @@ class _ProofreadingDialog(QDialog):
     def _on_toggle_prompts(self) -> None:
         expanded = not self._prompts_view.isVisible()
         self._prompts_view.setVisible(expanded)
-        self._prompts_toggle.setText(f"{'▾' if expanded else '▸'} {txt.PROMPTS_HEADING}")
+        self._prompts_toggle.setText(
+            win.expanded(txt.PROMPTS_HEADING) if expanded else win.collapsed(txt.PROMPTS_HEADING)
+        )
 
     def _sync_prompts(self) -> None:
         """Show the prompts of the steps that run for the current *corrections only* choice."""
         steps = self._prompts(self._corrections_only.isChecked())
-        self._prompts_view.setPlainText(
-            "\n\n".join(f"{title}\n\n{prompt}" for title, prompt in steps)
-        )
+        self._prompts_view.setPlainText(txt.prompts_block(steps))
 
 
 class ConfigPanel(QScrollArea):
@@ -375,10 +375,8 @@ class ConfigPanel(QScrollArea):
     def _build_step1_select_input(self) -> None:
         self._layout.addWidget(
             step_header(
-                "1  Documents",
-                "Choose the documents you want to process.\n"
-                "You can pick individual files or a whole folder.\n"
-                "Subfolders are included automatically.",
+                win.STEP_DOCUMENTS_TITLE,
+                win.STEP_DOCUMENTS_TOOLTIP,
             )
         )
         self._layout.addWidget(self._selection.row)
@@ -386,10 +384,8 @@ class ConfigPanel(QScrollArea):
     def _build_step2_language(self) -> None:
         self._layout.addWidget(
             step_header(
-                "2  Language",
-                "Select the language the documents are written in.\n"
-                "This helps the app recognise text accurately and\n"
-                "proofread in the correct language.",
+                win.STEP_LANGUAGE_TITLE,
+                win.STEP_LANGUAGE_TOOLTIP,
             )
         )
         inner = QWidget()
@@ -408,7 +404,7 @@ class ConfigPanel(QScrollArea):
         row.addWidget(self._language, stretch=1)
 
         # The level describes the students' writing, so it sits next to the language.
-        level_label = QLabel("Level:")
+        level_label = QLabel(win.LEVEL_LABEL)
         level_label.setToolTip(txt.LEVEL_TOOLTIP)
         self._correction_level = QComboBox()
         self._correction_level.addItems(list(LEVELS))
@@ -423,11 +419,8 @@ class ConfigPanel(QScrollArea):
     def _build_step3_what_should_happen(self) -> None:
         self._layout.addWidget(
             step_header(
-                "3  What should happen",
-                "The text is always read from the scans. The other steps are optional.\n"
-                "Removing personal info runs on this computer, before anything is sent\n"
-                f"(it needs name detection, see {WHERE_ADDONS}). Proofreading and\n"
-                f"content review use the AI models set under {WHERE_AI_MODELS}.",
+                win.STEP_WHAT_TITLE,
+                win.STEP_WHAT_TOOLTIP,
             )
         )
         inner = QWidget()
@@ -442,28 +435,20 @@ class ConfigPanel(QScrollArea):
         self._anonymization_enabled = QCheckBox(txt.REMOVE_PERSONAL_INFO)
         self._anonymization_enabled.setChecked(False)
         self._anonymization_enabled.toggled.connect(self._on_anonymization_changed)
-        self._anon_configure_btn = QPushButton(txt.RULES_BUTTON)
-        self._anon_configure_btn.setToolTip(
-            "Set which types of personal information to hide and how."
-        )
+        self._anon_configure_btn = QPushButton(win.RULES_BUTTON)
+        self._anon_configure_btn.setToolTip(win.RULES_TOOLTIP)
         self._anon_configure_btn.clicked.connect(self._on_configure_anonymizer)
         v.addLayout(self._checkbox_row(self._anonymization_enabled, self._anon_configure_btn))
         # Personal-info removal has no place to change here: its button is "Rules…".
         self._anonymization_uses = UsesLine(with_link=False)
         v.addWidget(self._anonymization_uses)
 
-        self._correction_enabled = QCheckBox(txt.PROOFREAD)
+        self._correction_enabled = QCheckBox(win.PROOFREAD)
         self._correction_enabled.setChecked(True)
-        self._correction_enabled.setToolTip(
-            "Use an AI to fix spelling and grammar in the extracted text.\n"
-            f"Which AI: see {WHERE_AI_MODELS}."
-        )
+        self._correction_enabled.setToolTip(win.PROOFREAD_TOOLTIP)
         self._correction_enabled.toggled.connect(self._update_correction_visibility)
-        self._correction_prompt_btn = QPushButton(txt.OPTIONS_BUTTON)
-        self._correction_prompt_btn.setToolTip(
-            "Change the explanations (their language, or corrections only) and add notes\n"
-            "for the AI. The instructions themselves are fixed; the dialog shows them."
-        )
+        self._correction_prompt_btn = QPushButton(win.OPTIONS_BUTTON)
+        self._correction_prompt_btn.setToolTip(win.PROOFREAD_OPTIONS_TOOLTIP)
         self._correction_prompt_btn.clicked.connect(self._on_configure_correction_prompt)
         v.addLayout(self._checkbox_row(self._correction_enabled, self._correction_prompt_btn))
         self._correction_uses = self._uses_line(SettingsPage.AI_MODELS, FOCUS_PROOFREADING)
@@ -474,13 +459,11 @@ class ConfigPanel(QScrollArea):
         review_layout = QVBoxLayout(review_rows)
         review_layout.setContentsMargins(20, 0, 0, 0)
         review_layout.setSpacing(6)
-        self._evaluation_enabled = QCheckBox(txt.REVIEW_CONTENT)
+        self._evaluation_enabled = QCheckBox(win.REVIEW_CONTENT)
         self._evaluation_enabled.setChecked(False)
         self._evaluation_enabled.toggled.connect(self._on_evaluation_enabled_changed)
-        self._evaluation_prompt_btn = QPushButton(txt.OPTIONS_BUTTON)
-        self._evaluation_prompt_btn.setToolTip(
-            "Change the instructions used to generate the content review report."
-        )
+        self._evaluation_prompt_btn = QPushButton(win.OPTIONS_BUTTON)
+        self._evaluation_prompt_btn.setToolTip(win.REVIEW_OPTIONS_TOOLTIP)
         self._evaluation_prompt_btn.clicked.connect(self._on_configure_evaluation_prompt)
         review_layout.addLayout(
             self._checkbox_row(self._evaluation_enabled, self._evaluation_prompt_btn)
@@ -493,9 +476,9 @@ class ConfigPanel(QScrollArea):
 
     def _build_recognition_rows(self, v: QVBoxLayout) -> tuple[QCheckBox, UsesLine, QLabel]:
         """Add "Recognize text", its "uses" line and the queue note to *v*; return the widgets."""
-        checkbox = QCheckBox(txt.RECOGNIZE_TEXT)
+        checkbox = QCheckBox(win.RECOGNIZE_TEXT)
         checkbox.setChecked(DEFAULTS["recognition_enabled"])
-        checkbox.setToolTip(txt.RECOGNIZE_TEXT_TOOLTIP)
+        checkbox.setToolTip(win.RECOGNIZE_TEXT_TOOLTIP)
         checkbox.toggled.connect(self._on_recognition_changed)
         v.addWidget(checkbox)
         uses = self._uses_line(SettingsPage.AI_MODELS, FOCUS_OCR)
@@ -526,8 +509,8 @@ class ConfigPanel(QScrollArea):
     def _build_step4_results(self) -> None:
         self._layout.addWidget(
             step_header(
-                "4  Results",
-                "Where the results are saved, and which files a run creates there.",
+                win.STEP_RESULTS_TITLE,
+                win.STEP_RESULTS_TOOLTIP,
             )
         )
         self._layout.addWidget(self._results.root)
@@ -714,11 +697,11 @@ class ConfigPanel(QScrollArea):
         the note is hidden.
         """
         if not self._recognition_enabled.isChecked() and skipped:
-            self._recognition_note.setText(txt.scans_skipped_note(skipped))
+            self._recognition_note.setText(win.scans_skipped_note(skipped))
             self._recognition_note.setStyleSheet("color: #e67e22; font-size: 8pt;")
             self._recognition_note.setVisible(True)
         elif self._recognition_enabled.isChecked() and not_needed:
-            self._recognition_note.setText(txt.RECOGNIZE_NOT_NEEDED)
+            self._recognition_note.setText(win.RECOGNIZE_NOT_NEEDED)
             self._recognition_note.setStyleSheet("color: #888; font-size: 8pt;")
             self._recognition_note.setVisible(True)
         else:
@@ -752,7 +735,7 @@ class ConfigPanel(QScrollArea):
         """
         proofreading = self._correction_enabled.isChecked()
         self._evaluation_enabled.setEnabled(proofreading)
-        self._evaluation_enabled.setToolTip("" if proofreading else txt.REVIEW_NEEDS_PROOFREADING)
+        self._evaluation_enabled.setToolTip("" if proofreading else win.REVIEW_NEEDS_PROOFREADING)
 
     def _on_evaluation_enabled_changed(self, checked: bool) -> None:
         self._settings_dict["evaluation_enabled"] = checked

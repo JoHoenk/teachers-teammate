@@ -7,7 +7,12 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QLabel
 
 from teachers_teammate.application.queue import QueueRow, StageState
-from teachers_teammate.application.sent_text import SentText, SentTexts, describe_sent_texts
+from teachers_teammate.application.sent_text import (
+    CorrectionInstructions,
+    SentText,
+    SentTexts,
+    describe_sent_texts,
+)
 from teachers_teammate.domain.proofreading.review import CorrectionReview, UnclearNote
 from teachers_teammate.domain.data_location import (
     DataFlow,
@@ -20,15 +25,17 @@ from teachers_teammate.domain.data_location import (
     StageLocation,
 )
 from teachers_teammate.domain.stages import Stage
-from teachers_teammate.texts.privacy import level_text, stage_tooltip
-from teachers_teammate.gui._results_table import ResultsTable
-from teachers_teammate.gui._what_is_sent_dialog import (
+from teachers_teammate.texts import app as app_text
+from teachers_teammate.texts import privacy
+from teachers_teammate.texts.privacy import (
     NOTHING_LEAVES,
     TAB_PERSONAL,
     TAB_SENT,
-    WhatIsSentDialog,
-    highlighted_html,
+    level_text,
+    stage_tooltip,
 )
+from teachers_teammate.gui._results_table import ResultsTable
+from teachers_teammate.gui._what_is_sent_dialog import WhatIsSentDialog, highlighted_html
 
 _EU = StageLocation(DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU)
 _NON_EU = StageLocation(DataLocation.ONLINE, "OpenAI", region=DataRegion.NON_EU)
@@ -54,7 +61,7 @@ def _report(
         correction_text=correction_text,
         anonymize=hide,
         preview_extracted=bool(anonymized),
-        correction_prompt="Fix the spelling.",
+        correction=CorrectionInstructions((("correct", "Fix the spelling."),)),
         evaluation_prompt="Review the content.",
         stored=stored,
     )
@@ -126,7 +133,10 @@ def test_dialog_lists_one_section_per_outbound_step(qtbot) -> None:
     dialog = WhatIsSentDialog(report, file_name="essay.pdf")
     qtbot.addWidget(dialog)
 
-    assert [section.title for section in dialog.sections()] == ["Proofreading", "Content review"]
+    assert [app_text.stage_title(section.stage.stage) for section in dialog.sections()] == [
+        "Proofreading",
+        "Content review",
+    ]
     assert dialog.shown_texts() == ["Anna wrote this.", "Anna wrote this."]
     assert "essay.pdf" in dialog.windowTitle()
 
@@ -234,9 +244,11 @@ def test_section_details_name_the_destination(qtbot) -> None:
         DataFlowStage(Stage.CORRECTION, _EU, "text", personal_info_hidden=True), "text"
     )
 
-    assert own.badge == "On another computer (192.168.1.9) · names as written"
+    assert privacy.stage_badge(own.stage) == "On another computer (192.168.1.9) · names as written"
     assert own.names_hidden is False
-    assert online.names_note == "Names are hidden before the text is sent."
+    assert privacy.names_in_text_note(online.names_hidden) == (
+        "Names are hidden before the text is sent."
+    )
 
 
 # ── Stage tooltips in the results table ─────────────────────────────────────
@@ -515,16 +527,16 @@ def test_the_context_menu_asks_what_is_sent(qtbot, monkeypatch) -> None:
 
 
 @pytest.mark.gui
-def test_every_sent_text_of_a_report_names_its_stage() -> None:
+def test_every_sent_text_of_a_report_carries_its_stage() -> None:
     """
     Given  a report built from a flow with one step
     When   its section is inspected
-    Then   the section is a SentText with the stage's own title
+    Then   it is a SentText of that step, which the dialog names through texts
     """
     report = _report(DataFlowStage(Stage.CORRECTION, _EU, "text"))
 
     assert all(isinstance(section, SentText) for section in report.sections)
-    assert report.sections[0].title == "Proofreading"
+    assert report.sections[0].stage.stage == Stage.CORRECTION
 
 
 @pytest.mark.gui

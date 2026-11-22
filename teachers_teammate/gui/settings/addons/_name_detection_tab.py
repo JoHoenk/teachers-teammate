@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGroupBox, QLabel, QVBoxLayout, QWidget
 
 from ....application.composition import AppServices
 from ....domain.language import language_name
@@ -36,31 +36,24 @@ class NameDetectionTab(ScrolledTab):
     def __init__(self, app_service: AppServices, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._svc = app_service
-        #: The items of this tab, keyed like the installation check reports them.
-        self.checkboxes: dict[str, QCheckBox] = {}
         self._pending: list[str] = []
 
-        install_group = QGroupBox("Name detection")
+        install_group = QGroupBox(txt.NAME_DETECTION_GROUP)
         install_layout = QVBoxLayout(install_group)
-        intro = QLabel(
-            "spaCy is the library that finds names and other personal information. "
-            "Install it first, then download a name detection model below."
-        )
+        intro = QLabel(txt.NAME_DETECTION_INTRO)
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #aaa; font-size: 9pt;")
         install_layout.addWidget(intro)
-        cb_spacy = QCheckBox("spaCy  (spacy)")
+        cb_spacy = self.item_box(SPACY_ITEM, txt.SPACY_ITEM_LABEL)
         cb_spacy.setToolTip(license_tooltip(self._svc.addons.addon_license(SPACY_ITEM)))
-        self.checkboxes[SPACY_ITEM] = cb_spacy
         install_layout.addWidget(cb_spacy)
         self.body_layout.addWidget(install_group)
 
-        model_group = QGroupBox("Name detection models")
+        model_group = QGroupBox(txt.NAME_DETECTION_MODELS_GROUP)
         model_layout = QVBoxLayout(model_group)
         for lbl, model_id in _SPACY_MODEL_DOWNLOAD_CHOICES:
-            cb = QCheckBox(lbl)
+            cb = self.item_box(f"{SPACY_PREFIX}{model_id}", lbl)
             cb.setToolTip(license_tooltip(self._svc.addons.addon_license(model_id)))
-            self.checkboxes[f"{SPACY_PREFIX}{model_id}"] = cb
             model_layout.addWidget(cb)
         self.body_layout.addWidget(model_group)
         self.body_layout.addStretch(1)
@@ -109,4 +102,4 @@ class NameDetectionTab(ScrolledTab):
 
     def mark_installed(self, results: Mapping[str, object]) -> None:
         """Show whether spaCy and which models are importable already, and disable those boxes."""
-        apply_installed(self.checkboxes, results)
+        apply_installed(self.checkboxes, self.labels, results)

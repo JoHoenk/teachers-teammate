@@ -73,7 +73,7 @@ class Masking:
         """
         if not self._error:
             return ""
-        return txt.HIDING_PERSONAL_INFO_FAILED.format(reason=self._error)
+        return txt.hiding_personal_info_failed(self._error)
 
     def mask(self, text: str) -> str:
         """Return *text* with every name replaced by its placeholder (unchanged when off)."""

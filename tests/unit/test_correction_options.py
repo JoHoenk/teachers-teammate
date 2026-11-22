@@ -16,18 +16,14 @@ def test_proofreading_prompts_lists_the_steps_that_run(tmp_path: Path) -> None:
     """
     Given  a config whose model runs all three steps
     When   proofreading_prompts() is called
-    Then   it returns one titled prompt per step, in step order
+    Then   it returns one prompt per step, in step order, keyed by the step
     """
     config = dataclasses.replace(make_config(tmp_path), correction_enabled=True)
 
     prompts = proofreading_prompts(config)
 
-    assert [title for title, _prompt in prompts] == [
-        "Correct the text",
-        "Explain the corrections",
-        "List unclear expressions",
-    ]
-    assert all(prompt.strip() for _title, prompt in prompts)
+    assert [step for step, _prompt in prompts] == ["correct", "explain", "unclear"]
+    assert all(prompt.strip() for _step, prompt in prompts)
 
 
 def test_proofreading_prompts_with_corrections_only_lists_step_one(tmp_path: Path) -> None:
@@ -42,7 +38,7 @@ def test_proofreading_prompts_with_corrections_only_lists_step_one(tmp_path: Pat
 
     prompts = proofreading_prompts(config)
 
-    assert [title for title, _prompt in prompts] == ["Correct the text"]
+    assert [step for step, _prompt in prompts] == ["correct"]
 
 
 def test_proofreading_prompts_leaves_out_the_unclear_step_of_a_model_without_it(
@@ -65,10 +61,7 @@ def test_proofreading_prompts_leaves_out_the_unclear_step_of_a_model_without_it(
 
     prompts = proofreading_prompts(config)
 
-    assert [title for title, _prompt in prompts] == [
-        "Correct the text",
-        "Explain the corrections",
-    ]
+    assert [step for step, _prompt in prompts] == ["correct", "explain"]
 
 
 def test_the_notation_hint_is_the_only_fixed_instruction() -> None:

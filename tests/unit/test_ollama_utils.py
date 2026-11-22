@@ -1695,7 +1695,7 @@ def test_the_ollama_wrappers_let_a_stop_through_instead_of_degrading_to_a_warnin
             timeout=1.0,
             temperature=0.2,
             fallback="raw",
-            failure="failed ({exc})",
+            failure=lambda exc: f"failed ({exc})",
         )
 
     def structured():

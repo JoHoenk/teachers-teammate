@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from ..texts import main_window as txt
+
 
 def step_header(text: str, tooltip: str) -> QWidget:
     """Return the heading of a step: its name, and an "i" that explains it."""
@@ -16,7 +18,7 @@ def step_header(text: str, tooltip: str) -> QWidget:
     h.setContentsMargins(0, 4, 0, 2)
     lbl = QLabel(text.upper())
     lbl.setStyleSheet("QLabel { font-size: 11pt; font-weight: bold; color: #aaa; }")
-    info = QLabel("i")
+    info = QLabel(txt.STEP_INFO_MARK)
     info.setStyleSheet(
         "QLabel { color: white; background: #2980b9; border-radius: 9px; "
         "padding: 1px 5px; font-size: 11pt; font-weight: normal; }"

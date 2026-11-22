@@ -18,11 +18,9 @@ from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.exceptions import StageError, StageErrorKind
-from teachers_teammate.infrastructure.proofreading.chunking import (
-    MISSING_REVIEW_WARNING,
-    ChunkingCorrector,
-)
+from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
 from teachers_teammate.interfaces import Corrector
+from teachers_teammate.texts.review import EXPLANATIONS_MISSING
 from tools.evaluation.core.performance import Performance, RequestStats
 from tools.evaluation.core.records import Answer, TestRecord
 from tools.evaluation.run.comparison import WritingModelComparison
@@ -300,7 +298,7 @@ def test_a_piece_that_fell_back_flags_the_answer_although_the_warnings_are_joine
 
     answer = _single(_comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2))
 
-    assert MISSING_REVIEW_WARNING in answer.warning, "the warnings of the pieces are joined"
+    assert EXPLANATIONS_MISSING in answer.warning, "the warnings of the pieces are joined"
     assert answer.fallback is True
     assert answer.failed is False
 

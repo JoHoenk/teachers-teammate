@@ -15,12 +15,12 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QVariantAnimation
 from PySide6.QtGui import QColor, QFontMetrics, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QSizePolicy, QToolTip, QWidget
 
+from ..texts import main_window as txt
 from ._constants import _COLOUR_CORRECTION_BAR, _COLOUR_OCR_BAR
 
-_TITLE = "Processing time per file"
 _LEGEND: tuple[tuple[str, str], ...] = (
-    ("OCR", _COLOUR_OCR_BAR),
-    ("Proofreading", _COLOUR_CORRECTION_BAR),
+    (txt.CHART_LEGEND_OCR, _COLOUR_OCR_BAR),
+    (txt.CHART_LEGEND_PROOFREADING, _COLOUR_CORRECTION_BAR),
 )
 _GROW_MS = 300
 _MARGIN = 8
@@ -188,7 +188,7 @@ class ChartWidget(QWidget):
         painter.drawText(
             QRectF(_MARGIN, _MARGIN, self.width() - 2 * _MARGIN, layout.plot.top() - _MARGIN),
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-            _TITLE,
+            txt.CHART_TITLE,
         )
         font.setBold(False)
         painter.setFont(font)

@@ -22,6 +22,7 @@ from PIL import Image as _PILImage
 
 from ...exceptions import PipelineInputError
 from ...interfaces import ImagePreprocessor
+from ...texts.run import image_unreadable
 from ..image_io import read_image, write_image
 
 _logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ class StepPipeline(ImagePreprocessor):
         ctx = StepContext(source_dpi=info.dpi, camera_tags=info.camera_tags)
         image: Any = read_image(image_path)  # applies the rotation tag
         if image is None:
-            raise PipelineInputError(f"Cannot read image: {image_path}")
+            raise PipelineInputError(image_unreadable(image_path))
 
         names: list[str] = [] if self._steps else [TURNED_BY_TAG]
         for step in self._steps:

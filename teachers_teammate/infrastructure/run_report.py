@@ -7,6 +7,7 @@ adapter chose, so the command line keeps its layout and the GUI keeps its log pa
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from ..config import Config
@@ -19,8 +20,7 @@ from ..domain.data_location import (
 from ..domain.local_models import READER_MODEL_NAME
 from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..interfaces import Reporter
-
-LINE = "=" * 64
+from ..texts import report as txt
 
 
 def banner(
@@ -33,116 +33,115 @@ def banner(
 ) -> None:
     """Write the block a run starts with: what it will do, and with which settings."""
     cfg = config
-    reporter.status(LINE)
-    reporter.status("Teacher's Teammate")
-    reporter.status(LINE)
+
+    def row(label: str, value: object) -> None:
+        reporter.status(txt.row(label, value))
+
+    reporter.status(txt.LINE)
+    reporter.status(txt.TITLE)
+    reporter.status(txt.LINE)
     if config_file is not None:
-        reporter.status(f"  Config file   : {config_file}")
+        row(txt.CONFIG_FILE, config_file)
     if not cfg.recognition_enabled:
-        reporter.status("  Recognition   : disabled (scans are skipped)")
+        row(txt.RECOGNITION, txt.RECOGNITION_DISABLED)
     else:
         if cfg.ocr.engine == ENGINE_PPOCR:
-            reporter.status(
-                f"  OCR engine    : {OCR_ENGINE_NAMES[ENGINE_PPOCR]} ({READER_MODEL_NAME})"
+            row(
+                txt.OCR_ENGINE,
+                txt.reader_engine(OCR_ENGINE_NAMES[ENGINE_PPOCR], READER_MODEL_NAME),
             )
         else:
-            reporter.status(f"  OCR engine    : {cfg.ocr.engine}")
+            row(txt.OCR_ENGINE, cfg.ocr.engine)
         if cfg.ocr.engine == ENGINE_OLLAMA:
-            reporter.status(f"  OCR model     : {cfg.ocr.model}")
-    reporter.status(f"  Preprocess    : {cfg.ocr.preprocess_method}")
-    reporter.status(f"  Language      : {cfg.language}")
+            row(txt.OCR_MODEL, cfg.ocr.model)
+    row(txt.PREPROCESS, cfg.ocr.preprocess_method)
+    row(txt.LANGUAGE, cfg.language)
     if (
         (cfg.recognition_enabled and cfg.ocr.engine == ENGINE_OLLAMA)
         or (cfg.correction_enabled and cfg.correction_provider == PROVIDER_OLLAMA)
         or (cfg.evaluation_enabled and cfg.evaluate_provider == PROVIDER_OLLAMA)
     ):
-        reporter.status(f"  Ollama URL    : {cfg.ollama_url}")
-    reporter.status(f"  Input         : {cfg.input_dir.resolve()}")
-    reporter.status(f"  Output        : {cfg.output_dir.resolve()}")
-    reporter.status(f"  Recursive     : {cfg.recursive}")
-    reporter.status(f"  Debug         : {cfg.debug}")
+        row(txt.OLLAMA_URL, cfg.ollama_url)
+    row(txt.INPUT, cfg.input_dir.resolve())
+    row(txt.OUTPUT, cfg.output_dir.resolve())
+    row(txt.RECURSIVE, cfg.recursive)
+    row(txt.DEBUG, cfg.debug)
     if not cfg.correction_enabled:
-        reporter.status("  Correction    : disabled")
+        row(txt.CORRECTION, txt.DISABLED)
     else:
-        reporter.status(
-            f"  Correction    : {cfg.correction_provider} / {cfg.effective_correction_model}"
+        row(
+            txt.CORRECTION,
+            txt.provider_model(cfg.correction_provider, cfg.effective_correction_model),
         )
     if cfg.anonymization_enabled:
-        reporter.status("  Anonymization : enabled (PII removed after text recognition)")
+        row(txt.ANONYMIZATION, txt.ANONYMIZATION_ENABLED)
     if not cfg.evaluation_enabled:
-        reporter.status("  Evaluation    : disabled")
+        row(txt.EVALUATION, txt.DISABLED)
     else:
-        reporter.status(
-            f"  Evaluation    : {cfg.evaluate_provider} / {cfg.effective_evaluate_model}"
+        row(
+            txt.EVALUATION,
+            txt.provider_model(cfg.evaluate_provider, cfg.effective_evaluate_model),
         )
     if not cfg.docx_enabled:
-        reporter.status("  DOCX output   : disabled")
+        row(txt.DOCX_OUTPUT, txt.DISABLED)
     else:
-        reporter.status(f"  DOCX format   : {cfg.docx_format}")
-    text_files = [
-        name
-        for name, enabled in (
-            ("plain", cfg.text_enabled),
-            ("anonymized", cfg.text_anonymized_enabled),
-        )
-        if enabled
-    ]
-    reporter.status(f"  Text files    : {', '.join(text_files) or 'disabled'}")
+        row(txt.DOCX_FORMAT, cfg.docx_format)
+    row(
+        txt.TEXT_FILES,
+        txt.text_files(plain=cfg.text_enabled, anonymized=cfg.text_anonymized_enabled),
+    )
     _keep_awake_line(reporter, keep_awake, battery_warning)
 
 
 def summary(run: RunSummary, reporter: Reporter) -> None:
     """Write the closing block of a run: the counts, then the files that need attention."""
     reporter.status("")
-    reporter.status(LINE)
-    counts = [
-        f"{len(run.succeeded)} succeeded",
-        f"{len(run.failed)} failed",
-    ]
-    if run.skipped:
-        counts.append(f"{len(run.skipped)} skipped")
-    if run.stopped:
-        counts.append(f"{len(run.stopped)} stopped")
-    if run.not_started:
-        counts.append(f"{len(run.not_started)} not started")
-    reporter.status(f"Done: {', '.join(counts)}.")
+    reporter.status(txt.LINE)
+    reporter.status(
+        txt.done(
+            succeeded=len(run.succeeded),
+            failed=len(run.failed),
+            skipped=len(run.skipped),
+            stopped=len(run.stopped),
+            not_started=len(run.not_started),
+        )
+    )
     if run.failed:
-        reporter.status("Failed files:")
-        for name in run.failed:
-            reporter.status(f"  - {name}")
+        _file_list(reporter, txt.FAILED_FILES, run.failed)
     if run.skipped:
-        reporter.status("Skipped files (see the lines above for why):")
-        for name in run.skipped:
-            reporter.status(f"  - {name}")
+        _file_list(reporter, txt.SKIPPED_FILES, run.skipped)
     if run.stopped or run.not_started:
-        reporter.status("Unfinished files (stopped by user; what was done is kept):")
-        for name in (*run.stopped, *run.not_started):
-            reporter.status(f"  - {name}")
-    reporter.status(LINE)
+        _file_list(reporter, txt.UNFINISHED_FILES, (*run.stopped, *run.not_started))
+    reporter.status(txt.LINE)
 
 
 def preview_banner(config: Config, reporter: Reporter, preview_dir: Path) -> None:
     """Write the opening block of a preview run (image preparation only)."""
-    reporter.status(LINE)
-    reporter.status("Teacher's Teammate — Preview (preprocess only)")
-    reporter.status(LINE)
-    reporter.status(f"  Preprocess    : {config.ocr.preprocess_method}")
-    reporter.status(f"  Input         : {config.input_dir.resolve()}")
-    reporter.status(f"  Preview dir   : {preview_dir.resolve()}")
-    reporter.status(LINE)
+    reporter.status(txt.LINE)
+    reporter.status(txt.PREVIEW_TITLE)
+    reporter.status(txt.LINE)
+    reporter.status(txt.row(txt.PREPROCESS, config.ocr.preprocess_method))
+    reporter.status(txt.row(txt.INPUT, config.input_dir.resolve()))
+    reporter.status(txt.row(txt.PREVIEW_DIR, preview_dir.resolve()))
+    reporter.status(txt.LINE)
 
 
 def preview_summary(run: RunSummary, reporter: Reporter, preview_dir: Path) -> None:
     """Write the closing block of a preview run: what was prepared, and where it went."""
     reporter.status("")
-    reporter.status(LINE)
-    reporter.status(f"Done: {len(run.succeeded)} preprocessed, {len(run.failed)} failed.")
-    reporter.status(f"Images saved to: {preview_dir.resolve()}")
+    reporter.status(txt.LINE)
+    reporter.status(txt.preview_done(len(run.succeeded), len(run.failed)))
+    reporter.status(txt.images_saved(preview_dir.resolve()))
     if run.failed:
-        reporter.status("Failed files:")
-        for name in run.failed:
-            reporter.status(f"  - {name}")
-    reporter.status(LINE)
+        _file_list(reporter, txt.FAILED_FILES, run.failed)
+    reporter.status(txt.LINE)
+
+
+def _file_list(reporter: Reporter, heading: str, names: Iterable[str]) -> None:
+    """Write *heading* and one line for each of *names*."""
+    reporter.status(heading)
+    for name in names:
+        reporter.status(txt.file_item(name))
 
 
 def _keep_awake_line(
@@ -151,13 +150,14 @@ def _keep_awake_line(
     """Close the banner with whether the computer is kept awake (and a battery warning)."""
     if awake is not None:
         if not awake.enabled:
-            reporter.status("  Keep awake    : off (the computer may go to sleep)")
+            value = txt.AWAKE_OFF
         elif awake.held:
-            reporter.status("  Keep awake    : yes")
+            value = txt.AWAKE_YES
         elif not awake.available:
-            reporter.status("  Keep awake    : no (not available on this computer)")
+            value = txt.AWAKE_UNAVAILABLE
         else:
-            reporter.status("  Keep awake    : no (the system did not allow it)")
-    reporter.status(LINE)
+            value = txt.AWAKE_REFUSED
+        reporter.status(txt.row(txt.KEEP_AWAKE, value))
+    reporter.status(txt.LINE)
     if awake is not None and awake.enabled and awake.on_battery and battery_warning:
         reporter.warn(battery_warning)

@@ -11,6 +11,7 @@ from collections.abc import Sequence
 
 from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR
 from ..domain.local_models import (
+    HUGGING_FACE_HOST,
     PAGE_MODELS_NOT_DOWNLOADED,
     PAGE_MODELS_SIZE_LABEL,
     READER_SIZE_LABEL,
@@ -20,6 +21,16 @@ from ..exceptions import (
     AddonUpdateError,
     InstallFailure,
 )
+from .settings import WHERE_ADDONS
+
+#: The Add-ons page's tabs, in the order it shows them.
+TAB_LOCAL_MODELS = "AI models for this computer"
+TAB_ONLINE_SERVICES = "Online AI services"
+TAB_NAME_DETECTION = "Name detection"
+
+#: How the status line names the two downloads that come from this app.
+READER_PROGRESS_STATUS = "Built-in reader"
+PAGE_MODELS_PROGRESS_STATUS = "Page models"
 
 # ── The engines, the built-in reader and the page models ──────────────────────
 
@@ -44,7 +55,8 @@ OCR_ENGINE_HINTS = {
 }
 READER_DOWNLOAD_LABEL = f"Download built-in reader ({READER_SIZE_LABEL})"
 READER_NOT_DOWNLOADED = "Not downloaded yet."
-READER_DOWNLOADED = "✓ Downloaded"
+DOWNLOADED_MARK = "✓ Downloaded"
+READER_DOWNLOADED = DOWNLOADED_MARK
 INCLUDED = "✓ Included"
 """What a row says when the app carries the files itself: nothing to download."""
 
@@ -60,7 +72,68 @@ PAGE_MODELS_MISSING_LINE = (
     f"ⓘ Turning pages and flattening curved pages need the page models ({PAGE_MODELS_SIZE_LABEL})."
 )
 PAGE_MODELS_DOWNLOAD_BUTTON = "Download…"
-PAGE_MODELS_DOWNLOADED = "✓ Downloaded"
+PAGE_MODELS_DOWNLOADED = DOWNLOADED_MARK
+
+# ── Model files on disk and a download ────────────────────────────────────────
+
+#: The built-in reader's model files, when they are not the ones this version of the app expects.
+READER_MODEL_MISMATCH = "The built-in reader's model files don't match this version of the app."
+
+
+def reader_model_mismatch(reason: BaseException) -> str:
+    """Return the same sentence for a reader that failed as it loaded, naming *reason*."""
+    return f"{READER_MODEL_MISMATCH} ({reason})"
+
+
+def models_not_downloaded(repo: str) -> str:
+    """Return what the app says about the model files of *repo* while they are missing."""
+    return f"The model files of {repo} are not downloaded yet."
+
+
+def download_damaged(name: str) -> str:
+    """Return what a download says about a file whose checksum does not match."""
+    return (
+        f"The download of {name} was damaged on the way (the checksum does not match). "
+        "Please try again."
+    )
+
+
+def model_pull_failed(reason: BaseException) -> str:
+    """Return what a download of a model from the AI server says when it breaks off."""
+    return f"Download failed: {reason}"
+
+
+# ── Provider packages ─────────────────────────────────────────────────────────
+
+
+def package_not_installed(package: str) -> str:
+    """Return the install hint of a provider package that is missing."""
+    return f"{package} is not installed. Run: pip install {package}"
+
+
+def provider_not_loaded(provider: str) -> str:
+    """Return what the app says about a provider whose own package cannot be loaded."""
+    return (
+        f"Provider '{provider}' could not be loaded — "
+        "check that all required packages are installed."
+    )
+
+
+def unknown_provider_error(provider: str, available: str) -> str:
+    """Return what the app says about a provider name no module of the app has."""
+    return f"Unknown correction provider '{provider}'. Available: {available}."
+
+
+# ── Name detection: spaCy ─────────────────────────────────────────────────────
+
+#: What the app says about anonymization without spaCy: the library is required for it.
+SPACY_REQUIRED = "spacy is required for anonymization"
+
+
+def spacy_not_loadable(reason: BaseException) -> str:
+    """Return what the app says about a spaCy that is installed but cannot be imported."""
+    return f"spacy is installed but cannot be loaded: {reason}"
+
 
 # ── The Add-ons page and an install ───────────────────────────────────────────
 
@@ -73,6 +146,9 @@ ADDONS_OUTDATED_NOTE = (
     "Everything else works meanwhile."
 )
 ADDONS_UPDATED = "The add-ons are up to date."
+#: The add-ons are installed into the folder of the running program, which a source checkout
+#: does not have: updating them there is refused.
+ADDONS_UPDATE_NEEDS_INSTALL = "Add-ons are updated only in the installed app"
 #: An install could not replace a file the running app has loaded (Windows): a restart
 #: finishes it.  The Add-ons page says it, and the readiness line names the step it blocks.
 ADDONS_RESTART_NEEDED = "spaCy is installed. Restart the app to finish."
@@ -174,3 +250,162 @@ def addons_detect_failed(reason: str = "") -> str:
 def addons_spacy_model(language: str) -> str:
     """Return the name of a name-detection model by its language: ``"the German model"``."""
     return ADDONS_ITEM_SPACY_MODEL.format(language=language)
+
+
+# ── The installer and the download dialogs ────────────────────────────────────
+
+INSTALL_PRIVACY_TITLE = "Install Privacy Add-on"
+
+#: The buttons of the installer and the download dialogs.
+BUTTON_INSTALL = "Install"
+BUTTON_CLOSE = "Close"
+BUTTON_RETRY = "Retry"
+BUTTON_DOWNLOAD = "Download"
+BUTTON_CANCEL = "Cancel"
+BUTTON_INSTALLED = "Installed ✓"
+BUTTON_DONE = "Done ✓"
+BUTTON_DOWNLOADED = "Downloaded ✓"
+BUTTON_DOWNLOADING = "Downloading…"
+
+#: The hint under an AI service whose Python package is missing.
+PACKAGE_BUTTON = "Install…"
+PACKAGE_BUTTON_TOOLTIP = "Opens Add-ons, where this package can be installed with one click."
+PACKAGE_PIP_HINT = "Or run:  pip install {pip}"
+
+INSTALL_LOG_PLACEHOLDER = "Installation log will appear here…"
+DOWNLOAD_LOG_PLACEHOLDER = "Download log will appear here…"
+SAVED_LOG_PLACEHOLDER = "Install / download log will appear here…"
+STARTING_DOWNLOAD = "Starting download…"
+DOWNLOAD_CANCELLED = "The download was cancelled."
+INSTALL_COMPLETE_LOG = "\n✓ Installation complete."
+MODEL_DOWNLOADED_LOG = "\n✓ Model downloaded."
+
+READER_DOWNLOAD_TITLE = "Download the built-in reader"
+PAGE_MODELS_DOWNLOAD_TITLE = "Download the page models"
+
+SPACY_DOWNLOAD_TITLE = "Download spaCy Model"
+SPACY_DOWNLOAD_INTRO = (
+    "Select a spaCy NER model to download. The model will be used for "
+    "anonymizing person names in OCR output.<br><br>"
+    "The <i>Multilingual</i> model works as a secondary pass across all "
+    "supported languages and is a good default choice."
+)
+
+#: The Add-ons page's tabs and the fields of the models tab.
+READING_MODELS_INTRO = (
+    "The built-in reader reads pages on this computer, without a server. "
+    f"{OCR_ENGINE_HINTS[ENGINE_PPOCR]} Its model files, and the page models of the "
+    "automatic image preparation, come from PaddlePaddle (Apache-2.0)."
+)
+READER_ITEM_LABEL = f"Built-in reader (PP-OCR) — {READER_SIZE_LABEL}"
+NAME_DETECTION_GROUP = "Name detection"
+NAME_DETECTION_MODELS_GROUP = "Name detection models"
+NAME_DETECTION_INTRO = (
+    "spaCy is the library that finds names and other personal information. "
+    "Install it first, then download a name detection model below."
+)
+SPACY_ITEM_LABEL = "spaCy  (spacy)"
+PROVIDERS_GROUP = "Online AI services"
+
+
+def privacy_install_intro() -> str:
+    """Return what the privacy add-on's installer says before it starts."""
+    return (
+        "This installs <b>spaCy</b>, the NLP library used for PII anonymization.<br><br>"
+        "After installation, download a name detection model for your language under "
+        f"<i>{WHERE_ADDONS}</i> before using anonymization."
+    )
+
+
+def reader_intro() -> str:
+    """Return what the download dialog of the built-in reader says above the folder."""
+    return (
+        "The built-in reader reads pages on this computer, without a server. Its model "
+        f"files ({READER_SIZE_LABEL}, Apache-2.0, from PaddlePaddle) are downloaded once "
+        f"from {HUGGING_FACE_HOST} and kept in:"
+    )
+
+
+def page_models_intro() -> str:
+    """Return what the download dialog of the page models says above the folder."""
+    return (
+        "The automatic image preparation turns sideways pages and flattens curved ones with two "
+        f"small models ({PAGE_MODELS_SIZE_LABEL}, Apache-2.0, from PaddlePaddle). They are "
+        f"downloaded once from {HUGGING_FACE_HOST} and kept in:"
+    )
+
+
+def saved_in(path: str) -> str:
+    """Return the line under a download that names where the files are kept."""
+    return f"Saved in: {path}"
+
+
+def megabytes(done: int, total: int) -> str:
+    """Return a download's progress in megabytes: ``"1.2 / 3.4 MB"``."""
+    return f"{done / 1_000_000:.1f} / {total / 1_000_000:.1f} MB"
+
+
+# ── The lines an install writes to the log ────────────────────────────────────
+
+LOG_UPDATING = "Installing the add-ons again…"
+LOG_UPDATED = "✓ Add-ons updated."
+LOG_PIP_DONE = "✓ pip install complete."
+LOG_SPACY_DONE = "✓ spaCy model downloaded."
+LOG_READER_START = "Downloading the built-in reader…"
+LOG_READER_DONE = "✓ Built-in reader downloaded."
+LOG_PAGE_MODELS_START = "Downloading the page models…"
+LOG_PAGE_MODELS_DONE = "✓ Page models downloaded."
+LOG_OLLAMA_DONE = "✓ Ollama model pulled."
+
+
+def log_pip_install(packages: list[str]) -> str:
+    """Return the log line that names the *packages* pip is asked to install."""
+    return f"pip install {' '.join(packages)}"
+
+
+def log_spacy_start(model: str) -> str:
+    """Return the log line for the start of a spaCy *model* download."""
+    return f"Downloading spaCy model: {model}"
+
+
+def log_ollama_start(model: str) -> str:
+    """Return the log line for the start of an Ollama *model* pull."""
+    return f"Pulling Ollama model: {model}"
+
+
+# ── The name detection's extra model, the provider check ──────────────────────
+
+INSTALLED_MARK = "✓ Installed"
+NO_HEALTH_CHECK = "no health check available"
+MODEL_LIST_UNREADABLE = "the model list could not be read"
+
+
+def provider_check_failed(provider: str, reason: BaseException) -> str:
+    """Return the line for a *provider* whose health check raised."""
+    return f"✗ Could not check provider '{provider}': {reason}"
+
+
+def extra_model_language_unknown(document_language: str) -> str:
+    """Return the warning for a computer whose language is not known: no extra model is used."""
+    return (
+        "WARNING: the language of this computer could not be determined, so no "
+        f"extra detection model is used (the model for {document_language} is "
+        "enough). Choose a model in the personal-info settings."
+    )
+
+
+def extra_model_missing(
+    model: str, system_language: str, primary: str, document_language: str
+) -> str:
+    """Return the warning for the extra detection *model* that is not downloaded."""
+    return (
+        f"WARNING: the extra detection model '{model}' for the language of this "
+        f"computer ({system_language}) is not downloaded, so only '{primary}' is "
+        f"used. Download it under Add-ons in the app, or with `python -m spacy "
+        f"download {model}`, to catch names the {document_language} model misses."
+    )
+
+
+def package_pip_hint(pip: str) -> str:
+    """Return the line that offers the pip command for the package *pip*."""
+    return PACKAGE_PIP_HINT.format(pip=pip)

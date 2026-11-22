@@ -28,12 +28,14 @@ from teachers_teammate.domain.model_catalog import (
     Suitability,
 )
 from teachers_teammate.domain.providers import ProviderInfo
+from teachers_teammate.texts.addons import PAGE_MODELS_PROGRESS_STATUS
 from teachers_teammate.texts import review as txt
 from teachers_teammate.texts.privacy import PLACE_OWN_SERVER, PLACE_THIS_COMPUTER
 from teachers_teammate.gui.setup import SetupAssistant, SetupContext
 from teachers_teammate.gui.setup._flow import ORDER, SetupPageId
 from teachers_teammate.gui.setup._pages import _fit_words
 from teachers_teammate.texts.setup import (
+    CLASSES_NAME,
     DONE_DONE,
     DONE_FAILED,
     DONE_PROGRESS,
@@ -41,22 +43,13 @@ from teachers_teammate.texts.setup import (
     DONE_WAITING,
     FIT_VERY_SLOW,
     FIT_WORDS,
+    HANDWRITTEN,
+    PAGE_MODELS_DETAIL,
+    PAGE_MODELS_NAME,
     PRIVACY_ALREADY_ON,
     PRIVACY_HAS_DETECTION,
     PRIVACY_NEEDS_DETECTION,
-    SUGGESTION,
-    SUGGESTION_DOWNLOADED,
-    SUMMARY_DISK_SHORT,
-    SUMMARY_DOWNLOADS_TOTAL,
-    SUMMARY_FAILED,
-    SUMMARY_NO_DOWNLOADS,
-)
-from teachers_teammate.gui.setup._summary import (
-    CLASSES_NAME,
-    HANDWRITTEN,
     ROW_CLASSES,
-    PAGE_MODELS_DETAIL,
-    PAGE_MODELS_NAME,
     ROW_DOWNLOADED,
     ROW_INSTALLED,
     ROW_KEEPS_OWN,
@@ -66,11 +59,15 @@ from teachers_teammate.gui.setup._summary import (
     ROW_SAME_MODEL,
     SIZE_GB,
     STEP_NAMES,
+    SUMMARY_DISK_SHORT,
+    SUMMARY_DOWNLOADS_TOTAL,
+    SUMMARY_FAILED,
+    SUMMARY_NO_DOWNLOADS,
+    SUGGESTION,
+    SUGGESTION_DOWNLOADED,
     TYPED,
-    SummaryRow,
-    SummaryRows,
-    summary_rows,
 )
+from teachers_teammate.gui.setup._summary import SummaryRow, SummaryRows, summary_rows
 
 from ._service_stubs import services_of
 from ._settings_stubs import SetupAppService
@@ -1290,6 +1287,33 @@ def test_a_failed_pull_does_not_fail_the_readers_download(qtbot) -> None:
     assert "ppocr" in rows._fraction
 
 
+def test_the_page_models_row_shows_its_own_progress(qtbot) -> None:
+    """
+    Given  a download list with the page models and an Ollama model that is pulling
+    When   the install round reports progress under the page models' status
+    Then   the page models' row advances and the Ollama row keeps its own line
+    """
+    from teachers_teammate.gui.setup._pages import _DownloadRows  # noqa: PLC0415
+
+    rows = _DownloadRows()
+    qtbot.addWidget(rows)
+    rows.set_downloads(
+        [
+            PlannedDownload(kind=DownloadKind.PAGE_MODELS, name="page_models", stage="ocr"),
+            PlannedDownload(kind=DownloadKind.OLLAMA_MODEL, name="gemma4:12b", stage="correction"),
+        ]
+    )
+    rows.started("gemma4:12b")
+    ollama_line = rows._labels["gemma4:12b"].text()
+
+    rows.pull_progress(PAGE_MODELS_PROGRESS_STATUS, 10_000_000.0, 40_000_000.0)
+
+    assert rows._fraction["page_models"] == 0.25
+    assert "10" in rows._labels["page_models"].text()
+    assert rows._labels["gemma4:12b"].text() == ollama_line
+    assert "gemma4:12b" not in rows._fraction
+
+
 def test_the_done_page_says_when_an_ollama_download_goes_on_afterwards(qtbot, monkeypatch) -> None:
     """
     Given  a plan whose downloads include an Ollama model
@@ -1398,7 +1422,8 @@ def test_the_done_page_follows_the_reader_download_in_megabytes(qtbot) -> None:
     When   the round starts it, reports how far it is, and finishes it
     Then   the reader's line says running, then megabytes (not "0.0 of 0.0 GB"), then done
     """
-    from teachers_teammate.gui.setup._pages import DONE_PROGRESS_MB, _DownloadRows  # noqa: PLC0415
+    from teachers_teammate.gui.setup._pages import _DownloadRows  # noqa: PLC0415
+    from teachers_teammate.texts.setup import DONE_PROGRESS_MB  # noqa: PLC0415
 
     rows = _DownloadRows()
     qtbot.addWidget(rows)

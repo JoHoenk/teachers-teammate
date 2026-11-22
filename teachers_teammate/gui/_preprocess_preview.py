@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from ..application.composition import AppServices
 from ..config import OcrConfig
 from ..texts import dialogs as dlg
+from ..texts.models import PREVIEW_ZOOM_HINT, preview_title
 from . import _dialogs
 from ._background import run_in_background
 from ._config_panel import ConfigPanel
@@ -149,11 +150,11 @@ class PreprocessPreview(QObject):
         proc_pix = load_pixmap(proc_path)
 
         preview = QDialog(owner)
-        preview.setWindowTitle(f"Preprocessing Preview — {ocr_config.preprocess_method}")
+        preview.setWindowTitle(preview_title(ocr_config.preprocess_method))
         preview.resize(1000, 620)
 
         vbox = QVBoxLayout(preview)
-        hint = QLabel("Ctrl + scroll wheel to zoom")
+        hint = QLabel(PREVIEW_ZOOM_HINT)
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setStyleSheet("color: #888; font-size: 8pt;")
         vbox.addWidget(hint)

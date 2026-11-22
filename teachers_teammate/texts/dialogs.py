@@ -24,6 +24,7 @@ from ._types import (
     cancel,
     yes_no,
 )
+from .app import NAME
 from .settings import WHERE_ADDONS, WHERE_PRIVACY, WHERE_READING_MODELS, WHERE_RESULTS
 
 #: The name filter of the main window's input picker.
@@ -34,6 +35,9 @@ SUPPORTED_FILES_FILTER = (
 
 #: What a result says when the reason a step failed is not known.
 UNKNOWN_ERROR = "unknown error"
+
+#: The label above the message of a step that failed, inside a dialog.
+ERROR_HEAD = "Error:"
 
 #: Why a window stays open while a package is being installed.
 INSTALLATION_RUNNING = (
@@ -488,7 +492,7 @@ def close_during_run() -> Question:
     """Ask whether to stop the run and close; the default answer keeps the run going."""
     return Question(
         "Documents are still being processed",
-        "Stop now and close Teacher's Teammate?\n\n"
+        f"Stop now and close {NAME}?\n\n"
         "Finished documents are kept. The document being processed is left unfinished; what is "
         "already done is reused next time.",
         (

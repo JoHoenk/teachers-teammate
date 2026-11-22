@@ -30,8 +30,13 @@ from ...domain.model_catalog import HardwareProfile, HardwareProfileSetting
 from ...domain.model_listing import ListedModel, ModelListing
 from ...domain.providers import ProviderInfo
 from ...domain.stages import Stage
+from ...texts.addons import PACKAGE_BUTTON, PACKAGE_BUTTON_TOOLTIP
 from ...texts.models import (
+    AI_MODEL_LABEL,
+    AI_SERVICE_LABEL,
     SAME_MODEL_TIP,
+    STATUS_KEY_NEEDED,
+    STATUS_NOT_INSTALLED,
     USE_SUGGESTION,
     asking_for_models_text,
     checking_models_text,
@@ -61,7 +66,7 @@ from .._model_fetch import (
 )
 from .._model_guidance import OllamaModelGuidance, OpenDownloads
 from .._model_item_delegate import ModelItem, fill_grouped, install
-from .._package_hint import INSTALL_BUTTON, INSTALL_BUTTON_TOOLTIP, PackageHint
+from .._package_hint import PackageHint
 from ._credentials import ApiKeyDrafts, ApiKeyRow
 
 
@@ -100,8 +105,6 @@ _PLACE_OF_SELF_HOSTED = {
     DataLocation.OTHER_COMPUTER: PLACE_OWN_SERVER,
     DataLocation.ONLINE: PLACE_ONLINE,
 }
-MARK_NOT_INSTALLED = "not installed"
-MARK_KEY_NEEDED = "key needed"
 
 
 def missing_packages(app_service: AppServices) -> dict[str, str | None]:
@@ -158,9 +161,9 @@ def service_groups(
             bucket, place = other, DataRegion.NON_EU.label
         marks = [place]
         if packages.get(provider):
-            marks.append(MARK_NOT_INSTALLED)
+            marks.append(STATUS_NOT_INSTALLED)
         if app_service.providers.provider_key_missing(provider):
-            marks.append(MARK_KEY_NEEDED)
+            marks.append(STATUS_KEY_NEEDED)
         bucket.append(ModelItem(text=name, label=" · ".join(marks), data=provider))
     return [sorted(group, key=lambda item: item.text.lower()) for group in (own, eu, other)]
 
@@ -263,15 +266,15 @@ class AiServiceSection(QWidget):
             ),
         )
         self._provider.currentIndexChanged.connect(self._on_provider_selected)
-        form.addRow("AI service:", self._provider)
+        form.addRow(AI_SERVICE_LABEL, self._provider)
 
         self._where_hint = LocationHint()
         form.addRow("", self._where_hint)
 
         self._package_hint = PackageHint(
             self._open_downloads,
-            button_text=self._install_button_text or INSTALL_BUTTON,
-            button_tooltip=self._install_button_tooltip or INSTALL_BUTTON_TOOLTIP,
+            button_text=self._install_button_text or PACKAGE_BUTTON,
+            button_tooltip=self._install_button_tooltip or PACKAGE_BUTTON_TOOLTIP,
         )
         form.addRow("", self._package_hint)
 
@@ -292,7 +295,7 @@ class AiServiceSection(QWidget):
         # Says a fetch is running, so a list that stays put for a moment is not a hang.
         self._busy = _BusyIndicator()
         model_layout.addWidget(self._busy)
-        form.addRow("AI model:", model_row)
+        form.addRow(AI_MODEL_LABEL, model_row)
 
         self._status_lbl = QLabel(_STATUS_LOADING)
         self._status_lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -685,10 +688,8 @@ class AiServiceSection(QWidget):
         # good reasons), but is called out: silently swapping it would be worse.
         self._model.setCurrentText(previous)
         if previous and self._is_saved_model(previous) and listing.source == "live":
-            self._status_lbl.setText(
-                f"{_listing_status(listing, service)} "
-                f"{_status_note(saved_model_not_offered_text(previous, service))}"
-            )
+            note = _status_note(saved_model_not_offered_text(previous, service))
+            self._status_lbl.setText(f"{_listing_status(listing, service)} {note}")
 
     def _show_curated(self, listing: ModelListing, service: str, previous: str) -> None:
         """Fill the model field from a curated list: labelled groups, kept selection.
@@ -731,10 +732,8 @@ class AiServiceSection(QWidget):
             and self._is_saved_model(previous)
             and listing.source == "live"
         ):
-            self._status_lbl.setText(
-                f"{_listing_status(listing, service)} "
-                f"{_status_note(saved_model_not_offered_text(previous, service))}"
-            )
+            note = _status_note(saved_model_not_offered_text(previous, service))
+            self._status_lbl.setText(f"{_listing_status(listing, service)} {note}")
 
     def _retiring_note(self, model: ListedModel, service: str) -> str:
         """Return the orange note for a chosen model that is about to leave *service*."""

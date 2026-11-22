@@ -21,6 +21,7 @@ from ..domain.data_location import (
     StageLocation,
 )
 from ..texts import privacy
+from . import _html
 
 #: One colour per level: green keeps everything here, yellow sends anonymized text into the
 #: EU, orange sends it out of it, red sends names.
@@ -122,7 +123,7 @@ class UsesLine(QWidget):
         self.label.setWordWrap(True)
         self.label.setStyleSheet("font-size: 11px;")
         layout.addWidget(self.label, stretch=1)
-        self.change_link = QLabel('<a href="change">change…</a>')
+        self.change_link = QLabel(_html.link("change", privacy.CHANGE_LINK))
         self.change_link.setStyleSheet("font-size: 11px;")
         self.change_link.linkActivated.connect(lambda _link: self.change_requested.emit())
         self.change_link.setVisible(with_link)
@@ -149,14 +150,11 @@ class DataFlowSummary(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setToolTip(
-            "Where your documents go with these settings. The dot next to each step under "
-            "\u201cWhat should happen\u201d says where that step runs."
-        )
+        self.setToolTip(privacy.DATA_FLOW_TOOLTIP)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(3)
-        self._title = QLabel("WHERE YOUR DOCUMENTS ARE PROCESSED")
+        self._title = QLabel(privacy.DATA_FLOW_TITLE)
         self._title.setStyleSheet("QLabel { font-size: 9pt; font-weight: bold; color: #aaa; }")
         self._body = QLabel()
         self._body.setTextFormat(Qt.TextFormat.RichText)

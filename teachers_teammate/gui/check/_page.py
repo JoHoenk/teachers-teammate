@@ -96,17 +96,17 @@ class CopyKind(Enum):
 
 
 _COPY_LABELS = {
-    CopyKind.RAW: "Copy what was read",
-    CopyKind.RAW_ANONYMIZED: "Copy what was read, names hidden",
-    CopyKind.CORRECTED: "Copy corrected text",
-    CopyKind.CORRECTED_ANONYMIZED: "Copy corrected text, names hidden",
+    CopyKind.RAW: check_text.COPY_RAW,
+    CopyKind.RAW_ANONYMIZED: check_text.COPY_RAW_ANONYMIZED,
+    CopyKind.CORRECTED: check_text.COPY_CORRECTED,
+    CopyKind.CORRECTED_ANONYMIZED: check_text.COPY_CORRECTED_ANONYMIZED,
 }
 
 #: The two Save entries of the Copy menu, in menu order.
 _SAVE_KINDS = (ExportKind.TEXT, ExportKind.TEXT_ANONYMIZED)
 _SAVE_LABELS = {
-    ExportKind.TEXT: "Save what was read as text file\u2026",
-    ExportKind.TEXT_ANONYMIZED: "Save it with names hidden\u2026",
+    ExportKind.TEXT: check_text.SAVE_RAW,
+    ExportKind.TEXT_ANONYMIZED: check_text.SAVE_ANONYMIZED,
 }
 
 #: How long the "Copied" note stays next to the button.
@@ -873,15 +873,15 @@ class CheckPage(QWidget):
         layout.addWidget(self._position_label)
 
         self._previous_btn = QToolButton()
-        self._previous_btn.setText("\u25c0")
-        self._previous_btn.setToolTip("Previous document in the queue")
+        self._previous_btn.setText(check_text.PREVIOUS_ARROW)
+        self._previous_btn.setToolTip(check_text.PREVIOUS_DOCUMENT)
         self._previous_btn.setEnabled(False)
         self._previous_btn.clicked.connect(self.previous_requested)
         layout.addWidget(self._previous_btn)
 
         self._next_btn = QToolButton()
-        self._next_btn.setText("\u25b6")
-        self._next_btn.setToolTip("Next document in the queue")
+        self._next_btn.setText(check_text.NEXT_ARROW)
+        self._next_btn.setToolTip(check_text.NEXT_DOCUMENT)
         self._next_btn.setEnabled(False)
         self._next_btn.clicked.connect(self.next_requested)
         layout.addWidget(self._next_btn)
@@ -931,8 +931,8 @@ class CheckPage(QWidget):
             layout.addWidget(zoom)
 
         self._copy_btn = QToolButton()
-        self._copy_btn.setText("Copy")
-        self._copy_btn.setToolTip("Copy the text of this document, or save it as a text file")
+        self._copy_btn.setText(check_text.COPY)
+        self._copy_btn.setToolTip(check_text.COPY_TOOLTIP)
         self._copy_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._copy_btn.setMenu(self._build_copy_menu())
         layout.addWidget(self._copy_btn)
@@ -1219,7 +1219,7 @@ class CheckPage(QWidget):
 
     def show_copied(self) -> None:
         """Confirm a copy next to the button, for a few seconds."""
-        self._copied_label.setText("Copied")
+        self._copied_label.setText(check_text.COPIED)
         self._copied_label.setVisible(True)
         self._copied_timer.start()
 

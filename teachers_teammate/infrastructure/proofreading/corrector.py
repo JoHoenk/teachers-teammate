@@ -32,21 +32,20 @@ from ...domain.proofreading.result import (
 from ...domain.stages import Stage
 from ...exceptions import StageError, StageErrorKind
 from ...interfaces import Corrector
+from ...texts.review import (
+    EXPLANATIONS_MISSING,
+    PROOFREADING_FAILED,
+    PROOFREADING_NO_ANSWER,
+    UNCLEAR_FAILED,
+)
 from .exchanges import Exchange, ExchangeCost, ProofreadContext, build_exchange
-from .exchanges.t import EXPLAIN_FAILED, UNCLEAR_FAILED
 from .port import ModelPort, OllamaPort
 
 if TYPE_CHECKING:
     from ...domain.formatted_text import TextFormat
     from ..ollama_utils import OllamaClient
 
-_FAILED = "Proofreading failed; keeping the original text."
-"""Shown when an exchange failed without saying why."""
-
-_NO_ANSWER = "Proofreading failed; the model did not answer."
-"""Shown when a request never reached the model and the transport said nothing more."""
-
-_PARTIAL_WARNINGS: frozenset[str] = frozenset({EXPLAIN_FAILED, UNCLEAR_FAILED})
+_PARTIAL_WARNINGS: frozenset[str] = frozenset({EXPLANATIONS_MISSING, UNCLEAR_FAILED})
 """The warnings of the steps whose failure costs part of the answer instead of the file."""
 
 
@@ -112,10 +111,12 @@ class ExchangeCorrector(Corrector):
         if result.failed:
             if any(report.failure == "transport" for report in result.reports):
                 raise StageError(
-                    warning or _NO_ANSWER, kind=StageErrorKind.PROVIDER, stage=Stage.CORRECTION
+                    warning or PROOFREADING_NO_ANSWER,
+                    kind=StageErrorKind.PROVIDER,
+                    stage=Stage.CORRECTION,
                 )
             return CorrectionOutcome(
-                text=raw_text, review=None, warning=warning or _FAILED, failed=True
+                text=raw_text, review=None, warning=warning or PROOFREADING_FAILED, failed=True
             )
         return CorrectionOutcome(
             text=result.text,

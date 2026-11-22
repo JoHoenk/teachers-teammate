@@ -49,6 +49,8 @@ from ..domain.output_files import output_folder_refusal
 from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..exceptions import OllamaConnectionError, ProviderNotAvailableError
 from ..interfaces import ProgressCallbacks, Reporter
+from ..texts import report as report_text
+from ..texts.run import preview_needs_images
 from . import run_report
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
 from .ollama_utils import OllamaClient
@@ -88,8 +90,8 @@ class PipelineDependencies:
     # Whether the computer is kept awake for this run (the application layer holds it); the
     # banner says so, and warns when the run is on battery power.
     keep_awake: KeepAwakeState | None = None
-    # The sentence the banner warns with on battery power; the adapter passes it, because a
-    # sentence a teacher reads is defined in ``texts`` and this layer may not import it.
+    # The sentence the banner and the window warn with on battery power; the adapter passes it,
+    # so the run's warning and the window say the same line.
     battery_warning: str = ""
     # Where the built-in reader's model files live; the application layer passes the store its
     # readiness check looks at, so the run reads the folder that was checked.
@@ -147,7 +149,7 @@ def preprocess_preview(
         None,
     )
     if image_path is None:
-        raise ValueError(f"Preview is only available for image-based inputs: '{source_path.name}'.")
+        raise ValueError(preview_needs_images(source_path.name))
 
     preprocessor = build_preprocessor(tmp_dir=tmp_dir, save_steps=False, ocr=ocr, store=model_store)
     out_path, steps = preprocessor.preprocess(image_path)
@@ -247,7 +249,7 @@ class OCRPipeline:
         state_repo = self._state_repo or StateRepository(tmp_dir / "state")
 
         storage = resolve_storage_root()
-        reporter.status(f"Storage root: {storage.path.resolve()} ({storage.source})")
+        reporter.status(report_text.storage_root(storage.path.resolve(), storage.source))
 
         run_report.banner(
             cfg,
@@ -261,7 +263,7 @@ class OCRPipeline:
                 self._component_factory.check_ocr_model(
                     url=cfg.ollama_url, model=cfg.ocr.model, reporter=reporter
                 )
-                reporter.status("Checking Ollama connection... OK")
+                reporter.status(report_text.OLLAMA_CHECKED)
             except (RuntimeError, OllamaConnectionError) as exc:
                 reporter.error(str(exc))
                 return RunSummary(error=str(exc))
@@ -274,10 +276,10 @@ class OCRPipeline:
         files = self._files
         if not files:
             supported = ", ".join(s.lstrip(".").upper() for s in sorted(supported_suffixes()))
-            reporter.status(f"No supported files found ({supported}). Nothing to do.")
+            reporter.status(report_text.no_supported_files(supported))
             return RunSummary()
 
-        reporter.status(f"Found {len(files)} file(s) to process.\n")
+        reporter.status(report_text.files_to_process(len(files)))
         summary = self._run_files(files, file_processor, tmp_dir, artifact_store)
         run_report.summary(summary, reporter)
         return summary
@@ -292,7 +294,7 @@ class OCRPipeline:
         preprocess_service, files, tmp_dir = self._prepare_preview_run()
         if not files:
             supported = ", ".join(s.lstrip(".").upper() for s in sorted(supported_suffixes()))
-            reporter.status(f"No supported files found ({supported}). Nothing to do.")
+            reporter.status(report_text.no_supported_files(supported))
             return RunSummary()
 
         try:
@@ -326,15 +328,15 @@ class OCRPipeline:
     ) -> tuple[list[str], list[str]]:
         reporter = self._reporter
         total = len(files)
-        reporter.status(f"Found {total} file(s) to preprocess.\n")
+        reporter.status(report_text.files_to_preprocess(total))
 
         succeeded: list[str] = []
         failed: list[str] = []
         for idx, file in enumerate(files, start=1):
             if self._stop_event and self._stop_event.is_set():
-                reporter.status("\nStopped by user.")
+                reporter.status(report_text.STOPPED_BY_USER)
                 break
-            reporter.status(f"[{idx}/{total}] Processing: {file.name}")
+            reporter.status(report_text.processing(idx, total, file.name))
             try:
                 ok = self._preview_file(file, preprocess_service)
                 if ok:
@@ -394,10 +396,12 @@ class OCRPipeline:
     def _preview_file(self, file: Path, preprocess_service: PreprocessService) -> bool:
         prepared = preprocess_service.preprocess_input(file)
         if prepared.raw_text_hint is not None:
-            self._reporter.status("       → skipped preprocessing (text input)")
+            self._reporter.status(report_text.PREPROCESSING_SKIPPED_TEXT)
         else:
             for out_path in prepared.ocr_inputs:
-                self._reporter.status(f"       → {out_path.name}  ({', '.join(prepared.steps)})")
+                self._reporter.status(
+                    report_text.prepared_page(out_path.name, ", ".join(prepared.steps))
+                )
         return True
 
     def _setup_services(
@@ -435,11 +439,11 @@ class OCRPipeline:
 
         correction, anonymizer = builder.build_correction_and_anonymizer(ollama_client)
         if cfg.correction_enabled:
-            reporter.status("Building correction LLM... OK")
+            reporter.status(report_text.CORRECTION_LLM_BUILT)
 
         evaluation = builder.build_evaluation(correction, ollama_client)
         if evaluation is not None:
-            reporter.status("Building evaluation LLM... OK")
+            reporter.status(report_text.EVALUATION_LLM_BUILT)
 
         doc_creator = builder.build_doc_creator()
         text_anonymizer = builder.build_text_anonymizer(anonymizer)
@@ -488,7 +492,7 @@ class OCRPipeline:
         if not tmp_dir.exists():
             return
         if self._config.debug:
-            self._reporter.status(f"       → DEBUG: preprocessing files kept in {tmp_dir}")
+            self._reporter.status(report_text.debug_files_kept(tmp_dir))
             return
         try:
             artifact_store.cleanup_intermediate_images(keep_debug=self._config.debug)

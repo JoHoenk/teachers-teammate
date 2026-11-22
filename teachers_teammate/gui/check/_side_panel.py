@@ -753,7 +753,7 @@ class SidePanel(QWidget):
             self._add_filter_box(
                 category,
                 txt.category_label(category),
-                check_txt.FILTER_CATEGORY_TIP.format(category=txt.category_label(category)),
+                check_txt.filter_category_tip(txt.category_label(category)),
             )
         self._add_filter_box(FILTER_UNCLEAR, check_txt.FILTER_UNCLEAR, check_txt.FILTER_UNCLEAR_TIP)
         self._add_filter_box(

@@ -16,14 +16,16 @@ from teachers_teammate.infrastructure.proofreading.exchanges import TExchange
 from teachers_teammate.infrastructure.proofreading.exchanges.base import ProofreadContext
 from teachers_teammate.infrastructure.proofreading.exchanges.t import (
     EXPLAIN_EDITS_CHARS,
-    CORRECT_FAILED,
-    EXPLAIN_FAILED,
-    FRAMING_WARNING,
+)
+from teachers_teammate.texts.review import (
     ADDED_TEXT_WARNING,
-    LEFT_OUT_WARNING,
-    LEFT_OUT_WARNING_ONE,
+    CORRECT_FAILED,
+    EXPLANATIONS_MISSING,
+    FRAMING_WARNING,
     LOST_TEXT_WARNING,
     UNCLEAR_FAILED,
+    left_out_warning,
+    left_out_warning_one,
 )
 from tests.fakes.fake_port import FakePort, answer, cut_off, invalid, transport
 
@@ -239,7 +241,7 @@ def test_a_dropped_paragraph_twice_is_put_back_and_the_file_is_stored() -> None:
     assert result.failed is False
     assert result.text == LONG_CORRECTED
     assert result.left_out == 1
-    assert LEFT_OUT_WARNING_ONE.format(words=11) in result.warnings
+    assert left_out_warning_one(11) in result.warnings
     assert result.review is not None
     [note] = [note for note in result.review.unclear if note.left_out]
     assert note.expression == "Er ist nett und spielt gern im Garten mit meinem Bruder."
@@ -269,7 +271,7 @@ def test_several_stretches_left_out_are_counted_in_one_warning() -> None:
     assert result.failed is False
     assert result.text == source
     assert result.left_out == 2
-    assert LEFT_OUT_WARNING.format(count=2, words=28) in result.warnings
+    assert left_out_warning(count=2, words=28) in result.warnings
     assert result.review is not None
     assert [note.expression for note in result.review.unclear if note.left_out] == [first, last]
 
@@ -423,7 +425,7 @@ def test_an_unusable_explanation_only_warns() -> None:
 
     assert result.failed is False
     assert result.text == CORRECTED
-    assert EXPLAIN_FAILED in result.warnings
+    assert EXPLANATIONS_MISSING in result.warnings
     assert result.review is not None
     assert result.review.edits[0].explanation == ""
 

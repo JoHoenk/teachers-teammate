@@ -48,6 +48,7 @@ import time
 from ..domain.local_models import PRIVACY_ADDON_ID
 from ..domain.providers import AddonPackage
 from ..exceptions import AddonInstallError, AddonUpdateError, InstallFailure
+from ..texts.addons import ADDONS_UPDATE_NEEDS_INSTALL
 from .llm_factory import get_provider_info, list_providers
 from .spacy_models import spacy_model_url
 from .subprocess_utils import no_console_window_kwargs
@@ -860,7 +861,7 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
             bundle, ...); each failure is an :class:`AddonInstallError` when its reason is known.
     """
     if not getattr(sys, "frozen", False):
-        raise RuntimeError("Add-ons are updated only in the installed app")
+        raise RuntimeError(ADDONS_UPDATE_NEEDS_INSTALL)
     pkg_dir = get_packages_dir()
     failures: list[tuple[str, RuntimeError]] = []
     for requirement in installed_addon_requirements(pkg_dir):

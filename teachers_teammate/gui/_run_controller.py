@@ -83,8 +83,8 @@ class RunHooks:
     """Relabel both tabs."""
     refresh_check_run: Callable[[], None]
     """Tell the Check tab what the run does with the open document."""
-    sync_row: Callable[[str], None]
-    """Show what the store says about one document in its row."""
+    sync_row: Callable[..., None]
+    """Show what the store says about the documents given, one row each, read in one pass."""
     load_check: Callable[[str], bool]
     """Show one document in the Check tab; whether it could be shown."""
     current_source_id: Callable[[], str]
@@ -258,6 +258,9 @@ class RunController(QObject):
         self._hooks.save_settings(notify=False)
         self._table.set_output_dir(config.output_dir)
         self._chart.clear_data()
+        # What these rows showed may be gone from the store since (a re-run invalidates it): a
+        # row is its answer, so they say so now and a run that stops early leaves none behind.
+        self._hooks.sync_row(*selected_source_ids)
         # A document the run redoes is read-only from the run's start until its own result
         # arrives: an edit stored meanwhile would race the run. It stays the open document, so
         # its result reloads it (without a tab switch), and a run that ends before reaching it

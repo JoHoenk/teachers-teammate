@@ -958,13 +958,12 @@ class MainWindow(QMainWindow):
 
     # ── Worker signal handlers ────────────────────────────────────────────
 
-    def _sync_row(self, source_id: str) -> None:
-        """Show what the store now says about *source_id* in its row.
+    def _sync_row(self, *source_ids: str) -> None:
+        """Show what the store now says about *source_ids* in their rows, read in one pass.
 
-        The row is the store's answer, so every action that changes a document ends here
+        A row is the store's answer, so every action that changes a document ends here
         instead of patching cells: a stage that ran, an edit, a *Checked* mark.
         """
-        source = Path(source_id)
         try:
             config = self._config_panel.to_config()
         except ValueError:
@@ -972,10 +971,11 @@ class MainWindow(QMainWindow):
             # the lookup config names the same state folder and needs no valid folder.
             config = self._config_panel.lookup_config()
         try:
-            row = self._app_service.documents.queue_row(config, source)
+            rows = self._app_service.documents.queue_rows(config, [Path(s) for s in source_ids])
         except OSError, ValueError:
-            return  # nothing readable: the row keeps what it showed
-        self._results_table.update_row(row)
+            return  # nothing readable: the rows keep what they showed
+        for row in rows:
+            self._results_table.update_row(row)
 
     # ── Readiness line ────────────────────────────────────────────────────
 

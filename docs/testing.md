@@ -136,10 +136,13 @@ down. Each step checks what a teacher would see — the rows of the queue, the s
 Word files on disk, the summary of every run — and the first failure ends the walk with a message
 that names the step and what it waited for.
 
-Guards replace the teacher's eyes: an unexpected dialog is declined and recorded, a window a step
-did not open is closed, an exception in a slot fails its step, warnings are collected, and a
-watchdog ends a hung walk with a result instead of running into the CI job's limit. Every guard
-lives in the script, so a bundle run reports the same way a test run does.
+Guards replace the teacher's eyes: an unexpected dialog is declined and recorded, a window a
+step did not open is closed and recorded with its title and its own sentences (a bundle that
+lost a model file says so in the result), an exception in a slot is recorded and fails its step,
+and warnings are collected. A wait that runs out names what the guards caught, so a broken
+bundle says why it broke, and a watchdog ends a hung walk with a result instead of running into
+the CI job's limit.
+Every guard lives in the script, so a bundle run reports the same way a test run does.
 
 The walk writes one JSON file (steps, dialogs, modals, exceptions, warnings, screenshots,
 platform and versions) and exits 0 only when every step passed. It writes that file on failure
@@ -168,6 +171,14 @@ gh run download <run-id> -n teachers-teammate-linux    # then unpack
 ```
 
 An older bundle that lacks a handle a newer script uses fails the first step, naming the handle.
+A bundle is a working one only if the walk exits 0: a missing Qt platform plugin aborts the
+process before the script's first line, so there is no `e2e.json` to read.
+
+On a Wayland desktop the window opens on the `wayland` platform, even under `xvfb-run`:
+`WAYLAND_DISPLAY` is what Qt follows. `QT_QPA_PLATFORM=xcb` puts it on the display `DISPLAY`
+names instead; the Qt xcb plugin needs `libxcb-cursor0` and the other `libxcb-*` packages that
+`.github/workflows/build_artifacts.yml` installs; the `.deb` depends on them and a bare checkout
+does not have them.
 
 ### Adding a step
 

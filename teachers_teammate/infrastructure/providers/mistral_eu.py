@@ -21,30 +21,31 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
+from teachers_teammate.domain.data_location import DataRegion
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.infrastructure.providers import _mistral_common as common
 from teachers_teammate.infrastructure.providers._helpers import api_key_check
 
-PROVIDER_INFO: dict = {
-    "display_name": "Mistral (EU)",
+PROVIDER = ProviderInfo(
+    name="mistral_eu",
+    display_name="Mistral (EU)",
     # This endpoint processes requests in EU/EFTA data centres (see the module docstring).
-    "data_region": "eu",
-    "vendor_country": "France",
-    "needs_api_key": True,
+    data_region=DataRegion.EU,
+    vendor_country="France",
+    needs_api_key=True,
     # The vendor's page where a key is created; the Settings window links to it.
-    "key_url": "https://console.mistral.ai/api-keys",
-    "env_key": common.ENV_KEY,
-    "needs_base_url": False,
-    "can_list_models": True,
-    "package": {"module": "langchain_mistralai", "pip": "langchain-mistralai"},
-    "default_model": common.DEFAULT_MODEL,
-    "models": list(common.FALLBACK_MODELS),
-}
+    key_url="https://console.mistral.ai/api-keys",
+    env_key=common.ENV_KEY,
+    can_list_models=True,
+    package=AddonPackage(module="langchain_mistralai", pip="langchain-mistralai", minimum=">=1.1"),
+    models=tuple(common.FALLBACK_MODELS),
+)
 
 
 def list_models_checked(**_kwargs: object) -> ModelListing:
     """Return the chat models this endpoint serves and whether the list is live."""
-    return common.list_chat_models_checked(common.EU_BASE_URL, PROVIDER_INFO["models"])
+    return common.list_chat_models_checked(common.EU_BASE_URL, PROVIDER.models)
 
 
 def list_models(**kwargs: object) -> list[str]:
@@ -62,4 +63,4 @@ def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseCh
     return common.create_chat_model(model, temperature, common.EU_BASE_URL)
 
 
-check_connection = api_key_check(PROVIDER_INFO["env_key"])
+check_connection = api_key_check(PROVIDER.env_key)

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import threading
 from unittest.mock import MagicMock
@@ -15,6 +16,7 @@ import pytest
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.gui import _anonymizer_config_widget, _dialogs
 from teachers_teammate.gui._background import wait_for_background_tasks
 from teachers_teammate.gui import _user_text as txt
@@ -1548,12 +1550,7 @@ def test_on_provider_changed_seeds_the_model(qtbot, monkeypatch) -> None:
     monkeypatch.setattr(
         section._app_service.providers,
         "get_provider_info",
-        lambda p: {
-            "models": [f"{p}-model-1", f"{p}-model-2"],
-            "default_model": f"{p}-model-1",
-            "needs_api_key": False,
-            "env_key": "",
-        },
+        lambda p: ProviderInfo(name=p, display_name=p, models=(f"{p}-model-1", f"{p}-model-2")),
     )
 
     section._on_provider_changed("openai")
@@ -1672,12 +1669,12 @@ def test_changing_the_provider_preselects_its_default_model(qtbot, monkeypatch) 
     monkeypatch.setattr(
         section._app_service.providers,
         "get_provider_info",
-        lambda p: {
-            "models": [f"{p}-model-1", f"{p}-model-2"],
-            "default_model": f"{p}-model-2",
-            "needs_api_key": False,
-            "env_key": "",
-        },
+        lambda p: ProviderInfo(name=p, display_name=p, models=(f"{p}-model-1", f"{p}-model-2")),
+    )
+    monkeypatch.setattr(
+        section._app_service.providers,
+        "default_model_for_task",
+        lambda p, _task: f"{p}-model-2",
     )
     section._model.setCurrentText("")
 
@@ -2979,10 +2976,10 @@ def test_a_key_the_service_refuses_says_why_and_offers_a_retry(qtbot, no_keys) -
 
 
 class _KeyUrlService(ProviderAppService):
-    def get_provider_info(self, provider: str) -> dict:
-        info = dict(super().get_provider_info(provider))
+    def get_provider_info(self, provider: str) -> ProviderInfo:
+        info = super().get_provider_info(provider)
         if provider == "mistral_eu":
-            info["key_url"] = "https://console.example.org/keys"
+            return dataclasses.replace(info, key_url="https://console.example.org/keys")
         return info
 
 

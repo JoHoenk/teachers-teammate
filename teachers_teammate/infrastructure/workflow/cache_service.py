@@ -9,7 +9,7 @@ from pathlib import Path
 
 from ...config import Config, OcrConfig
 from ...domain.context_budget import RunWindows, window_from_setting
-from ...domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, SentRecord
+from ...domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, PROVIDER_OLLAMA, SentRecord
 from ...domain.freshness import (
     StageHashes,
     correction_kept_over_settings,
@@ -176,7 +176,7 @@ def _window_fingerprint(config: Config, windows: RunWindows | None = None) -> tu
     computer.  Without them only the settings are known, which gives the pinned window and
     the base step for ``"auto"`` — the same key a run at the base window produces.
     """
-    if config.correction_provider != "ollama":
+    if config.correction_provider != PROVIDER_OLLAMA:
         return ()
     window = (
         windows.proofreading
@@ -195,7 +195,7 @@ def _evaluation_window_fingerprint(
     failure of a smaller window must not be reused.  An online provider brings its own
     window, which the app does not set.
     """
-    if config.evaluate_provider != "ollama" or windows is None:
+    if config.evaluate_provider != PROVIDER_OLLAMA or windows is None:
         return ()
     return (f"num-ctx-{windows.evaluation}",)
 

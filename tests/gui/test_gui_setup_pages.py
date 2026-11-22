@@ -27,6 +27,7 @@ from teachers_teammate.domain.model_catalog import (
     ModelRating,
     Suitability,
 )
+from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._data_flow_summary import PLACE_OWN_SERVER, PLACE_THIS_COMPUTER
 from teachers_teammate.gui.setup import SetupAssistant, SetupContext
@@ -1018,7 +1019,7 @@ def test_the_summary_says_where_a_remote_ollama_runs(qtbot, url: str, expected: 
                 provider,
                 model,
                 ollama_url,
-                lambda _p: {"display_name": "Ollama", "self_hosted": True},
+                lambda _p: ProviderInfo(name=_p, display_name="Ollama", self_hosted=True),
             )
 
     assistant = _assistant(qtbot, _context(_RealRule(), ollama_url=url))

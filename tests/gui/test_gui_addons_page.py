@@ -19,6 +19,7 @@ from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     ModelUses,
 )
+from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._constants import _SPACY_MODEL_CHOICES
@@ -358,11 +359,11 @@ class _ProviderPackagesService(_StubService):
             "openai": ("langchain_openai", "langchain-openai"),
         }
 
-    def get_provider_info(self, provider: str) -> dict:
-        info: dict = {"display_name": provider.title()}
+    def get_provider_info(self, provider: str) -> ProviderInfo:
+        package = None
         if provider in ("mistral", "mistral_eu"):  # one package serves both
-            info["package"] = {"module": "langchain_mistralai", "pip": "langchain-mistralai"}
-        return info
+            package = AddonPackage(module="langchain_mistralai", pip="langchain-mistralai")
+        return ProviderInfo(name=provider, display_name=provider.title(), package=package)
 
     def get_installation_status(self, *, ollama_models=None, **kwargs) -> dict[str, bool]:
         status = super().get_installation_status(ollama_models=ollama_models, **kwargs)

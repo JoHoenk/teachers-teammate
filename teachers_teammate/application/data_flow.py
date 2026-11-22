@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from typing import Any
 
 from ..config import DEFAULTS, Config
 from ..domain.data_location import (
+    ENGINE_OLLAMA,
     OCR_ENGINE_NAMES,
     STAGE_ANONYMIZATION,
     DataFlow,
@@ -28,11 +28,13 @@ from ..domain.data_location import (
     llm_stage_location,
     online_ocr_reason,
 )
+from ..domain.providers import ProviderInfo
 from ..domain.stages import Stage
 from ..infrastructure.llm_factory import get_provider_info
 from ..infrastructure.ollama_utils import ollama_server
 
-ProviderInfo = Callable[[str], Mapping[str, Any]]
+#: Answers what a provider is and needs (``None`` for a name that is no provider).
+ProviderLookup = Callable[[str], ProviderInfo | None]
 #: Answers where a provider processes the data: ``"eu"``, ``"non_eu"`` or ``"unknown"``.
 ProviderRegion = Callable[[str], str]
 
@@ -61,7 +63,7 @@ def ocr_refusal(engine: str, model: str, ollama_url: str) -> str:
 
 def ocr_location(engine: str, model: str, ollama_url: str) -> StageLocation:
     """Classify text recognition with *engine*; only engines the user controls are supported."""
-    if engine == "ollama":
+    if engine == ENGINE_OLLAMA:
         return _ollama_location(model, ollama_url)
     if engine in OCR_ENGINE_NAMES:
         return StageLocation(DataLocation.THIS_COMPUTER, OCR_ENGINE_NAMES[engine])
@@ -71,17 +73,20 @@ def ocr_location(engine: str, model: str, ollama_url: str) -> StageLocation:
 
 def data_region_of(
     provider: str,
-    info: Mapping[str, Any],
+    info: ProviderInfo | None,
     provider_region: ProviderRegion | None = None,
 ) -> DataRegion:
     """Return where *provider* processes the data, defaulting to "not declared".
 
     *provider_region* answers providers whose region depends on their settings (a custom
-    base URL, an EU endpoint); without it the provider's ``PROVIDER_INFO`` is used.  A
-    value that is not one of the known regions counts as :attr:`DataRegion.UNKNOWN`: a
+    base URL, an EU endpoint); without it the provider's ``PROVIDER.data_region`` is used.
+    A value that is not one of the known regions counts as :attr:`DataRegion.UNKNOWN`: a
     school can only rely on what a vendor declares.
     """
-    value = provider_region(provider) if provider_region is not None else info.get("data_region")
+    if provider_region is not None:
+        value: object = provider_region(provider)
+    else:
+        value = info.data_region if info is not None else DataRegion.UNKNOWN
     try:
         return DataRegion(str(value or ""))
     except ValueError:
@@ -92,7 +97,7 @@ def llm_location(
     provider: str,
     model: str,
     ollama_url: str,
-    provider_info: ProviderInfo,
+    provider_info: ProviderLookup,
     provider_region: ProviderRegion | None = None,
 ) -> StageLocation:
     """Classify a LangChain provider: self-hosted ones follow the server, others are online.
@@ -101,14 +106,14 @@ def llm_location(
     tag): the only self-hosted provider today is Ollama.  A second one would need its own
     server setting passed in here.
 
-    A provider that does not declare ``"self_hosted": True`` in its ``PROVIDER_INFO`` is
-    treated as a vendor-hosted online service — the safe default for a new provider.
+    A provider that does not declare ``self_hosted`` in its ``PROVIDER`` is treated as a
+    vendor-hosted online service — the safe default for a new provider.
     """
     info = provider_info(provider)
-    name = str(info.get("display_name") or provider.capitalize())
+    name = (info.display_name if info is not None else "") or provider.capitalize()
     region = data_region_of(provider, info, provider_region)
-    country = str(info.get("vendor_country") or "")
-    self_hosted = bool(info.get("self_hosted"))
+    country = info.vendor_country if info is not None else ""
+    self_hosted = info is not None and info.self_hosted
     server = ollama_server(ollama_url)
     where = llm_stage_location(
         self_hosted=self_hosted,
@@ -230,7 +235,7 @@ class DataFlowService:
     def __init__(
         self,
         *,
-        provider_info: ProviderInfo,
+        provider_info: ProviderLookup,
         provider_region: ProviderRegion | None = None,
         anonymizer_models: Callable[[Config], Sequence[str]] = lambda _config: (),
     ) -> None:
@@ -266,7 +271,7 @@ class DataFlowService:
 
 def describe_data_flow(
     config: Config,
-    provider_info: ProviderInfo,
+    provider_info: ProviderLookup,
     provider_region: ProviderRegion | None = None,
     anonymizer_models: Sequence[str] = (),
 ) -> DataFlow:

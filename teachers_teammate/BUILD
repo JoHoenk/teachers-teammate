@@ -44,6 +44,7 @@ _DOMAIN_SRCS = [
     "domain/proofreading/sentences.py",
     "domain/proofreading/text_loss.py",
     "domain/proofreading/word_diff.py",
+    "domain/providers.py",
     "domain/run_summary.py",
     "domain/setting_values.py",
     "domain/settings_notice.py",

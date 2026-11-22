@@ -7,27 +7,29 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
+from teachers_teammate.domain.data_location import DataRegion
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.infrastructure.providers._helpers import (
     api_key_check,
     checked_listing,
     import_guard,
 )
 
-PROVIDER_INFO: dict = {
-    "display_name": "OpenAI (ChatGPT)",
-    "data_region": "non_eu",
-    "vendor_country": "USA",
-    "needs_api_key": True,
+PROVIDER = ProviderInfo(
+    name="openai",
+    display_name="OpenAI (ChatGPT)",
+    data_region=DataRegion.NON_EU,
+    vendor_country="USA",
+    needs_api_key=True,
     # The vendor's page where a key is created; the Settings window links to it.
-    "key_url": "https://platform.openai.com/api-keys",
-    "env_key": "OPENAI_API_KEY",
-    "needs_base_url": False,
-    "can_list_models": True,
-    "package": {"module": "langchain_openai", "pip": "langchain-openai"},
-    "default_model": "gpt-4o-mini",
-    "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-}
+    key_url="https://platform.openai.com/api-keys",
+    env_key="OPENAI_API_KEY",
+    can_list_models=True,
+    strict_json_schema=True,
+    package=AddonPackage(module="langchain_openai", pip="langchain-openai", minimum=">=0.2"),
+    models=("gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"),
+)
 
 _CHAT_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 
@@ -43,7 +45,7 @@ def _fetch_chat_ids() -> list[str]:
 def list_models_checked(**_kwargs: object) -> ModelListing:
     """Return chat-capable model IDs from the OpenAI API and whether the list is live."""
     return checked_listing(
-        _fetch_chat_ids, PROVIDER_INFO["models"], env_key=PROVIDER_INFO["env_key"], service="OpenAI"
+        _fetch_chat_ids, PROVIDER.models, env_key=PROVIDER.env_key, service="OpenAI"
     )
 
 
@@ -63,4 +65,4 @@ def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseCh
     return ChatOpenAI(model=model, temperature=temperature)
 
 
-check_connection = api_key_check(PROVIDER_INFO["env_key"])
+check_connection = api_key_check(PROVIDER.env_key)

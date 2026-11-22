@@ -8,6 +8,7 @@ from teachers_teammate.application import providers as providers_module
 from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.providers import ProviderInfo
 
 
 def _as_listing(fake):
@@ -186,17 +187,25 @@ def test_provider_packages_list_a_shared_package_once() -> None:
 @pytest.mark.parametrize(
     ("info", "key_set", "missing"),
     [
-        ({"needs_api_key": True, "env_key": "TT_TEST_KEY"}, False, True),
-        ({"needs_api_key": True, "env_key": "TT_TEST_KEY"}, True, False),
-        ({"needs_api_key": False, "env_key": ""}, False, False),
-        ({}, False, False),
+        (
+            ProviderInfo(name="any", display_name="Any", needs_api_key=True, env_key="TT_TEST_KEY"),
+            False,
+            True,
+        ),
+        (
+            ProviderInfo(name="any", display_name="Any", needs_api_key=True, env_key="TT_TEST_KEY"),
+            True,
+            False,
+        ),
+        (ProviderInfo(name="any", display_name="Any"), False, False),
+        (None, False, False),
     ],
 )
-def test_provider_key_missing_follows_the_provider_info_and_environment(
-    monkeypatch: pytest.MonkeyPatch, info: dict, key_set: bool, missing: bool
+def test_provider_key_missing_follows_the_provider_and_environment(
+    monkeypatch: pytest.MonkeyPatch, info: ProviderInfo | None, key_set: bool, missing: bool
 ) -> None:
     """
-    Given  a provider that does or does not need an API key, with the key set or not
+    Given  a declaration that does or does not need an API key, with the key set or not
     When   the service is asked whether the key is missing
     Then   it is missing only for a provider that needs a key while none is set
     """
@@ -206,6 +215,40 @@ def test_provider_key_missing_follows_the_provider_info_and_environment(
     monkeypatch.setattr(providers_module, "get_provider_info", lambda _provider: info)
 
     assert ProviderService().provider_key_missing("any") is missing
+
+
+# ── what a provider declares ──────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_names_and_key_answers_come_from_the_declaration() -> None:
+    """
+    Given  the shipped providers and a name nobody declares
+    When   the service is asked for a display name, a key variable and a key page
+    Then   each answer is what the provider declares, and an unknown name has none
+    """
+    service = ProviderService()
+
+    assert service.display_name("mistral_eu") == "Mistral (EU)"
+    assert service.env_key("mistral_eu") == "MISTRAL_API_KEY"
+    assert service.key_page("MISTRAL_API_KEY") == "https://console.mistral.ai/api-keys"
+    assert service.display_name("nonexistent") == "nonexistent"
+    assert service.env_key("nonexistent") == ""
+    assert service.key_page("NOT_A_KEY") == ""
+
+
+@pytest.mark.unit
+def test_provider_needs_key_follows_the_declaration() -> None:
+    """
+    Given  a service talked to directly, an online service and a name nobody declares
+    When   the service is asked whether the provider needs an API key
+    Then   only the online service does
+    """
+    service = ProviderService()
+
+    assert service.provider_needs_key("ollama") is False
+    assert service.provider_needs_key("openai") is True
+    assert service.provider_needs_key("nonexistent") is False
 
 
 # ── check_connection ──────────────────────────────────────────────────────

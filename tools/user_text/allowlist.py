@@ -429,7 +429,9 @@ ALLOWED: dict[str, frozenset[str]] = {
         {
             "f'Built-in reader (PP-OCR) — {READER_SIZE_LABEL}'",
             "f'Saved in: {self._svc.reader.models_dir()}'",
-            "f\"The built-in reader reads pages on this computer, without a server. {txt.OCR_ENGINE_HINTS['ppocr']} Its model files, and the page models of the automatic image preparation, come from PaddlePaddle (Apache-2.0).\"",
+            "f'The built-in reader reads pages on this computer, without a server. "
+            "{txt.OCR_ENGINE_HINTS[ENGINE_PPOCR]} Its model files, and the page models of the "
+            "automatic image preparation, come from PaddlePaddle (Apache-2.0).'",
         }
     ),
     "teachers_teammate/gui/settings/addons/_update_banner.py": frozenset(

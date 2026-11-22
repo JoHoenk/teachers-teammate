@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..domain.context_budget import BASE_NUM_CTX, CONTEXT_STEPS, RunWindows, stage_windows
+from ..domain.data_location import PROVIDER_OLLAMA
 
 
 @dataclass(frozen=True)
@@ -55,8 +56,8 @@ def context_choice(
             setting,
             proofreading_model=proofreading_model,
             evaluation_model=review_model,
-            proofreading_local=proofreading_provider == "ollama",
-            evaluation_local=review_provider == "ollama",
+            proofreading_local=proofreading_provider == PROVIDER_OLLAMA,
+            evaluation_local=review_provider == PROVIDER_OLLAMA,
             evaluation_runs=True,
             card_gb=card_gb,
         )

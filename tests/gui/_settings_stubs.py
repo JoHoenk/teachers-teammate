@@ -7,8 +7,8 @@ queries, hardware profiles and ratings, and (for the Add-ons page) what is insta
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import dataclasses
 from datetime import date
-import os
 import threading
 
 from teachers_teammate.application.data_flow import llm_location
@@ -21,7 +21,7 @@ from teachers_teammate.application.setup_plan import (
     build_model_choices,
     build_setup_plan,
 )
-from teachers_teammate.domain.data_location import StageLocation
+from teachers_teammate.domain.data_location import DataRegion, StageLocation
 from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     ModelCategory,
@@ -35,6 +35,7 @@ from teachers_teammate.domain.name_models import (
 )
 from teachers_teammate.domain.ollama_discovery import DiscoveryScope, OllamaState
 from teachers_teammate.domain.performance_estimate import TimeRange
+from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 
 from ._service_stubs import RecommendationServiceStub, context_choice_from
 
@@ -99,24 +100,25 @@ class DummyAppService(RecommendationServiceStub):
         """Nothing waits for a restart unless a test says so."""
         return ()
 
-    def get_provider_info(self, provider: str) -> dict:
+    def get_provider_info(self, provider: str) -> ProviderInfo:
         if provider == "openai":
-            return {
-                "display_name": "OpenAI (ChatGPT)",
-                "data_region": "non_eu",
-                "models": ["gpt-4o", "gpt-4o-mini"],
-                "default_model": "gpt-4o-mini",
-                "needs_api_key": True,
-                "env_key": "OPENAI_API_KEY",
-            }
-        return {
-            "display_name": "Ollama" if provider == "ollama" else provider,
-            "self_hosted": provider == "ollama",
-            "models": [f"{provider}-model"],
-            "default_model": f"{provider}-model",
-            "needs_api_key": False,
-            "env_key": "",
-        }
+            return ProviderInfo(
+                name="openai",
+                display_name="OpenAI (ChatGPT)",
+                data_region=DataRegion.NON_EU,
+                vendor_country="USA",
+                needs_api_key=True,
+                key_url="https://platform.openai.com/api-keys",
+                env_key="OPENAI_API_KEY",
+                can_list_models=True,
+                models=("gpt-4o", "gpt-4o-mini"),
+            )
+        return ProviderInfo(
+            name=provider,
+            display_name="Ollama" if provider == "ollama" else provider,
+            self_hosted=provider == "ollama",
+            models=(f"{provider}-model",),
+        )
 
     def describe_llm_location(self, provider: str, model: str, ollama_url: str) -> StageLocation:
         """Answer with the real rule, so the pages' labels and hints follow the provider info."""
@@ -124,12 +126,7 @@ class DummyAppService(RecommendationServiceStub):
 
     def get_provider_data_region(self, provider: str) -> str:
         """Answer with the region the provider info names, as the real service does."""
-        return str(self.get_provider_info(provider).get("data_region", "unknown"))
-
-    def provider_key_missing(self, provider: str) -> bool:
-        """Answer with the real rule: a key the environment does not hold is missing."""
-        info = self.get_provider_info(provider)
-        return bool(info.get("needs_api_key")) and not os.environ.get(str(info.get("env_key", "")))
+        return self.get_provider_info(provider).data_region.value
 
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         _ = base_url
@@ -206,16 +203,18 @@ class ProviderAppService(CachingDummyAppService):
     def list_providers(self) -> list[str]:
         return ["mistral", "mistral_eu", "ollama", "openai"]
 
-    def get_provider_info(self, provider: str) -> dict:
+    def get_provider_info(self, provider: str) -> ProviderInfo:
         if provider in ("mistral", "mistral_eu"):
-            return {
-                "display_name": "Mistral" if provider == "mistral" else "Mistral (EU)",
-                "data_region": "unknown" if provider == "mistral" else "eu",
-                "models": ["mistral-small-latest", "open-mistral-nemo"],
-                "default_model": "mistral-small-latest",
-                "needs_api_key": True,
-                "env_key": "MISTRAL_API_KEY",
-            }
+            return ProviderInfo(
+                name=provider,
+                display_name="Mistral" if provider == "mistral" else "Mistral (EU)",
+                data_region=DataRegion.UNKNOWN if provider == "mistral" else DataRegion.EU,
+                vendor_country="France",
+                needs_api_key=True,
+                env_key="MISTRAL_API_KEY",
+                package=AddonPackage(module="langchain_mistralai", pip="langchain-mistralai"),
+                models=("mistral-small-latest", "open-mistral-nemo"),
+            )
         return super().get_provider_info(provider)
 
     def list_provider_models_checked(self, provider: str, *, base_url: str = "") -> ModelListing:
@@ -237,10 +236,10 @@ class SlowMistralService(ProviderAppService):
         super().__init__()
         self.release = threading.Event()
 
-    def get_provider_info(self, provider: str) -> dict:
-        info = dict(super().get_provider_info(provider))
+    def get_provider_info(self, provider: str) -> ProviderInfo:
+        info = super().get_provider_info(provider)
         if provider in ("mistral", "mistral_eu"):
-            info["can_list_models"] = True
+            return dataclasses.replace(info, can_list_models=True)
         return info
 
     def list_provider_models_checked(self, provider: str, *, base_url: str = "") -> ModelListing:
@@ -254,14 +253,16 @@ class NonListableService(DummyAppService):
     def list_providers(self) -> list[str]:
         return ["anthropic"]
 
-    def get_provider_info(self, provider: str) -> dict:
-        return {
-            "display_name": "Anthropic",
-            "models": ["claude-opus-4-5", "claude-haiku-4-5", "claude-3-5-sonnet-20241022"],
-            "default_model": "claude-haiku-4-5",
-            "needs_api_key": True,
-            "env_key": "ANTHROPIC_API_KEY",
-        }
+    def get_provider_info(self, provider: str) -> ProviderInfo:
+        return ProviderInfo(
+            name=provider,
+            display_name="Anthropic",
+            data_region=DataRegion.NON_EU,
+            vendor_country="USA",
+            needs_api_key=True,
+            env_key="ANTHROPIC_API_KEY",
+            models=("claude-opus-4-5", "claude-haiku-4-5", "claude-3-5-sonnet-20241022"),
+        )
 
 
 def select_provider(section, provider_id: str) -> None:

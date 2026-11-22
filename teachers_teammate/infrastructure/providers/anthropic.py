@@ -7,33 +7,33 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
+from teachers_teammate.domain.data_location import DataRegion
+from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.infrastructure.providers._helpers import api_key_check, import_guard
 
-PROVIDER_INFO: dict = {
-    "display_name": "Anthropic (Claude)",
-    "data_region": "non_eu",
-    "vendor_country": "USA",
-    "needs_api_key": True,
+PROVIDER = ProviderInfo(
+    name="anthropic",
+    display_name="Anthropic (Claude)",
+    data_region=DataRegion.NON_EU,
+    vendor_country="USA",
+    needs_api_key=True,
     # The vendor's page where a key is created; the Settings window links to it.
-    "key_url": "https://console.anthropic.com/settings/keys",
-    "env_key": "ANTHROPIC_API_KEY",
-    "needs_base_url": False,
-    "can_list_models": False,
-    "package": {"module": "langchain_anthropic", "pip": "langchain-anthropic"},
-    "default_model": "claude-haiku-4-5",
-    "models": [
+    key_url="https://console.anthropic.com/settings/keys",
+    env_key="ANTHROPIC_API_KEY",
+    package=AddonPackage(module="langchain_anthropic", pip="langchain-anthropic", minimum=">=0.1"),
+    models=(
         "claude-opus-4-5",
         "claude-sonnet-4-5",
         "claude-haiku-4-5",
         "claude-3-5-sonnet-20241022",
         "claude-3-opus-20240229",
-    ],
-}
+    ),
+)
 
 
 def list_models(**_kwargs: object) -> list[str]:
     """Return the static Anthropic model list (no public listing API available)."""
-    return list(PROVIDER_INFO["models"])
+    return list(PROVIDER.models)
 
 
 def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseChatModel:
@@ -47,4 +47,4 @@ def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseCh
     return ChatAnthropic(model=model, temperature=temperature)
 
 
-check_connection = api_key_check(PROVIDER_INFO["env_key"])
+check_connection = api_key_check(PROVIDER.env_key)

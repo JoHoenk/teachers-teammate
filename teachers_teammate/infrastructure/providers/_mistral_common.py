@@ -12,6 +12,7 @@ HTTP dependency) out of the install.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
 import json
 import os
@@ -331,7 +332,7 @@ def fetch_model_entries(base_url: str, api_key: str) -> list[dict[str, Any]]:
         return json.load(response).get("data", [])
 
 
-def list_chat_models_checked(base_url: str, fallback: list[str]) -> ModelListing:
+def list_chat_models_checked(base_url: str, fallback: Sequence[str]) -> ModelListing:
     """Return the chat-capable model IDs served at *base_url*, saying whether they are live.
 
     Asking the endpoint the provider will use means the EU provider only lists models the

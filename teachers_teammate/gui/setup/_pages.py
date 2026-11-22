@@ -48,6 +48,7 @@ from ...application.setup_plan import (
 )
 from ...config import DEFAULTS
 from ...domain.data_location import (
+    PROVIDER_OLLAMA,
     STAGE_ANONYMIZATION,
     DataLocation,
     DataRegion,
@@ -543,8 +544,8 @@ class ProofreadingPage(SetupPage):
         self._places = QButtonGroup(self)
         for button in (self._local, self._online, self._off):
             self._places.addButton(button)
-        self._local.setChecked(saved == "ollama")
-        self._online.setChecked(saved not in ("ollama", ""))
+        self._local.setChecked(saved == PROVIDER_OLLAMA)
+        self._online.setChecked(saved not in (PROVIDER_OLLAMA, ""))
         layout.addWidget(self._local)
         self._suggestion = _note(SUGGESTION_CHECKING)
         layout.addWidget(_indent(self._suggestion))
@@ -899,10 +900,7 @@ class PrivacyPage(SetupPage):
 
         if leaves:
             if case is PrivacyCase.ONLINE:
-                info = self._context.app_service.providers.get_provider_info(
-                    answers.online_choice[0]
-                )
-                name = str(info.get("display_name") or answers.online_choice[0])
+                name = self._context.app_service.providers.display_name(answers.online_choice[0])
                 self._sent.setText(PRIVACY_SENT.format(service=name))
                 self._school.setText(PRIVACY_SCHOOL_NOTE)
             else:
@@ -1033,16 +1031,15 @@ class SummaryPage(SetupPage):
 
     def _place_of(self, provider: str) -> str:
         """Return where *provider* runs in the few words the summary has room for."""
-        if provider == "ollama":
+        if provider == PROVIDER_OLLAMA:
             url = self.assistant().answers().ollama_url
             return short_place(
                 self._context.app_service.providers.describe_llm_location(provider, "", url)
             )
-        info = self._context.app_service.providers.get_provider_info(provider)
         return short_place(
             StageLocation(
                 location=DataLocation.ONLINE,
-                service=str(info.get("display_name") or provider),
+                service=self._context.app_service.providers.display_name(provider),
                 region=DataRegion(
                     self._context.app_service.providers.get_provider_data_region(provider)
                 ),
@@ -1055,7 +1052,7 @@ class SummaryPage(SetupPage):
             step.provider
             for step in plan.steps
             if step.provider
-            and step.provider != "ollama"
+            and step.provider != PROVIDER_OLLAMA
             and self._context.app_service.providers.provider_key_missing(step.provider)
         }
 

@@ -11,6 +11,7 @@ import pytest
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection
+from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.exceptions import OnlineOcrNotAllowedError
 from teachers_teammate.infrastructure.preprocessing.steps import StepPipeline
@@ -885,26 +886,26 @@ def test_the_teacher_settings_reach_the_exchange(tmp_path: Path) -> None:
 # ── one rule for "this step runs online" ──────────────────────────────────────
 
 
-def _fake_provider(monkeypatch: pytest.MonkeyPatch, name: str, info: dict) -> None:
-    """Register a provider module whose ``PROVIDER_INFO`` is *info*."""
+def _fake_provider(monkeypatch: pytest.MonkeyPatch, name: str, info: ProviderInfo) -> None:
+    """Register a provider module that declares *info*."""
     import sys  # noqa: PLC0415
     import types  # noqa: PLC0415
 
     module_name = f"teachers_teammate.infrastructure.providers.{name}"
     module = types.ModuleType(module_name)
-    module.PROVIDER_INFO = info
+    module.PROVIDER = info
     monkeypatch.setitem(sys.modules, module_name, module)
 
 
 @pytest.mark.parametrize(
     ("info", "expected_online"),
     [
-        ({"self_hosted": True, "display_name": "Own server"}, False),
-        ({"display_name": "Vendor"}, True),
+        (ProviderInfo(name="ownserver", display_name="Own server", self_hosted=True), False),
+        (ProviderInfo(name="ownserver", display_name="Vendor"), True),
     ],
 )
 def test_the_privacy_badge_and_the_number_of_tries_agree(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, info: dict, expected_online: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, info: ProviderInfo, expected_online: bool
 ) -> None:
     """
     Given  a provider module that declares itself self-hosted, and one that does not, both

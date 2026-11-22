@@ -23,7 +23,13 @@ from .domain.correction_policy import (
     normalize_output_mode,
 )
 from .domain.correction_prompts import NOTES_LIMIT
-from .domain.data_location import ENGINE_OLLAMA, LOCAL_OCR_ENGINES, RETIRED_OCR_ENGINES, OcrEngine
+from .domain.data_location import (
+    ENGINE_OLLAMA,
+    LOCAL_OCR_ENGINES,
+    PROVIDER_OLLAMA,
+    RETIRED_OCR_ENGINES,
+    OcrEngine,
+)
 from .domain.model_catalog import (
     DEFAULT_OCR_MODEL,
     DEFAULT_WRITING_MODEL,
@@ -263,7 +269,7 @@ SETTINGS: tuple[Setting, ...] = (
     # ── Correction ────────────────────────────────────────────────────────────
     Setting("correction_enabled", True, SettingScope.RUN, _flag),
     Setting("anonymization_enabled", False, SettingScope.RUN, _flag),
-    Setting("correction_provider", "ollama", SettingScope.RUN),
+    Setting("correction_provider", PROVIDER_OLLAMA, SettingScope.RUN),
     Setting("correction_model", DEFAULT_WRITING_MODEL, SettingScope.RUN),
     # What the teacher wants the model to know about this class or this text.  The instructions
     # themselves are fixed by the app; the notes are the one place a teacher adds context.
@@ -280,7 +286,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     # ── Evaluation ────────────────────────────────────────────────────────────
     Setting("evaluation_enabled", False, SettingScope.RUN, _flag),
-    Setting("evaluate_provider", "ollama", SettingScope.RUN),
+    Setting("evaluate_provider", PROVIDER_OLLAMA, SettingScope.RUN),
     Setting("evaluate_model", DEFAULT_WRITING_MODEL, SettingScope.RUN),
     Setting("evaluate_prompt", _DEFAULT_EVALUATE_PROMPT, SettingScope.RUN, _evaluate_prompt),
     # ── Output ────────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from ..config import Config
+from ..domain.data_location import PROVIDER_OLLAMA
 from ..domain.model_catalog import short_model_name
 from ..domain.ollama_discovery import WaitDetail, WaitKind
 from ..domain.performance_estimate import TimeRange
@@ -144,7 +145,9 @@ class RunSession:
             short_model_name(config.effective_correction_model) if config.correction_enabled else ""
         )
         self.steps_per_file = 2 if config.correction_enabled else 1
-        self.waits_for_ollama = config.correction_enabled and config.correction_provider == "ollama"
+        self.waits_for_ollama = (
+            config.correction_enabled and config.correction_provider == PROVIDER_OLLAMA
+        )
         self.stop_stage = StopStage.RUNNING
         self.progress_base = f"Selected {len(source_ids)} file(s) — Starting…"
         self.step = ""

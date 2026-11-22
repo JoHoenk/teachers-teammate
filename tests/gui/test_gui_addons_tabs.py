@@ -10,6 +10,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QCheckBox
 import pytest
 
+from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._install_round import PACKAGE_PREFIX, PAGE_MODELS_ITEM, READER_ITEM
 from teachers_teammate.gui._model_guidance import SPACY_PREFIX
@@ -33,10 +34,18 @@ class _ProviderPackagesService(RecommendationServiceStub):
             "openai": ("langchain_openai", "langchain-openai"),
         }
 
-    def get_provider_info(self, provider: str) -> dict:
+    def get_provider_info(self, provider: str) -> ProviderInfo:
         # ``mistral_eu`` shares mistral's package, which the list offers once, under mistral.
-        package = {"pip": "langchain-mistralai"} if provider == "mistral_eu" else None
-        return {"display_name": provider.replace("_", " ").title(), "package": package}
+        package = (
+            AddonPackage(module="langchain_mistralai", pip="langchain-mistralai")
+            if provider == "mistral_eu"
+            else None
+        )
+        return ProviderInfo(
+            name=provider,
+            display_name=provider.replace("_", " ").title(),
+            package=package,
+        )
 
 
 def _providers_tab(qtbot) -> ProvidersTab:

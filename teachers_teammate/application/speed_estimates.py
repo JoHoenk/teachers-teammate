@@ -30,6 +30,7 @@ import threading
 
 from ..config import DEFAULTS, Config, OcrConfig
 from ..domain.correction_policy import normalize_output_mode
+from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import (
     AnswerLength,
     HardwareDetection,
@@ -202,13 +203,13 @@ class SpeedChoices:
         """Build the choices; a step that is ``None``/``False`` or not on Ollama gets no model."""
 
         def ollama_model(choice: tuple[str, str] | None, task: Stage) -> str:
-            if choice is None or choice[0] != "ollama":
+            if choice is None or choice[0] != PROVIDER_OLLAMA:
                 return ""
             return effective_model(choice[0], choice[1], task)
 
         return cls(
             ollama_url=ollama_url,
-            reading_model=ocr.model if reading and ocr.engine == "ollama" else "",
+            reading_model=ocr.model if reading and ocr.engine == ENGINE_OLLAMA else "",
             writing_model=ollama_model(correction, Stage.CORRECTION),
             review_model=ollama_model(evaluation, Stage.EVALUATION),
             correction_output=normalize_output_mode(correction_output),

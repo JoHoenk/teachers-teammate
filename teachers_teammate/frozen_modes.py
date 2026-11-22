@@ -174,12 +174,13 @@ def _setup_answers(settings: Mapping[str, object]) -> SetupAnswers:
 def _setup_plan_problem(plan: SetupPlan, frozen: bool) -> str | None:
     """Return what is wrong with *plan*, or ``None`` when it is what the defaults should give."""
     from teachers_teammate.application.setup_plan import DownloadKind  # noqa: PLC0415
+    from teachers_teammate.domain.data_location import PROVIDER_OLLAMA  # noqa: PLC0415
 
     if not plan.steps:
         return "the setup plan has no step"
     provider = plan.settings.get("correction_provider")
-    if provider != "ollama":
-        return f"the setup plan proofreads with {provider!r} instead of 'ollama'"
+    if provider != PROVIDER_OLLAMA:
+        return f"the setup plan proofreads with {provider!r} instead of {PROVIDER_OLLAMA!r}"
     if frozen:
         # The bundle carries the page models, so the defaults (handwritten pages, automatic image
         # preparation) must not plan their download: this is the real ``setup_facts`` seeing them.
@@ -536,7 +537,8 @@ def forget_keys() -> int:
 
     store = CredentialStore()
     for provider in llm_factory.list_providers():
-        env_key = str(llm_factory.get_provider_info(provider).get("env_key", ""))
+        info = llm_factory.get_provider_info(provider)
+        env_key = info.env_key if info is not None else ""
         if env_key:
             store.remove(env_key)
     return 0

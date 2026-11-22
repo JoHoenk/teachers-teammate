@@ -11,6 +11,7 @@ from collections.abc import Callable
 import importlib.util
 from pathlib import Path
 
+from ..domain.data_location import PROVIDER_OLLAMA
 from ..domain.local_models import PAGE_MODELS, READER_MODELS
 from ..domain.model_catalog import normalize_tag
 from ..infrastructure.onnx.store import ModelStore
@@ -97,7 +98,9 @@ class AddonService:
                 # Compare normalised tags: "llama3.2" and "llama3.2:latest" are one model.
                 pulled = {
                     normalize_tag(name)
-                    for name in self._providers.list_provider_models("ollama", base_url=ollama_url)
+                    for name in self._providers.list_provider_models(
+                        PROVIDER_OLLAMA, base_url=ollama_url
+                    )
                 }
             except Exception:  # noqa: BLE001
                 # Ollama may be unreachable; treat as no models pulled

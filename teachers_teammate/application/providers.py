@@ -14,8 +14,9 @@ import os
 import time
 
 from .._model_defaults import default_model_for_task
-from ..domain.data_location import StageLocation
+from ..domain.data_location import PROVIDER_OLLAMA, StageLocation
 from ..domain.model_listing import ModelListing
+from ..domain.providers import ProviderInfo
 from ..infrastructure.llm_factory import (
     check_provider_connection,
     get_provider_data_region,
@@ -64,9 +65,33 @@ class ProviderService:
         """Return available LLM providers."""
         return list_providers()
 
-    def get_provider_info(self, provider: str) -> dict:
-        """Return provider metadata used for model picker defaults."""
+    def get_provider_info(self, provider: str) -> ProviderInfo | None:
+        """Return what *provider* declares, or ``None`` when the name is no provider."""
         return get_provider_info(provider)
+
+    def display_name(self, provider: str) -> str:
+        """Return the name a teacher reads for *provider* (its id when it declares none)."""
+        info = self.get_provider_info(provider)
+        return (info.display_name if info is not None else "") or provider
+
+    def env_key(self, provider: str) -> str:
+        """Return the environment variable *provider* reads its key from (``""`` = none)."""
+        info = self.get_provider_info(provider)
+        return info.env_key if info is not None else ""
+
+    def provider_needs_key(self, provider: str) -> bool:
+        """Return whether *provider* cannot answer without an API key."""
+        info = self.get_provider_info(provider)
+        return info is not None and info.needs_api_key
+
+    def key_page(self, env_key: str) -> str:
+        """Return the page where a key for *env_key* is created (``""`` when nobody says)."""
+        for provider in list_providers():
+            if self.env_key(provider) == env_key:
+                info = self.get_provider_info(provider)
+                if info is not None and info.key_url:
+                    return info.key_url
+        return ""
 
     def provider_key_missing(self, provider: str) -> bool:
         """Return whether *provider* needs an API key that is not set in the environment.
@@ -74,8 +99,8 @@ class ProviderService:
         Without it the service cannot be asked for its models, so the GUI says "no key"
         instead of starting a request that is certain to fail.
         """
-        info = self.get_provider_info(provider)
-        return bool(info.get("needs_api_key")) and not os.environ.get(str(info.get("env_key", "")))
+        env_key = self.env_key(provider)
+        return self.provider_needs_key(provider) and not os.environ.get(env_key)
 
     def default_model_for_task(self, provider: str, task: str) -> str:
         """Resolve default model for provider and task."""
@@ -140,7 +165,7 @@ class ProviderService:
         Returns ``(connected, model_ok, message)``.  For the services that are not Ollama the
         tuple is ``(ok, ok, message)``: the model-level distinction does not apply to them.
         """
-        if provider == "ollama":
+        if provider == PROVIDER_OLLAMA:
             from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
             return OllamaClient(url).check_connection(model)
@@ -163,7 +188,7 @@ class ProviderService:
         an omitted URL, which means the default server — share one entry; otherwise an
         invalidation could miss the entry that was cached under the other spelling.
         """
-        if provider == "ollama":
+        if provider == PROVIDER_OLLAMA:
             from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
 
             return f"ollama:{normalize_ollama_url(base_url)}"
@@ -218,9 +243,9 @@ class ProviderService:
         For Ollama this also forgets the model classifications of that server.
         """
         self._model_cache.pop(self._model_cache_key(provider, base_url), None)
-        if provider == "ollama":
+        if provider == PROVIDER_OLLAMA:
             self._forget_classifications(base_url)
 
     def forget_ollama_model_list(self, normalized_url: str) -> None:
         """Drop only the cached Ollama model list (the recommender forgets the rest)."""
-        self._model_cache.pop(self._model_cache_key("ollama", normalized_url), None)
+        self._model_cache.pop(self._model_cache_key(PROVIDER_OLLAMA, normalized_url), None)

@@ -12,6 +12,8 @@ from collections.abc import Sequence
 from ..application.data_flow import sent_location
 from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import (
+    ENGINE_OLLAMA,
+    ENGINE_PPOCR,
     DataLocation,
     SentRecord,
     SentStatus,
@@ -110,12 +112,12 @@ EXPLANATIONS_SUPPORTED_TOOLTIP = (
 
 #: The engine choice, by engine id.
 OCR_ENGINE_LABELS = {
-    "ollama": "Ollama (AI model)",
-    "ppocr": "Built-in reader (PP-OCR)",
+    ENGINE_OLLAMA: "Ollama (AI model)",
+    ENGINE_PPOCR: "Built-in reader (PP-OCR)",
 }
 OCR_ENGINE_HINTS = {
-    "ollama": "Best for handwriting. Fast with a graphics card.",
-    "ppocr": (
+    ENGINE_OLLAMA: "Best for handwriting. Fast with a graphics card.",
+    ENGINE_PPOCR: (
         "Works on any computer without a server. Best for printed pages; reads handwriting "
         "less well."
     ),

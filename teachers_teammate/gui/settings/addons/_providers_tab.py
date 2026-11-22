@@ -18,14 +18,19 @@ from ..._install_round import PACKAGE_PREFIX
 from ..._model_guidance import PROVIDER_PREFIX
 from ._common import ScrolledTab, apply_installed, tick_enabled
 
-_PROVIDER_LABELS: dict[str, str] = {
-    "openai": "OpenAI  (langchain-openai)",
-    "anthropic": "Anthropic  (langchain-anthropic)",
-    "google": "Google Gemini  (langchain-google-genai)",
-    "mistral": "Mistral and Mistral (EU)  (langchain-mistralai)",
-    "cohere": "Cohere  (langchain-cohere)",
-    "ollama": "Ollama LangChain connector  (langchain-ollama)",
-}
+
+def _package_labels(app_service: AppServices) -> dict[str, str]:
+    """Return ``{pip name: box label}``, built from the providers that share the package.
+
+    The label names every service that needs the package (Mistral and Mistral (EU) share
+    one) and the pip name the teacher would see in an install message.
+    """
+    names: dict[str, list[str]] = {}
+    for provider in app_service.providers.list_providers():
+        info = app_service.providers.get_provider_info(provider)
+        if info is not None and info.package is not None:
+            names.setdefault(info.package.pip, []).append(info.display_name)
+    return {pip: f"{' and '.join(shared)}  ({pip})" for pip, shared in names.items()}
 
 
 class ProvidersTab(ScrolledTab):
@@ -35,6 +40,7 @@ class ProvidersTab(ScrolledTab):
         super().__init__(parent)
         self._svc = app_service
         self._packages = app_service.providers.list_provider_packages()
+        self._labels = _package_labels(app_service)
         #: The items of this tab, keyed like the installation check reports them.
         self.checkboxes: dict[str, QCheckBox] = {}
         self._pending: list[str] = []
@@ -42,7 +48,7 @@ class ProvidersTab(ScrolledTab):
         group = QGroupBox("Online AI services")
         group_layout = QVBoxLayout(group)
         for prov, (_, pip_pkg) in self._packages.items():
-            lbl = _PROVIDER_LABELS.get(prov) or f"{self._provider_name(prov)}  ({pip_pkg})"
+            lbl = self._labels.get(pip_pkg) or f"{self._provider_name(prov)}  ({pip_pkg})"
             cb = QCheckBox(lbl)
             cb.setToolTip(license_tooltip(self._svc.addons.addon_license(pip_pkg)))
             self.checkboxes[f"{PROVIDER_PREFIX}{prov}"] = cb
@@ -57,8 +63,8 @@ class ProvidersTab(ScrolledTab):
         under the first of them, so a request for the other one is mapped onto it.
         """
         if provider not in self._packages:
-            package = self._svc.providers.get_provider_info(provider).get("package")
-            pip = package.get("pip") if isinstance(package, dict) else None
+            info = self._svc.providers.get_provider_info(provider)
+            pip = info.package.pip if info is not None and info.package is not None else None
             for name, (_module, listed_pip) in self._packages.items():
                 if pip is not None and listed_pip == pip:
                     provider = name
@@ -105,4 +111,4 @@ class ProvidersTab(ScrolledTab):
 
     def _provider_name(self, provider: str) -> str:
         """Return the display name of *provider* (its own name when it has none)."""
-        return str(self._svc.providers.get_provider_info(provider).get("display_name", provider))
+        return self._svc.providers.display_name(provider)

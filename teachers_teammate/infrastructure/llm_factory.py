@@ -1,7 +1,8 @@
 """LLM factory: discover and invoke provider modules to build a BaseChatModel.
 
 Provider modules live in :mod:`teachers_teammate.infrastructure.providers` — one
-file per integration.  Each module exposes a single
+file per integration.  Each module declares its facts in ``PROVIDER`` (a
+:class:`~teachers_teammate.domain.providers.ProviderInfo`) and exposes a
 ``create(model, **kwargs) -> BaseChatModel`` function.  The *provider* string
 maps directly to the module name:
 
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 
 from ..domain.data_location import DataRegion
 from ..domain.model_listing import ModelListing
+from ..domain.providers import ProviderInfo
 from ..exceptions import ProviderNotAvailableError
 from ..interfaces import LLMProviderModule
 
@@ -50,23 +52,20 @@ def list_providers() -> list[str]:
     return sorted(p.stem for p in _providers_dir().glob("*.py") if not p.stem.startswith("_"))
 
 
-def get_provider_info(provider: str) -> dict:
-    """Return the ``PROVIDER_INFO`` metadata dict for *provider*, or ``{}``.
+def get_provider_info(provider: str) -> ProviderInfo | None:
+    """Return the :class:`ProviderInfo` *provider*'s module declares, or ``None``.
 
-    The module is imported lazily; heavy LangChain dependencies inside each
-    provider's ``create()`` function are **not** triggered here.
+    The module is imported lazily; the heavy LangChain dependency inside each
+    provider's ``create()`` function is **not** triggered here.
     """
-    try:
-        mod = importlib.import_module(f".providers.{provider}", package=__package__)
-        return getattr(mod, "PROVIDER_INFO", {})
-    except ImportError:
-        return {}
+    module = _import_provider_module(provider)
+    return getattr(module, "PROVIDER", None) if module is not None else None
 
 
 def get_provider_data_region(provider: str, **settings: object) -> str:
     """Return where *provider* processes data: ``"eu"``, ``"non_eu"`` or ``"unknown"``.
 
-    A provider module declares the region in ``PROVIDER_INFO["data_region"]``, or as a
+    A provider declares the region in its ``PROVIDER.data_region``, or as a
     ``data_region(**settings)`` function when the answer depends on the settings (a custom
     base URL, a regional endpoint).  The function wins, so a provider that offers several
     regions reports the one the current settings use.
@@ -75,16 +74,15 @@ def get_provider_data_region(provider: str, **settings: object) -> str:
     what a vendor actually declares, so "not declared" must never read as "EU".
     """
     module = _import_provider_module(provider)
-    if module is None:
-        return DataRegion.UNKNOWN.value
-    declared = getattr(module, "data_region", None)
+    info = getattr(module, "PROVIDER", None) if module is not None else None
+    declared: object = getattr(module, "data_region", None)
     if callable(declared):
         try:
             declared = declared(**settings)
         except Exception:  # noqa: BLE001  # a provider helper may raise anything
             return DataRegion.UNKNOWN.value
-    elif declared is None:
-        declared = getattr(module, "PROVIDER_INFO", {}).get("data_region", "")
+    else:
+        declared = info.data_region if info is not None else DataRegion.UNKNOWN
     try:
         return DataRegion(str(declared)).value
     except ValueError:
@@ -114,7 +112,7 @@ def list_provider_models(provider: str, **kwargs: object) -> list[str]:
     """Return available model names for *provider*.
 
     Calls the provider module's ``list_models(**kwargs)`` when it exists,
-    otherwise falls back to the ``models`` list in ``PROVIDER_INFO``.
+    otherwise falls back to the ``models`` list of its ``PROVIDER``.
 
     Args:
         provider: Provider name — must match a module in :mod:`teachers_teammate.infrastructure.providers`.
@@ -128,8 +126,8 @@ def list_provider_models(provider: str, **kwargs: object) -> list[str]:
         fn = getattr(mod, "list_models", None)
         if fn is not None:
             return fn(**kwargs)
-        info = getattr(mod, "PROVIDER_INFO", {})
-        return list(info.get("models", []))
+        info = getattr(mod, "PROVIDER", None)
+        return list(info.models) if info is not None else []
     except Exception as exc:  # noqa: BLE001  # provider list_models() may raise anything; return static fallback list
         _logger.warning("Could not list models for provider '%s': %s", provider, exc)
         return []
@@ -152,29 +150,28 @@ def list_provider_models_checked(provider: str, **kwargs: object) -> ModelListin
         _logger.warning("Could not list models for provider '%s': %s", provider, exc)
         return ModelListing(_builtin_models(provider), "failed", "the model list could not be read")
     models = list_provider_models(provider, **kwargs)
-    can_list = bool(get_provider_info(provider).get("can_list_models"))
-    return ModelListing(models, "live" if can_list else "builtin")
+    info = get_provider_info(provider)
+    return ModelListing(models, "live" if info is not None and info.can_list_models else "builtin")
 
 
 def _builtin_models(provider: str) -> list[str]:
     """Return the models *provider* lists in its metadata (empty when that cannot be read)."""
-    try:
-        return list(get_provider_info(provider).get("models", []))
-    except Exception:  # noqa: BLE001  # a broken provider module must not turn into a second failure
-        return []
+    info = get_provider_info(provider)
+    return list(info.models) if info is not None else []
 
 
 def provider_package(provider: str) -> tuple[str, str] | None:
     """Return ``(importable module, pip name)`` of the package *provider* uses, or ``None``."""
-    package = get_provider_info(provider).get("package")
-    if not isinstance(package, dict):
+    info = get_provider_info(provider)
+    if info is None or info.package is None:
         return None
-    return str(package["module"]), str(package["pip"])
+    return info.package.module, info.package.pip
 
 
 def provider_package_required(provider: str) -> bool:
     """Whether *provider* cannot work without its package (Ollama's connector is optional)."""
-    return not get_provider_info(provider).get("package_optional", False)
+    info = get_provider_info(provider)
+    return info is None or not info.package_optional
 
 
 def check_provider_connection(provider: str, **kwargs: object) -> tuple[bool, str]:
@@ -213,7 +210,7 @@ def build_llm(
         provider:    Provider name — must match a module in :mod:`teachers_teammate.infrastructure.providers`.
         model:       Model name forwarded to the provider.
         base_url:    Base URL for providers that require one (e.g. Ollama).
-                     Ignored for providers whose ``PROVIDER_INFO["needs_base_url"]`` is ``False``.
+                     Ignored for providers whose ``PROVIDER.needs_base_url`` is ``False``.
         temperature: Sampling temperature forwarded to the model constructor (0.0 = deterministic).
 
     Returns:
@@ -223,9 +220,8 @@ def build_llm(
         RuntimeError: On unknown provider or missing dependency.
     """
     module = _load_provider(provider.lower())
-    info = getattr(module, "PROVIDER_INFO", {})
     try:
-        if info.get("needs_base_url", False):
+        if module.PROVIDER.needs_base_url:
             return module.create(model, base_url=base_url, temperature=temperature)
         return module.create(model, temperature=temperature)
     except SystemExit as exc:

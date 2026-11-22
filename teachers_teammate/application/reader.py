@@ -13,7 +13,7 @@ import threading
 import uuid
 
 from ..config import OcrConfig
-from ..domain.data_location import StageLocation, is_ollama_cloud_model
+from ..domain.data_location import PROVIDER_OLLAMA, StageLocation, is_ollama_cloud_model
 from ..domain.local_models import PAGE_MODELS, READER_MODELS
 from ..infrastructure.ocr_processor import SUPPORTED_OCR_ENGINES
 from ..infrastructure.onnx.store import ModelStore
@@ -50,7 +50,7 @@ class ReaderService:
         """Return the Ollama models usable for text recognition (cloud models are left out)."""
         return [
             model
-            for model in self._providers.list_provider_models("ollama", base_url=base_url)
+            for model in self._providers.list_provider_models(PROVIDER_OLLAMA, base_url=base_url)
             if not is_ollama_cloud_model(model)
         ]
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import sys
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -29,32 +29,13 @@ from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from ..texts import dialogs as dlg
 from ..texts import privacy
 from . import _dialogs
-from ._model_fetch import _retire_thread, _start_thread
+from ._background import LatestTask
 
 _INVALID_BG = QColor("#ffd0d0")
 _DETECTING = "Detecting…"
 _AUTO_PRIMARY = "Auto (language-specific)"
 _NO_SECONDARY = "(none — no extra pass)"
 _AUTO_SECONDARY = "Auto (system language)"
-
-
-class _SpacyModelFetchThread(QThread):
-    """Fetches installed spaCy model names off the main thread."""
-
-    models_ready = Signal(list)
-    error = Signal(str)
-
-    def __init__(self, service: AppServices) -> None:
-        super().__init__()
-        self._service = service
-
-    def run(self) -> None:
-        try:
-            self.models_ready.emit(self._service.anonymization.list_installed_spacy_models())
-        except Exception as exc:  # noqa: BLE001
-            # spaCy discovery may raise anything; report via signals and emit an empty list
-            self.error.emit(str(exc))
-            self.models_ready.emit([])
 
 
 class AnonymizerConfigWidget(QWidget):
@@ -100,13 +81,14 @@ class AnonymizerConfigWidget(QWidget):
         self._app_service = app_service
         self._AnonymizerConfig = AnonymizerConfig
         self._valid = True
-        self._spacy_fetch_thread: _SpacyModelFetchThread | None = None
 
         config: AnonymizerConfig = (
             anonymizer_config
             if isinstance(anonymizer_config, AnonymizerConfig)
             else AnonymizerConfig()
         )
+        # Only the newest discovery counts; shutdown() drops the answers still on their way.
+        self._spacy_task = LatestTask(self)
         # Store configured model names so _on_spacy_models_fetched can re-select them
         self._configured_primary = config.primary_model
         self._configured_secondary = config.secondary_model
@@ -542,14 +524,23 @@ class AnonymizerConfigWidget(QWidget):
         QTimer.singleShot(50, self._run_preview)
 
     def _start_spacy_fetch(self) -> None:
-        """Ask for the installed spaCy models off the GUI thread (a running ask is retired)."""
-        _retire_thread(self._spacy_fetch_thread)
-        # No parent: a retired thread must outlive this widget until it ends on its own.
-        thread = _SpacyModelFetchThread(self._app_service)
-        thread.models_ready.connect(self._on_spacy_models_fetched)
-        thread.error.connect(self._on_spacy_fetch_error)
-        self._spacy_fetch_thread = thread
-        _start_thread(thread)
+        """Ask for the installed spaCy models off the GUI thread.
+
+        An answer that arrives after the widget was closed is dropped with it.
+        """
+
+        def fetched() -> list[str]:
+            return self._app_service.anonymization.list_installed_spacy_models()
+
+        def arrived(models: object, error: BaseException | None) -> None:
+            if error is not None:
+                self._on_spacy_fetch_error(str(error))
+                self._on_spacy_models_fetched([])
+                return
+            assert isinstance(models, list)
+            self._on_spacy_models_fetched(models)
+
+        self._spacy_task.submit(fetched, arrived)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -599,8 +590,8 @@ class AnonymizerConfigWidget(QWidget):
         return self._detection_layout
 
     def shutdown(self) -> None:
-        """Detach a running spaCy discovery before the widget is destroyed."""
-        _retire_thread(self._spacy_fetch_thread)
+        """Stop showing spaCy models; the answer of a running discovery is dropped."""
+        self._spacy_task.cancel()
 
     # ── Public properties ──────────────────────────────────────────────────────
 

@@ -1,20 +1,17 @@
-"""Background update check against GitHub Releases."""
+"""Update check against GitHub Releases, run on the background pool."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import re
-from typing import Any
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QObject
 
 import teachers_teammate as _pkg
 
-_RELEASES_API = "https://api.github.com/repos/JoHoenk/teachers-teammate/releases/latest"
+from ._background import run_in_background
 
-# Threads that have been started but not yet finished. Holding a reference here keeps a
-# running QThread from being destroyed (which makes Qt abort the process) when the window
-# that launched it is closed before the network request returns.
-_RUNNING: set[UpdateCheckThread] = set()
+_RELEASES_API = "https://api.github.com/repos/JoHoenk/teachers-teammate/releases/latest"
 
 # A release version, either as the app writes it (0.5.7rc1, PEP 440) or as a tag reads
 # (v0.5.7-rc.1): the pre-release label sits right after the release part or behind a dash.
@@ -46,41 +43,42 @@ def _version_tuple(tag: str) -> tuple[int, ...]:
     return (*release, -1 if is_prerelease else 0)
 
 
-class UpdateCheckThread(QThread):
-    """Check GitHub Releases in the background and emit *update_available* if newer."""
+def fetch_newer_release() -> tuple[str, str] | None:
+    """Return the release ``(version, url)`` that is newer than this one, or ``None``.
 
-    update_available = Signal(str, str)  # (version_tag, html_url)
+    Best effort: no answer, no network and an unreadable answer all give ``None``.  An
+    installed version that cannot be read gives no banner either: better silent than offering
+    the same release on every launch.
+    """
+    try:
+        import json  # noqa: PLC0415
+        import urllib.request  # noqa: PLC0415
 
-    def start(self, *args: Any) -> None:
-        """Start the thread and keep it alive until it has finished."""
-        _RUNNING.add(self)
-        self.finished.connect(self._release)
-        super().start(*args)
+        req = urllib.request.Request(
+            _RELEASES_API,
+            headers={"Accept": "application/vnd.github+json"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
 
-    def _release(self) -> None:
-        self.wait()
-        _RUNNING.discard(self)
-        self.deleteLater()
+        tag = data.get("tag_name", "")
+        url = data.get("html_url", "")
+        latest = _version_tuple(tag)
+        installed = _version_tuple(_pkg.__version__)
+        if tag and url and latest and installed and latest > installed:
+            return tag.lstrip("v"), url
+    except Exception:  # noqa: BLE001  # update check is best-effort; network/parse errors are silently ignored
+        pass
+    return None
 
-    def run(self) -> None:
-        try:
-            import json  # noqa: PLC0415
-            import urllib.request  # noqa: PLC0415
 
-            req = urllib.request.Request(
-                _RELEASES_API,
-                headers={"Accept": "application/vnd.github+json"},
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read())
+def check_for_update(
+    on_available: Callable[[str, str], None], *, owner: QObject | None = None
+) -> None:
+    """Ask GitHub Releases off the GUI thread; *on_available* gets a newer ``(version, url)``."""
 
-            tag = data.get("tag_name", "")
-            url = data.get("html_url", "")
-            latest = _version_tuple(tag)
-            installed = _version_tuple(_pkg.__version__)
-            # An installed version that cannot be read gives no banner: better silent than
-            # offering the same release on every launch.
-            if tag and url and latest and installed and latest > installed:
-                self.update_available.emit(tag.lstrip("v"), url)
-        except Exception:  # noqa: BLE001  # update check is best-effort; network/parse errors are silently ignored
-            pass
+    def deliver(result: object, error: BaseException | None) -> None:
+        if error is None and isinstance(result, tuple) and len(result) == 2:
+            on_available(result[0], result[1])
+
+    run_in_background(fetch_newer_release, deliver, owner=owner)

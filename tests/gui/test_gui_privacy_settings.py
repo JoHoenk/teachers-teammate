@@ -195,7 +195,7 @@ def _make_page(
     display_anonymized: bool = False,
     privacy_available: bool = True,
 ) -> PrivacyPage:
-    """Build the page with spaCy model fetching suppressed (as the anonymizer tests do)."""
+    """Build the page with no spaCy model discovery (as the anonymizer tests do)."""
     service = MagicMock()
     service.list_installed_spacy_models.return_value = []  # no spaCy discovery in this test
     context = settings_context(
@@ -206,10 +206,6 @@ def _make_page(
         privacy_available=privacy_available,
     )
     page = PrivacyPage(context)
-    thread = page.rules()._spacy_fetch_thread
-    assert thread is not None
-    thread.quit()
-    thread.wait(500)
     qtbot.addWidget(page)
     if focus:
         page.focus(focus)

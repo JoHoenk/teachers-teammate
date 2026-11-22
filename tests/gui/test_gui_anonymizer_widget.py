@@ -8,26 +8,31 @@ import pytest
 
 from teachers_teammate.domain.anonymization import AnonymizerConfig, DEFAULT_PATTERNS
 from teachers_teammate.settings_schema import SECONDARY_MODEL_AUTO
-from teachers_teammate.gui import _dialogs
+from teachers_teammate.gui import _anonymizer_config_widget, _dialogs
 from teachers_teammate.gui._anonymizer_config_widget import AnonymizerConfigWidget
 from teachers_teammate.texts import privacy
 from teachers_teammate.texts._types import Notice
 
+from ._settings_stubs import InertLatestTask
+
+
+@pytest.fixture(autouse=True)
+def _no_spacy_discovery(monkeypatch) -> None:
+    """The rules widget discovers spaCy models in the background; these tests answer instead."""
+    monkeypatch.setattr(_anonymizer_config_widget, "LatestTask", InertLatestTask)
+
 
 def _make_dialog(qtbot, config=None, app_service=None, sample_text=""):
-    """Create an AnonymizerConfigWidget with spaCy model fetching suppressed.
+    """Create an AnonymizerConfigWidget whose spaCy model discovery never reports.
 
-    The service it is given reports no installed model, and the background thread is quit at
-    once, so tests are deterministic.
+    The service it is given reports no installed model, and the answer is handed in by the
+    test, so they are deterministic.
     """
     svc = app_service or MagicMock()
     svc.anonymization = svc
     svc.list_installed_spacy_models.return_value = []
     cfg = config if config is not None else AnonymizerConfig()
     dlg = AnonymizerConfigWidget("English", cfg, svc, sample_text=sample_text)
-    # Stop the thread to avoid teardown races
-    dlg._spacy_fetch_thread.quit()
-    dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
     return dlg
 
@@ -164,8 +169,6 @@ def test_dialog_secondary_model_combo_selects_installed_model(qtbot) -> None:
     svc.anonymization = svc
     svc.list_installed_spacy_models.return_value = installed
     dlg = AnonymizerConfigWidget("English", cfg, svc)
-    dlg._spacy_fetch_thread.quit()
-    dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
     # Simulate async fetch completion
     dlg._on_spacy_models_fetched(installed)
@@ -186,8 +189,6 @@ def test_dialog_secondary_model_falls_back_to_none_when_not_installed(qtbot) -> 
     svc.anonymization = svc
     svc.list_installed_spacy_models.return_value = []
     dlg = AnonymizerConfigWidget("English", cfg, svc)
-    dlg._spacy_fetch_thread.quit()
-    dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
     dlg._on_spacy_models_fetched([])
 
@@ -315,8 +316,6 @@ def test_dialog_anonymizer_config_property(qtbot) -> None:
     svc.anonymization = svc
     svc.list_installed_spacy_models.return_value = installed
     dlg = AnonymizerConfigWidget("English", cfg, svc)
-    dlg._spacy_fetch_thread.quit()
-    dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
     dlg._on_spacy_models_fetched(installed)
 
@@ -390,8 +389,6 @@ def test_dialog_combos_disabled_while_loading(qtbot) -> None:
     cfg = AnonymizerConfig()
     # Do NOT call _on_spacy_models_fetched — simulate thread still running
     dlg = AnonymizerConfigWidget("English", cfg, svc)
-    dlg._spacy_fetch_thread.quit()
-    dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
 
     assert not dlg._primary_model.isEnabled()
@@ -640,8 +637,6 @@ def test_dialog_on_model_downloaded_refreshes_combos(qtbot) -> None:
     dlg._app_service.anonymization.list_installed_spacy_models.return_value = ["xx_ent_wiki_sm"]
 
     dlg._on_model_downloaded("xx_ent_wiki_sm")
-    dlg._spacy_fetch_thread.quit()
-    dlg._spacy_fetch_thread.wait(500)
     # Simulate the async fetch completing
     dlg._on_spacy_models_fetched(["xx_ent_wiki_sm"])
 
@@ -730,26 +725,39 @@ def test_validity_changed_is_emitted_only_when_validity_flips(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_shutdown_parks_a_running_model_discovery(qtbot) -> None:
+def test_shutdown_drops_a_running_model_discovery(qtbot, monkeypatch) -> None:
     """
     Given  a rules widget whose spaCy model discovery is still running
-    When   shutdown() is called
-    Then   the thread is not waited for and its late answer no longer reaches the widget
+    When   shutdown() is called and the discovery answers afterwards
+    Then   shutdown does not wait for it, and its late answer no longer reaches the widget
     """
     import threading  # noqa: PLC0415
 
+    from teachers_teammate.gui._background import (  # noqa: PLC0415
+        LatestTask,
+        wait_for_background_tasks,
+    )
+
+    monkeypatch.setattr(_anonymizer_config_widget, "LatestTask", LatestTask)
+    started = threading.Event()
     release = threading.Event()
     svc = MagicMock()
     svc.anonymization = svc
-    svc.list_installed_spacy_models.side_effect = lambda: release.wait(10) and []
+
+    def installed() -> list[str]:
+        started.set()
+        release.wait(10)
+        return ["xx_ent_wiki_sm"]
+
+    svc.list_installed_spacy_models.side_effect = installed
     dlg = AnonymizerConfigWidget("English", AnonymizerConfig(), svc)
     qtbot.addWidget(dlg)
-    thread = dlg._spacy_fetch_thread
-    assert thread is not None and thread.isRunning()
+    assert started.wait(5), "the spaCy models were never asked for"
 
     dlg.shutdown()
     release.set()
-    qtbot.waitUntil(thread.isFinished, timeout=5000)
+    assert wait_for_background_tasks(5000)
+    qtbot.wait(50)  # let a (dropped) late answer arrive, if it were
 
     assert not dlg._primary_model.isEnabled()  # the late answer was not applied
 

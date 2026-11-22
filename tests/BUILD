@@ -2422,6 +2422,7 @@ py_test(
     name = "test_gui_anonymizer_widget",
     size = "medium",
     srcs = _COMMON_SRCS + [
+        "gui/_settings_stubs.py",
         "gui/test_gui_anonymizer_widget.py",
     ],
     args = ["gui/test_gui_anonymizer_widget.py"],

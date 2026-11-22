@@ -15,7 +15,8 @@ import pytest
 from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.config import DEFAULTS, OcrConfig
 from teachers_teammate.gui import _dialogs
-from teachers_teammate.gui import _model_fetch
+from teachers_teammate.gui import _anonymizer_config_widget, _model_fetch
+from teachers_teammate.gui._background import wait_for_background_tasks
 from teachers_teammate.gui.settings import (
     PAGE_TITLES,
     SettingsPage,
@@ -36,7 +37,12 @@ from teachers_teammate.gui.settings._page import (
 from teachers_teammate.texts._types import Answer, Choice, Notice, Question
 
 from ._gui_harness import settings_context
-from ._settings_stubs import AddonsCapableService, FakeKeyring, ProviderAddonsService
+from ._settings_stubs import (
+    AddonsCapableService,
+    FakeKeyring,
+    InertLatestTask,
+    ProviderAddonsService,
+)
 
 _PRIVACY_TAB_INDEX = {FOCUS_SENDING: 0, FOCUS_DETECTION: 1, FOCUS_PATTERNS: 2}
 
@@ -107,14 +113,10 @@ def scripted_box(monkeypatch) -> type[_ScriptedAnswers]:
 
 @pytest.fixture(autouse=True)
 def _hermetic_window(monkeypatch) -> None:
-    """Keep the window offline: in-memory QSettings, no spaCy discovery thread."""
-    from teachers_teammate.gui._anonymizer_config_widget import (  # noqa: PLC0415
-        _SpacyModelFetchThread,
-    )
-
+    """Keep the window offline: in-memory QSettings, no spaCy model discovery."""
     _MemoryQSettings.store = {}
     monkeypatch.setattr(window_module, "QSettings", _MemoryQSettings)
-    monkeypatch.setattr(_SpacyModelFetchThread, "start", lambda self: None)
+    monkeypatch.setattr(_anonymizer_config_widget, "LatestTask", InertLatestTask)
 
 
 def _window(
@@ -236,7 +238,7 @@ def test_only_the_opened_page_is_built(qtbot, monkeypatch) -> None:
            no AI-model key (an unvisited page changes nothing)
     """
     started: list[int] = []
-    monkeypatch.setattr(_model_fetch._ModelFetchThread, "start", lambda self: started.append(1))
+    monkeypatch.setattr(_model_fetch.ModelFetcher, "start", lambda self, *a, **k: started.append(1))
 
     window = _window(qtbot, SettingsPage.PRIVACY)
 
@@ -256,7 +258,7 @@ def test_a_page_is_built_the_first_time_it_is_shown(qtbot, monkeypatch) -> None:
     Then   that page is built then (its model lists are asked for), and the window shows it
     """
     started: list[int] = []
-    monkeypatch.setattr(_model_fetch._ModelFetchThread, "start", lambda self: started.append(1))
+    monkeypatch.setattr(_model_fetch.ModelFetcher, "start", lambda self, *a, **k: started.append(1))
     window = _window(qtbot, SettingsPage.PRIVACY)
     assert started == []
 
@@ -1044,7 +1046,7 @@ def test_enter_in_a_field_on_add_ons_does_not_close_the_window(qtbot, monkeypatc
     from PySide6.QtTest import QTest  # noqa: PLC0415
     from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
 
-    monkeypatch.setattr(_model_fetch._ModelFetchThread, "start", lambda self: None)
+    monkeypatch.setattr(_model_fetch.ModelFetcher, "start", lambda self, *a, **k: None)
     window = _window(qtbot, SettingsPage.ADDONS)
     window.show()
     qtbot.waitExposed(window)
@@ -1066,7 +1068,7 @@ def test_ok_is_the_default_button_again_after_leaving_add_ons(qtbot, monkeypatch
     """
     from PySide6.QtWidgets import QDialogButtonBox  # noqa: PLC0415
 
-    monkeypatch.setattr(_model_fetch._ModelFetchThread, "start", lambda self: None)
+    monkeypatch.setattr(_model_fetch.ModelFetcher, "start", lambda self, *a, **k: None)
     window = _window(qtbot, SettingsPage.ADDONS)
     window.show()
     qtbot.waitExposed(window)
@@ -1085,7 +1087,7 @@ def test_a_finished_install_does_not_reset_the_image_preparation(qtbot, monkeypa
            did not change)
     Then   the image preparation is still "none", not the method's default
     """
-    monkeypatch.setattr(_model_fetch._ModelFetchThread, "start", lambda self: None)
+    monkeypatch.setattr(_model_fetch.ModelFetcher, "start", lambda self, *a, **k: None)
     window = _window(
         qtbot,
         SettingsPage.SCAN_QUALITY,
@@ -1108,7 +1110,7 @@ def test_a_finished_install_leaves_an_unbuilt_scan_page_alone(qtbot, monkeypatch
     When   an install finishes and every built page looks again
     Then   no image preparation is carried into the result (an unvisited page changes nothing)
     """
-    monkeypatch.setattr(_model_fetch._ModelFetchThread, "start", lambda self: None)
+    monkeypatch.setattr(_model_fetch.ModelFetcher, "start", lambda self, *a, **k: None)
     window = _window(
         qtbot,
         SettingsPage.AI_MODELS,
@@ -1220,17 +1222,18 @@ def test_closing_shuts_down_every_built_page(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_closing_parks_a_running_model_fetch(qtbot) -> None:
+def test_closing_does_not_wait_for_a_running_model_fetch(qtbot) -> None:
     """
     Given  an AI models page whose model list is still being fetched
-    When   the window is closed
-    Then   closing does not wait for the thread; it is parked so it is never destroyed while
-           running
+    When   the window is closed and the list arrives afterwards
+    Then   closing did not wait for it, and the late list no longer reaches the page
     """
     release = threading.Event()
+    started = threading.Event()
 
     class _Slow(AddonsCapableService):
         def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
+            started.set()
             release.wait(10)
             return [f"{provider}-model"]
 
@@ -1240,14 +1243,15 @@ def test_closing_parks_a_running_model_fetch(qtbot) -> None:
         service=_Slow(),
         settings={"correction_provider": "ollama"},
     )
-    thread = window.page(SettingsPage.AI_MODELS)._shared._fetch_thread
-    assert thread is not None and thread.isRunning()
+    section = window.page(SettingsPage.AI_MODELS)._shared
+    assert started.wait(5), "the model list was never asked for"
 
     window.reject()
-
-    assert thread in _model_fetch._RETIRED_THREADS
     release.set()
-    qtbot.waitUntil(thread.isFinished, timeout=5000)
+    assert wait_for_background_tasks(5000)
+    qtbot.wait(50)  # let a (dropped) late answer arrive, if it were
+
+    assert section._guidance._models == []
 
 
 # ── remembered window state ────────────────────────────────────────────────────

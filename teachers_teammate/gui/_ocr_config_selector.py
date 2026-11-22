@@ -56,11 +56,9 @@ from ._hardware_profile_selector import HardwareProfileSelector
 from ._model_fetch import (
     _STATUS_ERROR,
     _STATUS_LOADING,
+    ModelFetcher,
     _BusyIndicator,
-    _ModelFetchThread,
-    _retire_thread,
     _set_combo,
-    _start_thread,
     _status_busy,
     _status_ok,
 )
@@ -103,7 +101,7 @@ class OcrModelPicker(QWidget):
         super().__init__(parent)
         self._app_service = app_service
         self._ollama_url = ollama_url
-        self._fetch_thread: _ModelFetchThread | None = None
+        self._fetcher = ModelFetcher(self)
         self._shared_selector = profile_selector
 
         form = QFormLayout(self)
@@ -252,15 +250,12 @@ class OcrModelPicker(QWidget):
         self._auto_fetch()
 
     def stop_threads(self) -> None:
-        """Detach any in-flight model-fetch thread (call before closing).
+        """Stop showing model lists (call before closing).
 
-        The fetch thread runs a plain function with no event loop, so it cannot be
-        interrupted and must not be destroyed while running (that aborts the
-        process).  It is parked until it ends on its own, without blocking the
-        GUI thread.  Hardware detection needs no handling: it runs on the shared
-        background pool.
+        A fetch still running cannot be interrupted, so it ends on its own; its answer is
+        dropped, and the picker is filled from the server again when it is shown anew.
         """
-        _retire_thread(self._fetch_thread)
+        self._fetcher.cancel()
 
     # ── internal ────────────────────────────────────────────────────────────
 
@@ -305,7 +300,7 @@ class OcrModelPicker(QWidget):
     def _auto_fetch(self) -> None:
         engine = self.engine()
         # A fetch still running belongs to an engine that may no longer be the chosen one.
-        _retire_thread(self._fetch_thread)
+        self._fetcher.cancel()
         if engine == ENGINE_OLLAMA:
             # Always fetch in the thread (a cache hit there is instant): the
             # classification of custom models must not run on the GUI thread.
@@ -320,10 +315,11 @@ class OcrModelPicker(QWidget):
                 self._app_service.recommendations.classify_ollama_models(tags, url)
                 return tags
 
-            self._fetch_thread = _ModelFetchThread(fetch)
-            self._fetch_thread.models_ready.connect(self._on_models_fetched)
-            self._fetch_thread.progress.connect(self._on_fetch_progress)
-            _start_thread(self._fetch_thread)
+            self._fetcher.start(
+                fetch,
+                lambda _tag, listing: self._on_models_fetched(listing.models),
+                self._on_fetch_progress,
+            )
         else:
             self._set_busy(False)
             self._status_lbl.setText("")
@@ -681,5 +677,5 @@ class OcrConfigSelector(QWidget):
         self._picker.reload_models()
 
     def stop_threads(self) -> None:
-        """Detach any in-flight model-fetch thread (call before closing)."""
+        """Stop showing model lists (call before closing)."""
         self._picker.stop_threads()

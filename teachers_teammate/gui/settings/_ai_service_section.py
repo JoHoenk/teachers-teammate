@@ -42,11 +42,9 @@ from .._model_fetch import (
     _STATUS_KEY_MISSING,
     _STATUS_LOADING,
     _USE_PREFIX,
+    ModelFetcher,
     _BusyIndicator,
     _listing_status,
-    _ModelFetchThread,
-    _retire_thread,
-    _start_thread,
     _status_busy,
     _status_note,
 )
@@ -208,7 +206,7 @@ class AiServiceSection(QWidget):
         self._install_button_tooltip = install_button_tooltip
         self._loaded = False
         self._app_service = app_service
-        self._fetch_thread: _ModelFetchThread | None = None
+        self._fetcher = ModelFetcher(self)
         #: The model the teacher saved for this step, and the provider it was saved for, so a
         #: list that no longer offers it can say so instead of silently dropping it — and a
         #: later list of another provider cannot mistake a name carried over for it.
@@ -403,13 +401,13 @@ class AiServiceSection(QWidget):
             self._refetch_models()
 
     def shutdown(self) -> None:
-        """Detach a running model fetch (it cannot be interrupted, so it is parked).
+        """Stop showing model lists; an answer still on its way is dropped.
 
         The section counts as not loaded afterwards: it asks nothing until it is loaded again.
         """
         self._loaded = False
         self._key_row.stop()
-        _retire_thread(self._fetch_thread)
+        self._fetcher.cancel()
 
     # ── provider change ───────────────────────────────────────────────────────
 
@@ -589,7 +587,7 @@ class AiServiceSection(QWidget):
 
     def _auto_fetch(self) -> None:
         # A fetch still running belongs to a service that may no longer be the chosen one.
-        _retire_thread(self._fetch_thread)
+        self._fetcher.cancel()
         provider = self.provider()
         service = self._service_name(provider)
         if self._app_service.providers.provider_key_missing(provider):
@@ -626,10 +624,7 @@ class AiServiceSection(QWidget):
                     provider, base_url=url
                 )
 
-        self._fetch_thread = _ModelFetchThread(fetch, tag=provider)
-        self._fetch_thread.listing_ready.connect(self._on_listing_ready)
-        self._fetch_thread.progress.connect(self._on_fetch_progress)
-        _start_thread(self._fetch_thread)
+        self._fetcher.start(fetch, self._on_listing_ready, self._on_fetch_progress, tag=provider)
 
     def _on_fetch_progress(self, provider: str, text: str) -> None:
         """Say what the running fetch is doing, unless the user has left that service."""

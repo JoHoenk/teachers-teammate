@@ -8,6 +8,8 @@ a result for an owner that has been closed in the meantime is dropped silently.
 
 * :func:`run_in_background` — fire-and-forget; ``on_done(result, error)`` runs on
   the GUI thread.
+* :func:`run_streaming` — the same for a task that reports as it goes; every item
+  reaches ``on_item`` on the GUI thread, then ``on_done(result, error)``.
 * :class:`LatestTask` — "latest wins": starting a new task makes the results of
   all earlier ones stale, so a slow, outdated answer can never overwrite a newer
   one.
@@ -30,7 +32,7 @@ _DEFAULT_WAIT_MS = 3000
 
 # Deliveries stay referenced until their result arrived on the GUI thread; an
 # unreferenced QObject would be destroyed together with its pending signal.
-_active: set[_Delivery] = set()
+_active: set[QObject] = set()
 
 
 @functools.cache
@@ -94,6 +96,56 @@ class _Task(QRunnable):
         self._delivery.arrived.emit(result, error)
 
 
+class _Stream(QObject):
+    """Carries a streaming task's items, and then its end, to the GUI thread."""
+
+    item = Signal(object)
+    ended = Signal(object, object)  # result, error
+
+    def __init__(
+        self,
+        on_item: Callable[[object], None],
+        on_done: Callable[[object, BaseException | None], None],
+        owner: QObject | None,
+    ) -> None:
+        super().__init__()  # no parent: lives until the task ended
+        self._on_item = on_item
+        self._on_done = on_done
+        self._owner = owner
+        self.item.connect(self._deliver_item)
+        self.ended.connect(self._deliver_end)
+
+    @Slot(object)
+    def _deliver_item(self, payload: object) -> None:
+        if _owner_alive(self._owner):
+            self._on_item(payload)
+
+    @Slot(object, object)
+    def _deliver_end(self, result: object, error: object) -> None:
+        _active.discard(self)
+        if not _owner_alive(self._owner):
+            return
+        self._on_done(result, error if isinstance(error, BaseException) else None)
+
+
+class _StreamTask(QRunnable):
+    """Runs one callable that reports items while it works."""
+
+    def __init__(self, fn: Callable[[Callable[[object], None]], object], stream: _Stream) -> None:
+        super().__init__()
+        self._fn = fn
+        self._stream = stream
+
+    def run(self) -> None:
+        result: object = None
+        error: BaseException | None = None
+        try:
+            result = self._fn(self._stream.item.emit)
+        except Exception as exc:  # noqa: BLE001  # any failure is reported to on_done, never raised in the pool
+            error = exc
+        self._stream.ended.emit(result, error)
+
+
 def run_in_background(
     fn: Callable[[], object],
     on_done: Callable[[object, BaseException | None], None],
@@ -111,6 +163,30 @@ def run_in_background(
     delivery = _Delivery(on_done, owner)
     _active.add(delivery)
     _get_pool().start(_Task(fn, delivery))
+
+
+def run_streaming(
+    fn: Callable[[Callable[[object], None]], object],
+    on_item: Callable[[object], None],
+    on_done: Callable[[object, BaseException | None], None],
+    *,
+    owner: QObject | None = None,
+) -> None:
+    """Run *fn* in a pool thread, handing every item it reports to the GUI thread.
+
+    *fn* is given an ``emit(item)`` callable; each call reaches *on_item* on the GUI
+    thread in the order it was made, and ``on_done(result, error)`` comes last.
+
+    Args:
+        fn: Callable taking ``emit``; must not touch widgets.
+        on_item: Receives each item, in order, before *on_done*.
+        on_done: Receives ``(result, None)`` or ``(None, exception)``.
+        owner: Optional widget the results belong to.  When it has been destroyed
+            by the time an item or the end arrives, nothing is called.
+    """
+    stream = _Stream(on_item, on_done, owner)
+    _active.add(stream)
+    _get_pool().start(_StreamTask(fn, stream))
 
 
 class LatestTask:
@@ -138,6 +214,27 @@ class LatestTask:
                 on_done(result, error)
 
         run_in_background(fn, deliver, owner=self._owner)
+        return ticket
+
+    def submit_streaming(
+        self,
+        fn: Callable[[Callable[[object], None]], object],
+        on_item: Callable[[object], None],
+        on_done: Callable[[object, BaseException | None], None],
+    ) -> int:
+        """Start a reporting *fn*; items of earlier submissions are dropped as well."""
+        self._sequence += 1
+        ticket = self._sequence
+
+        def deliver_item(payload: object) -> None:
+            if ticket == self._sequence:
+                on_item(payload)
+
+        def deliver(result: object, error: BaseException | None) -> None:
+            if ticket == self._sequence:
+                on_done(result, error)
+
+        run_streaming(fn, deliver_item, deliver, owner=self._owner)
         return ticket
 
     def cancel(self) -> None:

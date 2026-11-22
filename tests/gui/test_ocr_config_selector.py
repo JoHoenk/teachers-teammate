@@ -225,9 +225,7 @@ def _ollama_selector(
     widget.refresh()  # starts the (always threaded) Ollama model fetch
     installed = models if models is not None else _INSTALLED
     qtbot.waitUntil(lambda: widget._picker._guidance._models == list(installed), timeout=5000)
-    thread = widget._picker._fetch_thread
-    assert thread is not None
-    thread.wait(5000)
+    qtbot.waitUntil(lambda: widget._picker._busy.isHidden(), timeout=5000)
     return widget
 
 
@@ -364,9 +362,6 @@ def test_ollama_cloud_models_are_not_offered_for_reading_pages(qtbot) -> None:
         pass
     selector.refresh()
     qtbot.waitUntil(lambda: selector._picker._guidance._models == ["qwen3-vl:8b"], timeout=5000)
-    thread = selector._picker._fetch_thread
-    assert thread is not None
-    thread.wait(5000)
 
     combo = selector._picker._ocr_model
     assert [combo.itemText(i) for i in range(combo.count())] == ["qwen3-vl:8b"]
@@ -470,25 +465,21 @@ def test_selector_warns_when_a_cloud_model_is_typed_in(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_switching_the_engine_retires_a_running_model_fetch(qtbot, monkeypatch) -> None:
+def test_switching_the_engine_drops_a_running_model_fetch(qtbot, monkeypatch) -> None:
     """
     Given  a selector whose Ollama model fetch is still running
     When   the engine is switched to the built-in reader
-    Then   the running fetch is retired, so its late answer cannot reach the widgets
+    Then   the running fetch is cancelled, so its late answer cannot reach the widgets
     """
-    from teachers_teammate.gui import _ocr_config_selector  # noqa: PLC0415
-
     widget = OcrConfigSelector(app_service=services_of(_DummyAppService()))
     qtbot.addWidget(widget)
     widget._picker.set_engine("ollama")
-    retired: list[object] = []
-    monkeypatch.setattr(_ocr_config_selector, "_retire_thread", retired.append)
-    running = object()
-    monkeypatch.setattr(widget._picker, "_fetch_thread", running)
+    cancelled: list[bool] = []
+    monkeypatch.setattr(widget._picker._fetcher, "cancel", lambda: cancelled.append(True))
 
     widget._picker.set_engine("ppocr")
 
-    assert running in retired
+    assert cancelled == [True]
 
 
 @pytest.mark.gui

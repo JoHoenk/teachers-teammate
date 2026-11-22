@@ -82,12 +82,8 @@ class _DummyWorker:
         return True
 
 
-class _DummyUpdateThread:
-    def __init__(self, _parent=None) -> None:
-        self.update_available = _DummySignal()
-
-    def start(self) -> None:
-        pass
+def _no_update_check(_on_available, *, owner=None) -> None:
+    """Never ask GitHub for a newer release."""
 
 
 class _MemorySettings:
@@ -149,7 +145,7 @@ def _no_network(monkeypatch) -> None:
     )
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
-    monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
+    monkeypatch.setattr(main_window_module, "check_for_update", _no_update_check)
 
 
 @pytest.fixture

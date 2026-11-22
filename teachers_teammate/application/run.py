@@ -151,8 +151,8 @@ class RunPreflight:
         """The first blocker as ``(stage, issue)``, or ``None`` when nothing blocks the run.
 
         The stage is :attr:`~teachers_teammate.domain.stages.Stage.OCR` for a refused recognition
-        and ``""`` for a server or a model that does not belong to one stage.  One shape for every blocker, so the GUI shows and
-        fixes them all the same way.
+        and ``""`` for a server or a model that does not belong to one stage.  One shape for
+        every blocker, so the GUI shows and fixes them all the same way.
         """
         if self.nothing_to_read:
             return Stage.OCR, RequirementIssue(

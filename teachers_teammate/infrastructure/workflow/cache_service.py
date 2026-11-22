@@ -155,7 +155,7 @@ def sent_record(config: Config, stage: Stage, *, names_hidden: int = 0) -> SentR
     Ollama host.  A provider whose region depends on a setting (a custom base URL, a regional
     endpoint) adds that setting here; none does today, so an online provider has no endpoint.
     """
-    if stage is Stage.EVALUATION:
+    if stage == Stage.EVALUATION:
         provider, model = config.evaluate_provider, config.effective_evaluate_model
     else:
         provider, model = config.correction_provider, config.effective_correction_model

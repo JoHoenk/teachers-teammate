@@ -175,8 +175,7 @@ def fix_for(
 
     Args:
         stage: The step the issue belongs to (a :class:`~teachers_teammate.domain.stages.Stage`);
-            it decides
-            which key row ``Enter key…`` opens.
+            it decides which key row ``Enter key…`` opens.
         issue: What is missing.
         display_name: Turns a provider id into the name the teacher knows.
         language: The document language, to name the language of a missing name detection.

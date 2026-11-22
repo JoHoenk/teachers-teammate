@@ -33,7 +33,11 @@ _HINTS: dict[Stage, str] = {
 
 
 def with_notation_hint(system: str, text_format: TextFormat, *, task: Stage) -> str:
-    """Return *system* with the notation hint for *task* appended when *text_format* is Markdown."""
-    if text_format != "markdown":
+    """Return *system* with the notation hint for *task* appended when *text_format* is Markdown.
+
+    A stage that writes no text (recognition) gets none.
+    """
+    hint = _HINTS.get(task)
+    if text_format != "markdown" or hint is None:
         return system
-    return f"{system}\n\n{_HINTS[task]}"
+    return f"{system}\n\n{hint}"

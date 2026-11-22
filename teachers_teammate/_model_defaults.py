@@ -41,5 +41,6 @@ _DEFAULT_MODELS: dict[Stage, dict[str, str]] = {
 
 def default_model_for_task(provider: str, task: Stage | str) -> str:
     """Return the default model name for *provider* and pipeline *task*."""
-    task_defaults = _DEFAULT_MODELS.get(Stage(task), _DEFAULT_MODELS[Stage.CORRECTION])
+    stage = Stage._value2member_map_.get(task)
+    task_defaults = _DEFAULT_MODELS.get(stage, _DEFAULT_MODELS[Stage.CORRECTION])
     return task_defaults.get(provider, "gpt-4o-mini")

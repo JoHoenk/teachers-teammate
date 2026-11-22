@@ -31,7 +31,16 @@ from ..domain.model_catalog import (
     suitability_rank,
 )
 from ..domain.performance_estimate import TimeRange
-from . import _user_text as txt
+from ..texts import review as txt
+from ..texts.models import (
+    HINT_NOT_DOWNLOADED,
+    HINT_NOT_DOWNLOADED_WITH_LINK,
+    compact_suitability_text,
+    is_warning,
+    memory_text,
+    model_hint,
+    suitability_text,
+)
 from ._hardware_profile_selector import HardwareProfileSelector
 from ._model_item_delegate import (
     ITEM_LABEL_COLOR_ROLE,
@@ -40,15 +49,6 @@ from ._model_item_delegate import (
     fill_grouped,
     install,
     widen,
-)
-from ._model_wording import (
-    HINT_NOT_DOWNLOADED,
-    HINT_NOT_DOWNLOADED_WITH_LINK,
-    compact_suitability_text,
-    is_warning,
-    memory_text,
-    model_hint,
-    suitability_text,
 )
 
 #: Shows Settings → Add-ons with the given model tags (or ``provider:<name>`` entries)

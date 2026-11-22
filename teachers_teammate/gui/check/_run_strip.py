@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...texts import check as check_text
-from .. import _user_text as txt
+from ...texts import review as txt
 
 #: The accent of the primary button: the same green as *Run* in the Documents tab.
 PRIMARY_STYLE = (

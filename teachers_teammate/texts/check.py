@@ -1,7 +1,7 @@
 """What the Check tab says around its text.
 
 The tab's own wording — the switch, the banners, the card and its buttons — lives in
-``gui/_user_text.py`` next to the rest of the window's labels.  What is here is the wording the
+``texts/review.py`` next to the rest of the window's labels.  What is here is the wording the
 tab's widgets hand to a sink themselves: the tooltips of the two editable views, the ⋯ button,
 the source dialog's button, the side panel's tabs and its filter row.
 """

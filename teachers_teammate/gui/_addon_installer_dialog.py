@@ -27,8 +27,8 @@ from ..domain.local_models import (
     READER_SIZE_LABEL,
 )
 from ..exceptions import ModelDownloadCancelledError
+from ..texts import addons as txt
 from ..texts.settings import WHERE_ADDONS
-from . import _user_text as txt
 from ._constants import _SPACY_MODEL_CHOICES
 from ._long_job import ABORTED, LongJobThread
 

@@ -50,7 +50,7 @@ from ...application.speed_estimates import (
 from ...domain.model_catalog import HardwareDetection, find_spec, short_model_name
 from ...domain.performance_estimate import ProbeResult, SpeedStep, StepOutcome
 from ...exceptions import RunStoppedError
-from .. import _user_text as txt
+from ...texts import review as txt
 from .._background import LatestTask
 from .._hardware_profile_selector import HardwareProfileSelector
 

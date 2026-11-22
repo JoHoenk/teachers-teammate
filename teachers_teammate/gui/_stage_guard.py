@@ -18,7 +18,7 @@ from ..application.composition import AppServices
 from ..application.run import RequirementIssue
 from ..config import Config
 from ..domain.stages import Stage
-from . import _user_text as txt
+from ..texts import review as txt
 from ._background import LatestTask
 from ._dependency_guard_dialog import DependencyGuardDialog
 from ._fix_targets import FixAction, fix_for

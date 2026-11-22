@@ -19,7 +19,7 @@ from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.gui import _anonymizer_config_widget, _dialogs
 from teachers_teammate.gui._background import wait_for_background_tasks
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import review as txt
 from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 from teachers_teammate.gui.settings._ai_models_page import (

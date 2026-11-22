@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..domain.prompt_text import normalize_prompt_text
-from . import _user_text as txt
+from ..texts import review as txt
 
 
 class PromptEditor(QWidget):

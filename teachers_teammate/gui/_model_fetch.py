@@ -19,8 +19,8 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QComboBox, QProgressBar, QWidget
 
 from ..domain.model_listing import ModelGroup, ModelListing
+from ..texts.models import models_from_text
 from ._background import LatestTask
-from ._model_wording import models_from_text
 
 # ── busy bar ──────────────────────────────────────────────────────────────────
 

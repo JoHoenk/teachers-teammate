@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ... import _user_text as txt
+from ....texts import addons as txt
 from ..._install_round import PACKAGE_PREFIX, UPDATE_ADDONS_ITEM, InstallRound
 from ..._long_job import ABORTED
 from ..._model_guidance import SPACY_PREFIX

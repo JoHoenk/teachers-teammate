@@ -24,8 +24,8 @@ from PySide6.QtWidgets import (
 
 from ..config import DEFAULTS
 from ..texts import dialogs as dlg
+from ..texts import review as txt
 from . import _dialogs
-from . import _user_text as txt
 from ._path_row import PathRow
 
 #: The three choices of the "Text file" row: which text files a run writes.

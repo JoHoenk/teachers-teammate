@@ -15,8 +15,8 @@ from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QVBoxLayout, QWidget
 from ....application.composition import AppServices
 from ....domain.language import language_name
 from ....domain.name_models import SPACY_MODELS
+from ....texts import addons as txt
 from ....texts.settings import license_tooltip
-from ... import _user_text as txt
 from ..._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
 from ..._install_round import PACKAGE_PREFIX
 from ..._model_guidance import SPACY_PREFIX

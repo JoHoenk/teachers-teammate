@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QMenu
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.domain.proofreading.review import CorrectionReview, UnclearNote
 from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import review as txt
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._types import FileDoneEvent, StageStatus

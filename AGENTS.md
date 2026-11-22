@@ -79,9 +79,8 @@ or `docs/development.md`.
 **Where code goes**
 - GUI and CLI contain no discovery or availability logic: implement it in the service that
   owns the topic (`application/run.py`, `providers.py`, …), call it from the GUI.
-- A sentence a teacher reads is defined in `teachers_teammate/texts/` (or, when it is built from
-  application data, in the Qt-free `gui/_user_text.py` / `gui/_model_wording.py`) and used by
-  reference, never a literal at the call site. Message boxes and file pickers go through
+- A sentence a teacher reads is defined in `teachers_teammate/texts/` and used by reference,
+  never a literal at the call site. Message boxes and file pickers go through
   `gui/_dialogs.py`. `tests/unit/test_user_text_centralised.py` enforces it.
 - A service is built once per entry point (`application/composition.py`, called from the
   composition modules); every other class is given the one it uses, never builds or looks one up

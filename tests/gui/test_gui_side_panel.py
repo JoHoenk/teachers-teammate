@@ -18,7 +18,7 @@ from teachers_teammate.domain.proofreading.review import (
     UnclearNote,
     edit_note,
 )
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import review as txt
 from teachers_teammate.gui.check import _style
 from teachers_teammate.gui.check._masking import Masking
 from teachers_teammate.domain.teacher_work import WorkStatus

@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..application.data_flow import sent_location
 from ..application.queue import QueueRow, StageState
 from ..domain.data_location import SentStatus
 from ..domain.formatted_text import TextFormat
@@ -34,8 +35,8 @@ from ..domain.proofreading.review import CorrectionReview
 from ..domain.run_summary import FileOutcome, FileStatus
 from ..domain.stages import Stage
 from ..texts import dialogs as dlg
+from ..texts import review as txt
 from . import _dialogs
-from . import _user_text as txt
 from ._constants import (
     _COLOUR_CACHED,
     _COLOUR_CORRECTION_BAR,
@@ -512,7 +513,7 @@ class ResultsTable(QTableWidget):
         status = row.sent.get(stage) if stage else None
         # A stage the run is redoing has no stored result to describe any more.
         sent = (
-            txt.sent_lines(status, stage)
+            txt.sent_lines(status, stage, sent_location(status.record))
             if isinstance(status, SentStatus) and not self._stage_is_live(live, stage)
             else ()
         )

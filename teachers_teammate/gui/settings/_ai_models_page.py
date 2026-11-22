@@ -41,7 +41,7 @@ from ...application.correction_options import review_has_own_model
 from ...config import DEFAULTS, OcrConfig
 from ...domain.stages import Stage
 from ...settings_schema import CONTEXT_SETTINGS
-from .. import _user_text as txt
+from ...texts import review as txt
 from .._background import LatestTask
 from .._model_guidance import SPACY_PREFIX
 from .._ocr_config_selector import OcrModelPicker

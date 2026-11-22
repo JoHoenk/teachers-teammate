@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QCheckBox
 import pytest
 
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import addons as txt
 from teachers_teammate.gui._install_round import PACKAGE_PREFIX, PAGE_MODELS_ITEM, READER_ITEM
 from teachers_teammate.gui._model_guidance import SPACY_PREFIX
 from teachers_teammate.gui.settings.addons import (

@@ -1501,7 +1501,7 @@ def test_proofreading_dialog_returns_the_explanation_options(qtbot) -> None:
     When   the user picks "Same as the text" and ticks "Corrections only"
     Then   explanation_values() returns explanation_language "" and correction_output "text"
     """
-    from teachers_teammate.gui import _user_text as txt  # noqa: PLC0415
+    from teachers_teammate.texts import review as txt  # noqa: PLC0415
     from teachers_teammate.gui._config_panel import _ProofreadingDialog  # noqa: PLC0415
 
     dlg = _ProofreadingDialog(

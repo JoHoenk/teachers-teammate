@@ -11,7 +11,7 @@ from collections.abc import Callable
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
-from ... import _user_text as txt
+from ....texts import addons as txt
 
 
 class UpdateBanner(QWidget):

@@ -17,7 +17,7 @@ from teachers_teammate.domain.teacher_work import WorkTooNewError
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui import _run_controller as run_controller_module
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import review as txt
 from teachers_teammate.gui._check_controller import CheckController, CheckHooks
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._export_menu import ExportKind

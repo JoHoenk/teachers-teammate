@@ -960,7 +960,7 @@ def test_plain_http_note_warns_for_a_server_of_the_teachers_choosing(
         DataLocation,
         StageLocation,
     )
-    from teachers_teammate.gui._data_flow_summary import plain_http_note  # noqa: PLC0415
+    from teachers_teammate.texts.privacy import plain_http_note  # noqa: PLC0415
 
     places = {
         "this": StageLocation(DataLocation.THIS_COMPUTER, "Ollama"),
@@ -990,7 +990,7 @@ def test_short_place_uses_few_words_for_every_kind_of_place() -> None:
         DataRegion,
         StageLocation,
     )
-    from teachers_teammate.gui._data_flow_summary import short_place  # noqa: PLC0415
+    from teachers_teammate.texts.privacy import short_place  # noqa: PLC0415
 
     here = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
     server = StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", host="school.example")
@@ -1014,7 +1014,7 @@ def test_uses_line_names_model_and_place_and_falls_back_to_the_engine() -> None:
         DataLocation,
         DataRegion,
     )
-    from teachers_teammate.gui._data_flow_summary import uses_line  # noqa: PLC0415
+    from teachers_teammate.texts.privacy import uses_line  # noqa: PLC0415
 
     online = _stage("correction", DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU)
     reader = _stage("ocr", DataLocation.THIS_COMPUTER, "Built-in reader", "page images")
@@ -1032,7 +1032,7 @@ def test_uses_line_shows_the_short_model_name_and_no_place_on_this_computer() ->
     Then   the line names the short model name and does not repeat "this computer"
     """
     from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
-    from teachers_teammate.gui._data_flow_summary import uses_line  # noqa: PLC0415
+    from teachers_teammate.texts.privacy import uses_line  # noqa: PLC0415
 
     stage = _stage("ocr", DataLocation.THIS_COMPUTER, "Ollama", "page images")
     tag = "hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0"
@@ -1053,7 +1053,7 @@ def test_uses_line_is_grey_while_the_step_is_off_and_escapes_names() -> None:
            is grey all over
     """
     from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
-    from teachers_teammate.gui._data_flow_summary import level_color, uses_line  # noqa: PLC0415
+    from teachers_teammate.texts.privacy import level_color, uses_line  # noqa: PLC0415
 
     stage = _stage("correction", DataLocation.ONLINE, "<b>x</b>")
 
@@ -1080,7 +1080,7 @@ def test_uses_tooltip_says_where_names_go_and_the_vendor_country(qtbot) -> None:
         DataRegion,
         StageLocation,
     )
-    from teachers_teammate.gui._data_flow_summary import uses_tooltip  # noqa: PLC0415
+    from teachers_teammate.texts.privacy import uses_tooltip  # noqa: PLC0415
 
     location = StageLocation(
         DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU, vendor_country="France"
@@ -1123,7 +1123,7 @@ def test_every_advice_code_has_wording_for_the_teacher() -> None:
     Then   each one has a sentence, so a new code cannot reach the screen without text
     """
     from teachers_teammate.domain.data_location import Advice  # noqa: PLC0415
-    from teachers_teammate.gui._data_flow_summary import advice_text  # noqa: PLC0415
+    from teachers_teammate.texts.privacy import advice_text  # noqa: PLC0415
 
     for advice in Advice:
         assert advice_text(advice).strip()
@@ -1137,7 +1137,7 @@ def test_the_caption_names_steps_in_words_and_ignores_the_gray_conversion(qtbot)
     Then   every acting step has its words, the gray conversion none, and the rotation tag alone
            reads "Original page (rotation tag applied)"
     """
-    from teachers_teammate.gui import _user_text as txt  # noqa: PLC0415
+    from teachers_teammate.texts import review as txt  # noqa: PLC0415
 
     assert (
         txt.prepared_caption(["page", "turn", "size", "light", "deskew", "grayscale"])

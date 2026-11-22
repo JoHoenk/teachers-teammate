@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from ..application.run import IssueKind, RequirementIssue
 from ..domain.language import language_name
 from ..domain.stages import Stage
-from . import _user_text as txt
+from ..texts import addons
+from ..texts import review as txt
 from ._install_round import PACKAGE_PREFIX, READER_ITEM
 from ._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .settings._page import (
@@ -146,13 +147,13 @@ def _general_fix(issue: RequirementIssue) -> Fix | None:
         )
     if kind is IssueKind.ADDONS_OUTDATED:
         return Fix(
-            txt.ADDONS_OUTDATED_LINE,
+            addons.ADDONS_OUTDATED_LINE,
             (
                 FixAction(
-                    txt.UPDATE_ADDONS + "…",
+                    addons.UPDATE_ADDONS + "…",
                     SettingsPage.ADDONS,
                     FOCUS_ADDON_UPDATE,
-                    tooltip=txt.ADDONS_OUTDATED_NOTE,
+                    tooltip=addons.ADDONS_OUTDATED_NOTE,
                 ),
             ),
         )

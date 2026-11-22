@@ -58,6 +58,9 @@ from ...domain.language import LANGUAGES
 from ...domain.local_models import PAGE_MODELS_ADDON_ID
 from ...domain.model_catalog import DiskVerdict, Suitability, short_model_name
 from ...domain.stages import Stage
+from ...texts import review as txt
+from ...texts.models import compact_suitability_text
+from ...texts.privacy import short_place
 from ...texts.setup import (
     CLASSES_HANDWRITTEN,
     CLASSES_HANDWRITTEN_NOTE,
@@ -157,9 +160,7 @@ from ...texts.setup import (
     WELCOME_TITLE,
     name_model_label,
 )
-from .. import _user_text as txt
 from .._background import LatestTask
-from .._data_flow_summary import short_place
 from .._hardware_profile_selector import HardwareProfileSelector
 from .._install_round import (
     PACKAGE_PREFIX,
@@ -170,7 +171,6 @@ from .._install_round import (
 from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .._model_item_delegate import ModelItem, fill_grouped
 from .._model_item_delegate import install as install_model_labels
-from .._model_wording import compact_suitability_text
 from .._ollama_status_line import OllamaStatusLine
 from ..settings._ai_service_section import PROOFREADING, AiServiceSection
 from ..settings._server_search_dialog import ServerSearchDialog

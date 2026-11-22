@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...texts import check as check_text
-from .. import _user_text as txt
+from ...texts import review as txt
 from .._image_utils import load_pixmap
 from .._image_view import ZoomableImageView
 

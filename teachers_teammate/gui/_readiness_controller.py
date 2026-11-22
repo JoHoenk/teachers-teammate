@@ -26,8 +26,8 @@ from ..domain.ollama_discovery import (
 )
 from ..domain.stages import Stage
 from ..texts import dialogs as dlg
+from ..texts import review as txt
 from . import _dialogs
-from . import _user_text as txt
 from ._background import LatestTask, run_in_background
 from ._config_panel import ConfigPanel
 from ._fix_targets import (

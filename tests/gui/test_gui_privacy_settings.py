@@ -16,7 +16,7 @@ from teachers_teammate.domain.data_location import (
     describe_fingerprint,
 )
 from teachers_teammate.domain.anonymization import DEFAULT_PATTERNS, AnonymizerConfig
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import review as txt
 from teachers_teammate.gui._privacy_settings import (
     DISPLAY_ANONYMIZED_KEY,
     SETTINGS_KEY,

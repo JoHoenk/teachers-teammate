@@ -3,7 +3,7 @@
 :func:`summary_rows` turns a plan into the lines the page shows, so the wording can be tested
 without a window; :class:`SummaryRows` draws them, one checkbox per download, and hands back the
 ones the teacher left ticked.  The place words come from the caller
-(:func:`.._data_flow_summary.short_place`), so the summary, the service list and the "uses" lines
+(:func:`...texts.privacy.short_place`), so the summary, the service list and the "uses" lines
 never describe one place differently.
 """
 
@@ -22,7 +22,7 @@ from ...domain.data_location import (
 )
 from ...domain.model_catalog import licence_note
 from ...domain.stages import Stage
-from .. import _user_text as txt
+from ...texts import review as txt
 
 #: The step names the summary uses; the same words as the "uses" lines in the main window.
 STEP_NAMES: dict[str, str] = {

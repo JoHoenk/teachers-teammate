@@ -13,8 +13,8 @@ from collections.abc import Mapping, Sequence
 from PySide6.QtWidgets import QCheckBox, QGroupBox, QVBoxLayout, QWidget
 
 from ....application.composition import AppServices
+from ....texts import addons as txt
 from ....texts.settings import license_tooltip
-from ... import _user_text as txt
 from ..._install_round import PACKAGE_PREFIX
 from ..._model_guidance import PROVIDER_PREFIX
 from ._common import ScrolledTab, apply_installed, tick_enabled

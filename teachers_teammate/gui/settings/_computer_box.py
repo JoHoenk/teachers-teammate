@@ -16,8 +16,8 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from ...application.composition import AppServices
 from ...application.speed_estimates import CLASS_SET_FILES
 from ...config import DEFAULTS
+from ...texts import review as txt
 from ...texts.settings import PAGE_AI_SETUP
-from .. import _user_text as txt
 from .._hardware_profile_selector import HardwareProfileSelector
 
 CHANGE_PROFILE_LINK = '<a href="change">change…</a>'

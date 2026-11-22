@@ -34,7 +34,7 @@ from ...domain.formatted_text import FormattedDocument, TextFormat
 from ...domain.proofreading.quotes import map_forward
 from ...domain.teacher_work import TextEdit
 from ...texts import check as check_text
-from .. import _user_text as txt
+from ...texts import review as txt
 from .._formatted_text import (
     STUDENT_STRIKE_COLOUR,
     FormattedTextEdit,

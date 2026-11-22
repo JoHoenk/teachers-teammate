@@ -13,8 +13,8 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QWidget
 
 from ...config import DEFAULTS, OcrConfig
+from ...texts.models import EXPERT_SETTINGS
 from .._collapsible_section import CollapsibleSection
-from .._model_wording import EXPERT_SETTINGS
 from .._ocr_config_selector import ScanQualityControls
 from ._page import SettingsContext, SettingsPage, SettingsPageBase
 

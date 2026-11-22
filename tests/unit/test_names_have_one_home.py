@@ -31,12 +31,12 @@ _STAGE_WORDS_LEFT: dict[str, int] = {
     "domain/performance_estimate.py": 4,
     "domain/proofreading/review.py": 1,  # "1 minor correction"
     "exceptions.py": 1,  # OCRError's stage: the pkg layer cannot import domain
-    "gui/_model_wording.py": 3,
     "gui/_ocr_config_selector.py": 1,
-    "gui/_user_text.py": 1,  # "3 spelling and punctuation corrections"
     "gui/settings/_page.py": 1,  # FOCUS_OCR, a deep link
     "gui/settings/addons/_ollama_models_tab.py": 7,
     "infrastructure/benchmark/run_store.py": 2,  # the "ocr" key of a stored run
+    "texts/models.py": 3,  # ModelCategory, and the word "ocr" in a model's abilities
+    "texts/review.py": 1,  # "3 spelling and punctuation corrections"
 }
 
 #: The port the address in ``domain/ollama_discovery.py`` names.

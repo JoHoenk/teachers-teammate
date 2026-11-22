@@ -45,9 +45,8 @@ from ....domain.model_catalog import (
     suitability_rank,
 )
 from ....texts import dialogs as dlg
-from ... import _dialogs
-from ... import _user_text as txt
-from ..._model_wording import (
+from ....texts import review as txt
+from ....texts.models import (
     ADD_MODEL_NOTE,
     BEST_ALREADY_DOWNLOADED,
     DOWNLOADS_INTRO,
@@ -63,6 +62,7 @@ from ..._model_wording import (
     too_large_confirmation,
     too_large_tooltip,
 )
+from ... import _dialogs
 from .._computer_box import ProfileLine
 from ._common import is_model_tag
 

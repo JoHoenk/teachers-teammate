@@ -56,6 +56,17 @@ class ScrolledTab(QScrollArea):
         content = QWidget()
         self.setWidget(content)
         self.body_layout = QVBoxLayout(content)
+        #: The items of this tab, keyed like the installation check reports them.
+        self.checkboxes: dict[str, QCheckBox] = {}
+        #: Each box's own label, by item: the mark of an installed item is added to it.
+        self.labels: dict[str, str] = {}
+
+    def item_box(self, key: str, label: str) -> QCheckBox:
+        """Return the box of item *key*, labelled *label*, and list it under that label."""
+        box = QCheckBox(label)
+        self.checkboxes[key] = box
+        self.labels[key] = label
+        return box
 
 
 def installed_mark(key: str, results: Mapping[str, object]) -> str:
@@ -64,24 +75,28 @@ def installed_mark(key: str, results: Mapping[str, object]) -> str:
         return txt.INCLUDED
     if key in (READER_ITEM, PAGE_MODELS_ITEM):
         return txt.READER_DOWNLOADED
-    return "✓ Installed"
+    return txt.INSTALLED_MARK
 
 
-def apply_installed(boxes: Mapping[str, QCheckBox], results: Mapping[str, object]) -> None:
+def apply_installed(
+    boxes: Mapping[str, QCheckBox],
+    labels: Mapping[str, str],
+    results: Mapping[str, object],
+) -> None:
     """Mark the boxes of what is installed and untick every box.
 
-    An installed box is disabled: the mark says it is there, while a tick always means
-    "install it", and nothing is installed without the teacher's click.
+    *labels* holds each box's own label, so the mark is added to it rather than read back out of
+    the widget.  An installed box is disabled: the mark says it is there, while a tick always
+    means "install it", and nothing is installed without the teacher's click.
     """
     for key, box in boxes.items():
-        base = box.text().split("  ✓")[0]
+        base = labels[key]
+        box.setChecked(False)
         if results.get(key, False):
             box.setText(f"{base}  {installed_mark(key, results)}")
-            box.setChecked(False)
             box.setEnabled(False)
         else:
             box.setText(base)
-            box.setChecked(False)
             box.setEnabled(True)
 
 

@@ -15,7 +15,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QWidget
 
 from ..texts import dialogs as dlg
-from ..texts import review as txt
+from ..texts import main_window as txt
 from . import _dialogs, _handles
 from ._path_row import PathRow
 

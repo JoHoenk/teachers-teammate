@@ -49,6 +49,10 @@ from ..exceptions import (
     RunStoppedError,
     stop_requested,
 )
+from ..texts.review import (
+    SPEED_NO_TOKEN_COUNTS_PAGE,
+    SPEED_NO_TOKEN_COUNTS_PARAGRAPH,
+)
 from .ollama_utils import (
     PROOFREADING_NUM_CTX,
     ChatStats,
@@ -428,7 +432,7 @@ class PerformanceProbe:
                 SpeedStep.READING,
                 model,
                 StepOutcome.FAILED,
-                message="the server reported no token counts for the page",
+                message=SPEED_NO_TOKEN_COUNTS_PAGE,
             )
         return StepResult(SpeedStep.READING, model, StepOutcome.MEASURED, speed=speed)
 
@@ -467,7 +471,7 @@ class PerformanceProbe:
                 step,
                 model,
                 StepOutcome.FAILED,
-                message="the server reported no token counts for the paragraph",
+                message=SPEED_NO_TOKEN_COUNTS_PARAGRAPH,
             )
         return StepResult(step, model, StepOutcome.MEASURED, speed=speed)
 

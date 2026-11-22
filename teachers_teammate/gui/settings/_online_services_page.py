@@ -13,23 +13,17 @@ from collections.abc import Sequence
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from ...texts.settings import PAGE_AI_MODELS, PAGE_ONLINE_SERVICES
+from ...texts import settings as st
 from ._credentials import ApiKeyDrafts, CredentialsGroup
 from ._page import FOCUS_API_KEYS, SettingsContext, SettingsPage, SettingsPageBase
-
-TITLE = PAGE_ONLINE_SERVICES
-DESCRIPTION = (
-    f"Access keys for the online AI services you can choose on {PAGE_AI_MODELS}. Not "
-    "needed while everything runs on this computer."
-)
 
 
 class OnlineServicesPage(SettingsPageBase):
     """The saved API keys, one row each, plus a picker to add a key for another service."""
 
     page = SettingsPage.ONLINE_SERVICES
-    title = TITLE
-    description = DESCRIPTION
+    title = st.PAGE_ONLINE_SERVICES
+    description = st.PAGE_INTRO_ONLINE_SERVICES
 
     def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:
         super().__init__(context, parent)

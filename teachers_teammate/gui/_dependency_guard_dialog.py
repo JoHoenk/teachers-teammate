@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from ..domain.requirements import RequirementIssue
 from ..texts.issues import issue_line
+from . import _html
 from ._fix_targets import COMMAND_RETRY, FixAction
 
 
@@ -48,7 +49,7 @@ class DependencyGuardDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        title_lbl = QLabel(f"<b>{title}:</b>")
+        title_lbl = QLabel(_html.heading(title))
         title_lbl.setWordWrap(True)
         layout.addWidget(title_lbl)
 

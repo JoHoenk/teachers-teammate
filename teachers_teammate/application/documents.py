@@ -43,7 +43,12 @@ from .data_flow import DataFlowService
 from .document_view import DocumentStateView, to_view
 from .merged_view import merged_view, reconciled_view
 from .queue import QueueRow, StoredStages, queue_row
-from .sent_text import Anonymize, SentTexts, describe_sent_texts
+from .sent_text import (
+    Anonymize,
+    CorrectionInstructions,
+    SentTexts,
+    describe_sent_texts,
+)
 
 
 @dataclass(frozen=True)
@@ -265,7 +270,7 @@ class DocumentQueries:
             correction_text=view.correction_text,
             anonymize=self._sent_text_anonymizer(config),
             preview_extracted=config.anonymization_enabled,
-            correction_prompt=self._sent_correction_prompt(config),
+            correction=self._sent_correction(config),
             evaluation_prompt=self._sent_evaluation_prompt(
                 config, normalize_text_format(view.raw_text_format)
             ),
@@ -285,18 +290,16 @@ class DocumentQueries:
         language = config.language
         return lambda text: self._anonymization.anonymize_preview(text, language, anon_config)
 
-    def _sent_correction_prompt(self, config: Config) -> str:
-        """Return the instructions the corrector sends, or ``""`` when it sends none.
+    def _sent_correction(self, config: Config) -> CorrectionInstructions:
+        """Return what the proofreading requests are told: their prompts and the notes.
 
-        One heading per step that runs, then the teacher's notes when there are any: the
-        prompts are fixed, so this is the whole of what the model is told.
+        Both are taken from the code the stages use, so the dialog shows the requests a run
+        really makes: the prompts are fixed, so this and the notes are all the model is told.
         """
-
-        parts = [f"{title}\n\n{prompt}" for title, prompt in proofreading_prompts(config)]
-        notes = notes_block(config.correction_notes).strip()
-        if notes:
-            parts.append(notes)
-        return "\n\n".join(parts)
+        return CorrectionInstructions(
+            prompts=proofreading_prompts(config),
+            notes=notes_block(config.correction_notes).strip(),
+        )
 
     def _sent_evaluation_prompt(self, config: Config, text_format: TextFormat) -> str:
         """Return the instructions the evaluator sends, or ``""`` when it sends none."""

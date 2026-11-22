@@ -10,14 +10,24 @@ Which module owns what:
 ===================  ==================================================================
 ``_types.py``        the shapes: :class:`Notice`, :class:`Question`, :class:`FilePrompt`
 ``addons.py``        the reading engines, their downloads and the Add-ons page's installs
+``app.py``           the app's name, the names of its steps, the update banner, Help and About
+``benchmark.py``     the Benchmark window
 ``check.py``         what the Check tab's widgets say around its text
+``cli.py``           the command line's help and the lines it prints while it works
+``credentials.py``   the Settings list of access keys (API keys) and the note under each
 ``dialogs.py``       every message box, question and file picker
+``fixes.py``         the readiness line's fixes: the line for what is missing and its button
 ``issues.py``        one sentence per unmet requirement of a step or a run
-``models.py``        this computer, the suitability of a model, the download warnings
-``privacy.py``       what is sent for a file, and the data-flow wording
-``review.py``        the review, the prompt dialogs, the queue, the speed test, sent results
-``run.py``           what a run says: the battery warning, a stopped file
-``servers.py``       how a found Ollama server is described (the card)
+``main_window.py``   the main window's rows, steps, panel, results table, export and stats
+``menus.py``         the main window's menu bar and what each entry offers
+``models.py``        this computer, the model fields and their status line, the download warnings
+``privacy.py``       what is sent for a file, the data-flow wording, a remembered answer
+``report.py``        the banner, the progress lines and the closing block of a run's log
+``review.py``        the review, the proofreading warnings, the prompt dialogs, the queue, the
+                     speed test, sent results
+``run.py``           what a run says: the battery warning, a stopped file, a file or a stage that
+                     failed, where the output goes
+``servers.py``       an Ollama server: its card, its models and what it answered
 ``settings.py``      the Settings window's page names and the "where to change it" phrases
 ``setup.py``         every sentence of the Setup Assistant's pages
 ===================  ==================================================================
@@ -26,7 +36,8 @@ Rules that keep it one home:
 
 * **Dependencies point inward.**  This package may import ``pkg`` and ``domain``;
   ``domain`` and ``application`` never import it.  They return ids and data, the adapter
-  asks this package for the sentence.
+  asks this package for the sentence.  ``infrastructure`` asks for the sentences it reports:
+  a failure it raises, a warning or reason it puts into a result, a line it prints.
 * **Dynamic parts are functions** — ``no_files_found(folder)``, never ``"…" % x`` at the
   call site.
 * **Dialogs go through one helper**, ``gui/_dialogs.py``: ``notify``, ``ask``, ``choose``,
@@ -36,6 +47,6 @@ Rules that keep it one home:
   through ``settings.py``, so renaming the page renames the sentence.
 
 Out of scope on purpose: the LLM prompts (``domain/correction_prompts.py`` — versioned and
-hashed into the cache key), log lines, developer exceptions that never reach a teacher, and
+hashed into the cache key), the developer log, developer exceptions that never reach a teacher, and
 the Word file's label tables, which follow the *document* language rather than the app's.
 """

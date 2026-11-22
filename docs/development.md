@@ -106,11 +106,11 @@ The layers, innermost first. A layer imports only from the layers above it in th
 (`tests/unit/test_layer_imports.py` enforces it):
 
 - **Domain** (`domain/`) — pure business concepts (stage names, freshness policy); no I/O.
+- **Texts** (`texts/`) — every sentence a teacher reads; Qt-free, imports only `domain` and `pkg`; infrastructure and the presentation layer import it, `application` and `domain` never do.
 - **Interfaces** (`interfaces.py`) — the ABC of every pipeline stage.
 - **Infrastructure** (`infrastructure/`) — concrete implementations: OCR engines, LLM providers, file I/O, DOCX builder, and the pipeline orchestration in `infrastructure/workflow/`.
 - **Application** (`application/`) — the services, one per topic (`run.py` for the run, `documents.py`, `commands.py`, …); they coordinate the use cases and are the only entry point for the GUI and CLI.
 - **Presentation** (`gui/`, `cli.py`) — translates user interactions into application calls and renders results. Contains no business logic, and imports `pkg`, `core`, `domain`, `application` and `texts` only.
-- **Texts** (`texts/`) — every sentence a teacher reads; Qt-free, imports only `domain`.
 
 The presentation layer never imports `infrastructure`. The modules that wire concrete classes
 are the exception, and the only one: `gui/composition.py`, `gui/__main__.py`,
@@ -144,8 +144,8 @@ The processing stages and the choices at each stage:
 ### Where text lives
 
 Every sentence a teacher reads is *defined* in `teachers_teammate/texts/` and *used* by
-reference everywhere else. The package is Qt-free, so `gui/`, `cli.py`, `application/` and
-`infrastructure/` can all import it; one module per surface:
+reference everywhere else. The package is Qt-free, so `gui/`, `cli.py` and
+`infrastructure/` import it; `application/` and `domain/` do not. One module per surface:
 
 | Module | Owns |
 |---|---|
@@ -154,12 +154,20 @@ reference everywhere else. The package is Qt-free, so `gui/`, `cli.py`, `applica
 | `texts/settings.py` | Settings page titles, the `WHERE_*` "where do I change this" sentences, tab names. |
 | `texts/privacy.py` | The "what is sent for this file" wording, and what each privacy level and each place means (the levels, the places, the advice, the tooltips of the data-flow summary). |
 | `texts/check.py` | What the Check tab's widgets say around its text: the two editable views' tooltips, the ⋯ button, the source dialog's button, the scan switch, the strips, the side panel's tabs and its filter row. |
+| `texts/cli.py` | The command line's own words: the arguments' help and what it prints while it works (the download counter, the data-flow block). |
+| `texts/report.py` | What a run writes to its log: the banner, the progress lines under each file and the closing block. |
+| `texts/fixes.py` | The readiness line's fixes: the line for what is missing and the label of the button that fixes it. |
+| `texts/main_window.py` | The main window itself: the input and results rows, the step switches, the panel's buttons, the results table and its menu, the export entries, the System Monitor. |
+| `texts/credentials.py` | The Settings list of access keys (API keys): its buttons, placeholder and the notes under the group and each key. |
+| `texts/menus.py` | The main window's menu bar: the four menus, their entries and what each entry offers. |
+| `texts/app.py` | The app's name, the update banner, and the Help, About and licence windows. |
+| `texts/benchmark.py` | The Benchmark window: the document, the configuration, the runs list and the comparison. |
 | `texts/setup.py` | Every sentence of the Setup Assistant's pages. |
 | `texts/issues.py` | One sentence per unmet requirement of a step or a run, worded from a `RequirementIssue`. |
-| `texts/run.py` | What a run says: the battery warning, the line for a file a stop cut short. |
-| `texts/servers.py` | How a found Ollama server is described (the card). |
-| `texts/review.py` | The review and the unclear expressions, the prompt dialogs, the queue's rows and steps, the speed test, and how a stored result was sent. |
-| `texts/models.py` | This computer, the suitability of a model, the download warnings and the model list. |
+| `texts/run.py` | What a run says: the battery warning, a file it cannot use, a stage that failed, the output files it could not write, where they go. |
+| `texts/servers.py` | An Ollama server: its card, the models it offers and what it answered. |
+| `texts/review.py` | The review and the unclear expressions, the warnings of the proofreading and review requests, the prompt dialogs, the image-preparation caption, the settings wording that is not a page name, what is sent for a file, how a stored result was sent, the speed test, and the Check tab's panels and marks. |
+| `texts/models.py` | This computer, the suitability of a model, the download warnings, the model list, the labels of the recognition and model fields and the status line under a model field. |
 | `texts/addons.py` | The reading engines, the downloads of the built-in reader and the page models, and what the Add-ons page says during an install. |
 
 `texts/__init__.py` is the map — a docstring naming which module owns what, no logic.
@@ -172,7 +180,9 @@ So `texts` imports `domain` and `pkg`, nothing else.
 Rules:
 
 - **Dependencies point inward.** `texts` may import `domain` ids and enums; `domain` and
-  `application` never import `texts`. A lower layer returns an id, never a sentence.
+  `application` never import `texts`. `infrastructure` does, for the sentences it reports — a
+  failure it raises, a warning or reason it puts into a result, a line it prints; every other
+  layer returns an id and the caller asks `texts` for the words.
 - **Dynamic parts are functions**, never `%`-formatting at the call site:
   `dlg.no_files_found(folder)`, not `"No files found in %s" % folder`.
 - **One helper shows them.** `gui/_dialogs.py` is the only module that touches
@@ -196,25 +206,27 @@ Rules:
 
 **The ratchet test.** `tests/unit/test_user_text_centralised.py` parses `gui/`, `cli.py`,
 `application/`, `infrastructure/` and `domain/` with `ast` and fails on a string literal (or
-f-string) passed to a user-facing sink — `QMessageBox`/`QFileDialog` calls, `setText`/`setToolTip`/
-`setPlaceholderText`/`setWindowTitle`/`setTitle`, widget constructors, `addTab`/`addMenu`/
-`addAction`, `print` and argparse `help` in `cli.py`, `raise …Error("…")`, a `message=` /
-`notice=` / `reason=` keyword argument, a module-level sentence constant named `*_MESSAGE` /
-`*_NOTICE` / `*_WARNING`, and a literal handed to a function of `dlg` / `privacy`
-(`dlg.copy_failed("Could not copy")` — the sentence belongs in the function). A sentence that is
-only *returned* or kept in a local variable is not a sink, so the test cannot see it: build it in
-`texts/` and call it. A `raise` in `domain/` (an invariant) and the step reasons of
-`infrastructure/preprocessing/` (debug log) are not sinks. The
-allowlist is `tools/user_text/allowlist.py`, keyed by file and literal text (not line
-number, which shifts on every edit). It may only shrink: a second test fails on an entry
-whose literal is gone, so moving a text means deleting its entry in the same change.
-`tools/user_text/inventory.py` scans the same sources and writes a CSV of what it found
-(`bazel run //tools/user_text:inventory -- --out user_text.csv`); the allowlist itself is edited
-by hand.
+f-string) handed to a sink that shows text. The sinks are the tables at the top of
+`tools/user_text/inventory.py` (`_QUALIFIED`, `_SIMPLE`, `_MARKED`, `_KEYWORDS`,
+`_FIELD_KEYWORDS`): widget calls, dialogs, the readiness line's fixes, a line sent to a log, a
+CLI line, a prose keyword, a raised exception. It also fails on a module constant whose name says a
+teacher reads it (`_CONSTANT_SUFFIXES`, and for a one-word value `_SHORT_SUFFIXES`; a list, tuple or
+dict constant is read item by item), on a sentence handed to a function imported from `texts`
+(`dlg.copy_failed("Could not copy")` — the sentence belongs in the function; a word without a space
+is an id and passes), and on a template of `texts` filled at a call site with `.format`. A sentence
+that is only *returned* or kept in a local variable is not a sink, so the test cannot see it:
+build it in `texts/` and call it. What is not a sink is listed in the same module: a `raise` that
+states an invariant of the code (any raise in `domain/`, `INVARIANT_MESSAGES`), the step reasons of
+`infrastructure/preprocessing/` (debug log), the constants in `NON_TEXT_CONSTANTS`, and the
+Word file's label tables. A test fails on an entry of either list whose literal is gone. The allowlist
+`tools/user_text/allowlist.py` is empty: the test fails on any literal it sees at a call site, and a
+second test fails on an entry whose literal is gone, so the answer is to put the sentence in
+`texts/`, not to add an entry. `tools/user_text/inventory.py` scans the same sources and writes
+a CSV of what it found (`bazel run //tools/user_text:inventory -- --out user_text.csv`).
 
 **Out of scope, and must stay where it is:** the LLM prompts in
 `domain/correction_prompts.py` (versioned and hashed into the protocol fingerprint and the
-cache key — moving text changes cache keys), log lines, `diagnostics.log`, developer
+cache key — moving text changes cache keys), the developer log (`logging`, `diagnostics.log`), developer
 exceptions that never reach a teacher, `tools/`, tests and docs. The Word output's en/de
 label tables follow the *document* language, not the UI language, and stay in
 `docx_builder.py` / `docx_comments.py`.
@@ -869,10 +881,10 @@ and `ollama_utils.ollama_server` pass `own_host_names` and `windows_host_address
 ### Remembered "don't ask again" answers
 
 `gui/_privacy_settings.py:FlowAcknowledgements` is the only code that reads or writes them
-(QSettings key `privacy/acknowledged_data_flows`, one line per answer:
-`<fingerprint>` or `<fingerprint>\t<readable summary>`).  The question before a run, the
-list in Settings → Privacy and "Ask again" all use it.  A record without a summary is put into
-words by `domain/data_location.py:describe_fingerprint()`.
+(QSettings key `privacy/acknowledged_data_flows`, one line per answer: its fingerprint).  The
+question before a run, the list in Settings → Privacy and "Ask again" all use it.  The line the
+list shows is put into words when it is read, by `texts/privacy.py:describe_fingerprint()`, so
+no wording sits in the settings file.
 
 The fingerprint is versioned (`v2|` …, with the data region), so an answer whose fingerprint has
 another version does not match and the user is asked again.  Parts are separated by `|` and their
@@ -889,7 +901,7 @@ window's OK only (`apply()`).
 does the service read?* — without spaCy, a model or a widget:
 
 - `describe_sent_texts(flow, *, raw_text, correction_text, anonymize, preview_extracted,
-  correction_prompt, evaluation_prompt)` walks `DataFlow.outbound` (the steps that leave the
+  correction, evaluation_prompt)` walks `DataFlow.outbound` (the steps that leave the
   computer) and returns a frozen `SentText` per step: proofreading gets the extracted text,
   content review the proofread text, each anonymized first when the step says names are
   hidden.  A step whose names are hidden needs `anonymize`; without it the text is reported
@@ -902,10 +914,12 @@ does the service read?* — without spaCy, a model or a widget:
   original-vs-anonymized tab; the service passes `config.anonymization_enabled`, so the tab
   appears exactly when names are actually being hidden.
 - `DocumentQueries.describe_sent_texts()` supplies `anonymize` (the caching
-  preview anonymizer, `None` when removal is off) and builds the prompts with the same code
-  the stages use (`_sent_correction_prompt` / `_sent_evaluation_prompt`), so the dialog cannot
-  drift from what a run sends.  `SentTexts` carries the sections, `flow.level`, the raw text
-  and the anonymized raw text.  Its `stored` argument is the file's `DocumentStateView.sent`
+  preview anonymizer, `None` when removal is off) and fills `correction` and
+  `evaluation_prompt` with the same code the stages use (`_sent_correction` /
+  `_sent_evaluation_prompt`), so the dialog cannot drift from what a run sends.  A `SentText`
+  carries the requests as data — the `(step, system prompt)` pairs and the teacher's notes —
+  and the dialog words them through `texts/review.py:prompts_block()`.  `SentTexts` carries the
+  sections, `flow.level`, the raw text and the anonymized raw text.  Its `stored` argument is the file's `DocumentStateView.sent`
   (see *How a stored result was sent*), so the dialog can put what is already stored next to
   what the next run would send.
 

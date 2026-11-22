@@ -5,10 +5,12 @@ remembers the answer for exactly those settings, keyed by the data flow's finger
 module is the one place that reads and writes those answers, so the question, the list in
 Settings → Privacy and the reset all agree.
 
-Each answer is stored with a readable summary, so the list can say *what* was agreed to
-("Proofreading: Online service (Mistral) -- receives text, names sent as written") instead of
-showing a fingerprint.  Records from earlier versions hold the fingerprint only; their line is
-rebuilt from it (:func:`~teachers_teammate.domain.data_location.describe_fingerprint`).
+An answer is stored as the fingerprint of what was agreed to, nothing else: the list says
+what that means ("Proofreading: Online service (Mistral) -- receives text, names sent as
+written") by reading the fingerprint back
+(:func:`~teachers_teammate.texts.privacy.describe_fingerprint`), so a changed wording changes
+every line and no English is kept in the settings file.  A line may carry a tab and further
+text; only the part before the tab is the fingerprint.
 """
 
 from __future__ import annotations
@@ -17,11 +19,13 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from ..domain.data_location import DataFlow, describe_fingerprint
+from ..domain.data_location import DataFlow
+from ..texts.privacy import describe_fingerprint
 
 SETTINGS_KEY = "privacy/acknowledged_data_flows"
-"""One line per remembered answer: ``<fingerprint>`` or ``<fingerprint>\\t<summary>``."""
+"""One line per remembered answer: the fingerprint of what was agreed to."""
 
+#: Separates the fingerprint from any text after it on a line; the text is ignored.
 _SUMMARY_SEPARATOR = "\t"
 
 
@@ -47,8 +51,8 @@ class FlowAcknowledgements:
     def remembered(self) -> list[RememberedFlow]:
         """Return every remembered answer, sorted by its summary."""
         flows = [
-            RememberedFlow(fingerprint, summary or describe_fingerprint(fingerprint))
-            for fingerprint, summary in self._read().items()
+            RememberedFlow(fingerprint, describe_fingerprint(fingerprint))
+            for fingerprint in self._read()
         ]
         return sorted(flows, key=lambda flow: (flow.summary, flow.fingerprint))
 
@@ -58,14 +62,12 @@ class FlowAcknowledgements:
 
     def remember(self, flow: DataFlow) -> None:
         """Stop asking about *flow* (its steps that leave the computer, exactly)."""
-        records = self._read()
-        records[flow.fingerprint] = flow.outbound_summary
-        self._write(records)
+        self._write({*self._read(), flow.fingerprint})
 
     def keep_only(self, fingerprints: Iterable[str]) -> None:
         """Forget every remembered answer whose fingerprint is not in *fingerprints*."""
         keep = set(fingerprints)
-        self._write({fp: summary for fp, summary in self._read().items() if fp in keep})
+        self._write({fp for fp in self._read() if fp in keep})
 
     def forget_all(self) -> None:
         """Forget every remembered answer: the question comes back before the next such run."""
@@ -73,24 +75,21 @@ class FlowAcknowledgements:
 
     # ── storage ───────────────────────────────────────────────────────────────
 
-    def _read(self) -> dict[str, str]:
+    def _read(self) -> set[str]:
         raw = str(self._settings_factory().value(SETTINGS_KEY, "") or "")
-        records: dict[str, str] = {}
+        fingerprints: set[str] = set()
         for line in raw.split("\n"):
-            fingerprint, _sep, summary = line.partition(_SUMMARY_SEPARATOR)
+            fingerprint, _sep, _summary = line.partition(_SUMMARY_SEPARATOR)
             if fingerprint:
-                records[fingerprint] = summary
-        return records
+                fingerprints.add(fingerprint)
+        return fingerprints
 
-    def _write(self, records: dict[str, str]) -> None:
+    def _write(self, fingerprints: Iterable[str]) -> None:
         settings = self._settings_factory()
-        if not records:
+        lines = sorted(fingerprints)
+        if not lines:
             settings.remove(SETTINGS_KEY)
             return
-        lines = (
-            f"{fingerprint}{_SUMMARY_SEPARATOR}{summary}" if summary else fingerprint
-            for fingerprint, summary in sorted(records.items())
-        )
         settings.setValue(SETTINGS_KEY, "\n".join(lines))
 
 

@@ -27,13 +27,10 @@ PACKAGE_PREFIX = "package:"
 READER_PREFIX = "reader:"
 #: Equal to the status key of the application service, which the Add-ons page looks the row up by.
 READER_ITEM = READER_STATUS_KEY
-#: The status line the round sends with the reader's download progress.
-READER_PROGRESS_STATUS = "Built-in reader"
 #: The page models of the automatic image preparation (``page_models:all``); also the Add-ons
 #: "preselect" entry.
 PAGE_MODELS_PREFIX = "page_models:"
 PAGE_MODELS_ITEM = PAGE_MODELS_STATUS_KEY
-PAGE_MODELS_PROGRESS_STATUS = "Page models"
 #: The add-ons installed again after an app update (``update:addons``).
 UPDATE_ADDONS_ITEM = "update:addons"
 
@@ -237,7 +234,7 @@ class InstallRound(QObject):
     # ── the add-ons after an app update ──────────────────────────────────────────
 
     def _start_update(self) -> None:
-        self.log_line.emit("Installing the add-ons again…")
+        self.log_line.emit(txt.LOG_UPDATING)
         # The phase is set before the item is announced: the page reads it to decide whether
         # Abort can do anything.
         self._phase = "update"
@@ -250,7 +247,7 @@ class InstallRound(QObject):
         thread.start()
 
     def _on_update_done(self) -> None:
-        self.log_line.emit("✓ Add-ons updated.")
+        self.log_line.emit(txt.LOG_UPDATED)
         self.item_done.emit(UPDATE_ADDONS_ITEM)
         self._installed_any = True
         self._update_addons = False
@@ -260,7 +257,7 @@ class InstallRound(QObject):
     # ── pip ──────────────────────────────────────────────────────────────────────
 
     def _start_pip(self) -> None:
-        self.log_line.emit(f"pip install {' '.join(self._packages)}")
+        self.log_line.emit(txt.log_pip_install(self._packages))
         # pip reports one error for the whole command, so a failure names the first package.
         self._current = f"{PACKAGE_PREFIX}{self._packages[0]}"
         self._phase = "pip"
@@ -275,7 +272,7 @@ class InstallRound(QObject):
         thread.start()
 
     def _on_pip_done(self, packages: list[str]) -> None:
-        self.log_line.emit("✓ pip install complete.")
+        self.log_line.emit(txt.LOG_PIP_DONE)
         for package in packages:
             self.item_done.emit(f"{PACKAGE_PREFIX}{package}")
         self._installed_any = True
@@ -291,7 +288,7 @@ class InstallRound(QObject):
         from ._addon_installer_dialog import _ModelDownloadThread  # noqa: PLC0415
 
         model = self._spacy_models[0]
-        self.log_line.emit(f"Downloading spaCy model: {model}")
+        self.log_line.emit(txt.log_spacy_start(model))
         self._phase = "spacy"
         self._begin(f"{SPACY_PREFIX}{model}")
         thread = _ModelDownloadThread(self._svc, model, self._svc.addons.addon_packages_dir())
@@ -302,7 +299,7 @@ class InstallRound(QObject):
         thread.start()
 
     def _on_spacy_done(self) -> None:
-        self.log_line.emit("✓ spaCy model downloaded.")
+        self.log_line.emit(txt.LOG_SPACY_DONE)
         self.item_done.emit(self._current)
         self._installed_any = True
         inject_addon_packages_dir()
@@ -328,7 +325,7 @@ class InstallRound(QObject):
     def _start_reader(self) -> None:
         from ._addon_installer_dialog import _ReaderDownloadThread  # noqa: PLC0415
 
-        self.log_line.emit("Downloading the built-in reader…")
+        self.log_line.emit(txt.LOG_READER_START)
         self._phase = "reader"
         self._begin(READER_ITEM)
         thread = _ReaderDownloadThread(self._svc)
@@ -341,10 +338,10 @@ class InstallRound(QObject):
     def pull_progress_from_reader(self, payload: object) -> None:
         """Forward the reader's download progress as a pull progress line."""
         done, total = cast("tuple[int, int]", payload)
-        self.pull_progress.emit(READER_PROGRESS_STATUS, done, total)
+        self.pull_progress.emit(txt.READER_PROGRESS_STATUS, done, total)
 
     def _on_reader_done(self) -> None:
-        self.log_line.emit("✓ Built-in reader downloaded.")
+        self.log_line.emit(txt.LOG_READER_DONE)
         self.item_done.emit(READER_ITEM)
         self._installed_any = True
         self._reader = False
@@ -358,7 +355,7 @@ class InstallRound(QObject):
     def _start_page_models(self) -> None:
         from ._addon_installer_dialog import _ReaderDownloadThread  # noqa: PLC0415
 
-        self.log_line.emit("Downloading the page models…")
+        self.log_line.emit(txt.LOG_PAGE_MODELS_START)
         self._phase = "page_models"
         self._begin(PAGE_MODELS_ITEM)
         thread = _ReaderDownloadThread(self._svc, "download_page_models")
@@ -371,10 +368,10 @@ class InstallRound(QObject):
     def page_models_progress(self, payload: object) -> None:
         """Forward the page models' download progress as a pull progress line."""
         done, total = cast("tuple[int, int]", payload)
-        self.pull_progress.emit(PAGE_MODELS_PROGRESS_STATUS, done, total)
+        self.pull_progress.emit(txt.PAGE_MODELS_PROGRESS_STATUS, done, total)
 
     def _on_page_models_done(self) -> None:
-        self.log_line.emit("✓ Page models downloaded.")
+        self.log_line.emit(txt.LOG_PAGE_MODELS_DONE)
         self.item_done.emit(PAGE_MODELS_ITEM)
         self._installed_any = True
         self._page_models = False
@@ -429,7 +426,7 @@ class InstallRound(QObject):
         queued = self._pull_manager.queued
         if queued:
             # The manager goes on with the next model by itself.
-            self.log_line.emit(f"Pulling Ollama model: {queued[0]}")
+            self.log_line.emit(txt.log_ollama_start(queued[0]))
             self._begin(queued[0])
             return
         self._disconnect_pull_manager()
@@ -443,7 +440,7 @@ class InstallRound(QObject):
         self._on_error(message)
 
     def _pull_arrived(self, model: str) -> None:
-        self.log_line.emit("✓ Ollama model pulled.")
+        self.log_line.emit(txt.LOG_OLLAMA_DONE)
         self.item_done.emit(model)
         self._installed_any = True
         # The installed-model list and the classifications are stale from now on.

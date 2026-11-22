@@ -28,6 +28,7 @@ from ..domain.pdf_text_layer import (
     use_text_layer,
 )
 from ..interfaces import InputPayload, InputProvider, InputUnit
+from ..texts.run import PDF_NO_PAGES, text_layer_page_note
 
 _logger = logging.getLogger(__name__)
 
@@ -302,10 +303,11 @@ class PdfInputProvider(InputProvider):
                     )
                 # The scan stops at the first page that rules the text layer out: the last one.
                 text_layer_note = (
-                    "PDF has no pages"
+                    PDF_NO_PAGES
                     if not measured
-                    else f"page {len(measured)}: "
-                    + (unusable_text_reason(measured[-1]) or "no embedded text")
+                    else text_layer_page_note(
+                        len(measured), unusable_text_reason(measured[-1]) or ""
+                    )
                 )
 
             units: list[InputUnit] = []

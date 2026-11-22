@@ -8,38 +8,16 @@ from typing import Any
 from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QVBoxLayout, QWidget
 
 from ...config import DEFAULTS
+from ...texts import settings as st
 from ._page import SettingsContext, SettingsPage, SettingsPageBase
-
-TITLE = "General"
-DESCRIPTION = "How the app behaves while it works, and what it does at start."
-GROUP_TITLE = "While documents are processed"
-KEEP_AWAKE_LABEL = "Keep the computer awake"
-KEEP_AWAKE_TOOLTIP = (
-    "Stops the computer from going to sleep on its own while documents are processed,\n"
-    "so a long run is not interrupted. The screen may still turn off."
-)
-KEEP_AWAKE_NOTE = (
-    "The screen may still turn off. Closing the lid, or a nearly empty battery, can still "
-    "put the computer to sleep."
-)
-START_GROUP_TITLE = "When the app starts"
-CHECK_UPDATES_LABEL = "Check for updates when the app starts"
-CHECK_UPDATES_TOOLTIP = (
-    "Asks GitHub once whether a newer version exists and shows a note if one does.\n"
-    "Only the question itself is sent, nothing from your documents. The change takes effect at the next start."
-)
-CHECK_UPDATES_NOTE = (
-    "This is the only thing the app sends without being asked. Turned off, it never contacts "
-    "GitHub; the change takes effect the next time the app starts."
-)
 
 
 class GeneralPage(SettingsPageBase):
     """The settings that belong to no single step: keeping the computer awake, the update check."""
 
     page = SettingsPage.GENERAL
-    title = TITLE
-    description = DESCRIPTION
+    title = st.PAGE_GENERAL
+    description = st.PAGE_INTRO_GENERAL
 
     def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:
         super().__init__(context, parent)
@@ -47,23 +25,23 @@ class GeneralPage(SettingsPageBase):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
-        group = QGroupBox(GROUP_TITLE)
+        group = QGroupBox(st.WHILE_PROCESSING_GROUP)
         group_layout = QVBoxLayout(group)
-        self._keep_awake = QCheckBox(KEEP_AWAKE_LABEL)
-        self._keep_awake.setToolTip(KEEP_AWAKE_TOOLTIP)
+        self._keep_awake = QCheckBox(st.KEEP_AWAKE_LABEL)
+        self._keep_awake.setToolTip(st.KEEP_AWAKE_TOOLTIP)
         group_layout.addWidget(self._keep_awake)
-        note = QLabel(KEEP_AWAKE_NOTE)
+        note = QLabel(st.KEEP_AWAKE_NOTE)
         note.setWordWrap(True)
         note.setStyleSheet("color: #888888;")
         group_layout.addWidget(note)
         layout.addWidget(group)
 
-        start_group = QGroupBox(START_GROUP_TITLE)
+        start_group = QGroupBox(st.AT_START_GROUP)
         start_layout = QVBoxLayout(start_group)
-        self._check_updates = QCheckBox(CHECK_UPDATES_LABEL)
-        self._check_updates.setToolTip(CHECK_UPDATES_TOOLTIP)
+        self._check_updates = QCheckBox(st.CHECK_UPDATES_LABEL)
+        self._check_updates.setToolTip(st.CHECK_UPDATES_TOOLTIP)
         start_layout.addWidget(self._check_updates)
-        start_note = QLabel(CHECK_UPDATES_NOTE)
+        start_note = QLabel(st.CHECK_UPDATES_NOTE)
         start_note.setWordWrap(True)
         start_note.setStyleSheet("color: #888888;")
         start_layout.addWidget(start_note)

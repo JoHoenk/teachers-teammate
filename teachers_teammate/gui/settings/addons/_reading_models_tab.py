@@ -11,11 +11,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGroupBox, QLabel, QVBoxLayout, QWidget
 
 from ....application.composition import AppServices
-from ....domain.data_location import ENGINE_PPOCR
-from ....domain.local_models import READER_SIZE_LABEL
 from ....texts import addons as txt
 from ....texts.settings import TAB_READING_MODELS
 from ..._install_round import (
@@ -33,34 +31,25 @@ class ReadingModelsTab(ScrolledTab):
     def __init__(self, app_service: AppServices, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._svc = app_service
-        #: The items of this tab, keyed like the installation check reports them.
-        self.checkboxes: dict[str, QCheckBox] = {}
         self._pending: list[str] = []
 
         group = QGroupBox(TAB_READING_MODELS)
         group_layout = QVBoxLayout(group)
 
-        intro = QLabel(
-            "The built-in reader reads pages on this computer, without a server. "
-            f"{txt.OCR_ENGINE_HINTS[ENGINE_PPOCR]} Its model files, and the page models of the "
-            "automatic image preparation, come from PaddlePaddle (Apache-2.0)."
-        )
+        intro = QLabel(txt.READING_MODELS_INTRO)
         intro.setWordWrap(True)
         group_layout.addWidget(intro)
 
-        cb = QCheckBox(f"Built-in reader (PP-OCR) — {READER_SIZE_LABEL}")
-        self.checkboxes[READER_ITEM] = cb
-        group_layout.addWidget(cb)
+        group_layout.addWidget(self.item_box(READER_ITEM, txt.READER_ITEM_LABEL))
 
-        page_models = QCheckBox(txt.PAGE_MODELS_LABEL)
-        self.checkboxes[PAGE_MODELS_ITEM] = page_models
+        page_models = self.item_box(PAGE_MODELS_ITEM, txt.PAGE_MODELS_LABEL)
         group_layout.addWidget(page_models)
         page_models_hint = QLabel(txt.PAGE_MODELS_HINT)
         page_models_hint.setWordWrap(True)
         page_models_hint.setStyleSheet(f"{GREY_NOTE_STYLE} margin-left: 20px;")
         group_layout.addWidget(page_models_hint)
 
-        folder = QLabel(f"Saved in: {self._svc.reader.models_dir()}")
+        folder = QLabel(txt.saved_in(str(self._svc.reader.models_dir())))
         folder.setStyleSheet(GREY_NOTE_STYLE)
         folder.setWordWrap(True)
         folder.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -90,7 +79,7 @@ class ReadingModelsTab(ScrolledTab):
 
     def mark_installed(self, results: Mapping[str, object]) -> None:
         """Show which items are there and disable the boxes of the ones that are."""
-        apply_installed(self.checkboxes, results)
+        apply_installed(self.checkboxes, self.labels, results)
 
     def checked_items(self) -> list[str]:
         """Return the items this tab asks to install."""

@@ -14,7 +14,7 @@ ALLOWED: dict[str, frozenset[str]] = {
     "domain": frozenset({"pkg"}),
     "core": frozenset({"pkg", "domain"}),
     "texts": frozenset({"pkg", "domain"}),
-    "infrastructure": frozenset({"pkg", "domain", "core"}),
+    "infrastructure": frozenset({"pkg", "domain", "core", "texts"}),
     "application": frozenset({"pkg", "domain", "core", "infrastructure"}),
     "cli": frozenset({"pkg", "domain", "core", "application", "texts"}),
     "gui": frozenset({"pkg", "domain", "core", "application", "texts"}),

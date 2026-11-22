@@ -12,6 +12,7 @@ from teachers_teammate.domain.ollama_address import normalize_ollama_url
 from teachers_teammate.domain.ollama_discovery import DEFAULT_SERVER_URL
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.exceptions import ProviderNotAvailableError
+from teachers_teammate.texts.addons import package_not_installed
 
 # Metadata consumed by the GUI (and any other caller of llm_factory.get_provider_info).
 # ``models`` is intentionally empty: Ollama's model list is fetched live via the API.
@@ -59,7 +60,5 @@ def create(
         # optional dep; lazy import to avoid startup ImportError when not installed
         from langchain_ollama import ChatOllama  # noqa: PLC0415
     except ImportError as exc:
-        raise ProviderNotAvailableError(
-            "langchain-ollama is not installed. Run: pip install langchain-ollama"
-        ) from exc
+        raise ProviderNotAvailableError(package_not_installed("langchain-ollama")) from exc
     return ChatOllama(model=model, base_url=normalize_ollama_url(base_url), temperature=temperature)

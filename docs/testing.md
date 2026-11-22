@@ -84,6 +84,11 @@ layers it imports as `deps`. A test lists the **highest layer it imports** and n
 Bazel reruns it only when that layer or one below it changes. Editing a `gui/` file reruns the
 GUI tests; editing `domain/` reruns nearly everything, which is correct.
 
+`infrastructure_lib` depends on `texts_lib`, because infrastructure words the failures and
+warnings it reports. So a change to any `texts/` module reruns the infrastructure, application and
+GUI tests as well as the CLI's; wording changes rarely enough that one `texts_lib` stays simpler
+than a second library for the modules infrastructure imports.
+
 - Never give a test `//teachers_teammate:ocr_lib` or `:gui_lib`: they hold the whole package and
   every test would rerun on every edit. They are for the wheel, the docs and the lint targets.
 - Count lazy imports and `patch("teachers_teammate.…")` strings too: the test imports that module.

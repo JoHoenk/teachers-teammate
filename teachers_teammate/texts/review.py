@@ -17,11 +17,10 @@ from ..domain.data_location import (
     SentRecord,
     SentStatus,
     StageLocation,
-    stage_title,
 )
 from ..domain.proofreading.review import CHANGE_CATEGORIES
 from ..domain.stages import Stage
-from ..exceptions import RECOGNITION_OFF_MESSAGE
+from .app import stage_title
 from .check import FILTER_UNCLEAR
 from .settings import PAGE_AI_MODELS, WHERE_ADDONS, WHERE_AI_MODELS
 
@@ -67,6 +66,61 @@ PROMPT_DIALOG_FIXED_TEXT = (
     "Always added by the app (read-only): for Markdown texts, a note about the writing marks. "
     "This part cannot be edited."
 )
+
+#: What a content review warns with when the text does not fit a local model's window.
+TOO_LONG_FOR_REVIEW_WARNING = "The text is too long for a content review with a local model."
+
+# ── What the proofreading exchanges warn about ────────────────────────────────
+
+#: A step ① that twice answered with a lead-in or a closing remark around the text.
+FRAMING_WARNING = "The model answered with a remark around the text; keeping original text."
+#: A step ① that twice answered with much less of the text than it was sent.
+LOST_TEXT_WARNING = "The model dropped part of the text; keeping original text."
+#: A step ① that twice answered with much more text than it was sent.
+ADDED_TEXT_WARNING = "The model added text of its own; keeping original text."
+#: A Markdown text whose answer could not be restored everywhere.
+UNSTYLED_WARNING = "Part of the text lost its formatting."
+#: A file whose step ② left edits unexplained, or only some pieces of a long text answered.
+EXPLANATIONS_MISSING = "Explanations are missing for part of the text."
+
+
+#: A file whose step ① gave no usable answer.
+CORRECT_FAILED = "Proofreading failed; keeping original text."
+#: A file whose step ③ did not answer.
+UNCLEAR_FAILED = "Unclear wording could not be checked for this text."
+#: An exchange that failed without saying why, and a request no answer came back for.
+PROOFREADING_FAILED = "Proofreading failed; keeping the original text."
+PROOFREADING_NO_ANSWER = "Proofreading failed; the model did not answer."
+#: A chunked file whose one piece failed: no half-corrected text is ever stored.
+CHUNK_FAILURE = "Proofreading part of the text failed; keeping the original text."
+#: The item of a stretch the answer left out, which was put back.
+LEFT_OUT_WHY = (
+    "The AI left this passage out of its answer. It is kept here as you wrote it, without "
+    "corrections: read it with the rest."
+)
+#: A structured answer that does not have the shape the request asked for.
+ANSWER_NOT_STRUCTURED = "the answer did not match the required structure"
+
+
+def correction_failed(reason: BaseException) -> str:
+    """Return the warning of a proofreading request that failed in transport."""
+    return f"Correction failed ({reason})."
+
+
+def evaluation_failed(reason: BaseException) -> str:
+    """Return the warning of a content review request that failed in transport."""
+    return f"Evaluation failed ({reason})."
+
+
+def left_out_warning(count: int, words: int) -> str:
+    """Return the warning about *count* passages of *words* words the answer left out."""
+    return f"The AI left out {count} passages ({words} words); they are kept as you wrote them."
+
+
+def left_out_warning_one(words: int) -> str:
+    """Return the same warning for one passage."""
+    return f"The AI left out a passage ({words} words); it is kept as you wrote it."
+
 
 # ── Prompt dialog wording ─────────────────────────────────────────────────────
 
@@ -160,74 +214,6 @@ def prepared_caption(steps: Sequence[str]) -> str:
 REMOVE_PERSONAL_INFO = "Remove personal info"
 #: The line under it while it is on: the languages whose names are hidden.
 NAMES_IN_LANGUAGES = "Names in {languages}"
-
-# ── Main window: the documents and results rows ───────────────────────────────
-
-DOCUMENTS_LABEL = "Documents:"
-DOCUMENTS_PLACEHOLDER = "No input selected"
-DOCUMENTS_FOLDER_BUTTON = "Folder…"
-DOCUMENTS_FOLDER_TOOLTIP = (
-    "Choose a folder — all supported files inside will be processed, including subfolders."
-)
-DOCUMENTS_FILES_BUTTON = "Files…"
-DOCUMENTS_FILES_TOOLTIP = "Choose one or more individual files (PDF, images, or plain text)."
-RESULTS_LABEL = "Save to:"
-RESULTS_PLACEHOLDER = "Choose a folder for the results"
-RESULTS_TOOLTIP = (
-    "Folder where Word documents and text files will be saved.\n"
-    "Required as soon as a Word document or a text file is switched on."
-)
-RESULTS_BUTTON = "Choose…"
-RESULTS_BUTTON_TOOLTIP = "Choose the folder."
-TEXT_FILE_TOOLTIP = "Save the extracted text of each input file as a text file (name.txt)."
-TEXT_MODE_TOOLTIP = (
-    "as written — the text as it was read (name.txt).\n"
-    "anonymized — names and other personal data replaced by placeholders\n"
-    "(name_anonymized.txt). Runs on this computer and needs the privacy add-on (spaCy).\n"
-    "both — one file of each."
-)
-
-
-def files_more(count: int) -> str:
-    """Return the last line of the list of selected files: how many more there are."""
-    return f"… and {count} more"
-
-
-def files_from_folder(count: int, folder: object) -> str:
-    """Return ``3 files from C:\\…`` for a selection of individual documents."""
-    return f"{count} file{'s' if count != 1 else ''} from {folder}"
-
-
-# ── Main window: the steps ────────────────────────────────────────────────────
-
-RECOGNIZE_TEXT = "Recognize text"
-RECOGNIZE_TEXT_TOOLTIP = (
-    "Read the text from scans (photos and scanned pages).\n"
-    "Text files and PDFs that already contain their text are used as they are.\n"
-    "Switched off, only that existing text is used and scans are skipped."
-)
-RECOGNIZE_NOT_NEEDED = "Not needed here: the text of these documents is already available."
-
-
-def scans_skipped_note(count: int) -> str:
-    """Return the note under a switched-off "Recognize text" when *count* scans are queued."""
-    noun = "scan" if count == 1 else "scans"
-    return f"{count} {noun} will be skipped because text recognition is off."
-
-
-#: The tooltip of a "skipped" cell in the queue (the same sentence the pipeline reports).
-RECOGNITION_OFF_REASON = RECOGNITION_OFF_MESSAGE
-NOTHING_TO_READ_LINE = "Nothing to read: no document has text to use without recognition"
-TURN_ON_RECOGNITION = "Turn on"
-PROOFREAD = "Proofread"
-REVIEW_CONTENT = "Review content"
-RULES_BUTTON = "Rules…"
-OPTIONS_BUTTON = "Options…"
-GUARD_TITLE = "{step} can't be turned on"
-RUN_BLOCKED_TITLE = "The run can't start"
-REVIEW_NEEDS_PROOFREADING = (
-    "Content review reads the proofread text, so it runs only together with proofreading."
-)
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
 
@@ -324,6 +310,34 @@ ONE_NAME_HIDDEN = "1 name hidden"
 OTHER_PRIVACY_SETTINGS = (
     "made with other privacy settings — {action} again to send with the current ones"
 )
+#: What each step of the proofreading exchange is called where a teacher reads it.
+PROMPT_STEP_TITLES: dict[str, str] = {
+    "correct": "Correct the text",
+    "explain": "Explain the corrections",
+    "unclear": "List unclear expressions",
+}
+
+
+def prompt_step_title(step: str) -> str:
+    """Return the name of a proofreading step as a teacher knows it."""
+    return PROMPT_STEP_TITLES.get(step, step)
+
+
+def prompts_block(prompts: Sequence[tuple[str, str]], notes: str = "") -> str:
+    """Return the read-only block of instructions: one heading per request, then the notes.
+
+    *prompts* are ``(step, system prompt)`` as the exchange sends them; a content-review
+    prompt has no step and so gets no heading.  *notes* are the teacher's own words, which
+    every proofreading request carries.
+    """
+    parts = [
+        f"{prompt_step_title(step)}\n\n{prompt}" if step else prompt for step, prompt in prompts
+    ]
+    if notes.strip():
+        parts.append(notes.strip())
+    return "\n\n".join(parts)
+
+
 STORED_RESULT = "The stored {stage} was {how}."
 #: What the "other privacy settings" line tells the teacher to do, per step.
 _AGAIN = {Stage.CORRECTION: "proofread", Stage.EVALUATION: "review"}
@@ -450,6 +464,10 @@ SPEED_FROM_RUNS_DOCUMENT = "proofread document"
 SPEED_FROM_RUNS_PAGE = "recognised page"
 SPEED_PLUGGED_IN = "plugged in"
 SPEED_ON_BATTERY = "on battery, so slower than usual"
+
+#: Why a step of the speed test could not be turned into a figure: the answer carried no count.
+SPEED_NO_TOKEN_COUNTS_PAGE = "the server reported no token counts for the page"
+SPEED_NO_TOKEN_COUNTS_PARAGRAPH = "the server reported no token counts for the paragraph"
 
 #: Teacher-facing names of the steps the test measures.
 SPEED_STEP_NAMES: dict[str, str] = {
@@ -642,6 +660,14 @@ HIDE_PERSONAL_INFO_BUTTON_TIP = "Hide personal information in the texts shown he
 SHOW_PERSONAL_INFO_BUTTON_TIP = "Show names again in the texts shown here"
 
 
+# ── The work a teacher did on a document ──────────────────────────────────────
+
+
+def work_saved_by_newer_version(name: str) -> str:
+    """Return why the saved work of *name* is left alone: a newer version of the app wrote it."""
+    return f"the work of {name} was saved by a newer version of the app"
+
+
 # ── The Check tab's side panel ────────────────────────────────────────────────
 
 TAKE_OUT = "Take out"
@@ -730,6 +756,9 @@ CHECKED_TOOLTIP = (
     "checked; without one, the text that was read."
 )
 CHECKED_COLUMN = "Checked"
+FILE_COLUMN = "File"
+DURATION_COLUMN = "Duration"
+OPEN_COLUMN = "Open"
 #: The step columns of the results list, named like the steps under "What should happen".
 RECOGNITION_COLUMN = "Recognition"
 PROOFREADING_COLUMN = "Proofreading"
@@ -754,3 +783,8 @@ def checked_button_label(label: str) -> str:
 def checked_cell_label(label: str) -> str:
     """Return the queue cell's text for a document whose work says *label*."""
     return _CHECKED_CELLS.get(label, "")
+
+
+def hiding_personal_info_failed(reason: str) -> str:
+    """Return why the names in the shown texts could not be hidden."""
+    return HIDING_PERSONAL_INFO_FAILED.format(reason=reason)

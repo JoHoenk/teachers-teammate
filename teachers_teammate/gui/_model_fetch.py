@@ -13,13 +13,22 @@ presentation only; every query is delegated to the injected service.
 from __future__ import annotations
 
 from collections.abc import Callable
-import html
 
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QComboBox, QProgressBar, QWidget
 
 from ..domain.model_listing import ModelGroup, ModelListing
-from ..texts.models import models_from_text
+from ..texts.models import (
+    STATUS_ERROR,
+    STATUS_KEY_MISSING,
+    STATUS_LOADING,
+    STATUS_RETRY,
+    listing_builtin,
+    listing_failed,
+    model_count,
+    models_from_text,
+)
+from . import _html
 from ._background import LatestTask
 
 # ── busy bar ──────────────────────────────────────────────────────────────────
@@ -96,25 +105,25 @@ class ModelFetcher:
 # ── status label helpers ──────────────────────────────────────────────────────
 
 
-_STATUS_LOADING = '<span style="color:#888;">● loading…</span>'
-_STATUS_KEY_MISSING = '<span style="color:#e67e22;">● key not set</span>'
-_STATUS_ERROR = '<span style="color:#c0392b;">● -</span>'
+_STATUS_LOADING = _html.grey(STATUS_LOADING)
+_STATUS_KEY_MISSING = _html.amber(STATUS_KEY_MISSING)
+_STATUS_ERROR = _html.red(STATUS_ERROR)
 
 
 def _status_ok(n: int, service: str = "") -> str:
     """Return the finished status line: a green "✓ N models" (from *service* when given)."""
-    what = models_from_text(n, service) if service else f"{n} model{'' if n == 1 else 's'}"
-    return f'<span style="color:#27ae60;">✓ {html.escape(what)}</span>'
+    what = models_from_text(n, service) if service else model_count(n)
+    return _html.green(f"✓ {what}")
 
 
 def _status_busy(text: str) -> str:
     """Return the grey line shown while the model list is still on its way."""
-    return f'<span style="color:#888;">● {html.escape(text)}</span>'
+    return _html.grey(f"● {text}")
 
 
 def _status_note(text: str) -> str:
     """Return an orange note to append to a status line."""
-    return f'<span style="color:#e67e22;">{html.escape(text)}</span>'
+    return _html.amber(text)
 
 
 #: Status-link prefix that carries the model to take instead of the chosen one.
@@ -130,16 +139,11 @@ def _listing_status(listing: ModelListing, service: str = "") -> str:
     A failed query must not look like a successful one, so it says why and offers to retry.
     """
     count = len(listing.models)
-    noun = "model" if count == 1 else "models"
     if listing.source == "failed":
-        what = f"built-in list of {count} {noun}" if count else "no models to show"
-        return (
-            f'<span style="color:#e67e22;">● {what} — '
-            f"{html.escape(listing.problem or 'the service could not be asked')}</span> "
-            '<a href="retry">Try again</a>'
-        )
+        failed = _html.amber(listing_failed(count, listing.problem))
+        return f"{failed} {_html.link('retry', STATUS_RETRY)}"
     if listing.source == "builtin":
-        return f'<span style="color:#888;">● {count} {noun} · built-in list</span>'
+        return _html.grey(listing_builtin(count))
     return _status_ok(count, service)
 
 

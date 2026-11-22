@@ -31,6 +31,12 @@ from teachers_teammate.domain.model_listing import (
     ModelListing,
 )
 from teachers_teammate.infrastructure.providers._helpers import import_guard
+from teachers_teammate.texts.models import (
+    OWN_LABEL,
+    PINNED_LABEL,
+    SUGGESTED_LABEL,
+    current_version_note,
+)
 
 ENV_KEY = "MISTRAL_API_KEY"
 
@@ -64,10 +70,6 @@ _GROUP_ORDER: dict[str, int] = {"current": 0, "pinned": 1, "own": 2, "other": 3}
 
 #: Order inside the "current" group: biggest model first, anything unrecognised last.
 _SIZE_ORDER: tuple[str, ...] = ("large", "medium", "small", "ministral")
-
-SUGGESTED_LABEL = "★ suggested"
-PINNED_LABEL = "pinned version"
-OWN_LABEL = "your model"
 
 #: A dated model ID ends in the year and month of its release, e.g. ``mistral-small-2506``.
 _DATED_ID = re.compile(r"-\d{4}$")
@@ -282,7 +284,7 @@ def _describe(
     """Return the :class:`ListedModel` for *entry*, shown under *model_id*."""
     description = str(entry.get("description") or "")
     if pinned is not None:
-        note = f"Currently {pinned['id']}."
+        note = current_version_note(str(pinned["id"]))
         description = f"{description} {note}".strip()
     if not label and group == "current" and model_id == DEFAULT_MODEL:
         label = SUGGESTED_LABEL

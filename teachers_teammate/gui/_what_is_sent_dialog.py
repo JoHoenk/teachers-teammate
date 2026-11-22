@@ -29,21 +29,12 @@ from PySide6.QtWidgets import (
 
 from ..application.data_flow import sent_location
 from ..application.sent_text import SentText, SentTexts
+from ..texts import app, privacy
 from ..texts import review as txt
 from ..texts.privacy import level_text
 from ._data_flow_summary import level_color
 from ._diff_widget import DiffWidget
 from ._formatted_text import chip_placeholders
-
-TITLE = "What is sent for this file"
-TAB_SENT = "What is sent"
-TAB_PERSONAL = "Personal information"
-NOTHING_LEAVES = "Everything stays on this computer."
-NO_SECTION = "No step sends this file's text away."
-PAGES_SENT = "The page images of this file are sent to another computer you control."
-SHOW_PROMPT = "Show the instructions sent"
-HIDE_PROMPT = "Hide the instructions sent"
-EMPTY_TEXT = "(the text is empty)"
 
 
 def highlighted_html(text: str, placeholders: tuple[str, ...]) -> str:
@@ -52,7 +43,7 @@ def highlighted_html(text: str, placeholders: tuple[str, ...]) -> str:
     Longer placeholders win over shorter ones that are part of them, so ``[PERSON_1]`` is
     highlighted as a whole even when ``[PERSON]`` is also in the list.
     """
-    body = escape(text) if text else escape(EMPTY_TEXT)
+    body = escape(text) if text else escape(privacy.EMPTY_TEXT)
     if text:
         body = chip_placeholders(body, placeholders)
     return (
@@ -66,12 +57,15 @@ class _SentSection(QGroupBox):
     """One step that leaves the computer: destination, names note, text, instructions."""
 
     def __init__(self, section: SentText, parent: QWidget | None = None) -> None:
-        super().__init__(f"{section.title} — {section.badge}", parent)
+        super().__init__(
+            f"{app.stage_title(section.stage.stage)} — {privacy.stage_badge(section.stage)}",
+            parent,
+        )
         self._section = section
         layout = QVBoxLayout(self)
         layout.setSpacing(4)
 
-        names = QLabel(section.names_note)
+        names = QLabel(privacy.names_in_text_note(section.names_hidden))
         names.setWordWrap(True)
         names.setStyleSheet("color: #c0392b; font-weight: bold;")
         if section.names_hidden:
@@ -84,7 +78,7 @@ class _SentSection(QGroupBox):
         self._body.setHtml(highlighted_html(section.text, section.placeholders))
         layout.addWidget(self._body, stretch=1)
 
-        self._prompt_button = QPushButton(SHOW_PROMPT)
+        self._prompt_button = QPushButton(privacy.SHOW_PROMPT)
         self._prompt_button.setCheckable(True)
         self._prompt_button.setFlat(True)
         layout.addWidget(self._prompt_button)
@@ -92,7 +86,9 @@ class _SentSection(QGroupBox):
         self._prompt = QTextEdit()
         self._prompt.setReadOnly(True)
         self._prompt.setObjectName("sent_prompt")
-        self._prompt.setPlainText(section.prompt or "(no instructions are sent with this step)")
+        self._prompt.setPlainText(
+            txt.prompts_block(section.instructions, section.notes) or privacy.NO_INSTRUCTIONS
+        )
         self._prompt.setVisible(False)
         layout.addWidget(self._prompt)
 
@@ -100,7 +96,7 @@ class _SentSection(QGroupBox):
 
     def _on_prompt_toggled(self, shown: bool) -> None:
         self._prompt.setVisible(shown)
-        self._prompt_button.setText(HIDE_PROMPT if shown else SHOW_PROMPT)
+        self._prompt_button.setText(privacy.HIDE_PROMPT if shown else privacy.SHOW_PROMPT)
 
     def text_view(self) -> QTextEdit:
         """The view holding the text exactly as it is sent."""
@@ -127,7 +123,9 @@ class WhatIsSentDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self._report = report
-        self.setWindowTitle(f"{TITLE} — {file_name}" if file_name else TITLE)
+        self.setWindowTitle(
+            privacy.what_is_sent_title(file_name) if file_name else privacy.WHAT_IS_SENT_TITLE
+        )
         self.resize(900, 650)
 
         layout = QVBoxLayout(self)
@@ -140,9 +138,9 @@ class WhatIsSentDialog(QDialog):
 
         self._section_widgets: list[_SentSection] = []
         self._tabs = QTabWidget()
-        self._tabs.addTab(self._build_sent_tab(), TAB_SENT)
+        self._tabs.addTab(self._build_sent_tab(), privacy.TAB_SENT)
         if report.has_preview:
-            self._tabs.addTab(self._build_personal_tab(), TAB_PERSONAL)
+            self._tabs.addTab(self._build_personal_tab(), privacy.TAB_PERSONAL)
         layout.addWidget(self._tabs, stretch=1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -164,11 +162,11 @@ class WhatIsSentDialog(QDialog):
             block.setStyleSheet("color: #888;")
             outer.addWidget(block)
         if not self._report.leaves_computer:
-            note = QLabel(NOTHING_LEAVES)
+            note = QLabel(privacy.NOTHING_LEAVES)
             note.setWordWrap(True)
             note.setStyleSheet("font-weight: bold;")
             outer.addWidget(note)
-            hint = QLabel(NO_SECTION)
+            hint = QLabel(privacy.NO_SECTION)
             hint.setWordWrap(True)
             hint.setStyleSheet("color: #888;")
             outer.addWidget(hint)
@@ -181,7 +179,9 @@ class WhatIsSentDialog(QDialog):
         sections = QVBoxLayout(inner)
         sections.setSpacing(8)
         for stage in self._report.page_stages:
-            pages = QLabel(f"{stage.title} — {stage.badge}\n{PAGES_SENT}")
+            pages = QLabel(
+                privacy.pages_line(app.stage_title(stage.stage), privacy.stage_badge(stage))
+            )
             pages.setObjectName("page_stage")
             pages.setWordWrap(True)
             pages.setToolTip(stage.location.details)
@@ -201,7 +201,7 @@ class WhatIsSentDialog(QDialog):
         """Return the tab comparing the extracted text with its anonymized form."""
         page = QWidget()
         layout = QVBoxLayout(page)
-        note = QLabel("Left: the extracted text. Right: what a service sees when names are hidden.")
+        note = QLabel(privacy.PERSONAL_COMPARE_NOTE)
         note.setWordWrap(True)
         note.setStyleSheet("color: #888;")
         layout.addWidget(note)
@@ -258,8 +258,8 @@ class WhatIsSentDialog(QDialog):
     def personal_info_text(self) -> str:
         """Return the text of the original-vs-anonymized comparison (empty without it)."""
         page = (
-            self._tabs.widget(self.tabs().index(TAB_PERSONAL))
-            if TAB_PERSONAL in self.tabs()
+            self._tabs.widget(self.tabs().index(privacy.TAB_PERSONAL))
+            if privacy.TAB_PERSONAL in self.tabs()
             else None
         )
         if page is None:

@@ -52,6 +52,9 @@ from ..interfaces import (
     OCRProcessor,
     Reporter,
 )
+from ..texts import report as report_text
+from ..texts.dialogs import cli_warning
+from ..texts.run import personal_info_not_removed, personal_info_setup_failed
 from .anonymizer import anonymizer_config_from, resolve_anonymizer_config
 from .docx_builder import DocxDocumentCreator
 from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
@@ -524,7 +527,7 @@ class StageBuilder:
                 if cfg.correction_enabled:
                     raise  # text would be sent unprotected: the run must not start
                 # Nothing is sent anywhere, so the missing add-on only costs the preview cache.
-                self.reporter.warn(f"WARNING: {exc}; personal info is not removed in this run.")
+                self.reporter.warn(cli_warning(personal_info_not_removed(exc)))
 
         return correction, anonymizer
 
@@ -568,7 +571,7 @@ class StageBuilder:
             )
             return self.factory.build_anonymizer(language=cfg.language, config=anon_config)
         except (ImportError, OSError) as exc:
-            raise ProviderNotAvailableError(f"Cannot initialise anonymizer: {exc}") from exc
+            raise ProviderNotAvailableError(personal_info_setup_failed(exc)) from exc
 
     def build_text_anonymizer(self, shared: Anonymizer | None = None) -> Anonymizer | None:
         """Return the anonymizer for anonymized text files, or ``None`` when they are off.
@@ -589,7 +592,7 @@ class StageBuilder:
         if not cfg.evaluation_enabled:
             return None
         if correction is None:
-            self.reporter.warn("WARNING: Evaluation requires correction; disabling evaluation.")
+            self.reporter.warn(report_text.EVALUATION_NEEDS_CORRECTION)
             return None
         if cfg.evaluate_provider == PROVIDER_OLLAMA:
             client = ollama_client or self._build_ollama_client()

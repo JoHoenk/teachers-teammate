@@ -25,7 +25,9 @@ from ..domain.model_catalog import (
     memory_for_models_gb,
     system_reserve_gb,
 )
-from .settings import WHERE_AI_SETUP
+from .app import NAME
+from .review import REMOVE_PERSONAL_INFO
+from .settings import WHERE_ADDONS, WHERE_AI_SETUP
 
 # ── "My computer" ─────────────────────────────────────────────────────────────
 
@@ -393,10 +395,34 @@ def checking_models_text(count: int) -> str:
     return CHECKING_MODELS.format(count=count)
 
 
+def model_count(count: int) -> str:
+    """Return how many models there are: ``"1 model"``, ``"3 models"``."""
+    return f"{count} {'model' if count == 1 else 'models'}"
+
+
 def models_from_text(count: int, service: str) -> str:
     """Return the finished status line: how many models *service* offered."""
-    noun = "model" if count == 1 else "models"
-    return f"{count} {noun} from {service}"
+    return f"{model_count(count)} from {service}"
+
+
+# ── The status line under a model field ──────────────────────────────────────
+
+STATUS_LOADING = "● loading…"
+STATUS_KEY_MISSING = "● key not set"
+STATUS_ERROR = "● -"
+STATUS_RETRY = "Try again"
+SERVICE_NOT_ASKED = "the service could not be asked"
+
+
+def listing_builtin(count: int) -> str:
+    """Return the status of a model list that is the app's own by design."""
+    return f"● {model_count(count)} · built-in list"
+
+
+def listing_failed(count: int, problem: str) -> str:
+    """Return the status of a model list that fell back to the app's own after a failed query."""
+    what = f"built-in list of {model_count(count)}" if count else "no models to show"
+    return f"● {what} — {problem or SERVICE_NOT_ASKED}"
 
 
 def saved_model_not_offered_text(model: str, service: str) -> str:
@@ -469,12 +495,144 @@ def is_warning(value: Suitability) -> bool:
 # ── Add-ons page ──────────────────────────────────────────────────────────
 
 DOWNLOADS_INTRO = (
-    "Teacher's Teammate needs two AI models: a reading model that turns your "
+    f"{NAME} needs two AI models: a reading model that turns your "
     "scans into text, and a writing model that proofreads and reviews the text."
 )
 BEST_ALREADY_DOWNLOADED = "The best models for your computer are already downloaded."
 MODEL_ALREADY_LISTED = "That model is already in the list."
+#: The Add-ons page's *AI models for this computer* tab.
+OLLAMA_MODELS_GROUP = "AI models for this computer (Ollama)"
+SELECT_BEST_MODELS = "Select the best models for my computer"
+ADD_MODEL_LABEL = "Add a model by name:"
+ADD_MODEL_PLACEHOLDER = "e.g. llama3.2:latest"
+ADD_BUTTON = "Add"
+
 ADD_MODEL_NOTE = "Added models are downloaded when you click Install / Download Selected."
 GROUP_READING = "Reading models — turn scans into text"
 GROUP_WRITING = "Writing models — proofread and review the text"
 GROUP_OTHER = "Other models (added by you)"
+
+# ── Model choice guidance ────────────────────────────────────────────────
+
+MY_COMPUTER_LABEL = "My computer:"
+DETECT_AGAIN = "Detect again"
+USE_BEST_CHOICE = "Use best choice"
+DOWNLOAD_BEST_CHOICE = "Download best choice…"
+
+# ── Reading scans: the recognition settings ──────────────────────────────
+
+MODEL_LABEL = "Model:"
+RECOGNITION_ENGINE_TIP = (
+    "Pages are always read on a computer you control. Online services are not offered: "
+    "they would receive the whole page, including names and grades."
+)
+PDF_LABEL = "PDF:"
+RECOGNITION_METHOD_LABEL = "Recognition method:"
+IMAGE_PREPARATION_LABEL = "Image preparation:"
+PDF_RESOLUTION_LABEL = "PDF resolution:"
+PDF_TEXT_LAYER_LABEL = "PDF text layer:"
+TEMPERATURE_LABEL = "Temperature:"
+DPI_SUFFIX = " DPI"
+AI_SERVICE_LABEL = "AI service:"
+AI_MODEL_LABEL = "AI model:"
+PREVIEW_BUTTON = "Preview…"
+PDF_DPI_TIP = (
+    "Resolution for rendering PDF pages to images before OCR.\n"
+    "72 = screen quality, 150 = draft, 300 = recommended, 600 = high quality.\n"
+    "Has no effect on image inputs (JPG, PNG)."
+)
+PDF_TEXT_LAYER_TIP = (
+    "Use the text embedded in a PDF instead of recognising it.\n\n"
+    "auto — only when every page is clean, text-only (no scans, no\n"
+    "  handwriting, annotations or form fields); otherwise the pages\n"
+    "  are recognised.\n"
+    "always — whenever every page contains any text.\n"
+    "never — always recognise the rendered pages.\n"
+    "Has no effect on image or text files."
+)
+
+
+def preview_title(method: str) -> str:
+    """Return the title of the window that shows one prepared page."""
+    return f"Preprocessing Preview — {method}"
+
+
+PREVIEW_ZOOM_HINT = "Ctrl + scroll wheel to zoom"
+
+
+# ── Settings → AI models: the two groups of the page ─────────────────────
+
+READING_HANDWRITING_GROUP = "Reading handwriting"
+READING_HANDWRITING_NOTE = "Always on this computer: pages never go online."
+PROOFREADING_GROUP = "Proofreading and content review"
+REVIEW_OVERRIDE_LABEL = "Use a different model for content review"
+REVIEW_OVERRIDE_TOOLTIP = (
+    "Off: the content review uses the proofreading model.\n"
+    "On: choose another service or model for the review only."
+)
+REVIEW_CONTEXT_LABEL = "Context window for the content review:"
+REVIEW_CONTEXT_TOOLTIP = (
+    "How much text the content review may read in one request.\n"
+    "Automatic grows the window with the size of the graphics card;\n"
+    "a larger window lets longer texts through but needs more memory."
+)
+
+#: What the page says about names in the text, by the service the teacher chose.
+NAMES_AS_WRITTEN = "Names are sent as written."
+NAMES_PROTECTED = "Names are replaced before the text is sent."
+NAMES_NEED_DETECTION = (
+    "Names are sent as written. Replacing them needs name detection for {language}."
+)
+NAMES_TURNED_ON = (
+    f'"{REMOVE_PERSONAL_INFO}" will be turned on when you press OK, so names are replaced '
+    "before the text is sent."
+)
+BUTTON_TURN_ON = f'Turn on "{REMOVE_PERSONAL_INFO}"'
+BUTTON_KEEP_OFF = "Keep it off"
+#: The button next to the line that misses name detection: it leads to where it is installed.
+BUTTON_INSTALL_DETECTION = "Install…"
+
+#: How one row of the service list marks what still has to happen before it can be used.
+STATUS_NOT_INSTALLED = "not installed"
+STATUS_KEY_NEEDED = "key needed"
+
+# ── Settings → This computer: the local AI server, the model downloads ───
+
+PERFORMANCE_GROUP = "Power and speed of this computer"
+DOWNLOAD_MODEL = "Download a model…"
+DOWNLOAD_MODEL_TOOLTIP = "Opens Add-ons, where AI models for this computer are downloaded."
+
+
+# ── The Mistral model list: what its entries say ──────────────────────────────
+
+#: The labels the list puts to the right of a model's name.
+SUGGESTED_LABEL = "★ suggested"
+PINNED_LABEL = "pinned version"
+OWN_LABEL = "your model"
+
+
+def current_version_note(model_id: str) -> str:
+    """Return the note that names the version a model's name stands for today."""
+    return f"Currently {model_id}."
+
+
+def first_start_log(reading_model: str, writing_model: str, profile: HardwareProfile) -> str:
+    """Return the log line that says which models the first start chose for this computer."""
+    return (
+        f"First start: chose reading model {reading_model} and writing model "
+        f"{writing_model} for your computer ({profile_text(profile)}). "
+        f"You can download them under {WHERE_ADDONS}.\n"
+    )
+
+
+# ── The privacy line under the AI models page's service list ──────────────────
+
+THIS_LANGUAGE = "this language"
+LINE_PROTECTED = "✓ " + NAMES_PROTECTED
+LINE_TURNED_ON = "✓ " + NAMES_TURNED_ON
+LINE_NAMES_SENT = "● " + NAMES_AS_WRITTEN
+
+
+def line_needs_detection(language: str) -> str:
+    """Return the line for names that cannot be replaced: no detection for *language*."""
+    return "● " + NAMES_NEED_DETECTION.format(language=language or THIS_LANGUAGE)

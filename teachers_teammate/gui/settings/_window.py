@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 from ...config import OcrConfig
 from ...domain.model_catalog import profile_setting
 from ...texts import dialogs as dlg
+from ...texts import settings as st
 from .. import _dialogs
 from .._qsettings import app_settings
 from .._window_geometry import fit_to_screen, restore_geometry
@@ -61,10 +62,6 @@ from ._page import (
 )
 from ._privacy_page import PrivacyPage
 from ._scan_quality_page import ScanQualityPage
-
-WINDOW_TITLE = "Settings"
-RESTORE_DEFAULTS = "Restore defaults…"
-ADDONS_NOTE = "Downloads and installs start right away and are not undone by Cancel."
 
 #: QSettings keys (GUI state, not pipeline settings).
 GEOMETRY_KEY = "gui/settings_geometry"
@@ -143,7 +140,7 @@ class SettingsWindow(QDialog):
         preselect: Sequence[str] = (),
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(WINDOW_TITLE)
+        self.setWindowTitle(st.WINDOW_TITLE)
         self._context = context
         #: The settings unbuilt pages are built from: the saved ones plus what other pages
         #: changed meanwhile (profile, server address, an engine's image preparation).
@@ -192,13 +189,13 @@ class SettingsWindow(QDialog):
             self._stack.addWidget(container)
         body.addWidget(self._stack, stretch=1)
 
-        self._addons_note = QLabel(ADDONS_NOTE)
+        self._addons_note = QLabel(st.ADDONS_CANCEL_NOTE)
         self._addons_note.setStyleSheet("color: #888; font-size: 11px;")
         self._addons_note.setVisible(False)
         root.addWidget(self._addons_note)
 
         footer = QHBoxLayout()
-        self._restore_btn = QPushButton(RESTORE_DEFAULTS)
+        self._restore_btn = QPushButton(st.RESTORE_DEFAULTS)
         self._restore_btn.setAutoDefault(False)
         self._restore_btn.clicked.connect(self._on_restore_defaults)
         footer.addWidget(self._restore_btn)

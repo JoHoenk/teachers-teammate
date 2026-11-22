@@ -15,6 +15,7 @@ import json
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from ..exceptions import TRUNCATED_MESSAGE, RunStoppedError
+from ..texts.review import ANSWER_NOT_STRUCTURED, correction_failed
 from .ollama_utils import PROOFREADING_NUM_CTX
 
 if TYPE_CHECKING:
@@ -23,9 +24,6 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
     from .ollama_utils import OllamaClient
-
-#: Warning used when a correction call fails at the transport level.
-_CORRECTION_FAILURE = "Correction failed ({exc})."
 
 
 @dataclass(frozen=True)
@@ -44,12 +42,11 @@ def invoke_langchain_chain(
     human: str,
     variables: dict[str, str],
     fallback: str,
-    failure_prefix: str,
+    failure: Callable[[Exception], str],
 ) -> InvokeAnswer:
     """Build a ``(system, human)`` chain and invoke it.
 
-    On any provider error, returns *fallback* with the warning
-    ``"<failure_prefix> (<exc>)."``.
+    On any provider error, returns *fallback* with the warning *failure* words for it.
     """
     from langchain_core.output_parsers import StrOutputParser  # noqa: PLC0415
     from langchain_core.prompts import ChatPromptTemplate  # noqa: PLC0415
@@ -59,12 +56,7 @@ def invoke_langchain_chain(
     try:
         return InvokeAnswer(chain.invoke(variables))
     except Exception as exc:  # noqa: BLE001  # LangChain raises provider-specific errors; degrade with a warning
-        return InvokeAnswer(fallback, f"{failure_prefix} ({exc}).")
-
-
-def _failure_warning(template: str, exc: Exception) -> str:
-    """Return the warning text of *template*, with ``{exc}`` replaced by *exc*."""
-    return template.replace("{exc}", str(exc))
+        return InvokeAnswer(fallback, failure(exc))
 
 
 def invoke_ollama_chat(  # noqa: PLR0913  # one keyword-only call shape shared by every Ollama caller
@@ -76,7 +68,7 @@ def invoke_ollama_chat(  # noqa: PLR0913  # one keyword-only call shape shared b
     temperature: float,
     think: bool | str = False,
     fallback: str,
-    failure: str,
+    failure: Callable[[Exception], str],
     system: str = "",
     format: dict | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
     num_ctx: int = PROOFREADING_NUM_CTX,
@@ -85,8 +77,8 @@ def invoke_ollama_chat(  # noqa: PLR0913  # one keyword-only call shape shared b
 ) -> InvokeAnswer:
     """Invoke a native Ollama chat completion.
 
-    On any transport error, returns *fallback* with *failure*, its ``{exc}`` placeholder replaced
-    by the exception.  *system* is sent as a system message; *format* passes a JSON schema to
+    On any transport error, returns *fallback* with the warning *failure* words for the
+    exception.  *system* is sent as a system message; *format* passes a JSON schema to
     Ollama, which then constrains the answer to it.  An answer the context window cut off returns
     *fallback* with *truncated_warning*: its end is missing, so it must not replace the text it
     was asked about.
@@ -118,7 +110,7 @@ def invoke_ollama_chat(  # noqa: PLR0913  # one keyword-only call shape shared b
     except RunStoppedError:
         raise  # a stop is not a failed request: the caller leaves the stage
     except Exception as exc:  # noqa: BLE001  # client may raise any transport error; degrade with a warning
-        return InvokeAnswer(fallback, _failure_warning(failure, exc))
+        return InvokeAnswer(fallback, failure(exc))
 
 
 def tidy_answer(answer: InvokeAnswer, postprocess: Callable[[str], str]) -> InvokeAnswer:
@@ -223,16 +215,14 @@ def invoke_langchain_structured[T](
             # The provider took the schema when it was bound but refuses it when it is sent
             # (e.g. OpenAI's json_schema on gpt-3.5-turbo): a plain answer may still work.
             return StructuredResult(error=str(exc), failure="unsupported")
-        return StructuredResult(
-            error=_failure_warning(_CORRECTION_FAILURE, exc), failure="transport"
-        )
+        return StructuredResult(error=correction_failed(exc), failure="transport")
     raw = answer.get("raw") if isinstance(answer, dict) else answer
     parsed = answer.get("parsed") if isinstance(answer, dict) else answer
     if parsed is None:
         error = answer.get("parsing_error") if isinstance(answer, dict) else None
         return StructuredResult(
             raw=_message_text(raw),
-            error=str(error or "the answer did not match the required structure"),
+            error=str(error or ANSWER_NOT_STRUCTURED),
             failure="invalid",
         )
     return StructuredResult(parsed=cast("T", parsed), raw=_message_text(raw))
@@ -282,9 +272,7 @@ def invoke_ollama_structured[T](  # noqa: PLR0913  # one keyword-only call shape
         if _rejected_request(exc):
             # An older server or a model that refuses ``format``: a plain answer may still work.
             return StructuredResult(error=str(exc), failure="unsupported")
-        return StructuredResult(
-            error=_failure_warning(_CORRECTION_FAILURE, exc), failure="transport"
-        )
+        return StructuredResult(error=correction_failed(exc), failure="transport")
     parsed, error = parse(text)
     if parsed is None:
         return StructuredResult(raw=text, error=error, failure="invalid")

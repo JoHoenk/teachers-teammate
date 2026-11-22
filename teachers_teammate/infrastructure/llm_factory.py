@@ -31,6 +31,13 @@ from ..domain.model_listing import ModelListing
 from ..domain.providers import ProviderInfo
 from ..exceptions import ProviderNotAvailableError
 from ..interfaces import LLMProviderModule
+from ..texts.addons import (
+    MODEL_LIST_UNREADABLE,
+    NO_HEALTH_CHECK,
+    provider_check_failed,
+    provider_not_loaded,
+    unknown_provider_error,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -101,9 +108,7 @@ def _load_provider(provider: str) -> LLMProviderModule:
     """Import and return ``teachers_teammate.infrastructure.providers.<provider>``, or raise."""
     available = list_providers()
     if provider not in available:
-        raise ValueError(
-            f"Unknown correction provider '{provider}'. Available: {', '.join(available)}."
-        )
+        raise ValueError(unknown_provider_error(provider, ", ".join(available)))
     mod = importlib.import_module(f".providers.{provider}", package=__package__)
     return cast(LLMProviderModule, mod)
 
@@ -148,7 +153,7 @@ def list_provider_models_checked(provider: str, **kwargs: object) -> ModelListin
             return checked(**kwargs)
     except Exception as exc:  # noqa: BLE001  # provider list_models_checked() may raise anything; report as a failed listing
         _logger.warning("Could not list models for provider '%s': %s", provider, exc)
-        return ModelListing(_builtin_models(provider), "failed", "the model list could not be read")
+        return ModelListing(_builtin_models(provider), "failed", MODEL_LIST_UNREADABLE)
     models = list_provider_models(provider, **kwargs)
     info = get_provider_info(provider)
     return ModelListing(models, "live" if info is not None and info.can_list_models else "builtin")
@@ -192,9 +197,9 @@ def check_provider_connection(provider: str, **kwargs: object) -> tuple[bool, st
         fn = getattr(mod, "check_connection", None)
         if fn is not None:
             return fn(**kwargs)
-        return True, "no health check available"
+        return True, NO_HEALTH_CHECK
     except Exception as exc:  # noqa: BLE001  # provider health check may raise any provider/network error; report as failed
-        return False, f"✗ Could not check provider '{provider}': {exc}"
+        return False, provider_check_failed(provider, exc)
 
 
 def build_llm(
@@ -225,7 +230,4 @@ def build_llm(
             return module.create(model, base_url=base_url, temperature=temperature)
         return module.create(model, temperature=temperature)
     except SystemExit as exc:
-        raise ProviderNotAvailableError(
-            f"Provider '{provider}' could not be loaded — "
-            "check that all required packages are installed."
-        ) from exc
+        raise ProviderNotAvailableError(provider_not_loaded(provider)) from exc

@@ -64,6 +64,7 @@ from ...domain.model_catalog import (
     short_model_name,
 )
 from ...domain.stages import Stage
+from ...texts import addons as addon_text
 from ...texts import review as txt
 from ...texts.models import compact_suitability_text
 from ...texts.privacy import short_place
@@ -78,14 +79,10 @@ from ...texts.setup import (
     CLASSES_TYPED_NOTE,
     DONE_DONE,
     DONE_DOWNLOADS_TITLE,
-    DONE_FAILED,
     DONE_NAME_PAGE_MODELS,
     DONE_NAME_READER,
     DONE_NOTHING,
     DONE_OLLAMA_GOES_ON,
-    DONE_OVERALL,
-    DONE_PROGRESS,
-    DONE_PROGRESS_MB,
     DONE_PURPOSE_ADDON,
     DONE_PURPOSE_NAMES,
     DONE_PURPOSE_PAGE_MODELS,
@@ -124,12 +121,9 @@ from ...texts.setup import (
     PRIVACY_HAS_DETECTION,
     PRIVACY_HIDE_HERE,
     PRIVACY_HIDE_HERE_NOTE,
-    PRIVACY_MULTILINGUAL,
     PRIVACY_NEEDS_DETECTION,
     PRIVACY_SCHOOL_NOTE,
     PRIVACY_SCHOOL_NOTE_NETWORK,
-    PRIVACY_SENT,
-    PRIVACY_SENT_NETWORK,
     PRIVACY_STAYS,
     PRIVACY_STAYS_NOTE,
     PRIVACY_TITLE,
@@ -146,13 +140,8 @@ from ...texts.setup import (
     PROOFREADING_TITLE,
     PROOFREADING_USE_RECOMMENDED,
     READER_NAME,
-    SUGGESTION,
     SUGGESTION_CHECKING,
-    SUGGESTION_DOWNLOADED,
     SUGGESTION_UNKNOWN,
-    SUMMARY_DISK_SHORT,
-    SUMMARY_DOWNLOADS_NEEDED,
-    SUMMARY_DOWNLOADS_TOTAL,
     SUMMARY_FAILED,
     SUMMARY_INSTALLING,
     SUMMARY_LATER,
@@ -164,7 +153,19 @@ from ...texts.setup import (
     WELCOME_POINTS,
     WELCOME_TEXT,
     WELCOME_TITLE,
+    done_failed,
+    done_overall,
+    done_progress,
+    done_progress_mb,
     name_model_label,
+    privacy_multilingual,
+    privacy_sent,
+    privacy_sent_network,
+    suggestion,
+    suggestion_downloaded,
+    summary_disk_short,
+    summary_downloads_needed,
+    summary_downloads_total,
 )
 from .._background import LatestTask
 from .._hardware_profile_selector import HardwareProfileSelector
@@ -172,7 +173,6 @@ from .._install_round import (
     PACKAGE_PREFIX,
     PAGE_MODELS_ITEM,
     READER_PREFIX,
-    READER_PROGRESS_STATUS,
 )
 from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .._model_item_delegate import ModelItem, fill_grouped
@@ -193,6 +193,11 @@ _BAR_STEPS = 1000
 #: Bytes in a gigabyte, for the pull progress the manager reports in bytes.
 _GB = 1_000_000_000.0
 _MB = 1_000_000.0
+#: The download rows the install round reports under a status of their own, not the pulling model.
+_OWN_PROGRESS_ROWS = {
+    addon_text.READER_PROGRESS_STATUS: READER_NAME,
+    addon_text.PAGE_MODELS_PROGRESS_STATUS: PAGE_MODELS_ADDON_ID,
+}
 
 
 def _fit_words(step: PlannedStep) -> str:
@@ -769,9 +774,9 @@ class ProofreadingPage(SetupPage):
             return
         fit = _fit_words(step)
         if step.installed:
-            text = SUGGESTION_DOWNLOADED.format(model=step.model, fit=fit)
+            text = suggestion_downloaded(step.model, fit)
         else:
-            text = SUGGESTION.format(model=step.model, fit=fit, size=_size_words(step))
+            text = suggestion(step.model, fit, _size_words(step))
         self._suggestion.setText(text)
 
 
@@ -903,17 +908,17 @@ class PrivacyPage(SetupPage):
         )
         if model == service.spacy_model_for_language(""):
             # A language without a model of its own gets the multilingual one.
-            detection_text += " " + PRIVACY_MULTILINGUAL.format(language=answers.language)
+            detection_text += " " + privacy_multilingual(answers.language)
         self._fill_extra(answers.language)
 
         if leaves:
             if case is PrivacyCase.ONLINE:
                 name = self._context.app_service.providers.display_name(answers.online_choice[0])
-                self._sent.setText(PRIVACY_SENT.format(service=name))
+                self._sent.setText(privacy_sent(name))
                 self._school.setText(PRIVACY_SCHOOL_NOTE)
             else:
                 host = urlparse(answers.ollama_url).hostname or answers.ollama_url
-                self._sent.setText(PRIVACY_SENT_NETWORK.format(host=host))
+                self._sent.setText(privacy_sent_network(host))
                 self._school.setText(PRIVACY_SCHOOL_NOTE_NETWORK)
             already_on = bool(self._context.settings.get("anonymization_enabled"))
             self._remove.setChecked(True)
@@ -1027,9 +1032,7 @@ class SummaryPage(SetupPage):
         self._total.setText(_downloads_text(plan))
         self._disk.setVisible(plan.disk is DiskVerdict.NOT_ENOUGH)
         if plan.disk is DiskVerdict.NOT_ENOUGH:
-            self._disk.setText(
-                SUMMARY_DISK_SHORT.format(free=plan.free_disk_gb or 0.0, needed=plan.needed_gb)
-            )
+            self._disk.setText(summary_disk_short(plan.free_disk_gb or 0.0, plan.needed_gb))
         self._stopped.setVisible(
             any(
                 download.kind is DownloadKind.OLLAMA_MODEL and not download.possible
@@ -1070,8 +1073,8 @@ def _downloads_text(plan: SetupPlan) -> str:
     if not plan.downloads:
         return SUMMARY_NO_DOWNLOADS
     if plan.free_disk_gb is None:
-        return SUMMARY_DOWNLOADS_NEEDED.format(needed=plan.needed_gb)
-    return SUMMARY_DOWNLOADS_TOTAL.format(needed=plan.needed_gb, free=plan.free_disk_gb)
+        return summary_downloads_needed(plan.needed_gb)
+    return summary_downloads_total(plan.needed_gb, plan.free_disk_gb)
 
 
 class DonePage(SetupPage):
@@ -1134,7 +1137,7 @@ class DonePage(SetupPage):
             self.setTitle(DONE_TITLE_RUNNING if rows.pending() else DONE_TITLE)
         self._overall.setVisible(rows.total() > 0)
         self._overall.setValue(round(rows.fraction() * _BAR_STEPS))
-        self._overall.setFormat(DONE_OVERALL.format(done=rows.finished(), total=rows.total()))
+        self._overall.setFormat(done_overall(rows.finished(), rows.total()))
         self._speed_waits.setVisible(rows.pending_models())
 
     def on_packages_changed(self) -> None:
@@ -1273,7 +1276,7 @@ class _DownloadRows(QWidget):
 
     def failed(self, item: str, message: str) -> None:
         """The round could not install *item*."""
-        self._set(item, DONE_FAILED.format(message=message), failed=True)
+        self._set(item, done_failed(message), failed=True)
 
     def error(self, message: str) -> None:
         """A pull failed; the manager names no model, so every running Ollama row says why.
@@ -1285,7 +1288,7 @@ class _DownloadRows(QWidget):
             if self._kinds.get(name) is not DownloadKind.OLLAMA_MODEL:
                 continue
             if self._state.get(name) == DONE_RUNNING or name in self._fraction:
-                self._state[name] = DONE_FAILED.format(message=message)
+                self._state[name] = done_failed(message)
                 self._failed.add(name)
                 self._fraction.pop(name, None)
                 status.setText(self._state[name])
@@ -1297,15 +1300,16 @@ class _DownloadRows(QWidget):
         The signal carries a status text ("pulling sha256:…"), not the model, so the row is
         the one :meth:`started` named last.
         """
-        # The built-in reader's download reports through the same signal, under its own name.
-        name = READER_NAME if status == READER_PROGRESS_STATUS else self._pulling
+        # The reader's and the page models' downloads report through the same signal, each under
+        # its own name.
+        name = _OWN_PROGRESS_ROWS.get(status, self._pulling)
         if name not in self._labels or not total:
             return
         self._fraction[name] = min(done / total, 1.0)
         self._state[name] = (
-            DONE_PROGRESS_MB.format(done=done / _MB, total=total / _MB)
+            done_progress_mb(done / _MB, total / _MB)
             if total < _GB / 10
-            else DONE_PROGRESS.format(done=done / _GB, total=total / _GB)
+            else done_progress(done / _GB, total / _GB)
         )
         self._labels[name].setText(self._state[name])
         self.changed.emit()

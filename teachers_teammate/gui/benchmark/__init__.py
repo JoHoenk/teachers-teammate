@@ -11,12 +11,11 @@ diff + similarity).
 
 from __future__ import annotations
 
+from ...texts import app as app_text
+
 try:
     from ._benchmark_window import BenchmarkWindow, main_benchmark
 except ImportError as _exc:  # pragma: no cover - mirrors gui/__init__ guard
-    raise ImportError(
-        "The Benchmark window needs PySide6-Essentials, which is part of the base install. "
-        "Reinstall with: pip install --force-reinstall teachers-teammate"
-    ) from _exc
+    raise ImportError(app_text.MISSING_PYSIDE_BENCHMARK) from _exc
 
 __all__ = ["BenchmarkWindow", "main_benchmark"]

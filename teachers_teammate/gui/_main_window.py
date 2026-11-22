@@ -19,11 +19,9 @@ from PySide6.QtWidgets import (
     QApplication,
     QFrame,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
     QProgressBar,
     QPushButton,
-    QSizePolicy,
     QSplashScreen,
     QSplitter,
     QStyle,
@@ -49,10 +47,11 @@ from ..config import DEFAULTS, Config
 from ..domain.data_location import DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
 from ..domain.stages import Stage
+from ..texts import app as app_text
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
-from ..texts.privacy import advice_text, level_text, stage_tooltips
-from ..texts.settings import WHERE_GENERAL
+from ..texts import main_window as win_text
+from ..texts.privacy import advice_text, level_text, stage_badge, stage_tooltips
 from . import _dialogs, _handles
 from ._app_bootstrap import create_app, finish_process
 from ._background import LatestTask, run_in_background, wait_for_background_tasks
@@ -79,6 +78,7 @@ from ._settings_launcher import SettingsHooks, SettingsLauncher
 from ._setup_launcher import SetupHooks, SetupLauncher
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
+from ._update_banner import build_update_banner, show_update
 from ._update_check import check_for_update
 from .settings import SettingsPage
 from .settings._page import FOCUS_DETECTION
@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
         worker_factory: Callable[..., WorkerLike] | None = None,
     ) -> None:
         super().__init__()
-        self.setWindowTitle("Teacher's Teammate")
+        self.setWindowTitle(app_text.MAIN_WINDOW_TITLE)
         self.resize(1500, 860)
         self._app_service = app_service
         self._worker_factory = worker_factory
@@ -236,7 +236,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(4)
 
-        self._update_banner = self._build_update_banner()
+        self._update_banner = build_update_banner()
         root.addWidget(self._update_banner)
 
         self._build_widgets()
@@ -584,7 +584,7 @@ class MainWindow(QMainWindow):
             if warning
             else QSystemTrayIcon.MessageIcon.Information
         )
-        self._tray.showMessage("Teacher's Teammate", text, icon, 4000)
+        self._tray.showMessage(app_text.NAME, text, icon, 4000)
 
     def _scan_input_files(self) -> list[Path]:
         """Scan the input folder through the run service while the config is incomplete."""
@@ -771,7 +771,7 @@ class MainWindow(QMainWindow):
             return
         question = dlg.documents_leave_computer(
             level_text(flow.level),
-            [(stage.title, stage.badge) for stage in flow.outbound],
+            [(app_text.stage_title(stage.stage), stage_badge(stage)) for stage in flow.outbound],
             [advice_text(tip) for tip in flow.advice],
         )
         answer = _dialogs.choose(self, question)
@@ -1070,37 +1070,8 @@ class MainWindow(QMainWindow):
         self._privacy_controller.refresh_availability()  # the document language may have changed
         self._readiness_controller.schedule_check()  # ... and what a run needs with it
 
-    def _build_update_banner(self) -> QFrame:
-        banner = QFrame()
-        banner.setObjectName("UpdateBanner")
-        # Never grow taller than the content: the splitter below takes all spare height.
-        banner.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-        banner.setStyleSheet(
-            "#UpdateBanner { background: #6a5200; border-radius: 4px; padding: 2px; }"
-        )
-        layout = QHBoxLayout(banner)
-        layout.setContentsMargins(8, 4, 8, 4)
-        lbl = QLabel()
-        lbl.setObjectName("UpdateBannerLabel")
-        lbl.setOpenExternalLinks(True)
-        layout.addWidget(lbl, 1)
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(20, 20)
-        close_btn.setFlat(True)
-        close_btn.clicked.connect(banner.hide)
-        layout.addWidget(close_btn)
-        banner.hide()
-        return banner
-
     def _show_update_banner(self, version: str, url: str) -> None:
-        lbl = self._update_banner.findChild(QLabel, "UpdateBannerLabel")
-        if lbl is not None:
-            lbl.setText(
-                f"Version <b>{version}</b> is available — "
-                f'<a href="{url}" style="color:#ffd966;">Download</a>'
-                f" · turn this check off under {WHERE_GENERAL}"
-            )
-        self._update_banner.show()
+        show_update(self._update_banner, version, url)
 
     def _current_ollama_url(self) -> str:
         return str(self._config_panel.get_settings_dict().get("ollama_url", DEFAULTS["ollama_url"]))
@@ -1173,9 +1144,9 @@ class MainWindow(QMainWindow):
         elif addon == READER_ADDON_ID:
             # The built-in reader's models arrived: the readiness line turns green on the
             # check below; nothing else to tell.
-            self._log.append_text("The built-in reader is downloaded.\n")
+            self._log.append_text(win_text.LOG_READER_DOWNLOADED)
         elif addon == PAGE_MODELS_ADDON_ID:
-            self._log.append_text("The page models are downloaded.\n")
+            self._log.append_text(win_text.LOG_PAGE_MODELS_DOWNLOADED)
         self._readiness_controller.start_check()
 
 

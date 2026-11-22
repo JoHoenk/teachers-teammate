@@ -14,7 +14,7 @@ from ..application.composition import AppServices
 from ..config import Config
 from ..domain.run_summary import FileOutcome, FileStatus, KeepAwakeState, RunSummary
 from ..interfaces import CallbackReporter, ProgressCallbacks
-from ..texts.run import BATTERY_WARNING, stopped_message
+from ..texts.run import BATTERY_WARNING, fatal_error, stopped_message
 from ._types import FileDoneEvent
 
 
@@ -143,7 +143,7 @@ class OCRWorker(QThread):
                 self._config, self._files, **pipeline_kwargs
             )
         except (Exception, SystemExit) as exc:  # noqa: BLE001  # catch SystemExit to prevent the worker thread from killing the GUI process; also catches unexpected exceptions
-            self.log_line.emit(f"FATAL ERROR: {exc}\n")
+            self.log_line.emit(fatal_error(exc))
             summary = RunSummary(error=str(exc) or "unexpected error")
         self.run_finished.emit(summary)
 

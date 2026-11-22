@@ -31,6 +31,30 @@ from ..domain.ollama_address import (
 from ..domain.ollama_discovery import WaitDetail, WaitKind, is_private_host
 from ..exceptions import OllamaConnectionError, RunStoppedError, stop_requested
 from ..interfaces import Reporter
+from ..texts.addons import model_pull_failed
+from ..texts.servers import (
+    CHECK_NO_MODELS,
+    EMPTY_ANSWER,
+    EMPTY_ANSWER_CUT_OFF,
+    answer_abandoned,
+    cannot_connect,
+    cannot_reach,
+    check_cannot_connect,
+    check_connected,
+    check_model_available,
+    check_model_missing,
+    check_timed_out,
+    check_unexpected,
+    connection_timed_out,
+    contact_failed,
+    http_error,
+    model_not_found,
+    model_not_loaded,
+    no_first_token,
+    no_models_installed,
+    unreachable,
+    vision_not_supported,
+)
 from .reporting import StdoutReporter
 from .wsl import windows_host_addresses
 
@@ -183,13 +207,11 @@ def _mapped_stream[T](stream: Iterator[T], base_url: str) -> Iterator[T]:
             started = True
             yield item
     except ollama.ResponseError as exc:
-        raise OCRError(
-            f"HTTP error from Ollama: {exc}", status_code=getattr(exc, "status_code", None)
-        ) from exc
+        raise OCRError(http_error(exc), status_code=getattr(exc, "status_code", None)) from exc
     except (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError) as exc:
         if started:
             raise OCRError(str(exc)) from exc
-        raise OllamaUnreachableError(f"cannot connect to Ollama at {base_url} — {exc}") from exc
+        raise OllamaUnreachableError(unreachable(base_url, exc)) from exc
     finally:
         # The reader thread closes the outer generator to stop the server generating; without
         # this the inner HTTP response would stay open until garbage collection.
@@ -388,10 +410,7 @@ def _consume_iterator_with_first_token_timeout[T](
         first = _first_item(item_queue, first_token_timeout, cancel_event, waiting)
     except queue.Empty:
         _abandon(abandoned, on_abandon)
-        raise OCRTimeoutError(
-            f"No output within {first_token_timeout}s — the model may still be loading into "
-            "memory. Try again in a moment, or check that Ollama is running."
-        ) from None
+        raise OCRTimeoutError(no_first_token(first_token_timeout)) from None
     except RunStoppedError:
         _abandon(abandoned, on_abandon)
         raise
@@ -416,10 +435,8 @@ def _consume_iterator_with_first_token_timeout[T](
             )
         except queue.Empty:
             _abandon(abandoned, on_abandon)
-            raise OCRDeadlineError(
-                f"the answer was still being written after {total_timeout:g}s; "
-                "the request was abandoned"
-            ) from None
+            assert total_timeout is not None  # the queue only times out under a deadline
+            raise OCRDeadlineError(answer_abandoned(total_timeout)) from None
         except RunStoppedError:
             _abandon(abandoned, on_abandon)
             raise
@@ -723,13 +740,10 @@ class OllamaClient:
         except Exception as exc:  # noqa: BLE001  # any client error means unreachable; the message is classified below
             exc_str = str(exc).lower()
             if any(w in exc_str for w in ("connect", "refused", "network", "unreachable")):
-                return (
-                    [],
-                    f"✗ Cannot connect to Ollama at {self.base_url} — is it running? (ollama serve)",
-                )
+                return [], check_cannot_connect(self.base_url)
             if "timeout" in exc_str:
-                return [], f"✗ Connection timed out at {self.base_url} — check URL and network"
-            return [], f"✗ Unexpected error contacting Ollama: {exc}"
+                return [], check_timed_out(self.base_url)
+            return [], check_unexpected(exc)
 
     def check_connection(self, model: str = "") -> tuple[bool, bool, str]:
         """Return ``(connected, model_ok, message)`` for the Ollama server.
@@ -745,17 +759,12 @@ class OllamaClient:
             return False, False, error
 
         if not models:
-            return (
-                True,
-                False,
-                "✗ Connected to Ollama but no models are pulled — run: ollama pull <model>",
-            )
+            return True, False, CHECK_NO_MODELS
         if not model:
-            return True, True, f"✓ Connected — {len(models)} model(s) available"
+            return True, True, check_connected(len(models))
         if models_include(model, models):
-            return True, True, f"✓ Connected — model '{model}' is available"
-        avail_str = ", ".join(models)
-        return True, False, f"✗ Model '{model}' not found. Available: {avail_str}"
+            return True, True, check_model_available(model)
+        return True, False, check_model_missing(model, ", ".join(models))
 
     def model_capabilities(self, tag: str) -> frozenset[str] | None:
         """Return the capabilities of *tag* (e.g. ``{"completion", "vision"}``).
@@ -777,9 +786,7 @@ class OllamaClient:
             resp = self._client().show(tag)
         except Exception as exc:  # the Ollama client may raise anything; classified below
             if _is_transport_error(exc):
-                raise OllamaConnectionError(
-                    f"Cannot reach Ollama at {self.base_url}: {exc}"
-                ) from exc
+                raise OllamaConnectionError(cannot_reach(self.base_url, exc)) from exc
             return None  # the server answered but cannot describe the model
 
         try:
@@ -820,49 +827,30 @@ class OllamaClient:
         except Exception as exc:
             exc_str = str(exc).lower()
             if any(w in exc_str for w in ("connect", "refused", "network", "unreachable")):
-                raise OllamaConnectionError(
-                    f"Cannot connect to Ollama at {self.base_url}. "
-                    "Is it running? Start it with: ollama serve"
-                ) from exc
+                raise OllamaConnectionError(cannot_connect(self.base_url)) from exc
             if "timeout" in exc_str:
-                raise OllamaConnectionError(
-                    f"Connection to Ollama at {self.base_url} timed out. "
-                    "Check the URL and network settings."
-                ) from exc
-            raise OllamaConnectionError(
-                f"Unexpected error contacting Ollama at {self.base_url}: {exc}"
-            ) from exc
+                raise OllamaConnectionError(connection_timed_out(self.base_url)) from exc
+            raise OllamaConnectionError(contact_failed(self.base_url, exc)) from exc
 
         if not available:
-            raise OllamaConnectionError(
-                f"Connected to Ollama at {self.base_url} but no models are installed. "
-                "Pull a model first: ollama pull <model-name>"
-            )
+            raise OllamaConnectionError(no_models_installed(self.base_url))
 
         if not models_include(model_name, available):
             avail_str = ", ".join(available)
-            raise OllamaConnectionError(
-                f"Model '{model_name}' not found in Ollama. Available: {avail_str}"
-            )
+            raise OllamaConnectionError(model_not_found(model_name, avail_str))
 
         try:
             capabilities = self.model_capabilities(model_name)
         except OllamaConnectionError:
             capabilities = None  # introspection is best-effort; skip the advisory
         if capabilities is not None and "vision" not in capabilities:
-            reporter.warn(
-                f"\nWARNING: Model '{model_name}' may not support vision — "
-                "it cannot read scans. OCR results may be poor."
-            )
+            reporter.warn(vision_not_supported(model_name))
 
         try:
             ps_resp = client.ps()
             running = [m.model for m in ps_resp.models if m.model]
             if running and model_name not in running:
-                reporter.warn(
-                    f"\nNOTE: '{model_name}' is not currently loaded in Ollama — "
-                    "the first OCR request will be slow while the model loads."
-                )
+                reporter.warn(model_not_loaded(model_name))
         except Exception:  # noqa: BLE001  # older Ollama versions may not have /api/ps; the note is optional
             pass
 
@@ -926,7 +914,7 @@ class OllamaClient:
                 # returning "" would silently drop the page from the document.
                 from ..exceptions import OCRError  # noqa: PLC0415
 
-                raise OCRError("model returned an empty response (stopped at its output limit)")
+                raise OCRError(EMPTY_ANSWER_CUT_OFF)
         return content
 
     def chat_with_stats(  # noqa: PLR0913  # one keyword shape, shared with chat()
@@ -994,9 +982,7 @@ class OllamaClient:
                 # leaked reasoning regardless.
                 stream = _open_chat_stream(client, request, None)
         except Exception as exc:
-            raise OllamaUnreachableError(
-                f"cannot connect to Ollama at {self.base_url} — {exc}"
-            ) from exc
+            raise OllamaUnreachableError(unreachable(self.base_url, exc)) from exc
 
         waited = False
         reported: WaitDetail | None = None
@@ -1059,7 +1045,7 @@ class OllamaClient:
         # A reasoning model can spend the whole window on thinking it does not return: no text,
         # but a stop at the limit.  That is a cut-off answer, not an empty one -- say so.
         if not content.strip() and not stats.truncated:
-            raise OCRError("model returned an empty response")
+            raise OCRError(EMPTY_ANSWER)
         logger.debug(
             "ollama chat %s: done_reason=%r prompt_eval_count=%d eval_count=%d",
             model,
@@ -1098,4 +1084,4 @@ class OllamaClient:
                         resp.status or "", float(resp.completed or 0), float(resp.total or 0)
                     )
         except Exception as exc:
-            raise OCRError(f"Download failed: {exc}") from exc
+            raise OCRError(model_pull_failed(exc)) from exc

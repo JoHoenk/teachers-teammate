@@ -31,7 +31,10 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import DEFAULTS
+from ...texts import privacy as priv
 from ...texts import review as txt
+from ...texts import settings as st
+from .. import _html
 from .._anonymizer_config_widget import AnonymizerConfigWidget
 from .._privacy_settings import DISPLAY_ANONYMIZED_DEFAULT, FlowAcknowledgements
 from ._page import (
@@ -42,30 +45,6 @@ from ._page import (
     SettingsPage,
     SettingsPageBase,
 )
-
-TITLE = "Privacy"
-DESCRIPTION = (
-    "What may leave this computer, and how names and other personal information are found "
-    "and replaced."
-)
-TAB_SENDING = "Sending data away"
-TAB_DETECTION = "Personal info: detection"
-TAB_PATTERNS = "Personal info: patterns"
-SHOWING_TEXTS_GROUP = "Showing texts"
-
-SENDING_INTRO = (
-    "Before a run sends text or pages away from this computer, you are asked first. If you "
-    "tick “Don't ask again”, the answer is remembered for exactly those settings and listed "
-    "here. Take an answer back and you are asked again the next time."
-)
-LIST_HEADING = "You are not asked again for:"
-NOTHING_REMEMBERED = (
-    "No answers are remembered. You are asked before every run that sends documents away "
-    "from this computer."
-)
-ASK_AGAIN_SELECTED = "Ask again for selected"
-ASK_AGAIN_ALL = "Ask again for all"
-CHANGES_ON_OK = "Changes are saved when you press OK."
 
 _TAB_INDEX = {FOCUS_SENDING: 0, FOCUS_DETECTION: 1, FOCUS_PATTERNS: 2}
 
@@ -88,11 +67,11 @@ class SendingDataTab(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
 
-        intro = QLabel(SENDING_INTRO)
+        intro = QLabel(priv.SENDING_INTRO)
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        self._heading = QLabel(f"<b>{LIST_HEADING}</b>")
+        self._heading = QLabel(_html.bold(priv.LIST_HEADING))
         layout.addWidget(self._heading)
 
         self._list = QListWidget()
@@ -102,22 +81,22 @@ class SendingDataTab(QWidget):
         self._list.itemSelectionChanged.connect(self._update_buttons)
         layout.addWidget(self._list, stretch=1)
 
-        self._empty = QLabel(NOTHING_REMEMBERED)
+        self._empty = QLabel(priv.NOTHING_REMEMBERED)
         self._empty.setWordWrap(True)
         self._empty.setStyleSheet("color: #888;")
         layout.addWidget(self._empty)
 
         buttons = QHBoxLayout()
-        self._forget_selected_btn = QPushButton(ASK_AGAIN_SELECTED)
+        self._forget_selected_btn = QPushButton(priv.ASK_AGAIN_SELECTED)
         self._forget_selected_btn.clicked.connect(self._forget_selected)
         buttons.addWidget(self._forget_selected_btn)
-        self._forget_all_btn = QPushButton(ASK_AGAIN_ALL)
+        self._forget_all_btn = QPushButton(priv.ASK_AGAIN_ALL)
         self._forget_all_btn.clicked.connect(self._forget_all)
         buttons.addWidget(self._forget_all_btn)
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
-        note = QLabel(CHANGES_ON_OK)
+        note = QLabel(priv.CHANGES_ON_OK)
         note.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(note)
 
@@ -164,8 +143,8 @@ class PrivacyPage(SettingsPageBase):
     """Sending data away + personal-info detection + patterns."""
 
     page = SettingsPage.PRIVACY
-    title = TITLE
-    description = DESCRIPTION
+    title = st.PAGE_PRIVACY
+    description = st.PAGE_INTRO_PRIVACY
 
     def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:
         super().__init__(context, parent)
@@ -180,9 +159,9 @@ class PrivacyPage(SettingsPageBase):
 
         self._sending_tab = SendingDataTab(context.acknowledgements)
         tabs = self._rules.tabs()
-        tabs.setTabText(0, TAB_DETECTION)
-        tabs.setTabText(1, TAB_PATTERNS)
-        tabs.insertTab(0, self._sending_tab, TAB_SENDING)
+        tabs.setTabText(0, priv.PAGE_TAB_DETECTION)
+        tabs.setTabText(1, priv.PAGE_TAB_PATTERNS)
+        tabs.insertTab(0, self._sending_tab, priv.PAGE_TAB_SENDING)
         tabs.setCurrentIndex(0)
         self._available = context.privacy_available
         self._build_showing_texts_group(context.display_anonymized, context.privacy_available)
@@ -193,7 +172,7 @@ class PrivacyPage(SettingsPageBase):
         It sits on the detection tab because hiding *uses* these detection settings, and the
         preview below shows the effect straight away.
         """
-        group = QGroupBox(SHOWING_TEXTS_GROUP)
+        group = QGroupBox(priv.SHOWING_TEXTS_GROUP)
         layout = QVBoxLayout(group)
         self._hide_personal_cb = QCheckBox(txt.HIDE_PERSONAL_INFO_CHECKBOX)
         self._hide_personal_cb.setChecked(checked and available)

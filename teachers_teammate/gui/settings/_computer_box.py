@@ -18,11 +18,11 @@ from ...application.speed_estimates import CLASS_SET_FILES
 from ...config import DEFAULTS
 from ...domain.model_catalog import HardwareProfileSetting
 from ...texts import review as txt
+from ...texts.privacy import CHANGE_LINK
 from ...texts.settings import PAGE_AI_SETUP
+from .. import _html
 from .._hardware_profile_selector import HardwareProfileSelector
 
-CHANGE_PROFILE_LINK = '<a href="change">change…</a>'
-BOX_TITLE = f"<b>{PAGE_AI_SETUP}</b>"
 #: Left margin of the two rows, so they read as part of the title above them.
 _ROW_INDENT = 12
 
@@ -54,7 +54,7 @@ class ProfileLine(QWidget):
         layout.addWidget(self.selector, stretch=1)
         self.change_link: QLabel | None = None
         if with_link:
-            self.change_link = QLabel(CHANGE_PROFILE_LINK)
+            self.change_link = QLabel(_html.link("change", CHANGE_LINK))
             self.change_link.linkActivated.connect(lambda _link: self.change_requested.emit())
             layout.addWidget(self.change_link)
 
@@ -137,8 +137,8 @@ class ComputerBox(QFrame):
 
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
-        header.addWidget(QLabel(BOX_TITLE), stretch=1)
-        self.change_link = QLabel(CHANGE_PROFILE_LINK)
+        header.addWidget(QLabel(_html.bold(PAGE_AI_SETUP)), stretch=1)
+        self.change_link = QLabel(_html.link("change", CHANGE_LINK))
         self.change_link.linkActivated.connect(lambda _link: self.change_requested.emit())
         header.addWidget(self.change_link)
         layout.addLayout(header)

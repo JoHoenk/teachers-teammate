@@ -15,6 +15,7 @@ from enum import Enum
 
 from ..domain.performance_estimate import TimeRange
 from ..domain.run_summary import RunStatus, RunSummary
+from ..texts import run
 from ..texts.review import format_duration
 
 #: Files whose own pace is blended with the estimate.  One file says little about a class set,
@@ -23,11 +24,6 @@ BLEND_FILES = 3
 
 #: The share of its expected time a running file counts for before it is over.
 _FILE_CAP = 0.95
-
-#: The note the progress bar carries while a run is going.
-TIME_LEFT = "about {left} left"
-#: The tooltip behind that note: the range the figure comes from.
-TIME_LEFT_TOOLTIP = "Between {low} and {high} left, at the pace of this run."
 
 
 class RunTone(Enum):
@@ -56,40 +52,32 @@ def describe_run(summary: RunSummary) -> RunStatusText:
     done = len(summary.succeeded)
 
     if status is RunStatus.FAILED:
-        text = "Finished with errors"
-        if summary.failed:
-            text += f" — {len(summary.failed)} failed"
+        text = run.run_failed_count(len(summary.failed)) if summary.failed else run.RUN_FAILED
         return RunStatusText(text, text, RunTone.WARNING, complete=False)
 
     if status is RunStatus.STOPPED:
         total = done + len(summary.skipped) + len(summary.stopped) + len(summary.not_started)
-        parts = [f"{done} of {total} done"]
-        if summary.skipped:
-            parts.append(f"{len(summary.skipped)} skipped")
-        if summary.stopped:
-            parts.append(f"{len(summary.stopped)} unfinished")
-        if summary.not_started:
-            parts.append(f"{len(summary.not_started)} not started")
-        text = "Stopped — " + ", ".join(parts)
+        text = run.run_stopped(
+            done,
+            total,
+            skipped=len(summary.skipped),
+            unfinished=len(summary.stopped),
+            not_started=len(summary.not_started),
+        )
         return RunStatusText(text, text, RunTone.INFO, complete=False)
 
-    tray = f"Done — {done} file(s) processed"
-    if summary.skipped:
-        tray += f", {len(summary.skipped)} skipped"
-    return RunStatusText("Done \u2713", tray, RunTone.INFO, complete=True)
+    tray = run.run_done_tray(done, len(summary.skipped))
+    return RunStatusText(run.RUN_DONE, tray, RunTone.INFO, complete=True)
 
 
 def time_left_note(seconds: float) -> str:
     """Return the note the progress bar carries: ``"about 40 min left"``."""
-    return TIME_LEFT.format(left=format_duration(seconds))
+    return run.time_left(format_duration(seconds))
 
 
 def time_left_tooltip(low_s: float, high_s: float) -> str:
     """Return the tooltip behind the note: the range the figure comes from."""
-    return TIME_LEFT_TOOLTIP.format(
-        low=format_duration(low_s),
-        high=format_duration(high_s),
-    )
+    return run.time_left_range(format_duration(low_s), format_duration(high_s))
 
 
 @dataclass(frozen=True)

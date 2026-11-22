@@ -189,9 +189,9 @@ def test_fits_agrees_with_the_too_long_warning_of_evaluate(mocker) -> None:
     Then   fits() is False exactly when evaluate() reports the text as too long
     """
     from teachers_teammate.infrastructure.evaluation import (  # noqa: PLC0415
-        TOO_LONG_FOR_REVIEW_WARNING,
         NativeOllamaEvaluator,
     )
+    from teachers_teammate.texts.review import TOO_LONG_FOR_REVIEW_WARNING  # noqa: PLC0415
     from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClient  # noqa: PLC0415
 
     # The real chat() runs its size check; only the server round trip is stubbed.

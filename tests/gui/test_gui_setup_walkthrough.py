@@ -57,9 +57,10 @@ from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui._background import wait_for_background_tasks
 from teachers_teammate.gui._main_window import MainWindow
-from teachers_teammate.gui._ollama_status_line import CHECKING
 from teachers_teammate.gui.setup import SetupAssistant
 from teachers_teammate.gui.setup._flow import ORDER, SetupPageId
+from teachers_teammate.texts.main_window import READINESS_CHECKING
+from teachers_teammate.texts.servers import STATUS_CHECKING
 from teachers_teammate.texts.setup import DONE_DONE, DONE_WAITING
 from teachers_teammate.gui.setup._pages import (
     ClassesPage,
@@ -252,7 +253,7 @@ class Driver:
         assert page._status is not None, "the status line is built when the page is shown"
         wait_until(
             self._qtbot,
-            lambda: page._status._label.text() != CHECKING,
+            lambda: page._status._label.text() != STATUS_CHECKING,
             "the status line was left on its first line",
         )
         return page._status._label.text()
@@ -487,7 +488,7 @@ class Walkthrough:
         """Wait for the main window's readiness line to answer, and return what it says."""
         wait_until(
             self.qtbot,
-            lambda: self.win._readiness_line.label.text() != CHECKING,
+            lambda: self.win._readiness_line.label.text() not in ("", READINESS_CHECKING),
             "the readiness line was left on its first line",
         )
         return self.win._readiness_line.label.text()
@@ -828,7 +829,7 @@ def test_s5_a_failed_pull_drops_the_queue_and_leaves_the_window_usable(
     assert driver.rows[writing] == DONE_WAITING
 
     assert walk.win._menu_bar.setup_action.isEnabled(), "the window stopped answering"
-    assert walk.readiness_note() != CHECKING
+    assert walk.readiness_note() not in ("", READINESS_CHECKING)
     assert any("failed" in title.lower() for title, _text in modal_boxes), modal_boxes
 
 

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..texts import main_window as txt
 from ._fix_targets import Fix, FixAction
 
 
@@ -54,10 +55,6 @@ class Readiness:
     actions: tuple[FixAction, ...] = ()
 
 
-def _documents(count: int) -> str:
-    return f"{count} document{'s' if count != 1 else ''}"
-
-
 def readiness(
     *,
     blocker: Fix | None,
@@ -82,19 +79,18 @@ def readiness(
         checking: Whether the first check has not answered yet.
     """
     if blocker is not None:
-        return Readiness(f"⚠ {blocker.line}", Tone.WARNING, blocker.actions)
+        return Readiness(txt.readiness_warning(blocker.line), Tone.WARNING, blocker.actions)
     if results is not None:
-        return Readiness(f"⚠ {results.line}", Tone.WARNING, results.actions)
+        return Readiness(txt.readiness_warning(results.line), Tone.WARNING, results.actions)
     if not inputs_chosen:
-        return Readiness("Select documents to start", Tone.HINT)
+        return Readiness(txt.READINESS_SELECT_DOCUMENTS, Tone.HINT)
     if files == 0:
-        return Readiness("No documents found there", Tone.HINT)
+        return Readiness(txt.READINESS_NO_DOCUMENTS, Tone.HINT)
     if selected == 0:
-        return Readiness("Select the documents to run in the queue", Tone.HINT)
+        return Readiness(txt.READINESS_SELECT_ROWS, Tone.HINT)
     if checking:
-        return Readiness("Checking…", Tone.HINT)
-    count = _documents(files) if selected == files else f"{selected} of {_documents(files)}"
-    return Readiness(f"✓ Ready · {count}", Tone.READY)
+        return Readiness(txt.READINESS_CHECKING, Tone.HINT)
+    return Readiness(txt.readiness_ready(selected, files), Tone.READY)
 
 
 class ReadinessLine(QWidget):
@@ -105,10 +101,7 @@ class ReadinessLine(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setToolTip(
-            "Whether a run can start with the current settings. It never blocks Run: "
-            "the requirements are checked again when you press Run."
-        )
+        self.setToolTip(txt.READINESS_TOOLTIP)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(2)
@@ -156,7 +149,7 @@ class ReadinessLine(QWidget):
     def show_download(self, model: str) -> None:
         """Take the line over for a download of *model* (a blue label and a progress bar)."""
         self._downloading = True
-        self._render(Readiness(f"Downloading {model}", Tone.BUSY))
+        self._render(Readiness(txt.readiness_downloading(model), Tone.BUSY))
         self._download_bar.setValue(0)
         self._download_bar.setToolTip("")
         self._download_bar.setVisible(True)

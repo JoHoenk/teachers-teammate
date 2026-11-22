@@ -12,6 +12,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from ....texts import addons as txt
+from ... import _html
 
 
 class UpdateBanner(QWidget):
@@ -25,7 +26,7 @@ class UpdateBanner(QWidget):
         self._outdated = outdated
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        note = QLabel(f"<b>{txt.ADDONS_OUTDATED_LINE}.</b> {txt.ADDONS_OUTDATED_NOTE}")
+        note = QLabel(_html.headline(txt.ADDONS_OUTDATED_LINE, txt.ADDONS_OUTDATED_NOTE))
         note.setWordWrap(True)
         self.button = QPushButton(txt.UPDATE_ADDONS)
         self.button.clicked.connect(self.update_requested.emit)

@@ -35,6 +35,7 @@ from ..domain.proofreading.review import CorrectionReview
 from ..domain.run_summary import FileOutcome, FileStatus
 from ..domain.stages import Stage
 from ..texts import dialogs as dlg
+from ..texts import main_window as win
 from ..texts import review as txt
 from ..texts.run import stopped_message
 from . import _dialogs, _handles
@@ -170,13 +171,13 @@ class ResultsTable(QTableWidget):
         self._stage_tooltips: dict[str, str] = {}
         self.setHorizontalHeaderLabels(
             [
-                "File",
+                txt.FILE_COLUMN,
                 txt.RECOGNITION_COLUMN,
                 txt.PROOFREADING_COLUMN,
                 txt.CONTENT_REVIEW_COLUMN,
                 txt.CHECKED_COLUMN,
-                "Duration",
-                "Open",
+                txt.DURATION_COLUMN,
+                txt.OPEN_COLUMN,
             ]
         )
         _header = self.horizontalHeader()
@@ -547,7 +548,7 @@ class ResultsTable(QTableWidget):
     # ── Cells and rows ────────────────────────────────────────────────────
 
     def _add_preview_button(self, row: int, source_id: str) -> None:
-        btn = QPushButton("Open")
+        btn = QPushButton(win.OPEN_BUTTON)
         btn.setObjectName(_handles.OPEN_DOCUMENT)
         btn.setProperty(_handles.SOURCE_ID_PROPERTY, source_id)
         f = btn.font()
@@ -572,9 +573,9 @@ class ResultsTable(QTableWidget):
         h = QHBoxLayout(widget)
         h.setContentsMargins(2, 0, 2, 0)
         h.setSpacing(3)
-        lbl = QLabel("⚠")
+        lbl = QLabel(win.WARNING_MARK)
         lbl.setStyleSheet("color: #e67e22; font-size: 13pt; font-weight: bold;")
-        info_btn = QPushButton("ⓘ")
+        info_btn = QPushButton(win.INFO_MARK)
         info_btn.setFixedSize(18, 18)
         info_btn.setStyleSheet(
             "QPushButton { background: #e67e22; color: white; border-radius: 9px;"
@@ -596,9 +597,9 @@ class ResultsTable(QTableWidget):
         h = QHBoxLayout(widget)
         h.setContentsMargins(2, 0, 2, 0)
         h.setSpacing(3)
-        lbl = QLabel("✗")
+        lbl = QLabel(win.ERROR_MARK)
         lbl.setStyleSheet("color: #c0392b; font-size: 13pt; font-weight: bold;")
-        info_btn = QPushButton("ⓘ")
+        info_btn = QPushButton(win.INFO_MARK)
         info_btn.setFixedSize(18, 18)
         info_btn.setStyleSheet(
             "QPushButton { background: #c0392b; color: white; border-radius: 9px;"
@@ -808,7 +809,7 @@ class ResultsTable(QTableWidget):
             return
 
         menu = QMenu(self)
-        check = menu.addAction("Check")
+        check = menu.addAction(win.MENU_CHECK)
         # The first entry is the one a teacher reaches for; it is bold like a default action.
         _check_font = check.font()
         _check_font.setBold(True)
@@ -818,14 +819,14 @@ class ResultsTable(QTableWidget):
         select_checked.setToolTip(txt.SELECT_CHECKED_TOOLTIP)
         select_checked.setEnabled(bool(self.checked_source_ids()))
         menu.addSeparator()
-        rerun_ocr = menu.addAction("Re-run Text Recognition")
-        rerun_correction = menu.addAction("Re-run Proofreading")
-        rerun_evaluation = menu.addAction("Run Content Review")
+        rerun_ocr = menu.addAction(win.MENU_RERUN_RECOGNITION)
+        rerun_correction = menu.addAction(win.MENU_RERUN_PROOFREADING)
+        rerun_evaluation = menu.addAction(win.MENU_RUN_REVIEW)
         menu.addSeparator()
         export_menu, export_kinds = build_export_menu(menu)
         menu.addMenu(export_menu)
         menu.addSeparator()
-        what_is_sent = menu.addAction("What is sent for this file…")
+        what_is_sent = menu.addAction(win.MENU_WHAT_IS_SENT)
 
         # PySide6's stub lists a no-arg exec() overload first; exec(QPoint) is valid.
         action = menu.exec(self.viewport().mapToGlobal(pos))

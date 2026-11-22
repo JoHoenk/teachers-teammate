@@ -7,7 +7,7 @@ from collections.abc import Mapping
 import pytest
 
 from teachers_teammate.application.sent_text import (
-    SentText,
+    CorrectionInstructions,
     SentTexts,
     describe_sent_texts,
 )
@@ -77,16 +77,20 @@ def test_proofreading_receives_the_extracted_text() -> None:
     """
     flow = _flow(_stage(_EU))
 
-    report = describe_sent_texts(flow, raw_text="Anna wrote this.", correction_prompt="Fix it.")
+    report = describe_sent_texts(
+        flow,
+        raw_text="Anna wrote this.",
+        correction=CorrectionInstructions((("correct", "Fix it."),)),
+    )
 
     assert len(report.sections) == 1
     section = report.sections[0]
     assert section.stage.stage == Stage.CORRECTION
     assert section.text == "Anna wrote this."
     assert section.placeholders == ()
-    assert section.prompt == "Fix it."
+    assert section.instructions == (("correct", "Fix it."),)
+    assert section.notes == ""
     assert section.names_hidden is False
-    assert section.names_note == "Names are sent as written."
 
 
 @pytest.mark.unit
@@ -102,7 +106,7 @@ def test_content_review_receives_the_proofread_text() -> None:
         flow,
         raw_text="Anna wrotes this.",
         correction_text="Anna wrote this.",
-        correction_prompt="Fix it.",
+        correction=CorrectionInstructions((("correct", "Fix it."),), "Year 9."),
         evaluation_prompt="Review it.",
     )
 
@@ -111,7 +115,10 @@ def test_content_review_receives_the_proofread_text() -> None:
         (Stage.CORRECTION, "Anna wrotes this."),
         (Stage.EVALUATION, "Anna wrote this."),
     ]
-    assert report.sections[1].prompt == "Review it."
+    assert report.sections[0].instructions == (("correct", "Fix it."),)
+    assert report.sections[0].notes == "Year 9."
+    assert report.sections[1].instructions == (("", "Review it."),)
+    assert report.sections[1].notes == ""
 
 
 @pytest.mark.unit
@@ -130,7 +137,6 @@ def test_hidden_names_replace_the_text_and_list_the_placeholders() -> None:
     assert section.text == "hidden(Anna wrote this.)"
     assert section.placeholders == ("[PERSON_1]",)
     assert section.names_hidden is True
-    assert section.names_note == "Names are hidden before the text is sent."
 
 
 @pytest.mark.unit
@@ -203,22 +209,20 @@ def test_preview_off_has_no_comparison() -> None:
     assert report.anonymized_raw == ""
 
 
-# ── Wording ─────────────────────────────────────────────────────────────────
+# ── The tooltip of a section ────────────────────────────────────────────────
 
 
 @pytest.mark.unit
-def test_section_wording_names_the_destination() -> None:
+def test_section_details_name_the_destination() -> None:
     """
     Given  an online step in the EU
-    When   its title, badge and details are read
-    Then   they name the step, the provider and the region
+    When   the tooltip of its section is read
+    Then   it names the provider and the region
     """
     flow = _flow(_stage(_EU))
 
-    section: SentText = describe_sent_texts(flow, raw_text="text").sections[0]
+    section = describe_sent_texts(flow, raw_text="text").sections[0]
 
-    assert section.title == "Proofreading"
-    assert section.badge == "Online service (Mistral (EU)) · EU · names as written"
     assert "Online service (Mistral (EU)) · EU" in section.details
 
 

@@ -66,6 +66,18 @@ from ....domain.proofreading.review import CorrectionReview, UnclearNote, edit_n
 from ....domain.proofreading.sentences import sentence_spans
 from ....domain.proofreading.text_loss import LeftOut, Repaired, measure, repair
 from ....domain.proofreading.word_diff import Hunk, word_diff
+from ....texts.review import (
+    ADDED_TEXT_WARNING,
+    CORRECT_FAILED,
+    EXPLANATIONS_MISSING,
+    FRAMING_WARNING,
+    LEFT_OUT_WHY,
+    LOST_TEXT_WARNING,
+    UNCLEAR_FAILED,
+    UNSTYLED_WARNING,
+    left_out_warning,
+    left_out_warning_one,
+)
 from ...ocr_formats import (
     MarkdownRenderer,
     clean_llm_answer,
@@ -85,41 +97,6 @@ from ..schemas import (
 from .base import ExchangeResult, ProofreadContext
 
 _logger = logging.getLogger(__name__)
-
-CORRECT_FAILED = "Proofreading failed; keeping original text."
-"""Warning of a file whose step ① did not produce a usable answer."""
-
-FRAMING_WARNING = "The model answered with a remark around the text; keeping original text."
-"""Warning of a file whose step ① twice answered with a lead-in or a closing remark."""
-
-LOST_TEXT_WARNING = "The model dropped part of the text; keeping original text."
-"""Warning of a file whose step ① twice answered with much less of the text than it was sent."""
-
-ADDED_TEXT_WARNING = "The model added text of its own; keeping original text."
-"""Warning of a file whose step ① twice answered with much more text than it was sent."""
-
-LEFT_OUT_WARNING = (
-    "The AI left out {count} passages ({words} words); they are kept as you wrote them."
-)
-"""Warning of a file whose step ① twice answered without a stretch of the text, which is put back."""
-
-LEFT_OUT_WARNING_ONE = "The AI left out a passage ({words} words); it is kept as you wrote it."
-"""The same warning for one stretch."""
-
-LEFT_OUT_WHY = (
-    "The AI left this passage out of its answer. It is kept here as you wrote it, without "
-    "corrections: read it with the rest."
-)
-"""What the item of a stretch that was put back says."""
-
-EXPLAIN_FAILED = "Explanations are missing for part of the text."
-"""Warning of a file whose step ② left edits unexplained."""
-
-UNCLEAR_FAILED = "Unclear wording could not be checked for this text."
-"""Warning of a file whose step ③ did not answer."""
-
-UNSTYLED_WARNING = "Part of the text lost its formatting."
-"""Warning of a Markdown text whose answer could not be restored everywhere."""
 
 ANSWER_FACTOR = 1.0
 """How long a step's answer is compared with its request: as long as the text.
@@ -396,7 +373,7 @@ class TExchange:
             batch, ids, source, corrected, spans, hunks, ctx, reports
         )
         if failed:
-            return answered, EXPLAIN_FAILED
+            return answered, EXPLANATIONS_MISSING
         if not missing:
             return answered, ""
         follow = replace(batch, edits=tuple(edit for edit in batch.edits if edit.id in missing))
@@ -404,7 +381,7 @@ class TExchange:
             follow, sorted(missing), source, corrected, spans, hunks, ctx, reports
         )
         answered.update(more)
-        return answered, EXPLAIN_FAILED if failed or still else ""
+        return answered, EXPLANATIONS_MISSING if failed or still else ""
 
     def _ask_explain(
         self,
@@ -563,8 +540,8 @@ def _left_out_warning(left_out: Sequence[LeftOut]) -> str:
     """Return the warning for the stretches the answer left out, and the words they hold."""
     words = sum(part.words for part in left_out)
     if len(left_out) == 1:
-        return LEFT_OUT_WARNING_ONE.format(words=words)
-    return LEFT_OUT_WARNING.format(count=len(left_out), words=words)
+        return left_out_warning_one(words)
+    return left_out_warning(count=len(left_out), words=words)
 
 
 def _left_out_notes(left_out: Sequence[LeftOut], raw_plain: str) -> list[UnclearNote]:

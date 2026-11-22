@@ -18,9 +18,8 @@ from typing import TYPE_CHECKING, Protocol
 from ...domain.context_budget import ContextBudget
 from ...domain.proofreading.result import FailureKind, StepName
 from ...exceptions import TRUNCATED_MESSAGE
+from ...texts.review import correction_failed
 from .._llm_invoke import (
-    _CORRECTION_FAILURE,
-    _failure_warning,
     _rejected_request,
     invoke_langchain_chain,
     invoke_langchain_structured,
@@ -156,7 +155,7 @@ class OllamaPort:
                 # An older server or a model that refuses ``format``: a plain answer may still
                 # work, so this is an unusable answer, not an unreachable server.
                 return PortAnswer(failure="invalid", error=str(exc))
-            return PortAnswer(failure="transport", error=_failure_warning(_CORRECTION_FAILURE, exc))
+            return PortAnswer(failure="transport", error=correction_failed(exc))
         return self._answer(text, None, started)
 
     def _answer(
@@ -199,7 +198,7 @@ class LangChainPort:
             human=_TEXT_VARIABLE,
             variables={"text": req.user},
             fallback="",
-            failure_prefix="Correction failed",
+            failure=correction_failed,
         )
         if answer.warning is not None:
             return PortAnswer(failure="transport", error=answer.warning)

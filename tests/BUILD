@@ -824,7 +824,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_data_location.py"],
     args = ["unit/test_data_location.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB + _TEXTS_LIB,
 )
 
 py_test(
@@ -2765,7 +2765,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_ppocr_engine.py"],
     args = ["unit/test_ppocr_engine.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _CV_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
+    deps = _COMMON_DEPS + _CV_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB + _TEXTS_LIB,
 )
 
 py_test(

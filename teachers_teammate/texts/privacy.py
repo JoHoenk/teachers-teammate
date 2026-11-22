@@ -14,13 +14,16 @@ from ..domain.data_location import (
     DataFlowStage,
     DataLocation,
     DataRegion,
+    FingerprintPart,
     PrivacyLevel,
     StageLocation,
+    fingerprint_parts,
 )
 from ..domain.language import language_name
 from ..domain.model_catalog import short_model_name
 from ._types import Notice, NoticeKind
-from .review import NAMES_IN_LANGUAGES, REMOVE_PERSONAL_INFO
+from .app import stage_title
+from .review import NAMES_AS_WRITTEN, NAMES_IN_LANGUAGES, REMOVE_PERSONAL_INFO
 from .settings import WHERE_ADDONS
 
 WHAT_IS_SENT_TITLE = "What is sent for this file"
@@ -73,6 +76,106 @@ def unencrypted_note(host: str) -> str:
     return f"unencrypted (http://) — anyone on the network can read what goes to {host}"
 
 
+# ── The anonymizer's models and patterns: the widget on the Privacy page ──────
+#
+# The teacher picks the spaCy passes and the regex patterns here; the widget only puts its
+# labels around them.
+
+ANONYMISATION_NOTE = (
+    "<b>Note:</b> Anonymization is a detection aid, not a guarantee. "
+    "NER models and regex patterns may miss PII — always review the output "
+    "before uploading documents to a cloud provider. "
+    "You remain responsible for compliance with data-protection regulations."
+)
+
+DETECTION_TAB = "Detection"
+PATTERNS_TAB = "Regex Patterns"
+
+MODEL_DETECTING = "Detecting…"
+MODEL_AUTO_PRIMARY = "Auto (language-specific)"
+MODEL_AUTO_SECONDARY = "Auto (system language)"
+MODEL_NO_SECONDARY = "(none — no extra pass)"
+
+PRIMARY_MODEL_LABEL = "<b>Primary detection model:</b>"
+PRIMARY_MODEL_HINT = (
+    "Primary spaCy NER model for person-name detection.  "
+    "<i>Auto</i> picks the language-specific model automatically; "
+    "choose a specific model to override (e.g. force the multilingual model)."
+)
+EXTRA_MODEL_LABEL = "<b>Extra detection model (optional):</b>"
+EXTRA_MODEL_HINT = (
+    "An extra spaCy model run after the primary one to catch names it misses "
+    "(e.g. German names in English text). <i>Auto</i> uses the model for the "
+    "language this computer is set to, and nothing when that is the same model as "
+    "the primary one. Choose <i>(none)</i> to skip the second pass entirely."
+)
+
+PATTERNS_INTRO = "Patterns applied after NER (clear all rows to disable regex anonymization):"
+PATTERNS_ADD_ROW = "Add row"
+PATTERNS_REMOVE_SELECTED = "Remove selected"
+PATTERNS_RESTORE_DEFAULTS = "Restore defaults"
+PATTERNS_RESTORE_TOOLTIP = (
+    "Reset patterns to the built-in defaults "
+    "(IBAN, email, phone, dates, and German street and postcode formats)."
+)
+
+PREVIEW_INTRO = "<b>Preview</b> — paste sample OCR text to test all active patterns:"
+PREVIEW_SAMPLE_LABEL = "Sample text:"
+PREVIEW_SAMPLE_PLACEHOLDER = (
+    "Paste text here, e.g.:\nAlice sent an invoice to bob@example.com (STU-123456)."
+)
+PREVIEW_OUTPUT_LABEL = "Anonymized output:"
+PREVIEW_RUN = "Run preview"
+PREVIEW_MAP_LABEL = "Replacement map:"
+PATTERN_COLUMNS = ["Tag", "Regex pattern"]
+MAP_COLUMNS = ["Placeholder", "Original value"]
+
+
+def model_auto_primary(model: str) -> str:
+    """Return the primary combo's auto entry, naming the model when it is known."""
+    return f"{MODEL_AUTO_PRIMARY}: {model}" if model else MODEL_AUTO_PRIMARY
+
+
+def model_auto_secondary(system: str | None, primary: str) -> str:
+    """Return the secondary combo's auto entry: the system's model, or a note that says why not.
+
+    An unknown system language and a model that would repeat the primary pass both mean that
+    no extra pass happens.
+    """
+    if system and system == primary:
+        return f"{MODEL_AUTO_SECONDARY}: none, same as document language"
+    if system:
+        return f"{MODEL_AUTO_SECONDARY}: {system}"
+    return f"{MODEL_AUTO_SECONDARY}: none, the language is unknown"
+
+
+def spacy_fetch_failed(reason: str) -> str:
+    """Explain why the installed spaCy models could not be listed."""
+    return f"Could not detect installed spaCy models: {reason}"
+
+
+def spacy_model_not_downloaded(model: str) -> str:
+    """Explain that this spaCy model is missing, with the command that fetches it."""
+    return f"spaCy model '{model}' is not downloaded.\nRun: python -m spacy download {model}"
+
+
+def invalid_regex(reason: str) -> str:
+    """Return the tooltip of a pattern row: why its regex does not compile."""
+    return f"Invalid regex: {reason}"
+
+
+def invalid_patterns(count: int) -> str:
+    """Return the line above the patterns table: how many rows do not compile."""
+    plural = "s" if count > 1 else ""
+    verb = "have" if count > 1 else "has"
+    return f"{count} pattern{plural} {verb} errors — fix before saving."
+
+
+def preview_failed(reason: str) -> str:
+    """Explain why the anonymisation preview could not run."""
+    return f"Preview failed: {reason}"
+
+
 # ── Where the documents go: the levels, the places and the advice ─────────────
 #
 # The main window's summary box, the "uses" lines under its steps and the dialogs that name a
@@ -119,6 +222,59 @@ ADVICE_TEXT = {
 def level_text(level: PrivacyLevel) -> str:
     """Return the sentence that tells the teacher what *level* means."""
     return LEVEL_TEXT[level]
+
+
+#: How a step's row words the names: short, because it shares the line with the place.
+NAMES_HIDDEN_SHORT = "names hidden"
+#: How a stored answer words them, where there is room for the full sentence.
+NAMES_REPLACED_WHERE_DETECTED = "names replaced where detected"
+NAMES_SENT_AS_WRITTEN = "names sent as written"
+
+
+def stage_badge(stage: DataFlowStage) -> str:
+    """Return the short line for a step: where it runs and how names are handled."""
+    if stage.detail:
+        return stage.detail
+    parts = [stage.location.label]
+    if stage.leaves_computer:
+        parts.append(NAMES_HIDDEN_SHORT if stage.personal_info_hidden else NAMES_AS_WRITTEN)
+    return " · ".join(parts)
+
+
+def stage_summary(stage: DataFlowStage) -> str:
+    """Return one line: the step, where it runs, and (when it leaves) what it receives."""
+    if stage.detail:
+        return f"{stage_title(stage.stage)}: {stage.detail}"
+    line = f"{stage_title(stage.stage)}: {stage.location.label}"
+    if not stage.leaves_computer:
+        return line
+    names = NAMES_REPLACED_WHERE_DETECTED if stage.personal_info_hidden else NAMES_SENT_AS_WRITTEN
+    return f"{line} — receives {stage.receives}, {names}"
+
+
+def outbound_summary(flow: DataFlow) -> str:
+    """Return the steps that leave this computer as one line, for a remembered answer."""
+    return "; ".join(stage_summary(stage) for stage in flow.outbound)
+
+
+def describe_fingerprint(fingerprint: str) -> str:
+    """Return a readable line for a stored data-flow fingerprint.
+
+    A remembered answer keeps the fingerprint of what was agreed to; nobody can read it
+    (``correction:online:Mistral::0``), so the list shows this line instead.  A part that does
+    not parse is shown as it is, so nothing is ever hidden from the list.
+    """
+    lines = [
+        part if isinstance(part, str) else f"{stage_title(part.stage)}: {_part_place(part)}"
+        for part in fingerprint_parts(fingerprint)
+    ]
+    return "; ".join(line for line in lines if line)
+
+
+def _part_place(part: FingerprintPart) -> str:
+    """Return the place and the names of one parsed part of a stored fingerprint."""
+    names = NAMES_REPLACED_WHERE_DETECTED if part.names_hidden else NAMES_SENT_AS_WRITTEN
+    return f"{part.location.label} — {names}"
 
 
 def advice_text(advice: Advice) -> str:
@@ -221,3 +377,66 @@ def plain_http_note(location: StageLocation, url: str) -> str:
     if url.strip().lower().startswith("https://"):
         return ""
     return unencrypted_note(location.host)
+
+
+# ── The "What is sent for this file" dialog and the data-flow box ────────────
+#
+# The dialog only highlights the placeholders of the text it is given; every word around that
+# text is here.  The box under the steps of the main window reads its title and tooltip here.
+
+TAB_SENT = "What is sent"
+TAB_PERSONAL = "Personal information"
+
+#: The dialog's opening line: the same sentence as the local level below it.
+NOTHING_LEAVES = LEVEL_TEXT[PrivacyLevel.LOCAL]
+NO_SECTION = "No step sends this file's text away."
+PAGES_SENT = "The page images of this file are sent to another computer you control."
+SHOW_PROMPT = "Show the instructions sent"
+HIDE_PROMPT = "Hide the instructions sent"
+EMPTY_TEXT = "(the text is empty)"
+#: What the instructions block says for a step that sends none.
+NO_INSTRUCTIONS = "(no instructions are sent with this step)"
+#: The note above the text: whether the step sees the names or placeholders.
+NAMES_HIDDEN_NOTE = "Names are hidden before the text is sent."
+NAMES_AS_WRITTEN_NOTE = "Names are sent as written."
+PERSONAL_COMPARE_NOTE = (
+    "Left: the extracted text. Right: what a service sees when names are hidden."
+)
+
+#: The box under the steps: what it is called, and what the dots under the steps mean.
+DATA_FLOW_TITLE = "WHERE YOUR DOCUMENTS ARE PROCESSED"
+DATA_FLOW_TOOLTIP = (
+    "Where your documents go with these settings. The dot next to each step under "
+    "\u201cWhat should happen\u201d says where that step runs."
+)
+CHANGE_LINK = "change…"
+
+# ── Settings → Privacy: the page's three tabs and its list of answers ────────
+
+PAGE_TAB_SENDING = "Sending data away"
+PAGE_TAB_DETECTION = "Personal info: detection"
+PAGE_TAB_PATTERNS = "Personal info: patterns"
+SHOWING_TEXTS_GROUP = "Showing texts"
+SENDING_INTRO = (
+    "Before a run sends text or pages away from this computer, you are asked first. If you "
+    "tick “Don't ask again”, the answer is remembered for exactly those settings and listed "
+    "here. Take an answer back and you are asked again the next time."
+)
+LIST_HEADING = "You are not asked again for:"
+NOTHING_REMEMBERED = (
+    "No answers are remembered. You are asked before every run that sends documents away "
+    "from this computer."
+)
+ASK_AGAIN_SELECTED = "Ask again for selected"
+ASK_AGAIN_ALL = "Ask again for all"
+CHANGES_ON_OK = "Changes are saved when you press OK."
+
+
+def names_in_text_note(hidden: bool) -> str:
+    """Return the one sentence that says whether a step sees the real names."""
+    return NAMES_HIDDEN_NOTE if hidden else NAMES_AS_WRITTEN_NOTE
+
+
+def pages_line(title: str, badge: str) -> str:
+    """Return the line above the page sections: the step, its badge, where its pages go."""
+    return f"{title} — {badge}\n{PAGES_SENT}"

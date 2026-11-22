@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from ...application.formatting import TextFormatter
 from ...domain.benchmark import StoredRunView
+from ...texts import benchmark as bench_text
 
 _RUN_ID_ROLE = Qt.ItemDataRole.UserRole
 
@@ -49,15 +50,15 @@ class RunsList(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel("Stored runs"))
+        layout.addWidget(QLabel(bench_text.STORED_RUNS_LABEL))
 
         self._list = QListWidget()
         layout.addWidget(self._list, stretch=1)
 
         buttons = QHBoxLayout()
-        self._set_a_btn = QPushButton("Set as A")
-        self._set_b_btn = QPushButton("Set as B")
-        self._delete_btn = QPushButton("Delete")
+        self._set_a_btn = QPushButton(bench_text.SET_AS_A)
+        self._set_b_btn = QPushButton(bench_text.SET_AS_B)
+        self._delete_btn = QPushButton(bench_text.DELETE)
         self._set_a_btn.clicked.connect(lambda: self._assign("a"))
         self._set_b_btn.clicked.connect(lambda: self._assign("b"))
         self._delete_btn.clicked.connect(self._on_delete)
@@ -66,7 +67,7 @@ class RunsList(QWidget):
         buttons.addWidget(self._delete_btn)
         layout.addLayout(buttons)
 
-        self._clear_btn = QPushButton("Clear all runs for this document")
+        self._clear_btn = QPushButton(bench_text.CLEAR_ALL)
         self._clear_btn.clicked.connect(self.clear_all_requested.emit)
         layout.addWidget(self._clear_btn)
 

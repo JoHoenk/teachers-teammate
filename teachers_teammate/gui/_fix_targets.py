@@ -11,10 +11,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..domain.language import language_name
 from ..domain.requirements import IssueKind, RequirementIssue
 from ..domain.stages import Stage
-from ..texts import addons
+from ..texts import addons, fixes
+from ..texts import main_window as win
 from ..texts import review as txt
 from ..texts.issues import issue_text
 from ._install_round import PACKAGE_PREFIX, READER_ITEM
@@ -80,18 +80,12 @@ def found_server_fix(where: str, url: str) -> Fix:
     is never taken over by itself: the button asks.
     """
     return Fix(
-        f"Ollama isn't reachable at the saved address, but one answers on {where}",
+        fixes.found_server(where),
         (
-            FixAction("Use it", command=COMMAND_USE_SERVER, argument=url),
-            FixAction("Find server…", SettingsPage.AI_SETUP, FOCUS_FIND_SERVER),
+            FixAction(fixes.USE_IT, command=COMMAND_USE_SERVER, argument=url),
+            FixAction(fixes.FIND_SERVER, SettingsPage.AI_SETUP, FOCUS_FIND_SERVER),
         ),
     )
-
-
-def _models_line(models: tuple[str, ...]) -> str:
-    if len(models) == 1:
-        return f"{models[0]} isn't downloaded yet"
-    return f"{len(models)} AI models aren't downloaded yet"
 
 
 def _ollama_fix(issue: RequirementIssue) -> Fix | None:
@@ -104,31 +98,31 @@ def _ollama_fix(issue: RequirementIssue) -> Fix | None:
     kind = issue.kind
     if kind is IssueKind.OLLAMA_NOT_FOUND:
         return Fix(
-            "Ollama wasn't found on this computer",
+            fixes.OLLAMA_NOT_FOUND,
             (
-                FixAction("Get Ollama…", command=COMMAND_GET_OLLAMA),
-                FixAction("Check again", command=COMMAND_RETRY),
+                FixAction(fixes.GET_OLLAMA, command=COMMAND_GET_OLLAMA),
+                FixAction(fixes.CHECK_AGAIN, command=COMMAND_RETRY),
             ),
         )
     if kind is IssueKind.OLLAMA_NOT_RUNNING:
         if issue.startable:
             return Fix(
-                "Ollama isn't running",
+                fixes.OLLAMA_NOT_RUNNING,
                 (
-                    FixAction("Start Ollama", command=COMMAND_START_OLLAMA),
-                    FixAction("Check again", command=COMMAND_RETRY),
+                    FixAction(fixes.START_OLLAMA, command=COMMAND_START_OLLAMA),
+                    FixAction(fixes.CHECK_AGAIN, command=COMMAND_RETRY),
                 ),
             )
         return Fix(
-            "Ollama isn't running",
-            (FixAction("Check again", command=COMMAND_RETRY, tooltip=txt.OLLAMA_SERVICE_HINT),),
+            fixes.OLLAMA_NOT_RUNNING,
+            (FixAction(fixes.CHECK_AGAIN, command=COMMAND_RETRY, tooltip=txt.OLLAMA_SERVICE_HINT),),
         )
     if kind is IssueKind.OLLAMA_UNREACHABLE:
         return Fix(
-            "Ollama isn't reachable",
+            fixes.OLLAMA_UNREACHABLE,
             (
-                FixAction("Check again", command=COMMAND_RETRY),
-                FixAction("Find server…", SettingsPage.AI_SETUP, FOCUS_FIND_SERVER),
+                FixAction(fixes.CHECK_AGAIN, command=COMMAND_RETRY),
+                FixAction(fixes.FIND_SERVER, SettingsPage.AI_SETUP, FOCUS_FIND_SERVER),
             ),
         )
     return None
@@ -142,15 +136,15 @@ def _general_fix(issue: RequirementIssue) -> Fix | None:
         return Fix(issue_text(issue), ())
     if kind is IssueKind.NOTHING_TO_READ:
         return Fix(
-            txt.NOTHING_TO_READ_LINE,
-            (FixAction(txt.TURN_ON_RECOGNITION, command=COMMAND_TURN_ON_RECOGNITION),),
+            win.NOTHING_TO_READ_LINE,
+            (FixAction(win.TURN_ON_RECOGNITION, command=COMMAND_TURN_ON_RECOGNITION),),
         )
     if kind is IssueKind.ADDONS_OUTDATED:
         return Fix(
             addons.ADDONS_OUTDATED_LINE,
             (
                 FixAction(
-                    addons.UPDATE_ADDONS + "…",
+                    fixes.UPDATE_ADDONS_BUTTON,
                     SettingsPage.ADDONS,
                     FOCUS_ADDON_UPDATE,
                     tooltip=addons.ADDONS_OUTDATED_NOTE,
@@ -159,8 +153,8 @@ def _general_fix(issue: RequirementIssue) -> Fix | None:
         )
     if kind is IssueKind.OCR_NOT_ALLOWED:
         return Fix(
-            "Text recognition must run on this computer",
-            (FixAction("Choose a model…", SettingsPage.AI_MODELS, FOCUS_OCR),),
+            fixes.OCR_NOT_ALLOWED,
+            (FixAction(fixes.CHOOSE_MODEL, SettingsPage.AI_MODELS, FOCUS_OCR),),
         )
     return None
 
@@ -187,10 +181,10 @@ def fix_for(
         return general
     if kind is IssueKind.READER_MODEL_MISSING:
         return Fix(
-            "The built-in reader isn't downloaded yet",
+            fixes.READER_MISSING,
             (
                 FixAction(
-                    "Download…",
+                    fixes.DOWNLOAD,
                     SettingsPage.ADDONS,
                     FOCUS_READING_MODELS,
                     (READER_ITEM,),
@@ -202,20 +196,20 @@ def fix_for(
         return ollama
     if kind is IssueKind.NO_OLLAMA_MODEL:
         return Fix(
-            "No AI model is downloaded in Ollama yet",
-            (FixAction("Download…", SettingsPage.ADDONS, FOCUS_LOCAL_MODELS, issue.models),),
+            fixes.NO_OLLAMA_MODEL,
+            (FixAction(fixes.DOWNLOAD, SettingsPage.ADDONS, FOCUS_LOCAL_MODELS, issue.models),),
         )
     if kind is IssueKind.MODEL_MISSING:
         return Fix(
-            _models_line(issue.models),
-            (FixAction("Download…", SettingsPage.ADDONS, FOCUS_LOCAL_MODELS, issue.models),),
+            fixes.models_missing(issue.models),
+            (FixAction(fixes.DOWNLOAD, SettingsPage.ADDONS, FOCUS_LOCAL_MODELS, issue.models),),
         )
     if kind is IssueKind.PACKAGE_MISSING:
         return Fix(
-            f"{display_name(issue.provider)} support isn't installed",
+            fixes.package_missing(display_name(issue.provider)),
             (
                 FixAction(
-                    "Install…",
+                    fixes.INSTALL,
                     SettingsPage.ADDONS,
                     FOCUS_ONLINE_SERVICES,
                     (f"{PROVIDER_PREFIX}{issue.provider}",),
@@ -225,18 +219,17 @@ def fix_for(
     if kind is IssueKind.KEY_MISSING:
         focus = FOCUS_REVIEW_KEY if stage == Stage.EVALUATION else FOCUS_PROOFREADING_KEY
         return Fix(
-            f"No API key for {display_name(issue.provider)} yet",
-            (FixAction("Enter key…", SettingsPage.AI_MODELS, focus),),
+            fixes.key_missing(display_name(issue.provider)),
+            (FixAction(fixes.ENTER_KEY, SettingsPage.AI_MODELS, focus),),
         )
     models = tuple(f"{SPACY_PREFIX}{model}" for model in issue.models)
     if kind is IssueKind.PRIVACY_ADDON_MISSING:
         # spaCy itself is missing: installing it brings the model along, so the fix ticks both.
-        named = f"the {language_name(language)} model" if language else "a model"
         return Fix(
-            f"Name detection isn't installed yet (spaCy and {named})",
+            fixes.name_detection_missing(language),
             (
                 FixAction(
-                    "Install…",
+                    fixes.INSTALL,
                     SettingsPage.ADDONS,
                     FOCUS_NAME_DETECTION,
                     (f"{PACKAGE_PREFIX}spacy", *models),
@@ -244,10 +237,9 @@ def fix_for(
             ),
         )
     # NAME_DETECTION_MISSING: spaCy is there, the model of this language is not.
-    what = f"The {language_name(language)} name detection model" if language else "The model"
     return Fix(
-        f"{what} isn't downloaded",
-        (FixAction("Download…", SettingsPage.ADDONS, FOCUS_NAME_DETECTION, models),),
+        fixes.name_model_missing(language),
+        (FixAction(fixes.DOWNLOAD, SettingsPage.ADDONS, FOCUS_NAME_DETECTION, models),),
     )
 
 
@@ -257,7 +249,7 @@ def results_fix(problem: str) -> Fix:
     Args:
         problem: :data:`RESULTS_NO_FOLDER` or :data:`RESULTS_TEXT_IN_INPUT`.
     """
-    choose = (FixAction("Choose…", command=COMMAND_CHOOSE_FOLDER),)
+    choose = (FixAction(fixes.CHOOSE_FOLDER, command=COMMAND_CHOOSE_FOLDER),)
     if problem == RESULTS_TEXT_IN_INPUT:
-        return Fix("Choose a results folder outside the documents folder", choose)
-    return Fix("Choose where to save the results", choose)
+        return Fix(fixes.RESULTS_INSIDE_DOCUMENTS, choose)
+    return Fix(fixes.RESULTS_NO_FOLDER, choose)

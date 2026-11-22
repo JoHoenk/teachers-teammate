@@ -24,11 +24,11 @@ from ._types import FileDoneEvent
 def wait_detail_text(detail: WaitDetail) -> str:
     """Return what to say about a request to Ollama that has no answer yet."""
     if detail.kind is WaitKind.BUSY:
-        return check_text.RUN_WAITING_FOR_MODEL.format(other=detail.other)
+        return check_text.run_waiting_for_model(detail.other)
     if detail.kind is WaitKind.LOADING:
-        return check_text.RUN_LOADING_MODEL.format(model=detail.model)
+        return check_text.run_loading_model(detail.model)
     if detail.kind is WaitKind.QUEUED:
-        return check_text.RUN_QUEUED_FOR_MODEL.format(other=detail.other, model=detail.model)
+        return check_text.run_queued_for_model(detail.other, detail.model)
     return ""
 
 
@@ -42,15 +42,6 @@ class StopStage(Enum):
     NOW = "now"
 
 
-STOP_TEXT = "Stop"
-STOP_TOOLTIP = "Finish the document being processed, then stop."
-STOP_NOW_TEXT = "Stop now"
-STOP_NOW_TOOLTIP = (
-    "Stop at once. The document being processed is left unfinished; what is already done "
-    "is kept and reused next time."
-)
-STOPPING_SUFFIX = " — stopping after this document"
-STOPPING_NOW_TEXT = "Stopping…"
 #: How often the bar and the time left follow the clock while a run is going.
 PROGRESS_TICK_MS = 1000
 #: Steps of the bar once it follows the time of the run.

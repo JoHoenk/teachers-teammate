@@ -33,41 +33,10 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.composition import AppServices
+from ...texts import credentials as keys_text
 from ...texts import dialogs as dlg
-from ...texts.settings import PAGE_AI_MODELS
-from .. import _dialogs
+from .. import _dialogs, _html
 from .._credential_store import CredentialStore, KeyLocation, set_outside_app
-
-SHOW_KEY = "Show"
-HIDE_KEY = "Hide"
-KEY_PLACEHOLDER = "Paste your API key here"
-REMOVE_KEY = "Remove"
-ADD_KEY = "Add key"
-GROUP_TITLE = "Access keys (API keys)"
-#: Opens both notes: the key list shows the keys that are also entered under the service.
-_GROUP_NOTE_SAME_KEYS = (
-    "A key is what an online service gives you to use its AI. You can also enter it under "
-    f"the service on {PAGE_AI_MODELS}; here you see all of them, can remove one, or add "
-    "one for another service. "
-)
-GROUP_NOTE_KEYCHAIN = (
-    _GROUP_NOTE_SAME_KEYS + "Keys are kept in your system's secret store (keychain) and loaded "
-    "automatically when the app starts. A key set in the environment before launching takes "
-    "priority. A key you enter is used right away and saved when you press OK."
-)
-GROUP_NOTE_FILE = (
-    _GROUP_NOTE_SAME_KEYS + "No system keychain was found, so keys are kept in this app's "
-    "settings file on this computer, readable by anyone who can open your user account's files "
-    "(they are not encrypted), and loaded automatically when the app starts. A key set in the "
-    "environment before launching takes priority. A key you enter is used right away and saved "
-    "when you press OK."
-)
-KEY_LINE_OUTSIDE = (
-    "Set outside the app (environment variable). It is used instead of a key saved here."
-)
-KEY_LINE_KEYCHAIN = "Kept in your system's keychain."
-KEY_LINE_FILE = "Kept in this app's settings file, not encrypted (no keychain found)."
-KEY_LINE_GET_KEY = "Get a key at {link}."
 
 #: How long after the last keystroke a typed key counts as entered.
 COMMIT_DELAY_MS = 800
@@ -303,16 +272,16 @@ class ApiKeyRow(QWidget):
 
         self.field = QLineEdit(drafts.value(env_key))
         self.field.setEchoMode(QLineEdit.EchoMode.Password)
-        self.field.setPlaceholderText(KEY_PLACEHOLDER)
+        self.field.setPlaceholderText(keys_text.KEY_PLACEHOLDER)
         self.field.setMinimumWidth(220)
         layout.addWidget(self.field, 1, 0)
 
-        self._reveal = QPushButton(SHOW_KEY)
+        self._reveal = QPushButton(keys_text.SHOW_KEY)
         self._reveal.setCheckable(True)
         self._reveal.toggled.connect(self._on_reveal_toggled)
         layout.addWidget(self._reveal, 1, 1)
 
-        self.remove_button = QPushButton(REMOVE_KEY)  # shares the column with Show
+        self.remove_button = QPushButton(keys_text.REMOVE_KEY)  # shares the column with Show
         self.remove_button.clicked.connect(self._on_remove_clicked)
         layout.addWidget(self.remove_button, 0, 1)
 
@@ -369,10 +338,7 @@ class ApiKeyRow(QWidget):
     # ── internal ──────────────────────────────────────────────────────────────
 
     def _set_title(self, title: str) -> None:
-        self._name.setText(
-            f"<b>{html.escape(title)}</b> "
-            f"<span style='color:#888;'>({html.escape(self.env_key)})</span>"
-        )
+        self._name.setText(_html.bold_with_note(title, self.env_key))
 
     def _update_remove_button(self) -> None:
         self.remove_button.setEnabled(bool(self.field.text().strip()))
@@ -381,15 +347,15 @@ class ApiKeyRow(QWidget):
         if not self._inline:
             return
         if self._drafts.set_outside_app(self.env_key):
-            text = KEY_LINE_OUTSIDE
+            text = keys_text.KEY_LINE_OUTSIDE
         elif self._drafts.location() is KeyLocation.KEYCHAIN:
-            text = KEY_LINE_KEYCHAIN
+            text = keys_text.KEY_LINE_KEYCHAIN
         else:
-            text = KEY_LINE_FILE
+            text = keys_text.KEY_LINE_FILE
         if self._key_url:
             host = urlparse(self._key_url).netloc or self._key_url
-            link = f'<a href="{html.escape(self._key_url, quote=True)}">{html.escape(host)}</a>'
-            text = f"{html.escape(text)} {KEY_LINE_GET_KEY.format(link=link)}"
+            link = _html.link(self._key_url, host)
+            text = f"{html.escape(text)} {keys_text.key_line_get_key(link)}"
         else:
             text = html.escape(text)
         self.line.setText(text)
@@ -405,7 +371,7 @@ class ApiKeyRow(QWidget):
     def _on_reveal_toggled(self, shown: bool) -> None:
         mode = QLineEdit.EchoMode.Normal if shown else QLineEdit.EchoMode.Password
         self.field.setEchoMode(mode)
-        self._reveal.setText(HIDE_KEY if shown else SHOW_KEY)
+        self._reveal.setText(keys_text.HIDE_KEY if shown else keys_text.SHOW_KEY)
 
 
 class CredentialsGroup(QGroupBox):
@@ -423,13 +389,13 @@ class CredentialsGroup(QGroupBox):
         drafts: ApiKeyDrafts | None = None,
         store: CredentialStore | None = None,
     ) -> None:
-        super().__init__(GROUP_TITLE, parent)
+        super().__init__(keys_text.GROUP_TITLE, parent)
         self._app_service = app_service
         self.drafts = drafts or ApiKeyDrafts(app_service, store=store, parent=self)
         layout = QVBoxLayout(self)
 
         in_keychain = self.drafts.location() is KeyLocation.KEYCHAIN
-        note = QLabel(GROUP_NOTE_KEYCHAIN if in_keychain else GROUP_NOTE_FILE)
+        note = QLabel(keys_text.GROUP_NOTE_KEYCHAIN if in_keychain else keys_text.GROUP_NOTE_FILE)
         note.setWordWrap(True)
         note.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(note)
@@ -444,7 +410,7 @@ class CredentialsGroup(QGroupBox):
         add_layout.setContentsMargins(0, 0, 0, 0)
         self._add_combo = QComboBox()
         add_layout.addWidget(self._add_combo, stretch=1)
-        self._add_btn = QPushButton(ADD_KEY)
+        self._add_btn = QPushButton(keys_text.ADD_KEY)
         self._add_btn.clicked.connect(self._add_new_row)
         add_layout.addWidget(self._add_btn)
         layout.addWidget(self._add_row)

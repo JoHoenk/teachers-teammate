@@ -25,6 +25,11 @@ from typing import Any
 from ... import __version__
 from ...domain.local_models import HUGGING_FACE_HOST, LocalModel, ModelFile
 from ...exceptions import ModelDownloadCancelledError, ModelDownloadError, ModelMissingError
+from ...texts.addons import (
+    DOWNLOAD_CANCELLED,
+    download_damaged,
+    models_not_downloaded,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -48,7 +53,7 @@ def _one_download_at_a_time(cancel: threading.Event | None) -> Iterator[None]:
     """Hold the download lock; a download that waits for it can still be cancelled."""
     while not _DOWNLOAD_LOCK.acquire(timeout=_LOCK_POLL_S):
         if cancel is not None and cancel.is_set():
-            raise ModelDownloadCancelledError("The download was cancelled.")
+            raise ModelDownloadCancelledError(DOWNLOAD_CANCELLED)
     try:
         yield
     finally:
@@ -190,7 +195,7 @@ class ModelStore:
         """
         folder = self._installed_folder(model)
         if folder is None:
-            raise ModelMissingError(f"The model files of {model.repo} are not downloaded yet.")
+            raise ModelMissingError(models_not_downloaded(model.repo))
         return folder / name
 
     # ── download ──────────────────────────────────────────────────────────
@@ -281,7 +286,7 @@ class ModelStore:
                     with part.open("wb") as out:
                         for chunk in response.iter_content(chunk_size=_CHUNK):
                             if cancel is not None and cancel.is_set():
-                                raise ModelDownloadCancelledError("The download was cancelled.")
+                                raise ModelDownloadCancelledError(DOWNLOAD_CANCELLED)
                             if not chunk:
                                 continue
                             out.write(chunk)
@@ -293,10 +298,7 @@ class ModelStore:
                 except OSError as exc:
                     raise ModelDownloadError(_disk_message(part, exc)) from exc
             if size != file.size or digest.hexdigest() != file.sha256:
-                raise ModelDownloadError(
-                    f"The download of {file.name} was damaged on the way (the checksum does not "
-                    "match). Please try again."
-                )
+                raise ModelDownloadError(download_damaged(file.name))
             try:
                 os.replace(part, target)
             except OSError as exc:

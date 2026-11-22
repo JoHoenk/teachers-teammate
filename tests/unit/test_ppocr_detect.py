@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from teachers_teammate.exceptions import OCRError
 from teachers_teammate.infrastructure.ppocr.detect import (
     DetectorSettings,
     RotatedBox,
@@ -133,6 +134,23 @@ def test_detect_runs_the_net_and_returns_page_boxes() -> None:
     assert net.blob_shape == (1, 3, 320, 640)
     assert len(boxes) == 1
     assert boxes[0].centre == pytest.approx((300, 115), abs=3)
+
+
+def test_a_detector_output_of_the_wrong_shape_says_the_model_files_do_not_match() -> None:
+    """
+    Given  a net that answers with a map of three dimensions
+    When   detect is called
+    Then   an OCRError states what a teacher can act on, not the shape of the array
+    """
+    page = np.full((64, 64, 3), 255, np.uint8)
+
+    class _ThreeDimensional:
+        def run(self, blob: np.ndarray) -> np.ndarray:
+            """Return an output that has no batch and channel axes."""
+            return np.zeros((1, 64, 64), np.float32)
+
+    with pytest.raises(OCRError, match="don't match this version"):
+        detect(_ThreeDimensional(), page, _NO_PAD)
 
 
 def test_rotated_box_from_points_round_trips() -> None:

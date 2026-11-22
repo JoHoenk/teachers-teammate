@@ -26,13 +26,14 @@ from ..domain.stages import Stage
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts import review as txt
+from ..texts import run as run_text
 from . import _dialogs, _handles
 from ._background import run_in_background
 from ._config_panel import ConfigPanel
 from ._error_text import spacy_problem
 from ._export_menu import ExportKind
 from ._results_table import ResultsTable
-from ._run_session import STOP_NOW_TEXT, STOP_TEXT, RunSession, StopStage
+from ._run_session import RunSession, StopStage
 from ._view_settings import (
     check_card_split,
     check_split,
@@ -313,9 +314,9 @@ class CheckController(QObject):
             self._page.set_run(None)
             return
         stop_text = {
-            StopStage.RUNNING: STOP_TEXT,
-            StopStage.AFTER_FILE: STOP_NOW_TEXT,
-            StopStage.NOW: STOP_NOW_TEXT,
+            StopStage.RUNNING: run_text.STOP,
+            StopStage.AFTER_FILE: run_text.STOP_NOW,
+            StopStage.NOW: run_text.STOP_NOW,
         }.get(self._session.stop_stage, "")
         stop_enabled = self._session.stop_stage in (StopStage.RUNNING, StopStage.AFTER_FILE)
         if self._open != self._session.current:
@@ -329,7 +330,7 @@ class CheckController(QObject):
             )
             return
         step = self._session.step or (
-            check_text.RUN_PROOFREADING.format(model=self._session.model)
+            check_text.run_proofreading(self._session.model)
             if self._session.model
             else check_text.RUN_READING
         )

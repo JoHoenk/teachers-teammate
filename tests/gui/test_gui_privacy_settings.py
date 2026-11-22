@@ -13,7 +13,6 @@ from teachers_teammate.domain.data_location import (
     DataFlowStage,
     DataLocation,
     StageLocation,
-    describe_fingerprint,
 )
 from teachers_teammate.domain.anonymization import DEFAULT_PATTERNS, AnonymizerConfig
 from teachers_teammate.texts import review as txt
@@ -29,7 +28,8 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_PATTERNS,
     FOCUS_SENDING,
 )
-from teachers_teammate.gui.settings._privacy_page import NOTHING_REMEMBERED, PrivacyPage
+from teachers_teammate.gui.settings._privacy_page import PrivacyPage
+from teachers_teammate.texts.privacy import NOTHING_REMEMBERED
 
 from ._gui_harness import settings_context
 from teachers_teammate.texts.settings import WHERE_ADDONS
@@ -67,51 +67,15 @@ def acks(settings: _MemorySettings) -> FlowAcknowledgements:
     return FlowAcknowledgements(lambda: settings)
 
 
-# ── the readable line of a remembered answer ───────────────────────────────
-
-
-def test_a_fingerprint_without_summary_is_described_in_words() -> None:
-    """
-    Given  the fingerprint an earlier version stored (nothing readable next to it)
-    When   describe_fingerprint() is called
-    Then   it says the step, where it runs and whether names were replaced
-    """
-    flow = DataFlow(
-        (
-            DataFlowStage("correction", StageLocation(DataLocation.ONLINE, "Mistral"), "text"),
-            DataFlowStage(
-                "evaluation",
-                StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", "school-server"),
-                "text",
-                personal_info_hidden=True,
-            ),
-        )
-    )
-
-    assert describe_fingerprint(flow.fingerprint) == (
-        "Proofreading: Online service (Mistral) · outside the EU — names sent as written; "
-        "Content review: On another computer (school-server) — names replaced where detected"
-    )
-
-
-@pytest.mark.parametrize("fingerprint", ["garbage", "a:b", "correction:unknown_place:X::0"])
-def test_a_fingerprint_that_does_not_parse_is_shown_as_it_is(fingerprint: str) -> None:
-    """
-    Given  a stored value that is not a fingerprint this version understands
-    When   describe_fingerprint() is called
-    Then   it is returned unchanged, so nothing remembered is ever hidden from the list
-    """
-    assert describe_fingerprint(fingerprint) == fingerprint
-
-
 # ── storage ─────────────────────────────────────────────────────────────────
 
 
-def test_a_remembered_answer_is_stored_with_a_readable_summary(acks, settings) -> None:
+def test_a_remembered_answer_is_stored_as_its_fingerprint(acks, settings) -> None:
     """
     Given  an online proofreading flow
     When   "don't ask again" is remembered for it
-    Then   the list shows what was agreed to, and the question is skipped for that flow only
+    Then   the list shows what was agreed to, the settings hold the fingerprint only, and the
+           question is skipped for that flow only
     """
     flow = _flow("Mistral")
 
@@ -120,12 +84,11 @@ def test_a_remembered_answer_is_stored_with_a_readable_summary(acks, settings) -
     [entry] = acks.remembered()
     assert entry.fingerprint == flow.fingerprint
     assert entry.summary == (
-        "Proofreading: Online service (Mistral) · outside the EU — receives text, "
-        "names sent as written"
+        "Proofreading: Online service (Mistral) · outside the EU — names sent as written"
     )
     assert flow.fingerprint in acks.fingerprints()
     assert _flow("OpenAI").fingerprint not in acks.fingerprints()
-    assert "\t" in str(settings.store[SETTINGS_KEY])
+    assert str(settings.store[SETTINGS_KEY]) == flow.fingerprint
 
 
 def test_answers_stored_by_an_earlier_version_are_still_listed_and_honoured(acks, settings) -> None:
@@ -317,15 +280,14 @@ def test_the_sending_tab_lists_remembered_answers_in_words(qtbot, acks) -> None:
     """
     Given  one remembered answer
     When   the page is shown
-    Then   the list names the step, the service and what is sent, not a fingerprint
+    Then   the list names the step, the service and how names are handled, not a fingerprint
     """
     acks.remember(_flow("Mistral"))
 
     page = _make_page(qtbot, acks, focus=FOCUS_SENDING)
 
     assert _listed(page) == [
-        "Proofreading: Online service (Mistral) · outside the EU — receives text, "
-        "names sent as written"
+        "Proofreading: Online service (Mistral) · outside the EU — names sent as written"
     ]
     assert page.sending_tab()._empty.isHidden()
 

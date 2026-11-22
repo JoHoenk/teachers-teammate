@@ -10,33 +10,21 @@ from ..domain.notation import with_notation_hint
 from ..domain.prompt_text import migrate_saved_default
 from ..domain.stages import Stage
 
-#: What each step of the proofreading exchange is called where a teacher reads it.
-PROMPT_STEP_TITLES: dict[str, str] = {
-    "correct": "Correct the text",
-    "explain": "Explain the corrections",
-    "unclear": "List unclear expressions",
-}
-
-
-def prompt_step_title(step: str) -> str:
-    """Return the teacher-facing name of a proofreading step."""
-    return PROMPT_STEP_TITLES.get(step, step)
-
 
 def proofreading_prompts(config: Config) -> tuple[tuple[str, str], ...]:
-    """Return ``(step title, system prompt)`` for the steps this config sends.
+    """Return ``(step, system prompt)`` for the steps this config sends.
 
     Taken from the exchange itself, so the *Options…* dialog and *What is sent* show the
     requests a run really makes and cannot drift from them.  *Corrections only* leaves
-    step ① alone; a model without the unclear check leaves step ③ out.
+    step ① alone; a model without the unclear check leaves step ③ out.  The step is a key:
+    the adapter names it, through :func:`teachers_teammate.texts.review.prompt_step_title`.
     """
     from ..infrastructure.proofreading.corrector import exchange_prompts  # noqa: PLC0415
 
-    steps = exchange_prompts(
+    return exchange_prompts(
         config.correction_profile,
         corrections_only=config.correction_output == "text",
     )
-    return tuple((prompt_step_title(step), text) for step, text in steps)
 
 
 def evaluation_fixed_instructions(text_format: TextFormat = "plain") -> str:

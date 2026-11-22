@@ -42,7 +42,9 @@ from ...config import DEFAULTS, OcrConfig
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...domain.stages import Stage
 from ...settings_schema import CONTEXT_SETTINGS
+from ...texts import models as words
 from ...texts import review as txt
+from ...texts import settings as st
 from .._background import LatestTask
 from .._model_guidance import SPACY_PREFIX
 from .._ocr_config_selector import OcrModelPicker
@@ -52,37 +54,6 @@ from ._computer_box import ComputerBox
 from ._credentials import ApiKeyDrafts
 from ._page import SettingsContext, SettingsPage, SettingsPageBase
 
-TITLE = "AI models"
-DESCRIPTION = (
-    "Which AI reads the handwriting, and which AI proofreads and reviews the text. "
-    "You set this once."
-)
-READING_GROUP = "Reading handwriting"
-READING_NOTE = "Always on this computer: pages never go online."
-PROOFREADING_GROUP = "Proofreading and content review"
-OVERRIDE_LABEL = "Use a different model for content review"
-OVERRIDE_TOOLTIP = (
-    "Off: the content review uses the proofreading model.\n"
-    "On: choose another service or model for the review only."
-)
-CONTEXT_LABEL = "Context window for the content review:"
-CONTEXT_TOOLTIP = (
-    "How much text the content review may read in one request.\n"
-    "Automatic grows the window with the size of the graphics card;\n"
-    "a larger window lets longer texts through but needs more memory."
-)
-LINE_NEEDS_DETECTION = (
-    "Names are sent as written. Replacing them needs name detection for {language}."
-)
-LINE_PROTECTED = "Names are replaced before the text is sent."
-LINE_WILL_TURN_ON = (
-    f'"{txt.REMOVE_PERSONAL_INFO}" will be turned on when you press OK, so names are replaced '
-    "before the text is sent."
-)
-LINE_NAMES_SENT = "Names are sent as written."
-BUTTON_INSTALL = "Install…"
-BUTTON_KEEP_OFF = "Keep it off"
-BUTTON_TURN_ON = f'Turn on "{txt.REMOVE_PERSONAL_INFO}"'
 _GREEN = "#27ae60"
 _ORANGE = "#e67e22"
 _OCR_KEYS = ("ocr_engine", "ocr_model")
@@ -124,8 +95,8 @@ class AiModelsPage(SettingsPageBase):
     """Recognition picker, one shared proofreading/review model with an optional override."""
 
     page = SettingsPage.AI_MODELS
-    title = TITLE
-    description = DESCRIPTION
+    title = st.PAGE_AI_MODELS
+    description = st.PAGE_INTRO_AI_MODELS
 
     #: The user chose another recognition method (not emitted while loading).
     ocr_engine_changed = Signal(str)
@@ -178,9 +149,9 @@ class AiModelsPage(SettingsPageBase):
     # ── construction ──────────────────────────────────────────────────────────
 
     def _build_reading_group(self) -> QGroupBox:
-        reading = QGroupBox(READING_GROUP)
+        reading = QGroupBox(words.READING_HANDWRITING_GROUP)
         layout = QVBoxLayout(reading)
-        note = QLabel(READING_NOTE)
+        note = QLabel(words.READING_HANDWRITING_NOTE)
         note.setWordWrap(True)
         note.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(note)
@@ -197,13 +168,13 @@ class AiModelsPage(SettingsPageBase):
         return reading
 
     def _build_text_group(self) -> QGroupBox:
-        group = QGroupBox(PROOFREADING_GROUP)
+        group = QGroupBox(words.PROOFREADING_GROUP)
         layout = QVBoxLayout(group)
         self._shared = self._build_section(PROOFREADING, same_model_tip=False)
         layout.addWidget(self._shared)
 
-        self._override = QCheckBox(OVERRIDE_LABEL)
-        self._override.setToolTip(OVERRIDE_TOOLTIP)
+        self._override = QCheckBox(words.REVIEW_OVERRIDE_LABEL)
+        self._override.setToolTip(words.REVIEW_OVERRIDE_TOOLTIP)
         self._override.toggled.connect(self._on_override_toggled)
         layout.addWidget(self._override)
 
@@ -242,13 +213,13 @@ class AiModelsPage(SettingsPageBase):
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
-        label = QLabel(CONTEXT_LABEL)
-        label.setToolTip(CONTEXT_TOOLTIP)
+        label = QLabel(words.REVIEW_CONTEXT_LABEL)
+        label.setToolTip(words.REVIEW_CONTEXT_TOOLTIP)
         layout.addWidget(label)
         combo = QComboBox()
         for setting in CONTEXT_SETTINGS:
             combo.addItem(setting, setting)
-        combo.setToolTip(CONTEXT_TOOLTIP)
+        combo.setToolTip(words.REVIEW_CONTEXT_TOOLTIP)
         layout.addWidget(combo, stretch=1)
         row.setVisible(False)
         return row, combo
@@ -543,16 +514,23 @@ class AiModelsPage(SettingsPageBase):
 
     def _draw_privacy_line(self) -> None:
         state = self._privacy_state
-        language = self._context.language or "this language"
         text, color, button = {
             PrivacyLineState.NEEDS_DETECTION: (
-                "● " + LINE_NEEDS_DETECTION.format(language=language),
+                words.line_needs_detection(self._context.language),
                 _ORANGE,
-                BUTTON_INSTALL,
+                words.BUTTON_INSTALL_DETECTION,
             ),
-            PrivacyLineState.PROTECTED: ("✓ " + LINE_PROTECTED, _GREEN, ""),
-            PrivacyLineState.WILL_TURN_ON: ("✓ " + LINE_WILL_TURN_ON, _GREEN, BUTTON_KEEP_OFF),
-            PrivacyLineState.NAMES_SENT: ("● " + LINE_NAMES_SENT, _ORANGE, BUTTON_TURN_ON),
+            PrivacyLineState.PROTECTED: (words.LINE_PROTECTED, _GREEN, ""),
+            PrivacyLineState.WILL_TURN_ON: (
+                words.LINE_TURNED_ON,
+                _GREEN,
+                words.BUTTON_KEEP_OFF,
+            ),
+            PrivacyLineState.NAMES_SENT: (
+                words.LINE_NAMES_SENT,
+                _ORANGE,
+                words.BUTTON_TURN_ON,
+            ),
         }.get(state, ("", "", ""))
         self._privacy_label.setText(text)
         self._privacy_label.setStyleSheet(f"color: {color};" if color else "")

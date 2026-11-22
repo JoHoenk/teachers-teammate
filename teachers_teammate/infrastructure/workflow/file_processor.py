@@ -49,6 +49,23 @@ from ...interfaces import (
     OnStageStartedFn,
     Reporter,
 )
+from ...texts import report as report_text
+from ...texts.run import (
+    EMPTY_OCR_ANSWER,
+    RESULTS_CACHED,
+    cache_save_failed,
+    docx_failed,
+    input_read_failed,
+    output_not_saved,
+    output_overwrites_input,
+    output_read_back_as_input,
+    output_replaces_another,
+    personal_info_removal_failed,
+    personal_info_restore_failed,
+    preprocessing_failed,
+    preview_save_failed,
+    text_files_failed,
+)
 from ..ocr_formats import plain_text_of
 from ..reporting import StdoutReporter
 from ..run_stats import RunStatsCollector
@@ -315,11 +332,9 @@ class FileProcessor:
             return self._cache_service.prepare(file)
         except OSError as exc:
             if isinstance(exc, FileNotFoundError) and not file.exists():
-                self._reporter.status(f"       → Skipped: {FILE_GONE_MESSAGE}")
+                self._reporter.status(report_text.file_skipped(FILE_GONE_MESSAGE))
                 raise FileSkipped(FILE_GONE_MESSAGE) from exc
-            raise StageError(
-                f"Could not read input file: {exc}", kind=StageErrorKind.STORAGE
-            ) from exc
+            raise StageError(input_read_failed(exc), kind=StageErrorKind.STORAGE) from exc
 
     def _run_preprocess_or_cache(
         self, file: Path, ctx: CacheContext
@@ -356,7 +371,7 @@ class FileProcessor:
                 )
             except OSError:
                 pass
-        self._reporter.status("       → Using cached OCR output")
+        self._reporter.status(report_text.CACHED_OCR)
         if self._on_ocr_done:
             self._on_ocr_done(str(file.resolve()), file.name)
         return raw_text, preview_img, source_image, ctx
@@ -376,7 +391,7 @@ class FileProcessor:
         if reading is not None and not reading.text.strip():
             reading = None  # an emptied text is not a reading to go by
         if not is_text_input:
-            self._reporter.status("       → Preprocessing...")
+            self._reporter.status(report_text.PREPROCESSING)
             self._notify_stage(file, ProgressStage.PREPROCESSING)
         try:
             if self._recognize or reading is not None:
@@ -384,12 +399,10 @@ class FileProcessor:
             else:
                 prepared = self._preprocess_service.preprocess_input(file, allow_images=False)
         except RecognitionSwitchedOffError as exc:
-            self._reporter.status(f"       → Skipped: {RECOGNITION_OFF_MESSAGE}")
+            self._reporter.status(report_text.file_skipped(RECOGNITION_OFF_MESSAGE))
             raise FileSkipped(str(exc)) from exc
         except (OSError, ValueError, RuntimeError, PipelineInputError) as exc:
-            raise StageError(
-                f"Preprocessing failed: {exc}", kind=StageErrorKind.PREPROCESSING
-            ) from exc
+            raise StageError(preprocessing_failed(exc), kind=StageErrorKind.PREPROCESSING) from exc
 
         ocr_inputs, prep_steps, source_image = (
             prepared.ocr_inputs,
@@ -422,17 +435,15 @@ class FileProcessor:
                     pages=pages,
                 )
             except OSError as exc:
-                raise StageError(
-                    f"Could not persist preview image: {exc}", kind=StageErrorKind.STORAGE
-                ) from exc
+                raise StageError(preview_save_failed(exc), kind=StageErrorKind.STORAGE) from exc
 
         if not ocr_inputs:
-            self._reporter.status("       → Preprocessing skipped (text input)")
+            self._reporter.status(report_text.PREPROCESSING_TEXT_INPUT)
         elif not prep_steps:
-            self._reporter.status("       → Preprocessing applied no steps")
+            self._reporter.status(report_text.PREPROCESSING_NO_STEPS)
         else:
             self._reporter.status(
-                f"       → Preprocessing done: {', '.join(prep_steps)} ({len(ocr_inputs)} page(s))"
+                report_text.preprocessing_done(", ".join(prep_steps), len(ocr_inputs))
             )
 
         if reading is not None and prepared.raw_text_hint is None:
@@ -456,7 +467,7 @@ class FileProcessor:
         return stop_requested(self._stop_event)
 
     def _report_ocr_page(self, page: int, total: int) -> None:
-        self._reporter.status(f"       → OCR page {page}/{total}...")
+        self._reporter.status(report_text.ocr_page(page, total))
 
     def _begin_sample(self, step: SpeedStep) -> None:
         """Mark *step* as running, so the requests it sends become one sample."""
@@ -496,15 +507,15 @@ class FileProcessor:
             raw_text = raw_text_hint
             if reading is not None:
                 raw_text_format = reading.text_format
-                self._reporter.status("       → Your transcription used (pages not read again)")
+                self._reporter.status(report_text.USED_TRANSCRIPTION)
             elif prepared.text_origin == "pdf_text_layer":
-                self._reporter.status("       → Embedded PDF text used (OCR skipped)")
+                self._reporter.status(report_text.USED_PDF_TEXT)
             else:
-                self._reporter.status("       → Text input loaded (OCR skipped)")
+                self._reporter.status(report_text.USED_TEXT_INPUT)
         else:
             if prepared.text_layer_note:
-                self._reporter.status(f"       → PDF {prepared.text_layer_note} — using OCR")
-            self._reporter.status("       → Running OCR...")
+                self._reporter.status(report_text.pdf_text_layer_note(prepared.text_layer_note))
+            self._reporter.status(report_text.RUNNING_OCR)
             self._notify_stage(file, ProgressStage.OCR)
 
             def page_started(page: int, total: int) -> None:
@@ -527,9 +538,7 @@ class FileProcessor:
                 raw_text = join_labelled_pages(page_texts)
 
         if not raw_text:
-            raise StageError(
-                "Empty response from OCR model.", kind=StageErrorKind.ENGINE, stage=Stage.OCR
-            )
+            raise StageError(EMPTY_OCR_ANSWER, kind=StageErrorKind.ENGINE, stage=Stage.OCR)
 
         try:
             ctx = self._cache_service.record_ocr(
@@ -541,12 +550,10 @@ class FileProcessor:
                 raw_text_format=raw_text_format,
             )
         except OSError as exc:
-            raise StageError(
-                f"Could not persist OCR cache state: {exc}", kind=StageErrorKind.STORAGE
-            ) from exc
+            raise StageError(cache_save_failed(exc), kind=StageErrorKind.STORAGE) from exc
 
         if raw_text_hint is None:
-            self._reporter.status(f"       → OCR done ({page_count} page(s))")
+            self._reporter.status(report_text.ocr_done(page_count))
             if self._on_ocr_done:
                 self._on_ocr_done(str(file.resolve()), file.name)
 
@@ -577,11 +584,11 @@ class FileProcessor:
         try:
             anonymized, anon_map = self._anonymizer.anonymize(text)
         except Exception as exc:  # spaCy and name-model errors vary; report them per file
-            raise AnonymizerError(f"Personal info removal failed: {exc}", stage=stage) from exc
+            raise AnonymizerError(personal_info_removal_failed(exc), stage=stage) from exc
         if before_model:
-            self._reporter.status(f"       → PII anonymized before {stage}")
+            self._reporter.status(report_text.anonymized_before(stage))
         else:
-            self._reporter.status(f"       → Personal info removed ({len(anon_map)} items)")
+            self._reporter.status(report_text.personal_info_removed(len(anon_map)))
         return anonymized, anon_map
 
     def _restore_pii(
@@ -593,7 +600,7 @@ class FileProcessor:
         try:
             return self._anonymizer.restore(text, anon_map)
         except (ValueError, KeyError) as exc:
-            raise AnonymizerError(f"PII restore failed: {exc}", stage=stage) from exc
+            raise AnonymizerError(personal_info_restore_failed(exc), stage=stage) from exc
 
     def _run_correction_or_cache(
         self,
@@ -615,11 +622,9 @@ class FileProcessor:
         cache_state = ctx.state
         if cache_state.correction_done and cache_state.correction_text:
             if ctx.proofreading_kept:
-                self._reporter.status(
-                    "       → Proofreading kept: you worked on it (made with other settings)"
-                )
+                self._reporter.status(report_text.KEPT_PROOFREADING)
             else:
-                self._reporter.status("       → Using cached correction output")
+                self._reporter.status(report_text.CACHED_CORRECTION)
             review = CorrectionReview.from_dict(cache_state.correction_review)
             warnings = [cache_state.correction_warning] if cache_state.correction_warning else []
             return review, ctx, warnings
@@ -637,7 +642,7 @@ class FileProcessor:
         # Before the anonymization: it is a full spaCy pass that a stop should not wait for.
         if self._stopping():
             raise stopped()
-        self._reporter.status("       → Running correction...")
+        self._reporter.status(report_text.RUNNING_CORRECTION)
         self._notify_stage(file, ProgressStage.CORRECTION)
         text_for_correction, anon_map = anonymized(Stage.CORRECTION)
 
@@ -647,7 +652,7 @@ class FileProcessor:
             text_for_correction, self._language, text_format=text_format
         )
         if pieces is not None and pieces > 1:
-            self._reporter.status(f"       → Proofreading {file.name} in {pieces} parts...")
+            self._reporter.status(report_text.proofreading_in_parts(file.name, pieces))
         if self._stopping():  # the anonymization may have taken a while
             raise stopped()
         self._begin_sample(SpeedStep.PROOFREADING)
@@ -778,7 +783,7 @@ class FileProcessor:
 
         cache_state = ctx.state
         if cache_state.evaluation_done and cache_state.evaluation_text:
-            self._reporter.status("       → Using cached evaluation output")
+            self._reporter.status(report_text.CACHED_EVALUATION)
             return cache_state.evaluation_text, []
 
         stored = ctx.state.correction_done
@@ -798,7 +803,7 @@ class FileProcessor:
         # Before the anonymization: it is a spaCy pass that a stop should not wait for.
         if self._stopping():
             raise stopped()
-        self._reporter.status("       → Running evaluation...")
+        self._reporter.status(report_text.RUNNING_EVALUATION)
         # The proofread text has its real names back, so hide them again: the review may
         # run on an online service just like proofreading.
         text_for_evaluation, anon_map = self._hide_personal_info(
@@ -859,22 +864,16 @@ class FileProcessor:
             if suffix == DOCX_SUFFIX:  # Word documents are not an input type
                 continue
             if target.resolve() == source:
-                raise ValueError(f"{target.name} is the input document and would be overwritten")
+                raise ValueError(output_overwrites_input(target.name))
             if self._input_dir is not None and feeds_inputs(
                 target.parent.resolve(), self._input_dir, recursive=self._recursive
             ):
-                raise ValueError(
-                    f"{self._shown(target)} would be read as an input document by the next run; "
-                    "choose an output folder outside the input folder."
-                )
+                raise ValueError(output_read_back_as_input(self._shown(target)))
         with self._claim_lock:
             for target in targets.values():
                 owner = self._claimed.get(target.resolve())
                 if owner is not None and owner != source:
-                    raise ValueError(
-                        f"{self._shown(target)} would replace the output of {owner.name}; "
-                        "rename one of the two documents."
-                    )
+                    raise ValueError(output_replaces_another(self._shown(target), owner.name))
             for target in targets.values():
                 self._claimed[target.resolve()] = source
 
@@ -897,7 +896,7 @@ class FileProcessor:
         try:
             self._claim_outputs(file, targets)
         except ValueError as exc:
-            raise failed(f"Output files not saved: {exc}") from exc
+            raise failed(output_not_saved(exc)) from exc
 
         saved: list[str] = []
         try:
@@ -915,15 +914,14 @@ class FileProcessor:
                 )
                 saved.append(self._shown(docx_file))
         except Exception as exc:  # python-docx / PIL errors vary widely; surface the message
-            raise failed(f"DOCX creation failed: {exc}") from exc
+            raise failed(docx_failed(exc)) from exc
         try:
             self._write_text_files(targets, texts.raw, text_format, saved, anonymized_raw)
         except Exception as exc:  # NER / file-system errors vary; surface the message
-            already = f" (already saved: {', '.join(saved)})" if saved else ""
-            raise failed(f"Text file creation failed: {exc}{already}") from exc
+            raise failed(text_files_failed(exc, saved)) from exc
         return ProcessingResult(
             True,
-            ", ".join(saved) or "results cached (no output files)",
+            ", ".join(saved) or RESULTS_CACHED,
             preview_img=preview_img,
             raw_text=texts.raw,
             correction_text=texts.corrected,

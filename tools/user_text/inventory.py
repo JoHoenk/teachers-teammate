@@ -21,6 +21,7 @@ import csv
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 import sys
 
 #: The modules whose literals a teacher can read, relative to the repository root.
@@ -53,6 +54,28 @@ _QUALIFIED: dict[str, tuple[str, tuple[int, ...] | None]] = {
     "QFileDialog.getOpenFileName": (DIALOG, (1, 3)),
     "QFileDialog.getOpenFileNames": (DIALOG, (1, 3)),
     "QFileDialog.getSaveFileName": (DIALOG, (1, 3)),
+    # The few HTML fragments a widget puts around a label: every argument is a label, except
+    # the target of a link.
+    "_html.green": (WIDGET, None),
+    "_html.red": (WIDGET, None),
+    "_html.grey": (WIDGET, None),
+    "_html.amber": (WIDGET, None),
+    "_html.bold": (WIDGET, None),
+    "_html.bold_with_note": (WIDGET, None),
+    "_html.heading": (WIDGET, None),
+    "_html.headline": (WIDGET, None),
+    "_html.error_line": (WIDGET, None),
+    "_html.with_path": (WIDGET, None),
+    "_html.link": (WIDGET, (1,)),
+}
+
+#: A sink named by its last component, but only on a receiver whose dotted name holds the marker:
+#: ``status`` and ``emit`` are too common alone.  A run's reporter prints a line, a worker's
+#: ``log_line`` signal carries one to the log.
+_MARKED: dict[str, tuple[str, tuple[int, ...] | None, tuple[str, ...]]] = {
+    "status": (CLI, None, ("reporter",)),
+    "warn": (CLI, None, ("reporter",)),
+    "emit": (WIDGET, None, ("log_line",)),
 }
 
 _SIMPLE: dict[str, tuple[str, tuple[int, ...] | None]] = {
@@ -79,6 +102,19 @@ _SIMPLE: dict[str, tuple[str, tuple[int, ...] | None]] = {
     "addTab": (WIDGET, (1,)),
     "addMenu": (WIDGET, (0,)),
     "addAction": (WIDGET, (0,)),
+    "addRow": (WIDGET, (0,)),
+    "setSuffix": (WIDGET, (0,)),
+    "setApplicationDisplayName": (WIDGET, (0,)),
+    "setHorizontalHeaderLabels": (WIDGET, (0,)),
+    "setVerticalHeaderLabels": (WIDGET, (0,)),
+    "showMessage": (WIDGET, (0, 1)),
+    # The main window's own helpers: a step's header and its tooltip, a line in a log pane.
+    "step_header": (WIDGET, None),
+    "append_text": (WIDGET, (0,)),
+    # What the readiness line and the fix buttons show: the sentence is the first argument.
+    "Fix": (WIDGET, (0,)),
+    "FixAction": (WIDGET, (0,)),
+    "Readiness": (WIDGET, (0,)),
     # A CLI line: every positional argument is read.
     "print": (CLI, None),
 }
@@ -89,6 +125,7 @@ _KEYWORDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "ArgumentParser": (CLI, ("description", "epilog")),
     "add_parser": (CLI, ("help", "description")),
     "add_mutually_exclusive_group": (CLI, ()),
+    "FixAction": (WIDGET, ("tooltip",)),
 }
 
 #: Keyword arguments that carry prose wherever they appear: a result a teacher reads, the reason
@@ -96,20 +133,112 @@ _KEYWORDS: dict[str, tuple[str, tuple[str, ...]]] = {
 #: literal in it is a sentence written at the call site.
 _FIELD_KEYWORDS: tuple[str, ...] = ("message", "notice", "reason")
 
-#: Suffixes of a module constant that holds a sentence a teacher reads (``BATTERY_WARNING``).
-_CONSTANT_SUFFIXES: tuple[str, ...] = ("_MESSAGE", "_NOTICE", "_WARNING")
+#: Suffixes of a module constant that holds a sentence a teacher reads: the one a message says
+#: (``BATTERY_WARNING``) and the one a screen shows next to what it belongs to
+#: (``GENERAL_TITLE``, ``START_TOOLTIP``).
+_CONSTANT_SUFFIXES: tuple[str, ...] = (
+    "_MESSAGE",
+    "_NOTICE",
+    "_WARNING",
+    "_TITLE",
+    "_TITLES",
+    "_LABEL",
+    "_TIP",
+    "_TOOLTIP",
+    "_HINT",
+    "_NOTE",
+    "_HEADING",
+    "_INTRO",
+    "_PLACEHOLDER",
+    "_LABELS",
+    "_LEGEND",
+)
+
+#: The suffixes that name a word or two on a widget: ``MODEL_LABEL = "Model:"`` is a sentence's
+#: worth of wording even without a space.
+_SHORT_SUFFIXES: tuple[str, ...] = (
+    "_LABEL",
+    "_LABELS",
+    "_TITLE",
+    "_TIP",
+    "_TOOLTIP",
+    "_HEADING",
+    "_PLACEHOLDER",
+    "_LEGEND",
+)
+
+#: A colour is layout, not wording.
+_COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}")
+
+#: Module constants whose name says a teacher reads them, but whose value no teacher reads: a
+#: hint written for the LLM, and a download size that is a number.
+NON_TEXT_CONSTANTS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("teachers_teammate/domain/correction_prompts.py", "NOTES_HEADING"),
+        ("teachers_teammate/domain/local_models.py", "PAGE_MODELS_SIZE_LABEL"),
+        ("teachers_teammate/domain/local_models.py", "READER_SIZE_LABEL"),
+        ("teachers_teammate/domain/notation.py", "_CORRECTION_HINT"),
+        ("teachers_teammate/domain/notation.py", "_EVALUATION_HINT"),
+    }
+)
 
 #: Where a field holds a note for the debug log, never for a teacher: the reason of a step of the
 #: automatic image preparation.
 _DEBUG_ONLY_FIELDS: tuple[str, ...] = ("teachers_teammate/infrastructure/preprocessing/",)
 
+#: Where a table of labels follows the language of the *document* a run writes, not the language of
+#: the window: the Word output's headings.
+_DOCUMENT_TABLES: tuple[str, ...] = (
+    "teachers_teammate/infrastructure/docx_builder.py",
+    "teachers_teammate/infrastructure/docx_comments.py",
+)
+
 #: Where a raised exception states an invariant of the code, never something a teacher reads.
 _INVARIANT_ERRORS: tuple[str, ...] = ("teachers_teammate/domain/",)
 
-#: The names the adapters give the modules of ``teachers_teammate/texts``.  A sentence is
-#: *defined* there, so a literal handed to one of their functions is a sentence written at the
-#: call site after all (``dlg.copy_failed("Could not copy")``).
-TEXT_MODULES: frozenset[str] = frozenset({"addon_text", "check_text", "dlg", "privacy", "txt"})
+#: Messages raised outside ``domain`` that state an invariant too: a shape a model answered, a
+#: request our own code built without its schema, a structure Windows handed back.  Listed one by
+#: one, because the modules of ``infrastructure`` raise sentences for teachers as well.
+INVARIANT_MESSAGES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("teachers_teammate/infrastructure/gpu_detector.py", "GlobalMemoryStatusEx failed"),
+        (
+            "teachers_teammate/infrastructure/preprocessing/page_models.py",
+            "f'the orientation model answered {scores.size} classes'",
+        ),
+        (
+            "teachers_teammate/infrastructure/preprocessing/page_models.py",
+            "f'the flatten model answered the shape {out.shape}'",
+        ),
+        (
+            "teachers_teammate/infrastructure/proofreading/corrector.py",
+            "this port sends no request",
+        ),
+        (
+            "teachers_teammate/infrastructure/proofreading/exchanges/base.py",
+            "f'unknown exchange {kind!r} (known: {known})'",
+        ),
+        (
+            "teachers_teammate/infrastructure/proofreading/port.py",
+            "a structured request needs a schema",
+        ),
+    }
+)
+
+#: What a module imports from ``teachers_teammate/texts``: the names it gave the texts modules
+#: (``from ..texts import dialogs as dlg``) and the names it took out of them
+#: (``from ..texts.run import image_unreadable``).  A sentence is *defined* there, so a literal
+#: handed to one of them is a sentence written at the call site after all
+#: (``dlg.copy_failed("Could not copy")``).
+
+
+@dataclass(frozen=True)
+class TextImports:
+    """The ``texts`` names one module has in scope."""
+
+    modules: frozenset[str] = frozenset()
+    names: frozenset[str] = frozenset()
+
 
 #: Suffixes of an exception class whose message a teacher may read through ``str(exc)``.
 _ERROR_SUFFIXES = ("Error", "Exception")
@@ -127,14 +256,23 @@ class Finding:
 
 
 def _literal(node: ast.expr) -> str | None:
-    """Return the text of *node* when it is a literal or an f-string, else ``None``."""
+    """Return the text of *node* when it is a literal or an f-string, else ``None``.
+
+    An f-string whose literal parts hold no letter says nothing either: ``f"{a} {b}"`` glues
+    two names together, it does not word a sentence.
+    """
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     if isinstance(node, ast.JoinedStr):
-        return ast.unparse(node)
+        literal = "".join(
+            part.value
+            for part in node.values
+            if isinstance(part, ast.Constant) and isinstance(part.value, str)
+        )
+        return ast.unparse(node) if any(character.isalpha() for character in literal) else None
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
-        left, right = _literal(node.left), _literal(node.right)
-        if left is not None or right is not None:
+        parts = (_literal(node.left), _literal(node.right))
+        if any(part is not None and any(c.isalpha() for c in part) for part in parts):
             return ast.unparse(node)
     return None
 
@@ -157,17 +295,39 @@ def _sink(func: ast.expr) -> tuple[str, str, tuple[int, ...] | None] | None:
     if last in _SIMPLE:
         kind, positions = _SIMPLE[last]
         return last, kind, positions
+    if last in _MARKED:
+        kind, positions, markers = _MARKED[last]
+        if any(marker in dotted for marker in markers):
+            return dotted, kind, positions
     return None
 
 
-def _text_module_call(func: ast.expr) -> str | None:
-    """Return ``dlg.name`` when *func* is a function of a texts module, else ``None``."""
+def _text_imports(tree: ast.Module) -> TextImports:
+    """Return the names *tree* takes from ``texts``, by the module they were imported from."""
+    modules: set[str] = set()
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.module is None:
+            continue
+        parts = node.module.split(".")
+        if "texts" not in parts:
+            continue
+        taken = {alias.asname or alias.name for alias in node.names}
+        # ``from ..texts import dialogs`` names a module, ``from ..texts.run import x`` a thing in one
+        (modules if parts[-1] == "texts" else names).update(taken)
+    return TextImports(frozenset(modules), frozenset(names))
+
+
+def _text_module_call(func: ast.expr, imports: TextImports) -> str | None:
+    """Return the dotted name when *func* is a function of a texts module, else ``None``."""
     if (
         isinstance(func, ast.Attribute)
         and isinstance(func.value, ast.Name)
-        and func.value.id in TEXT_MODULES
+        and func.value.id in imports.modules
     ):
         return ast.unparse(func)
+    if isinstance(func, ast.Name) and func.id in imports.names:
+        return func.id
     return None
 
 
@@ -183,11 +343,15 @@ def _constant_target(node: ast.Assign | ast.AnnAssign) -> str | None:
 def _shown_arguments(call: ast.Call, positions: tuple[int, ...] | None) -> Iterator[ast.expr]:
     """Yield the arguments of *call* that a teacher reads."""
     if positions is None:
-        yield from call.args
-        return
-    for index in positions:
-        if index < len(call.args):
-            yield call.args[index]
+        arguments: Iterable[ast.expr] = call.args
+    else:
+        arguments = (call.args[index] for index in positions if index < len(call.args))
+    for argument in arguments:
+        # A list of labels (``setHorizontalHeaderLabels``) shows each of them.
+        if isinstance(argument, (ast.List, ast.Tuple)):
+            yield from argument.elts
+        else:
+            yield argument
 
 
 def _keyword_arguments(call: ast.Call, names: tuple[str, ...]) -> Iterator[ast.expr]:
@@ -198,19 +362,26 @@ def _keyword_arguments(call: ast.Call, names: tuple[str, ...]) -> Iterator[ast.e
 
 
 def _finding(path: str, node: ast.expr, sink: str, kind: str) -> Finding | None:
-    """Return the finding for *node* when it holds a literal, else ``None``."""
+    """Return the finding for *node* when it holds a sentence, else ``None``.
+
+    An empty literal says nothing: ``QLabel("")`` clears a label rather than wording one.
+    """
     text = _literal(node)
-    return None if text is None else Finding(path, node.lineno, sink, kind, text)
+    return None if not text else Finding(path, node.lineno, sink, kind, text)
 
 
 def _text_call_findings(call: ast.Call, path: str, name: str) -> list[Finding]:
-    """Return the sentences *call* hands to a function of ``texts``; an empty one says nothing."""
+    """Return the sentences *call* hands to a function of ``texts``.
+
+    A word with no space (a model's name, a package, an id) is data the function words into a
+    sentence, not a sentence.
+    """
     found = [_finding(path, argument, name, TEXT_CALL) for argument in call.args]
     found += [_finding(path, keyword.value, name, TEXT_CALL) for keyword in call.keywords]
-    return [finding for finding in found if finding is not None and finding.text]
+    return [finding for finding in found if finding is not None and " " in finding.text]
 
 
-def _call_findings(call: ast.Call, path: str) -> list[Finding]:
+def _call_findings(call: ast.Call, path: str, imports: TextImports) -> list[Finding]:
     """Return the sentences *call* shows, by its sink arguments or by a prose keyword."""
     findings: list[Finding] = []
     last = _call_name(call.func)[1]
@@ -222,7 +393,7 @@ def _call_findings(call: ast.Call, path: str) -> list[Finding]:
             for argument in _shown_arguments(call, positions)
             if (finding := _finding(path, argument, name, kind)) is not None
         )
-    text_call = _text_module_call(call.func)
+    text_call = _text_module_call(call.func, imports)
     if text_call is not None:
         findings.extend(_text_call_findings(call, path, text_call))
     # A function of ``texts`` already reported its keywords above: once is enough.
@@ -236,16 +407,34 @@ def _call_findings(call: ast.Call, path: str) -> list[Finding]:
     return findings
 
 
+def _constant_values(value: ast.expr) -> Iterator[ast.expr]:
+    """Yield the literals a constant holds: itself, or the items of a list, tuple or dict."""
+    if isinstance(value, ast.Dict):
+        for item in value.values:
+            yield from _constant_values(item)
+    elif isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+        for item in value.elts:
+            yield from _constant_values(item)
+    else:
+        yield value
+
+
 def _constant_findings(node: ast.Assign | ast.AnnAssign, path: str) -> list[Finding]:
-    """Return the sentence a module constant holds when its name says a teacher reads it."""
+    """Return the sentences a module constant holds when its name says a teacher reads them."""
     name = _constant_target(node)
     value = node.value
     if name is None or value is None:
         return []
-    finding = _finding(path, value, name, CONSTANT)
-    if finding is None or " " not in finding.text:
-        return []  # a colour or an id named ``*_WARNING`` is no sentence
-    return [finding]
+    short = name.endswith(_SHORT_SUFFIXES)
+    findings = []
+    for item in _constant_values(value):
+        finding = _finding(path, item, name, CONSTANT)
+        if finding is None or _COLOUR.fullmatch(finding.text):
+            continue
+        # a colour or an id named ``*_WARNING`` is no sentence; a label may be a single word
+        if " " in finding.text or short:
+            findings.append(finding)
+    return findings
 
 
 def _raise_findings(node: ast.Raise, path: str) -> list[Finding]:
@@ -262,13 +451,14 @@ def _raise_findings(node: ast.Raise, path: str) -> list[Finding]:
 def scan_source(source: str, *, path: str) -> list[Finding]:
     """Return every literal in *source* that reaches a teacher, in line order."""
     tree = ast.parse(source, filename=path)
+    imports = _text_imports(tree)
     findings: list[Finding] = []
     for node in tree.body:  # a constant is a module's own: a local one is not a sink
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             findings.extend(_constant_findings(node, path))
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            findings.extend(_call_findings(node, path))
+            findings.extend(_call_findings(node, path, imports))
         elif isinstance(node, ast.Raise):
             findings.extend(_raise_findings(node, path))
     return sorted(f for f in findings if not _is_exempt(f))
@@ -279,8 +469,88 @@ def _is_exempt(finding: Finding) -> bool:
     if finding.kind == FIELD:
         return finding.path.startswith(_DEBUG_ONLY_FIELDS) and finding.sink == "StepResult"
     if finding.kind == ERROR:
-        return finding.path.startswith(_INVARIANT_ERRORS)
+        return (
+            finding.path.startswith(_INVARIANT_ERRORS)
+            or (finding.path, finding.text) in INVARIANT_MESSAGES
+        )
+    if finding.kind == CONSTANT:
+        return (
+            finding.path,
+            finding.sink,
+        ) in NON_TEXT_CONSTANTS or finding.path in _DOCUMENT_TABLES
     return False
+
+
+def _template_calls(tree: ast.Module, path: str) -> list[tuple[str, int, str]]:
+    """Return ``(path, line, name)`` of each ``.format`` call on a name taken from ``texts``."""
+    imports = _text_imports(tree)
+    found: list[tuple[str, int, str]] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr != "format":
+            continue
+        owner = node.func.value
+        root = owner
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name) and (root.id in imports.modules or root.id in imports.names):
+            found.append((path, node.lineno, ast.unparse(owner)))
+    return sorted(found)
+
+
+def template_calls(root: Path) -> list[tuple[str, int, str]]:
+    """Return every template of ``texts`` that a scanned module fills at its own call site.
+
+    A dynamic part is a function of ``texts``, so renaming a placeholder cannot break a caller.
+    """
+    found: list[tuple[str, int, str]] = []
+    for path in scanned_files(root):
+        relative = path.relative_to(root).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+        found.extend(_template_calls(tree, relative))
+    return found
+
+
+def template_calls_in(source: str, *, path: str) -> list[tuple[str, int, str]]:
+    """Return the template calls of one *source*, as :func:`template_calls` does for a tree."""
+    return _template_calls(ast.parse(source, filename=path), path)
+
+
+def raised_messages(root: Path) -> set[tuple[str, str]]:
+    """Return ``(path, text)`` of every sentence the sources raise, the exempt ones included.
+
+    The stale check of :data:`INVARIANT_MESSAGES` needs the raises that ``scan`` drops.
+    """
+    found: set[tuple[str, str]] = set()
+    for path in scanned_files(root):
+        relative = path.relative_to(root).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Raise):
+                found.update(
+                    (finding.path, finding.text) for finding in _raise_findings(node, relative)
+                )
+    return found
+
+
+def module_constants(root: Path) -> set[tuple[str, str]]:
+    """Return ``(path, name)`` of every module constant the sources define, the exempt ones too.
+
+    The stale check of :data:`NON_TEXT_CONSTANTS` needs the constants that ``scan`` drops.
+    """
+    found: set[tuple[str, str]] = set()
+    for path in scanned_files(root):
+        relative = path.relative_to(root).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+        for node in tree.body:
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            found.update(
+                (relative, target.id) for target in targets if isinstance(target, ast.Name)
+            )
+    return found
 
 
 def scan_file(path: Path, *, root: Path) -> list[Finding]:

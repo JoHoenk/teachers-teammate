@@ -33,8 +33,10 @@ from ..domain.model_catalog import (
 from ..domain.performance_estimate import TimeRange
 from ..texts import review as txt
 from ..texts.models import (
+    DOWNLOAD_BEST_CHOICE,
     HINT_NOT_DOWNLOADED,
     HINT_NOT_DOWNLOADED_WITH_LINK,
+    USE_BEST_CHOICE,
     compact_suitability_text,
     is_warning,
     memory_text,
@@ -117,7 +119,7 @@ class OllamaModelGuidance(QWidget):
         self._hint_lbl.setStyleSheet(_HINT_STYLE)
         self._hint_lbl.linkActivated.connect(self._on_download_link)
         layout.addWidget(self._hint_lbl, stretch=1)
-        self._best_btn = QPushButton("Use best choice")
+        self._best_btn = QPushButton(USE_BEST_CHOICE)
         self._best_btn.clicked.connect(self._on_best_button)
         layout.addWidget(self._best_btn)
 
@@ -301,10 +303,10 @@ class OllamaModelGuidance(QWidget):
             return
         best = self._best(self.active_profile())
         if normalize_tag(best) in self._installed:
-            self._best_btn.setText("Use best choice")
+            self._best_btn.setText(USE_BEST_CHOICE)
             self._best_btn.setVisible(True)
         elif self._open_downloads is not None:
-            self._best_btn.setText("Download best choice…")
+            self._best_btn.setText(DOWNLOAD_BEST_CHOICE)
             self._best_btn.setVisible(True)
         else:
             self._best_btn.hide()

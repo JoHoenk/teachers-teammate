@@ -769,15 +769,16 @@ def test_this_computer_shows_the_computer_first_then_the_server(computer_page) -
     Then   its groups read top to bottom: the power and the speed of this computer in one box,
            then the local AI server -- and no API keys, those are on Online services
     """
-    from teachers_teammate.gui.settings import _ai_setup_page  # noqa: PLC0415
+    from teachers_teammate.texts import models as mdl  # noqa: PLC0415
+    from teachers_teammate.texts import servers as srv  # noqa: PLC0415
 
     layout = computer_page.layout()
     items = (layout.itemAt(i).widget() for i in range(layout.count()))
     groups = [widget.title() for widget in items if isinstance(widget, QGroupBox)]
 
     assert groups == [
-        _ai_setup_page.PERFORMANCE_GROUP,
-        _ai_setup_page.SERVER_GROUP,
+        mdl.PERFORMANCE_GROUP,
+        srv.SERVER_GROUP,
     ]
     assert not hasattr(computer_page, "_credentials")
 

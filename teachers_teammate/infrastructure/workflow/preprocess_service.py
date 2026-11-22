@@ -8,6 +8,12 @@ from typing import NamedTuple
 
 from ...exceptions import PipelineInputError, RecognitionSwitchedOffError
 from ...interfaces import ImagePreprocessor, InputPayload, InputProvider, TextOrigin
+from ...texts.run import (
+    image_unit_without_path,
+    input_without_content,
+    input_without_units,
+    unsupported_unit_kind,
+)
 from ..input_provider_factory import get_input_provider
 
 
@@ -74,7 +80,7 @@ class PreprocessService:
         """
         payload = self.load_input(file)
         if not payload.units:
-            raise PipelineInputError(f"Input '{file.name}' produced no units.")
+            raise PipelineInputError(input_without_units(file.name))
         if not allow_images and any(unit.kind == "image" for unit in payload.units):
             raise RecognitionSwitchedOffError(file.name)
 
@@ -85,9 +91,7 @@ class PreprocessService:
         for unit in payload.units:
             if unit.kind == "image":
                 if unit.image_path is None:
-                    raise PipelineInputError(
-                        f"Input '{file.name}' contains an image unit without image_path."
-                    )
+                    raise PipelineInputError(image_unit_without_path(file.name))
                 proc_path, page_steps = self._preprocessor.preprocess(unit.image_path)
                 preprocessed.append(proc_path)
                 originals.append(unit.image_path)
@@ -97,15 +101,11 @@ class PreprocessService:
                 if unit.text:
                     text_parts.append(unit.text)
             else:
-                raise PipelineInputError(
-                    f"Unsupported input unit kind '{unit.kind}' for '{file.name}'."
-                )
+                raise PipelineInputError(unsupported_unit_kind(unit.kind, file.name))
 
         raw_text_hint = "\n\n".join(text_parts).strip() if text_parts else None
         if not preprocessed and raw_text_hint is None:
-            raise PipelineInputError(
-                f"Input '{file.name}' produced no usable image or text content."
-            )
+            raise PipelineInputError(input_without_content(file.name))
         return PreparedInput(
             preprocessed,
             steps,

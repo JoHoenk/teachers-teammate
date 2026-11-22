@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..domain.prompt_text import normalize_prompt_text
+from ..texts import main_window as win
 from ..texts import review as txt
 
 
@@ -82,7 +83,7 @@ class PromptEditor(QWidget):
         box = QWidget()
         vbox = QVBoxLayout(box)
         vbox.setContentsMargins(0, 0, 0, 0)
-        self._advanced_toggle = QPushButton(f"▸ {txt.FIXED_HEADING}")
+        self._advanced_toggle = QPushButton(win.collapsed(txt.FIXED_HEADING))
         self._advanced_toggle.setFlat(True)
         self._advanced_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self._advanced_toggle.setStyleSheet("text-align: left; font-weight: bold;")
@@ -130,7 +131,9 @@ class PromptEditor(QWidget):
     def _on_toggle_advanced(self) -> None:
         expanded = not self._advanced.isVisible()
         self._advanced.setVisible(expanded)
-        self._advanced_toggle.setText(f"{'▾' if expanded else '▸'} {txt.FIXED_HEADING}")
+        self._advanced_toggle.setText(
+            win.expanded(txt.FIXED_HEADING) if expanded else win.collapsed(txt.FIXED_HEADING)
+        )
 
     def _sync(self) -> None:
         """Keep the status line, the hint and the reset button consistent with the editor."""

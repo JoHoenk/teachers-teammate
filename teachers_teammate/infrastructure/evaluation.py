@@ -26,11 +26,8 @@ from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
 from ..domain.stages import Stage
 from ..interfaces import Evaluator
+from ..texts.review import TOO_LONG_FOR_REVIEW_WARNING, evaluation_failed
 from ._llm_invoke import InvokeAnswer, invoke_langchain_chain, invoke_ollama_chat, tidy_answer
-
-TOO_LONG_FOR_REVIEW_WARNING = "The text is too long for a content review with a local model."
-"""Warning of a content review whose text does not fit the window (its own sentence: the
-proofreading warning is about a partly corrected text, which a review does not produce)."""
 
 
 def _outcome(answer: InvokeAnswer) -> EvaluationOutcome:
@@ -65,7 +62,7 @@ class LangChainEvaluator(Evaluator):
             human="Language: {language}\n\nCorrected text:\n\n{text}",
             variables={"text": corrected_text, "language": language},
             fallback="",
-            failure_prefix="Evaluation failed",
+            failure=evaluation_failed,
         )
         return _outcome(tidy_answer(result, _tidy_review))
 
@@ -125,7 +122,7 @@ class NativeOllamaEvaluator(Evaluator):
             temperature=self._temperature,
             think=self._think,
             fallback="",
-            failure="Evaluation failed ({exc}).",
+            failure=evaluation_failed,
             num_ctx=self._num_ctx,
             # A review's answer is short and fixed, so the text gets the rest of the window:
             # a content review cannot be split into pieces the way proofreading can.

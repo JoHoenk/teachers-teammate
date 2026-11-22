@@ -19,6 +19,8 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 import qdarkstyle
 
+from ..texts import app as app_text
+
 
 def create_app(
     *,
@@ -35,7 +37,7 @@ def create_app(
     app = QApplication.instance() or QApplication(sys.argv)
     assert isinstance(app, QApplication)
     app.setApplicationName("teachers-teammate")
-    app.setApplicationDisplayName("Teacher's Teammate")
+    app.setApplicationDisplayName(app_text.NAME)
     if sys.platform.startswith("linux") and hasattr(app, "setDesktopFileName"):
         app.setDesktopFileName("teachers-teammate")
     if icon_factory is not None:

@@ -25,19 +25,14 @@ import sys
 from ._model_defaults import default_model_for_task
 from .application.composition import AppServices, inject_addon_packages_dir
 from .config import Config, load_config_file
-from .domain.correction_prompts import NOTES_LIMIT
-from .domain.data_location import LOCAL_OCR_ENGINES, PROVIDER_OLLAMA, DataFlow, PrivacyLevel
-from .domain.local_models import (
-    HUGGING_FACE_HOST,
-    PAGE_MODELS_SIZE_LABEL,
-    READER_SIZE_LABEL,
-)
+from .domain.data_location import LOCAL_OCR_ENGINES, PROVIDER_OLLAMA, DataFlow
 from .domain.output_files import folder_problem
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
 from .domain.stages import Stage
 from .exceptions import ConfigFileNotFoundError, ConfigFileParseError, ModelDownloadError
 from .settings_schema import CONTEXT_SETTINGS, DEFAULTS, PREPROCESS_METHODS, LoadedSettings
 from .texts import addons as addon_text
+from .texts import cli as cli_text
 from .texts import dialogs as dlg
 from .texts.run import BATTERY_WARNING
 
@@ -50,11 +45,9 @@ def _pdf_dpi_type(value: str) -> int:
     try:
         dpi = int(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"'{value}' is not an integer") from exc
+        raise argparse.ArgumentTypeError(cli_text.not_an_integer(value)) from exc
     if not _PDF_DPI_MIN <= dpi <= _PDF_DPI_MAX:
-        raise argparse.ArgumentTypeError(
-            f"DPI must be between {_PDF_DPI_MIN} and {_PDF_DPI_MAX}, got {dpi}"
-        )
+        raise argparse.ArgumentTypeError(cli_text.dpi_out_of_range(dpi, _PDF_DPI_MIN, _PDF_DPI_MAX))
     return dpi
 
 
@@ -66,79 +59,66 @@ def _add_correction_args(parser: argparse.ArgumentParser, providers: list[str] |
         dest="correction_enabled",
         action="store_true",
         default=DEFAULTS["correction_enabled"],
-        help="Enable the LLM correction step (default).",
+        help=cli_text.HELP_CORRECTION,
     )
     corr_grp.add_argument(
         "--no-correction",
         dest="correction_enabled",
         action="store_false",
-        help="Skip the LLM correction step (DOCX is still created without column 2).",
+        help=cli_text.HELP_NO_CORRECTION,
     )
     corr_grp.add_argument(
         "--anonymization",
         dest="anonymization_enabled",
         action="store_true",
         default=DEFAULTS["anonymization_enabled"],
-        help=(
-            "Anonymize PII (person names, emails, phone numbers) in OCR text before "
-            "sending to the correction LLM. Requires spacy and a language model: "
-            "pip install 'teachers_teammate[privacy]' && python -m spacy download en_core_web_sm"
-        ),
+        help=cli_text.HELP_ANONYMIZATION,
     )
     corr_grp.add_argument(
         "--no-anonymization",
         dest="anonymization_enabled",
         action="store_false",
-        help="Disable PII anonymization before correction (default).",
+        help=cli_text.HELP_NO_ANONYMIZATION,
     )
     corr_grp.add_argument(
         "--correction-provider",
         default=DEFAULTS["correction_provider"],
         choices=providers,
         metavar="PROVIDER",
-        help=(
-            f"LLM provider for correction: {', '.join(providers or [])}."
-            if providers
-            else "LLM provider for correction."
-        ),
+        help=cli_text.provider_help(Stage.CORRECTION, providers or []),
     )
     corr_grp.add_argument(
         "--correction-model",
         default=DEFAULTS["correction_model"],
         metavar="MODEL",
         help=(
-            "Correction LLM model name. "
-            "Auto-selected per provider when omitted: "
-            f"{default_model_for_task(PROVIDER_OLLAMA, Stage.CORRECTION)} (ollama), "
-            f"{default_model_for_task('openai', Stage.CORRECTION)} (openai), "
-            f"{default_model_for_task('anthropic', Stage.CORRECTION)} (anthropic)."
+            cli_text.correction_model_help(
+                [
+                    (PROVIDER_OLLAMA, default_model_for_task(PROVIDER_OLLAMA, Stage.CORRECTION)),
+                    ("openai", default_model_for_task("openai", Stage.CORRECTION)),
+                    ("anthropic", default_model_for_task("anthropic", Stage.CORRECTION)),
+                ]
+            )
         ),
     )
     corr_grp.add_argument(
         "--correction-notes",
         default=DEFAULTS["correction_notes"],
         metavar="TEXT",
-        help=(
-            "Notes for the AI about this class or this text, sent with every proofreading "
-            f"request (at most {NOTES_LIMIT} characters). The instructions themselves are "
-            "fixed by the app."
-        ),
+        help=cli_text.HELP_CORRECTION_NOTES,
     )
     corr_grp.add_argument(
         "--correction-level",
         default=DEFAULTS["correction_level"],
         choices=["A1", "A2", "B1", "B2", "C1", "C2"],
         metavar="LEVEL",
-        help="CEFR level the correction aims at (default: %(default)s).",
+        help=cli_text.HELP_CORRECTION_LEVEL,
     )
     corr_grp.add_argument(
         "--explanation-language",
         default=DEFAULTS["explanation_language"],
         metavar="LANGUAGE",
-        help=(
-            "Language of the change explanations and the unclear table "
-            "(preset name such as 'german'). Default: the language of the text."
-        ),
+        help=cli_text.HELP_EXPLANATION_LANGUAGE,
     )
     corr_grp.add_argument(
         "--corrections-only",
@@ -146,29 +126,21 @@ def _add_correction_args(parser: argparse.ArgumentParser, providers: list[str] |
         action="store_const",
         const="text",
         default=DEFAULTS["correction_output"],
-        help=(
-            "Corrected text only: no explanations, no unclear list (one request instead of three)."
-        ),
+        help=cli_text.HELP_CORRECTIONS_ONLY,
     )
     corr_grp.add_argument(
         "--explanations",
         dest="correction_output",
         action="store_const",
         const="review",
-        help="Explain the changes and list unclear expressions (default; overrides a config "
-        'file that sets correction_output = "text").',
+        help=cli_text.HELP_EXPLANATIONS,
     )
     corr_grp.add_argument(
         "--proofreading-context",
         default=DEFAULTS["proofreading_context"],
         choices=CONTEXT_SETTINGS,
         metavar="TOKENS",
-        help=(
-            "Context window for the content review when it runs on another Ollama model than "
-            "proofreading (proofreading uses 8192): 'auto' grows it with the size of the "
-            "graphics card (8192, 16384 or 32768, whichever still fits), a fixed value pins it "
-            "— useful for a remote server whose card the app cannot see."
-        ),
+        help=cli_text.HELP_PROOFREADING_CONTEXT,
     )
 
 
@@ -185,10 +157,7 @@ def _parse_args(
     """
     parser = argparse.ArgumentParser(
         prog="teachers_teammate",
-        description=(
-            "Teacher's Teammate — batch OCR pipeline that extracts text from PDFs/images "
-            "and builds DOCX documents with grammar/spelling correction proposals."
-        ),
+        description=cli_text.DESCRIPTION,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -197,10 +166,7 @@ def _parse_args(
         "--config",
         default=None,
         metavar="FILE",
-        help=(
-            "Path to a TOML config file. Defaults to ocr.toml in the app's settings folder "
-            "(the file the app window saves) when it exists.  CLI arguments override file values."
-        ),
+        help=cli_text.HELP_CONFIG,
     )
 
     # ── Input / Output ─────────────────────────────────────────────────────
@@ -210,50 +176,50 @@ def _parse_args(
         "--input",
         default=None,
         metavar="FOLDER",
-        help="Input folder containing PDF, JPG, JPEG, PNG, or TXT files.",
+        help=cli_text.HELP_INPUT,
     )
     io_grp.add_argument(
         "-o",
         "--output",
         default=None,
         metavar="FOLDER",
-        help="Output folder for generated .docx files (cache state is stored separately).",
+        help=cli_text.HELP_OUTPUT,
     )
     io_grp.add_argument(
         "-r",
         "--recursive",
         action="store_true",
-        help="Scan subfolders recursively.",
+        help=cli_text.HELP_RECURSIVE,
     )
     io_grp.add_argument(
         "--no-recursive",
         dest="recursive",
         action="store_false",
-        help="Do not scan subfolders recursively.",
+        help=cli_text.HELP_NO_RECURSIVE,
     )
     io_grp.add_argument(
         "--debug",
         action="store_true",
-        help="Keep preprocessed temp files after the run (useful for inspecting OCR inputs).",
+        help=cli_text.HELP_DEBUG,
     )
     io_grp.add_argument(
         "--no-debug",
         dest="debug",
         action="store_false",
-        help="Do not keep preprocessing temp files after the run.",
+        help=cli_text.HELP_NO_DEBUG,
     )
     io_grp.add_argument(
         "--keep-awake",
         dest="keep_awake",
         action="store_true",
         default=DEFAULTS["keep_awake"],
-        help="Keep the computer from going to sleep during the run (default).",
+        help=cli_text.HELP_KEEP_AWAKE,
     )
     io_grp.add_argument(
         "--allow-sleep",
         dest="keep_awake",
         action="store_false",
-        help="Let the computer go to sleep during the run (by default it is kept awake).",
+        help=cli_text.HELP_ALLOW_SLEEP,
     )
 
     # ── OCR Parameters ─────────────────────────────────────────────────────
@@ -263,56 +229,40 @@ def _parse_args(
         "--ocr-model",
         default=DEFAULTS["ocr_model"],
         metavar="MODEL",
-        help="Ollama OCR vision model.",
+        help=cli_text.HELP_OCR_MODEL,
     )
     ocr_grp.add_argument(
         "--ocr-engine",
         default=DEFAULTS["ocr_engine"],
         choices=list(LOCAL_OCR_ENGINES),
         metavar="ENGINE",
-        help=(
-            "OCR engine: ollama (AI vision model through Ollama, default) or ppocr (the "
-            "built-in reader: no server, best on printed pages; download it first with "
-            "--download-reader). Online services are not offered: reading a page needs the "
-            "whole page, so personal information cannot be hidden first."
-        ),
+        help=cli_text.HELP_OCR_ENGINE,
     )
     ocr_grp.add_argument(
         "--download-reader",
         action="store_true",
         default=False,
-        help=(
-            f"Download the built-in reader's model files once ({READER_SIZE_LABEL}, from "
-            f"{HUGGING_FACE_HOST}) and exit."
-        ),
+        help=cli_text.HELP_DOWNLOAD_READER,
     )
     ocr_grp.add_argument(
         "--download-page-models",
         action="store_true",
         default=False,
-        help=(
-            "Download the page models of the automatic image preparation once "
-            f"({PAGE_MODELS_SIZE_LABEL}, from {HUGGING_FACE_HOST}) and exit. They turn sideways "
-            "pages and flatten curved ones; without them those two steps are skipped."
-        ),
+        help=cli_text.HELP_DOWNLOAD_PAGE_MODELS,
     )
     ocr_grp.add_argument(
         "-l",
         "--language",
         default=DEFAULTS["language"],
         metavar="LANGUAGE",
-        help="Language passed to the OCR vision model.",
+        help=cli_text.HELP_LANGUAGE,
     )
     ocr_grp.add_argument(
         "--preprocess-method",
         default=DEFAULTS["preprocess_method"],
         choices=list(PREPROCESS_METHODS),
         metavar="METHOD",
-        help=(
-            "Image preparation: auto (default; looks at each page and straightens, turns and "
-            "evens out photographed pages, clean scans pass unchanged) or none (the original "
-            "page, with the photo's rotation tag applied)."
-        ),
+        help=cli_text.HELP_PREPROCESS_METHOD,
     )
     ocr_grp.add_argument(
         "--pdf-render-dpi",
@@ -320,45 +270,33 @@ def _parse_args(
         default=DEFAULTS["pdf_render_dpi"],
         metavar="DPI",
         dest="pdf_render_dpi",
-        help=(
-            "Resolution for rendering PDF pages to images before OCR. "
-            "72 = screen quality, 150 = draft OCR, 300 = recommended (default), "
-            "600 = high quality. Has no effect on image inputs (JPG, PNG)."
-        ),
+        help=cli_text.HELP_PDF_RENDER_DPI,
     )
     ocr_grp.add_argument(
         "--recognition",
         dest="recognition_enabled",
         action="store_true",
         default=DEFAULTS["recognition_enabled"],
-        help="Read scans (images, PDFs without a text layer) with the OCR engine (default).",
+        help=cli_text.HELP_RECOGNITION,
     )
     ocr_grp.add_argument(
         "--no-recognition",
         dest="recognition_enabled",
         action="store_false",
-        help=(
-            "Do not read scans: use only text that already exists (TXT files, PDFs with a "
-            "text layer) and skip images and scanned PDFs. No OCR engine or model is needed."
-        ),
+        help=cli_text.HELP_NO_RECOGNITION,
     )
     ocr_grp.add_argument(
         "--pdf-text-layer",
         choices=PDF_TEXT_LAYER_MODES,
         default=DEFAULTS["pdf_text_layer"],
         dest="pdf_text_layer",
-        help=(
-            "Use a PDF's embedded text instead of OCR. "
-            "auto = only when every page is clean, text-only (no scans, no handwriting, "
-            "annotations or form fields) (default); always = whenever every page has any text; "
-            "never = always OCR. Has no effect on image or TXT inputs."
-        ),
+        help=cli_text.HELP_PDF_TEXT_LAYER,
     )
     ocr_grp.add_argument(
         "--ollama-url",
         default=DEFAULTS["ollama_url"],
         metavar="URL",
-        help="Ollama base URL.",
+        help=cli_text.HELP_OLLAMA_URL,
     )
     ocr_grp.add_argument(
         "--ocr-timeout",
@@ -366,7 +304,7 @@ def _parse_args(
         default=DEFAULTS["ocr_timeout"],
         metavar="SECONDS",
         dest="ocr_timeout",
-        help="Per-image OCR timeout in seconds (Ollama only).",
+        help=cli_text.HELP_OCR_TIMEOUT,
     )
 
     # ── Correction ─────────────────────────────────────────────────────────
@@ -379,36 +317,32 @@ def _parse_args(
         dest="evaluation_enabled",
         action="store_true",
         default=DEFAULTS["evaluation_enabled"],
-        help="Enable the evaluation step.",
+        help=cli_text.HELP_EVALUATION,
     )
     eval_grp.add_argument(
         "--no-evaluation",
         dest="evaluation_enabled",
         action="store_false",
-        help="Skip the evaluation step (default).",
+        help=cli_text.HELP_NO_EVALUATION,
     )
     eval_grp.add_argument(
         "--evaluate-provider",
         default=DEFAULTS["evaluate_provider"],
         choices=providers,
         metavar="PROVIDER",
-        help=(
-            f"LLM provider for evaluation: {', '.join(providers or [])}."
-            if providers
-            else "LLM provider for evaluation."
-        ),
+        help=cli_text.provider_help(Stage.EVALUATION, providers or []),
     )
     eval_grp.add_argument(
         "--evaluate-model",
         default=DEFAULTS["evaluate_model"],
         metavar="MODEL",
-        help="Evaluation model name; provider default is used when omitted.",
+        help=cli_text.HELP_EVALUATE_MODEL,
     )
     eval_grp.add_argument(
         "--evaluate-prompt",
         default=DEFAULTS["evaluate_prompt"],
         metavar="PROMPT",
-        help="System prompt used for evaluating corrected text.",
+        help=cli_text.HELP_EVALUATE_PROMPT,
     )
 
     # ── Output ─────────────────────────────────────────────────────────────
@@ -418,62 +352,48 @@ def _parse_args(
         action="store_true",
         default=False,
         dest="preview_only",
-        help=(
-            "Preprocess all input files and save the resulting images to the "
-            "temp cache folder, then exit. No OCR, correction, or DOCX generation "
-            "is performed."
-        ),
+        help=cli_text.HELP_PREVIEW_ONLY,
     )
     out_grp.add_argument(
         "--ignore-memory-check",
         action="store_true",
         default=False,
         dest="ignore_memory_check",
-        help=(
-            "Run even when the models do not fit in the memory that is free now. "
-            "Without this flag such a run is refused, because the computer would have to "
-            "use its disk as memory and become extremely slow."
-        ),
+        help=cli_text.HELP_IGNORE_MEMORY_CHECK,
     )
     out_grp.add_argument(
         "--docx",
         dest="docx_enabled",
         action="store_true",
         default=DEFAULTS["docx_enabled"],
-        help="Enable DOCX generation (disabled by default; only cache state is written otherwise).",
+        help=cli_text.HELP_DOCX,
     )
     out_grp.add_argument(
         "--no-docx",
         dest="docx_enabled",
         action="store_false",
-        help="Skip DOCX generation; only cache state is written.",
+        help=cli_text.HELP_NO_DOCX,
     )
     out_grp.add_argument(
         "--text",
         dest="text_enabled",
         action="store_true",
         default=DEFAULTS["text_enabled"],
-        help="Also save the extracted text of each file as <name>.txt.",
+        help=cli_text.HELP_TEXT,
     )
     out_grp.add_argument(
         "--text-anonymized",
         dest="text_anonymized_enabled",
         action="store_true",
         default=DEFAULTS["text_anonymized_enabled"],
-        help=(
-            "Also save the extracted text with personal data replaced by placeholders "
-            "as <name>_anonymized.txt (needs spaCy)."
-        ),
+        help=cli_text.HELP_TEXT_ANONYMIZED,
     )
     out_grp.add_argument(
         "--docx-format",
         default=DEFAULTS["docx_format"],
         choices=["table", "comments"],
         dest="docx_format",
-        help=(
-            "DOCX output layout: 'table' = three columns (image | OCR | correction); "
-            "'comments' = two columns (image | OCR) with diff corrections as Word comments."
-        ),
+        help=cli_text.HELP_DOCX_FORMAT,
     )
     if extra_defaults:
         parser.set_defaults(**extra_defaults)
@@ -489,37 +409,15 @@ def _validate_providers(args: argparse.Namespace, valid: frozenset[str]) -> list
     ):
         value = getattr(args, attr, "")
         if value and value not in valid:
-            warnings.append(
-                f"WARNING: Unknown {label} '{value}' — ignored. "
-                f"Valid providers: {', '.join(sorted(valid))}."
-            )
+            warnings.append(dlg.cli_warning(cli_text.unknown_provider(label, value, valid)))
             setattr(args, attr, DEFAULTS.get(attr, ""))
     return warnings
 
 
-#: What each privacy level means, in the console's own words.
-_LEVEL_TEXT = {
-    PrivacyLevel.LOCAL: "Everything stays on this computer.",
-    PrivacyLevel.OWN_SERVER: "Data goes to another computer you control.",
-    PrivacyLevel.ANON_EU: "Anonymized text is sent to a service in the EU.",
-    PrivacyLevel.ANON_NON_EU: "Anonymized text is sent to a service outside the EU.",
-    PrivacyLevel.NAMES_EU: "Text with names is sent to a service in the EU.",
-    PrivacyLevel.NAMES_NON_EU: "Text with names is sent to a service outside the EU.",
-}
-
-
 def _print_data_flow(flow: DataFlow) -> None:
     """Tell the user where their documents are processed before anything starts."""
-    print("Where your documents are processed:", file=sys.stderr)
-    for stage in flow.stages:
-        marker = "!" if stage.leaves_computer else "-"
-        print(f"  {marker} {stage.title}: {stage.badge}", file=sys.stderr)
-    print(f"  => {_LEVEL_TEXT[flow.level]}", file=sys.stderr)
-    if flow.leaves_computer:
-        print(
-            "  ! Data leaves this computer. Check that this is allowed for your documents.",
-            file=sys.stderr,
-        )
+    for line in cli_text.data_flow_lines(flow):
+        print(line, file=sys.stderr)
 
 
 def _download_models(
@@ -533,7 +431,7 @@ def _download_models(
     def progress(done: int, total: int) -> None:
         if total:
             print(
-                f"\rDownloading {name}: {done // 1_000_000} of {total // 1_000_000} MB",
+                cli_text.downloading(name, done, total),
                 end="",
                 file=sys.stderr,
                 flush=True,
@@ -542,23 +440,23 @@ def _download_models(
     try:
         download(progress)
     except ModelDownloadError as exc:
-        print(f"\nERROR: {exc}", file=sys.stderr)
+        print(file=sys.stderr)
+        print(dlg.cli_error(str(exc)), file=sys.stderr)
         return 1
-    print(f"\n{ready}", file=sys.stderr)
+    print(file=sys.stderr)
+    print(ready, file=sys.stderr)
     return 0
 
 
 def _download_reader(service: AppServices) -> int:
     """Download the built-in reader with a progress line on stderr; return the exit code."""
-    return _download_models(
-        service.reader.download_reader, "the built-in reader", "The built-in reader is ready."
-    )
+    return _download_models(service.reader.download_reader, cli_text.READER, cli_text.READER_READY)
 
 
 def _download_page_models(service: AppServices) -> int:
     """Download the page models with a progress line on stderr; return the exit code."""
     return _download_models(
-        service.reader.download_page_models, "the page models", "The page models are ready."
+        service.reader.download_page_models, cli_text.PAGE_MODELS, cli_text.PAGE_MODELS_READY
     )
 
 
@@ -592,7 +490,7 @@ def run_cli(
         config_path = service.setup.resolve_config_path(pre_args.config)
         loaded = load_config_file(config_path) if config_path else LoadedSettings({})
     except (ConfigFileNotFoundError, ConfigFileParseError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        print(dlg.cli_error(str(exc)), file=sys.stderr)
         return 1
     for notice in loaded.notices:
         print(dlg.cli_warning(dlg.setting_notice(notice).body), file=sys.stderr)
@@ -643,15 +541,15 @@ def run_cli(
         or service.run.output_refusal_for_run(config)
     )
     if refusal:
-        print(f"ERROR: {refusal}", file=sys.stderr)
+        print(dlg.cli_error(refusal), file=sys.stderr)
         return 1
     warning = service.run.memory_warning_for_run(config)
     if warning:
         if not args.ignore_memory_check:
-            print(f"ERROR: {warning}", file=sys.stderr)
-            print("Use --ignore-memory-check to run anyway.", file=sys.stderr)
+            print(dlg.cli_error(warning), file=sys.stderr)
+            print(cli_text.IGNORE_MEMORY_CHECK_HINT, file=sys.stderr)
             return 1
-        print(f"WARNING: {warning}", file=sys.stderr)
+        print(dlg.cli_warning(warning), file=sys.stderr)
     if service.run.page_models_skipped(config):
         print(addon_text.PAGE_MODELS_SKIPPED_NOTICE, file=sys.stderr)
     _print_data_flow(service.data_flow.describe_data_flow(config))

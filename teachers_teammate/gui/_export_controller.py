@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QPushButton, QStyle, QWidget
 from ..application.composition import AppServices
 from ..application.export import DocxExport, NothingToExport, WouldOverwriteInput
 from ..texts import dialogs as dlg
+from ..texts import main_window as txt
 from . import _dialogs, _handles
 from ._background import run_in_background
 from ._config_panel import ConfigPanel
@@ -72,7 +73,7 @@ class ExportController(QObject):
         """Return the Export button; its menu offers Word, text and anonymized text."""
         style = self._window.style()
         assert style is not None
-        button = QPushButton("Export")
+        button = QPushButton(txt.EXPORT_BUTTON)
         button.setObjectName(_handles.EXPORT_BUTTON)
         button.setIcon(
             QIcon.fromTheme(
@@ -82,10 +83,7 @@ class ExportController(QObject):
         )
         button.setMinimumHeight(32)
         button.setEnabled(False)
-        button.setToolTip(
-            "Save results as Word documents or text files, optionally anonymized "
-            "(also available via right-click)"
-        )
+        button.setToolTip(txt.EXPORT_TOOLTIP)
         menu, kinds = build_export_menu(button)
         menu.triggered.connect(lambda action: self.on_toolbar_action(kinds[action]))
         button.setMenu(menu)
@@ -174,10 +172,7 @@ class ExportController(QObject):
         claimed: set[Path] = set()
         for source_id, out_path in targets:
             if out_path.resolve() in claimed:
-                errors.append(
-                    f"{Path(source_id).name}: {out_path.name} would overwrite another file "
-                    "of this export."
-                )
+                errors.append(txt.export_would_overwrite(Path(source_id).name, out_path.name))
             else:
                 claimed.add(out_path.resolve())
                 kept.append((source_id, out_path))
@@ -239,7 +234,7 @@ class ExportController(QObject):
                         labels_language=explanation_language,
                     ),
                 )
-                self.log_line.emit(f"DOCX saved: {out_path}\n")
+                self.log_line.emit(txt.docx_saved(out_path))
             except Exception as exc:  # noqa: BLE001  # python-docx/PIL errors vary; collect per-file and continue the batch
                 errors.append(_export_failure(Path(source_id).name, exc))
 
@@ -307,7 +302,7 @@ class ExportController(QObject):
             if not isinstance(result, _TextExportOutcome):
                 return
             for out_path in result.written:
-                self.log_line.emit(f"Text saved: {out_path}\n")
+                self.log_line.emit(txt.text_saved(out_path))
             self._show_text_export_errors(result.failed)
 
         self._text_export_running = True

@@ -25,6 +25,7 @@ from ...config import DEFAULTS
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...texts import addons as txt
 from ...texts import dialogs as dlg
+from ...texts import settings as st
 from ...texts.settings import TAB_READING_MODELS
 from .._background import LatestTask
 from .._install_round import (
@@ -58,15 +59,6 @@ from .addons import (
     is_model_tag,
 )
 
-TITLE = "Add-ons"
-DESCRIPTION = (
-    "Download AI models for this computer and install optional parts. Installs start right "
-    "away and take effect immediately."
-)
-TAB_LOCAL_MODELS = "AI models for this computer"
-TAB_ONLINE_SERVICES = "Online AI services"
-TAB_NAME_DETECTION = "Name detection"
-
 
 class AddonsPage(SettingsPageBase):
     """Install AI models for this computer, handwriting engines, online services and more.
@@ -77,8 +69,8 @@ class AddonsPage(SettingsPageBase):
     """
 
     page = SettingsPage.ADDONS
-    title = TITLE
-    description = DESCRIPTION
+    title = st.PAGE_ADDONS
+    description = st.PAGE_INTRO_ADDONS
     applies_immediately = True
     #: The model tree takes the free height, so the page fills the window instead of scrolling:
     #: the install button must stay visible on a laptop screen.
@@ -133,9 +125,9 @@ class AddonsPage(SettingsPageBase):
         self.providers = ProvidersTab(self._svc)
         self.name_detection = NameDetectionTab(self._svc)
         self.reading_models = ReadingModelsTab(self._svc)
-        self._tabs.addTab(self.ollama_models, TAB_LOCAL_MODELS)
-        self._tabs.addTab(self.providers, TAB_ONLINE_SERVICES)
-        self._tabs.addTab(self.name_detection, TAB_NAME_DETECTION)
+        self._tabs.addTab(self.ollama_models, txt.TAB_LOCAL_MODELS)
+        self._tabs.addTab(self.providers, txt.TAB_ONLINE_SERVICES)
+        self._tabs.addTab(self.name_detection, txt.TAB_NAME_DETECTION)
         self._tabs.addTab(self.reading_models, TAB_READING_MODELS)
 
         self.status = InstallStatusPane(

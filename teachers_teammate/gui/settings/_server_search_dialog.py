@@ -28,40 +28,10 @@ from PySide6.QtWidgets import (
 from ...application.composition import AppServices
 from ...domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
 from ...texts import dialogs as dlg
+from ...texts import servers
 from .. import _dialogs
 from .._background import LatestTask
 from .._server_card import ServerCard
-
-TITLE = "Find the AI server"
-INTRO = (
-    "Looks for a local AI server (Ollama) that answers. Nothing is changed until you choose "
-    "one and press “Use this server”."
-)
-SEARCHING_HERE = "Searching this computer…"
-SEARCHING_NETWORK = "Searching the network…"
-NOTHING_HERE = (
-    "No server answered on this computer.\n\n"
-    "• Is Ollama started? Open the Ollama app, or run “ollama serve”.\n"
-    "• Ollama on the Windows computer, and this app in WSL: Ollama has to listen on the "
-    "network there (set OLLAMA_HOST=0.0.0.0 and restart it), and the firewall has to allow "
-    "it.\n"
-    "• A school server: use “Search the network…”."
-)
-FOUND_ONE = "Found 1 server. Press “Use it” to let the AI run there."
-FOUND_MANY = "Found {count} servers. Press “Use it” on the one the AI should run on."
-NOTHING_ON_NETWORK = (
-    "No server answered on the network. It may be switched off, listen only on its own "
-    "computer, or sit behind a firewall. Ask your IT department for its address and type it "
-    "in by hand."
-)
-NETWORK_BUTTON = "Search the network…"
-STOP_BUTTON = "Stop"
-USE_BUTTON = "Use this server"
-TYPE_BUTTON = "Enter address myself"
-CLOSE_BUTTON = "Close"
-_NETWORK_TOOLTIP = (
-    "Your documents would be sent to that computer. Only choose a computer you trust."
-)
 
 
 class ServerSearchDialog(QDialog):
@@ -80,7 +50,7 @@ class ServerSearchDialog(QDialog):
         start_search: bool = True,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(TITLE)
+        self.setWindowTitle(servers.SEARCH_TITLE)
         self.setMinimumWidth(480)
         self._service = app_service
         self._searching = False
@@ -91,7 +61,7 @@ class ServerSearchDialog(QDialog):
         self._network_searched = False
 
         layout = QVBoxLayout(self)
-        intro = QLabel(INTRO)
+        intro = QLabel(servers.SEARCH_INTRO)
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -113,18 +83,18 @@ class ServerSearchDialog(QDialog):
         layout.addWidget(self.progress)
 
         buttons = QHBoxLayout()
-        self.network_button = QPushButton(NETWORK_BUTTON)
+        self.network_button = QPushButton(servers.SEARCH_NETWORK_BUTTON)
         self.network_button.clicked.connect(self._on_network_clicked)
-        self.stop_button = QPushButton(STOP_BUTTON)
+        self.stop_button = QPushButton(servers.SEARCH_STOP_BUTTON)
         self.stop_button.setVisible(False)
         self.stop_button.clicked.connect(self._stop)
-        self.type_button = QPushButton(TYPE_BUTTON)
+        self.type_button = QPushButton(servers.SEARCH_TYPE_BUTTON)
         self.type_button.clicked.connect(self._on_type_clicked)
-        self.use_button = QPushButton(USE_BUTTON)
+        self.use_button = QPushButton(servers.SEARCH_USE_BUTTON)
         self.use_button.setEnabled(False)
         self.use_button.setDefault(True)
         self.use_button.clicked.connect(self._use_selected)
-        close = QPushButton(CLOSE_BUTTON)
+        close = QPushButton(servers.SEARCH_CLOSE_BUTTON)
         close.clicked.connect(self.reject)
         for button in (self.network_button, self.stop_button, self.type_button):
             buttons.addWidget(button)
@@ -152,7 +122,7 @@ class ServerSearchDialog(QDialog):
         self.progress.setVisible(scope is DiscoveryScope.NETWORK)
         self.progress.setRange(0, 0)
         self.status.setText(
-            SEARCHING_NETWORK if scope is DiscoveryScope.NETWORK else SEARCHING_HERE
+            servers.SEARCHING_NETWORK if scope is DiscoveryScope.NETWORK else servers.SEARCHING_HERE
         )
         self.network_button.setEnabled(False)
         self.stop_button.setVisible(scope is DiscoveryScope.NETWORK)
@@ -185,7 +155,7 @@ class ServerSearchDialog(QDialog):
     def _stop(self) -> None:
         if self._searching:
             self._stop_event.set()
-            self.status.setText("Stopping…")
+            self.status.setText(servers.SEARCH_STOPPING)
 
     def _on_progress(self, asked: int, total: int) -> None:
         self.progress.setRange(0, max(total, 1))
@@ -203,7 +173,7 @@ class ServerSearchDialog(QDialog):
         card.show_discovered(server)
         card.use_requested.connect(self._use)
         if server.kind is ServerKind.NETWORK:
-            card.setToolTip(_NETWORK_TOOLTIP)
+            card.setToolTip(servers.SEARCH_NETWORK_TOOLTIP)
         item.setSizeHint(card.sizeHint())
         self.list.addItem(item)
         self.list.setItemWidget(item, card)
@@ -221,9 +191,13 @@ class ServerSearchDialog(QDialog):
         self.network_button.setEnabled(not self._network_searched)
         count = self.list.count()
         if count:
-            self.status.setText(FOUND_ONE if count == 1 else FOUND_MANY.format(count=count))
+            self.status.setText(servers.search_found(count))
         else:
-            self.status.setText(NOTHING_ON_NETWORK if self._network_searched else NOTHING_HERE)
+            self.status.setText(
+                servers.SEARCH_NOTHING_ON_NETWORK
+                if self._network_searched
+                else servers.SEARCH_NOTHING_HERE
+            )
 
     # ── choosing ──────────────────────────────────────────────────────────────
 

@@ -23,6 +23,7 @@ from ...application.setup_plan import (
     SetupPlan,
 )
 from ...texts import dialogs as dlg
+from ...texts import setup as words
 from .. import _dialogs
 from .._install_round import InstallRound
 from .._window_geometry import fit_to_screen
@@ -41,9 +42,6 @@ from ._pages import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-TITLE = "Set up Teacher's Teammate"
-SET_UP = "Set up"
 
 #: The events after which Qt may have put its own look on the wizard.
 _LOOK_EVENTS = frozenset({QEvent.Type.Show, QEvent.Type.StyleChange, QEvent.Type.Polish})
@@ -69,12 +67,12 @@ class SetupAssistant(QWizard):
         self._round = InstallRound(context.app_service, context.pull_manager, parent)
         self._pages: dict[SetupPageId, SetupPage] = {}
 
-        self.setWindowTitle(TITLE)
+        self.setWindowTitle(words.ASSISTANT_TITLE)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage, True)
         self.setOption(QWizard.WizardOption.NoCancelButtonOnLastPage, True)
         # The summary page is the commit page, so QWizard shows its CommitButton there.
-        self.setButtonText(QWizard.WizardButton.CommitButton, SET_UP)
+        self.setButtonText(QWizard.WizardButton.CommitButton, words.ASSISTANT_COMMIT)
         self.setMinimumSize(640, 480)
 
         for index, page_id in enumerate(ORDER):

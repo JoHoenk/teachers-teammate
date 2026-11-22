@@ -24,6 +24,7 @@ from pathlib import Path
 import threading
 
 from ..domain.teacher_work import TeacherWork, WorkTooNewError
+from ..texts.review import work_saved_by_newer_version
 from .atomic_file import write_text_atomic
 from .storage_root import resolve_data_folder
 
@@ -92,7 +93,7 @@ class TeacherWorkStore:
             # Read first: whether the file is too new is only known once it was read.
             current = self._read(source_hash)
             if source_hash in self._too_new:
-                raise WorkTooNewError(f"the work of {name} was saved by a newer version of the app")
+                raise WorkTooNewError(work_saved_by_newer_version(name))
             current = current or TeacherWork(source_hash=source_hash, name=name)
             changed = change(current)
             if changed.empty:

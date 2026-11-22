@@ -27,7 +27,7 @@ from ..domain.ollama_discovery import (
 from ..domain.requirements import IssueKind, RequirementIssue
 from ..domain.stages import Stage
 from ..texts import dialogs as dlg
-from ..texts import review as txt
+from ..texts import main_window as txt
 from . import _dialogs
 from ._background import LatestTask, run_in_background
 from ._config_panel import ConfigPanel

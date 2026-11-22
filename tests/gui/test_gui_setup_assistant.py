@@ -19,9 +19,9 @@ from teachers_teammate.application.setup_plan import (
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui.setup import SetupAssistant, SetupContext, SetupResult
-from teachers_teammate.gui.setup._assistant import SET_UP
 from teachers_teammate.gui.setup._flow import ORDER, SetupPageId
 from teachers_teammate.texts import dialogs as dlg
+from teachers_teammate.texts import setup as words
 from teachers_teammate.texts._types import Notice
 
 from ._service_stubs import services_of
@@ -141,7 +141,7 @@ def test_the_commit_button_reads_set_up_on_the_summary(qtbot) -> None:
     assistant.setCurrentId(summary)
 
     commit = assistant.button(QWizard.WizardButton.CommitButton)
-    assert commit.text() == SET_UP
+    assert commit.text() == words.ASSISTANT_COMMIT
     assert commit.isVisible()
     assert not assistant.button(QWizard.WizardButton.NextButton).isVisible()
 

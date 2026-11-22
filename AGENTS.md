@@ -27,6 +27,8 @@ Layers, innermost first; a layer imports only from those above it in this list
 
 ```
 domain/          — pure business concepts (freshness policy, stage names); no I/O
+texts/           — every sentence a teacher reads; Qt-free, imports `domain` and `pkg`;
+                   infrastructure and the adapters use it, `application` does not
 interfaces.py    — ABCs for every pipeline stage; SUPPORTED_SUFFIXES lives here
 infrastructure/  — concrete implementations (OCR engines, LLM providers, DOCX builder, etc.)
 infrastructure/workflow/ — FileProcessor (per-file stage orchestrator), run_files() coordinator
@@ -36,7 +38,6 @@ application/     — the services, one per topic: RunService (the run) in `run.p
                    as `.run` / `.documents` / `.commands`; the only entry for GUI and CLI
 gui/ / cli.py    — adapters; no discovery or availability logic
                    (gui/settings/ = the Settings window, one page per topic)
-texts/           — every sentence a teacher reads; Qt-free, imports only domain
 ```
 
 `gui/` and `cli.py` import `pkg`, `core`, `domain`, `application` and `texts` only — never

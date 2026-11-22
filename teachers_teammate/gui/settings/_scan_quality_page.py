@@ -13,17 +13,11 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QWidget
 
 from ...config import DEFAULTS, OcrConfig
+from ...texts import settings as st
 from ...texts.models import EXPERT_SETTINGS
 from .._collapsible_section import CollapsibleSection
 from .._ocr_config_selector import ScanQualityControls
 from ._page import SettingsContext, SettingsPage, SettingsPageBase
-
-TITLE = "Scan quality"
-DESCRIPTION = (
-    "How scans and photos are prepared before the text is read. Automatic suits most "
-    "documents; Preview… shows the effect on one of your own."
-)
-GROUP_TITLE = "Preparing scans and photos"
 
 #: The settings keys :class:`ScanQualityControls` shows (the temperature lives on AI models).
 SCAN_KEYS = (
@@ -37,8 +31,8 @@ class ScanQualityPage(SettingsPageBase):
     """Image preparation (Automatic or Original page); Expert: PDF handling."""
 
     page = SettingsPage.SCAN_QUALITY
-    title = TITLE
-    description = DESCRIPTION
+    title = st.PAGE_SCAN_QUALITY
+    description = st.PAGE_INTRO_SCAN_QUALITY
 
     #: The user asked to preview the image preparation (the window adds the OCR choice).
     preview_requested = Signal()
@@ -51,7 +45,7 @@ class ScanQualityPage(SettingsPageBase):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
-        group = QGroupBox(GROUP_TITLE)
+        group = QGroupBox(st.PREPARING_GROUP)
         group_layout = QVBoxLayout(group)
         self._controls = ScanQualityControls(
             app_service=context.app_service,

@@ -14,6 +14,7 @@ from teachers_teammate.domain.local_models import LocalModel
 from teachers_teammate.exceptions import ModelMissingError, OCRError, RunStoppedError
 from teachers_teammate.infrastructure.ppocr.detect import DetectorSettings
 from teachers_teammate.infrastructure.ppocr.engine import PpOcrProcessor
+from teachers_teammate.texts.run import READER_PAGE_FAILED
 
 _CHARS = ["a", "b", "c"]  # classes: blank, a, b, c, space → 5
 
@@ -224,3 +225,21 @@ def test_unreadable_image_raises_ocr_error(tmp_path: Path) -> None:
 
     with pytest.raises(OCRError, match="Cannot read image"):
         _reader(tmp_path, _FakeRecogniser([1])).process_image(bad)
+
+
+def test_a_failing_net_raises_the_one_sentence_the_teacher_can_read(tmp_path: Path) -> None:
+    """
+    Given  a recogniser whose net raises the way OpenCV does on a wrong shape
+    When   the page is read
+    Then   OCRError carries the app's sentence, not the library's error message
+    """
+
+    def fail(_call: int) -> None:
+        raise RuntimeError("OpenCV(4.9.0) modules/dnn/src/layer.cpp:215: error: (-215:Assertion)")
+
+    reader = _reader(tmp_path, _FakeRecogniser([1], on_call=fail))
+
+    with pytest.raises(OCRError) as raised:
+        reader.process_image(_page(tmp_path))
+
+    assert str(raised.value) == READER_PAGE_FAILED

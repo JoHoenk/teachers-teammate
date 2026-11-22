@@ -11,6 +11,7 @@ from ...domain.proofreading.review import align, review_summary
 from ...domain.run_summary import FileOutcome, FileStatus, RunSummary
 from ...exceptions import UNEXPECTED_ERROR_MESSAGE
 from ...interfaces import OnFileDoneFn, OnFileStartedFn, Reporter
+from ...texts import report as report_text
 from ..reporting import StdoutReporter
 from .file_processor import ProcessingResult
 
@@ -56,9 +57,9 @@ def run_files(
                 stop_after_file_event and stop_after_file_event.is_set()
             ):
                 not_started = [f.name for f in files[idx - 1 :]]
-                reporter.status(f"\nStopped by user: {len(not_started)} file(s) not started.")
+                reporter.status(report_text.stopped_with_files_left(len(not_started)))
                 break
-            reporter.status(f"[{idx}/{total}] Processing: {file.name}")
+            reporter.status(report_text.processing(idx, total, file.name))
             if on_file_started:
                 on_file_started(source_id, file.name, idx, total)
             result = _process_one(process_file, file)
@@ -71,10 +72,10 @@ def run_files(
                 _logger.info("%s", result.message)
                 skipped.append(file.name)
             elif outcome.status is FileStatus.SAVED:
-                reporter.status(f"       → Saved: {result.message}")
+                reporter.status(report_text.saved(result.message))
                 summary = _review_line(result)
                 if summary:
-                    reporter.status(f"       → {summary}")
+                    reporter.status(report_text.step(summary))
                 for warning in outcome.warnings:
                     _logger.warning("%s", warning)
                 succeeded.append(file.name)

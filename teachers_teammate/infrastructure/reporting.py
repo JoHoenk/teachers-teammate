@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sys
 
+from ..texts.dialogs import cli_error
+
 
 class StdoutReporter:
     """Default reporter: ``status`` → stdout, ``warn``/``error`` → stderr.
@@ -23,4 +25,4 @@ class StdoutReporter:
         print(line, file=sys.stderr, flush=True)
 
     def error(self, line: str) -> None:
-        print(f"ERROR: {line}", file=sys.stderr, flush=True)
+        print(cli_error(line), file=sys.stderr, flush=True)

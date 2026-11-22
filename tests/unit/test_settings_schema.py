@@ -98,8 +98,8 @@ class _RecordingService:
     def memory_warning_for_run(self, config: Config) -> str:
         return ""
 
-    def page_models_notice_for_run(self, config: Config) -> str:
-        return ""
+    def page_models_skipped(self, config: Config) -> bool:
+        return False
 
     def collect_input_files(self, config: Config) -> list[Path]:
         return []

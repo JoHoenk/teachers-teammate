@@ -278,14 +278,14 @@ def test_list_supported_suffixes_returns_frozenset_with_images() -> None:
 
 
 @pytest.mark.unit
-def test_page_models_notice_names_the_flag_only_when_the_automatic_preparation_lacks_them(
+def test_page_models_are_reported_skipped_only_for_an_automatic_run_that_reads_pages(
     tmp_path: Path,
 ) -> None:
     """
     Given  a service whose model store has no page models
-    When   page_models_notice_for_run() is asked for an automatic run, an "Original page" run
-           and a run with recognition off
-    Then   only the automatic run that reads pages gets the one-line notice naming the flag
+    When   page_models_skipped() is asked for an automatic run, an "Original page" run and a
+           run with recognition off
+    Then   only the automatic run that reads pages reports the page models as skipped
     """
     from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
@@ -301,9 +301,9 @@ def test_page_models_notice_names_the_flag_only_when_the_automatic_preparation_l
         tmp_path, ocr=OcrConfig(preprocess_method=PreprocessMethod.AUTO), recognition_enabled=False
     )
 
-    assert "--download-page-models" in svc.run.page_models_notice_for_run(auto)
-    assert svc.run.page_models_notice_for_run(original) == ""
-    assert svc.run.page_models_notice_for_run(off) == ""
+    assert svc.run.page_models_skipped(auto) is True
+    assert svc.run.page_models_skipped(original) is False
+    assert svc.run.page_models_skipped(off) is False
 
 
 # ── _invalidate_from_stage (static helper) ────────────────────────────────

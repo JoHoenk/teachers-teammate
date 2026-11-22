@@ -258,12 +258,14 @@ class DocumentCommands:
         *,
         files: Sequence[Path],
         stage: str,
-    ) -> tuple[str, ...]:
+    ) -> tuple[tuple[str, str], ...]:
         """Invalidate the state of *files* from *stage* onwards; return what could not be reset.
 
         The caller names the files: the run that follows processes exactly these, so the
-        invalidation cannot reach a document the teacher did not pick.  Each failure names
-        its file and says why.
+        invalidation cannot reach a document the teacher did not pick.  Each failure is
+        ``(file name, why)``, and ``why`` is empty when the teacher's own changes could not
+        be dropped: the wording of that is
+        :func:`~teachers_teammate.texts.dialogs.cache_invalidation_failed`.
         """
         return self._invalidate_from_stage(
             stage=stage,
@@ -305,19 +307,19 @@ class DocumentCommands:
         files: Sequence[Path],
         store: StateRepository,
         work_store: TeacherWorkStore | None = None,
-    ) -> tuple[str, ...]:
+    ) -> tuple[tuple[str, str], ...]:
         stage_name = normalize_stage(stage)
-        failures: list[str] = []
+        failures: list[tuple[str, str]] = []
         for file in files:
             # The work goes first: it is what the teacher confirmed to lose.  If it cannot be
             # dropped nothing is reset, so the document stays as it was.
             if not DocumentCommands._drop_parts(work_store, file, stage_name):
-                failures.append(f"{file.name}: your changes could not be removed")
+                failures.append((file.name, ""))
                 continue
             try:
                 store.invalidate_from_stage(file, stage_name)
             except OSError as exc:
-                failures.append(f"{file.name}: {exc}")
+                failures.append((file.name, str(exc)))
 
         return tuple(failures)
 

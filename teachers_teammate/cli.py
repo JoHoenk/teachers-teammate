@@ -37,6 +37,7 @@ from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
 from .domain.stages import Stage
 from .exceptions import ConfigFileNotFoundError, ConfigFileParseError, ModelDownloadError
 from .settings_schema import CONTEXT_SETTINGS, DEFAULTS, PREPROCESS_METHODS, LoadedSettings
+from .texts import addons as addon_text
 from .texts import dialogs as dlg
 from .texts.run import BATTERY_WARNING
 
@@ -651,9 +652,8 @@ def run_cli(
             print("Use --ignore-memory-check to run anyway.", file=sys.stderr)
             return 1
         print(f"WARNING: {warning}", file=sys.stderr)
-    notice = service.run.page_models_notice_for_run(config)
-    if notice:
-        print(notice, file=sys.stderr)
+    if service.run.page_models_skipped(config):
+        print(addon_text.PAGE_MODELS_SKIPPED_NOTICE, file=sys.stderr)
     _print_data_flow(service.data_flow.describe_data_flow(config))
     return service.run.run_selected(
         config, files, config_file=config_path, battery_warning=BATTERY_WARNING

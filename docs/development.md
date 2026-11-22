@@ -1653,7 +1653,8 @@ changed constant and an `AUTO_VERSION` bump.
 carries them (see *Local model files*); otherwise they are downloaded only on request: **Download…** on Scan quality, the **Page models** box on Add-ons → Reading models
 (`page_models:all`, between the reader and the Ollama pulls in `InstallRound`), or
 `--download-page-models`.  Missing page models are **not** an `IssueKind`: a run never waits for
-them; the CLI prints one notice line (`page_models_notice_for_run`).  `UVDoc` answers an image at
+them; the CLI prints one notice line (`texts/addons.py:PAGE_MODELS_SKIPPED_NOTICE`).  `UVDoc`
+answers an image at
 the size it was given, so the page goes to it scaled to at most `FLATTEN_MAX_SIDE` (2048).
 
 **Identity.**  `cache_service._preprocess_fingerprint(ocr, source, store)` is the method; for

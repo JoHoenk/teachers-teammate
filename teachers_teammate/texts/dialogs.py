@@ -176,11 +176,16 @@ def selection_mismatch() -> Notice:
     )
 
 
-def cache_invalidation_failed(failures: Sequence[str]) -> Notice:
-    """Tell the teacher which files could not have their cache reset."""
+#: Why a file's cache stayed as it was when the teacher's own work could not be dropped.
+CHANGES_NOT_REMOVED = "your changes could not be removed"
+
+
+def cache_invalidation_failed(failures: Sequence[tuple[str, str]]) -> Notice:
+    """Tell the teacher which files could not have their cache reset, and why."""
+    lines = [f"{name}: {reason or CHANGES_NOT_REMOVED}" for name, reason in failures]
     return Notice(
         "Cache invalidation failed",
-        "Could not reset cache for one or more files:\n\n" + "\n".join(failures),
+        "Could not reset cache for one or more files:\n\n" + "\n".join(lines),
         NoticeKind.WARNING,
     )
 

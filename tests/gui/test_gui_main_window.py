@@ -318,7 +318,7 @@ def test_a_stopped_file_opens_no_error_dialog_and_shows_where_it_stopped(
                 source_id=source,
                 name="scan.png",
                 status=FileStatus.STOPPED,
-                error="Stopped before the text was read.",
+                stopped_stage="ocr",
             ),
             ocr_s=1.0,
             correction_s=0.0,
@@ -355,7 +355,7 @@ def test_a_stopped_file_keeps_the_tick_of_the_step_that_finished(main_window, mo
                 source_id=source,
                 name="essay.png",
                 status=FileStatus.STOPPED,
-                error="Stopped before proofreading.",
+                stopped_stage="correction",
             ),
             ocr_s=1.0,
             correction_s=0.0,
@@ -2252,7 +2252,7 @@ def test_stage_run_warns_on_invalidation_failure(main_window, monkeypatch) -> No
     monkeypatch.setattr(
         main_window._app_service.commands,
         "invalidate_from_stage",
-        lambda *a, **k: ("a.png: locked",),
+        lambda *a, **k: (("a.png", "locked"),),
     )
     started: list = []
     monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
@@ -5131,7 +5131,7 @@ def test_the_run_start_question_does_not_start_when_the_proofreading_cannot_be_d
     monkeypatch.setattr(
         main_window._app_service.commands,
         "invalidate_from_stage",
-        lambda *_a, **_k: ("a.png: denied",),
+        lambda *_a, **_k: (("a.png", "denied"),),
     )
     monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
 

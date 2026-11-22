@@ -36,6 +36,7 @@ from ..domain.run_summary import FileOutcome, FileStatus
 from ..domain.stages import Stage
 from ..texts import dialogs as dlg
 from ..texts import review as txt
+from ..texts.run import stopped_message
 from . import _dialogs
 from ._constants import (
     _COLOUR_CACHED,
@@ -64,6 +65,8 @@ def _warning_text(outcome: FileOutcome) -> str:
     """Return what the row says about *outcome*: why it failed, or the remarks about it."""
     if outcome.status is FileStatus.SAVED:
         return "; ".join(outcome.warnings)
+    if outcome.status is FileStatus.STOPPED:
+        return stopped_message(outcome.stopped_stage)
     return outcome.error
 
 

@@ -18,7 +18,7 @@ import threading
 from ..config import Config
 from ..domain.context_budget import RunWindows, memory_at_context_gb
 from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, PROVIDER_OLLAMA
-from ..domain.local_models import PAGE_MODELS_SKIPPED_NOTICE, READER_NOT_DOWNLOADED
+from ..domain.local_models import READER_NOT_DOWNLOADED
 from ..domain.model_catalog import (
     RUN_MEMORY_MARGIN_GB,
     DetectionReason,
@@ -297,19 +297,17 @@ class RunService:
             return ""  # no page is read, so what would read it does not matter
         return ocr_refusal(config.ocr.engine, config.ocr.model, config.ollama_url)
 
-    def page_models_notice_for_run(self, config: Config) -> str:
-        """Return the one line a run prints when it skips turning and flattening, else ``""``.
+    def page_models_skipped(self, config: Config) -> bool:
+        """Return whether a run skips turning and flattening the pages.
 
         That is a run that reads pages with the automatic preparation while the page models
         are not downloaded.  It is a notice, never a refusal: the run does not wait for them.
         """
-        if (
+        return (
             config.recognition_enabled
             and config.ocr.preprocess_method == "auto"
             and not self._reader.page_models_installed()
-        ):
-            return PAGE_MODELS_SKIPPED_NOTICE
-        return ""
+        )
 
     def reader_refusal_for_run(self, config: Config, files: Sequence[Path]) -> str:
         """Return why the built-in reader cannot start a run over *files*, or ``""`` when it can.

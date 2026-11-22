@@ -24,8 +24,10 @@ from ..ollama_utils import OllamaClient
 from ..onnx.store import ModelStore
 from ..stage_builder import PipelineComponentFactory, StageBuilder
 from ..storage_root import resolve_artifact_dir
-from ..workflow.file_processor import STOPPED_GENERIC
 from ..workflow.ocr_service import OCRStageService
+
+#: What a benchmark run reports when the teacher stopped it; its window shows it.
+STOPPED = "Stopped by user."
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,6 @@ def run_ocr(
             raw_text_format=processed.text_format,
         )
     except RunStoppedError:
-        return OcrRunResult("", None, time.monotonic() - start, STOPPED_GENERIC)
+        return OcrRunResult("", None, time.monotonic() - start, STOPPED)
     except Exception as exc:  # noqa: BLE001  # any stage may raise (engine missing, IO, provider); report, don't crash
         return OcrRunResult("", None, time.monotonic() - start, str(exc))

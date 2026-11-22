@@ -258,7 +258,6 @@ def test_ocr_worker_file_done_event_carries_the_stopped_flag(qtbot, tmp_path: Pa
                     "/tmp/a.png",
                     "a.png",
                     FileStatus.STOPPED,
-                    error="Stopped before proofreading.",
                     stopped_stage="correction",
                 )
             )

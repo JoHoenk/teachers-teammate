@@ -10,7 +10,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR
-from ..domain.local_models import PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
+from ..domain.local_models import (
+    PAGE_MODELS_NOT_DOWNLOADED,
+    PAGE_MODELS_SIZE_LABEL,
+    READER_SIZE_LABEL,
+)
 from ..exceptions import (
     AddonInstallError,
     AddonUpdateError,
@@ -44,6 +48,12 @@ READER_NOT_DOWNLOADED = "Not downloaded yet."
 READER_DOWNLOADED = "✓ Downloaded"
 INCLUDED = "✓ Included"
 """What a row says when the app carries the files itself: nothing to download."""
+
+PAGE_MODELS_SKIPPED_NOTICE = (
+    "Turning and flattening pages is skipped: "
+    f"{PAGE_MODELS_NOT_DOWNLOADED} (--download-page-models)"
+)
+"""The one line a run prints when the automatic preparation has no page models."""
 
 PAGE_MODELS_LABEL = f"Page models — {PAGE_MODELS_SIZE_LABEL}"
 PAGE_MODELS_HINT = "Used by Automatic image preparation for any reading engine."

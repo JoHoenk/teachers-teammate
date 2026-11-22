@@ -538,10 +538,10 @@ class OllamaModelPullDialog(QDialog):
 
     def __init__(
         self,
-        url: str = "http://127.0.0.1:11434",
         model_name: str = "",
         parent: QWidget | None = None,
         *,
+        url: str,
         service: Any,
     ) -> None:
         super().__init__(parent)

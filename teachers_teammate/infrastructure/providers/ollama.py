@@ -8,9 +8,8 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
 from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
+from teachers_teammate.domain.ollama_discovery import DEFAULT_SERVER_URL
 from teachers_teammate.exceptions import ProviderNotAvailableError
-
-_DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 
 # Metadata consumed by the GUI (and any other caller of llm_factory.get_provider_info).
 # ``models`` is intentionally empty: Ollama's model list is fetched live via the API.
@@ -32,14 +31,14 @@ PROVIDER_INFO: dict = {
 }
 
 
-def list_models(*, base_url: str = _DEFAULT_BASE_URL, **_kwargs: object) -> list[str]:
+def list_models(*, base_url: str = DEFAULT_SERVER_URL, **_kwargs: object) -> list[str]:
     """Return model names from the Ollama server, or ``[]`` when unreachable."""
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
     return OllamaClient(base_url).list_models()
 
 
-def check_connection(*, base_url: str = _DEFAULT_BASE_URL, **_kwargs: object) -> tuple[bool, str]:
+def check_connection(*, base_url: str = DEFAULT_SERVER_URL, **_kwargs: object) -> tuple[bool, str]:
     """Return ``(ok, message)`` for the Ollama server at *base_url*."""
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
@@ -48,7 +47,7 @@ def check_connection(*, base_url: str = _DEFAULT_BASE_URL, **_kwargs: object) ->
 
 
 def create(
-    model: str, *, base_url: str = _DEFAULT_BASE_URL, temperature: float = 0.7, **_kwargs: object
+    model: str, *, base_url: str = DEFAULT_SERVER_URL, temperature: float = 0.7, **_kwargs: object
 ) -> BaseChatModel:
     """Return a ``ChatOllama`` instance for *model*.
 

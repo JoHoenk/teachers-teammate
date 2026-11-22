@@ -29,6 +29,7 @@ from .domain.model_catalog import (
     DEFAULT_WRITING_MODEL,
     PROFILE_SETTINGS,
 )
+from .domain.ollama_discovery import DEFAULT_SERVER_URL
 from .domain.output_files import DocxFormat
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES, parse_pdf_text_layer
 from .domain.prompt_text import migrate_saved_default
@@ -243,7 +244,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         "preprocess_method", PreprocessMethod.AUTO, SettingScope.RUN, normalize_preprocess_method
     ),
-    Setting("ollama_url", "http://127.0.0.1:11434", SettingScope.RUN),
+    Setting("ollama_url", DEFAULT_SERVER_URL, SettingScope.RUN),
     Setting("ocr_timeout", 180, SettingScope.RUN, _count),
     # Whether scans (images, PDFs without a text layer) are read.  Off = only text that already
     # exists is used (text files, PDFs with a text layer) and scans are skipped.

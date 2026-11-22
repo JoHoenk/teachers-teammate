@@ -226,7 +226,7 @@ def test_check_connection_provider_ollama_success(monkeypatch) -> None:
         lambda self, model="": (True, True, "✓ Connected — 1 model(s) available"),
     )
     services = build_app_services()
-    ok, _, msg = services.providers.check_connection("ollama")
+    ok, _, msg = services.providers.check_connection("ollama", url="http://127.0.0.1:11434")
     assert ok is True
 
 
@@ -253,7 +253,7 @@ def test_check_connection_provider_returns_true_when_env_var_set(
     """
     monkeypatch.setenv(env_var, "sk-test")
     services = build_app_services()
-    ok, _, msg = services.providers.check_connection(provider)
+    ok, _, msg = services.providers.check_connection(provider, url="http://127.0.0.1:11434")
     assert ok is True
     assert env_var in msg
 
@@ -276,7 +276,7 @@ def test_check_connection_provider_returns_false_when_env_var_missing(
     """
     monkeypatch.delenv(env_var, raising=False)
     services = build_app_services()
-    ok, _, msg = services.providers.check_connection(provider)
+    ok, _, msg = services.providers.check_connection(provider, url="http://127.0.0.1:11434")
     assert ok is False
     assert env_var in msg
 

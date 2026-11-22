@@ -21,7 +21,7 @@ import cv2
 import numpy as np
 
 from ...exceptions import OCRError
-from ...texts.addons import READER_MODEL_MISMATCH
+from ...messages import reader_model_mismatch
 from ..onnx.runner import OnnxNet
 
 _logger = logging.getLogger(__name__)
@@ -146,7 +146,7 @@ def detect(net: OnnxNet, image: np.ndarray, settings: DetectorSettings) -> list[
     output = net.run(blob)
     if output.ndim != 4 or output.shape[0] != 1:
         _logger.debug("detector: unexpected output shape %s", tuple(output.shape))
-        raise OCRError(READER_MODEL_MISMATCH)
+        raise OCRError(reader_model_mismatch())
     boxes = boxes_from_map(output[0, 0], settings, (sx, sy))
     _logger.debug("detector: %d boxes (map %s)", len(boxes), tuple(output.shape[2:]))
     return boxes

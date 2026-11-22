@@ -1,13 +1,14 @@
 """What a failure says below the adapters: the key of a sentence and the data it needs.
 
-A message is not a sentence.  Nothing below the adapters builds one, so no wording can drift
-there, no two warnings are compared as text and no English is stored with a result: the
-:class:`Message` says *which* sentence and carries the values it needs, and ``texts`` words it
-(``texts/messages.py``, one renderer per key).
+A message is not a sentence: the :class:`Message` says *which* sentence and carries the values
+it needs, and ``texts`` words it (``texts/messages.py``, one renderer per key).  A failure that
+``infrastructure`` raises carries one, so its wording cannot drift from the call site and
+nothing compares two failures as text.  A message holds only text, numbers, ``None`` and other
+messages, so it can be written as JSON.
 
 ``str(message)`` gives the sentence once ``teachers_teammate.texts`` has installed a language.
 Until then it gives ``"key: args"``, which keeps a traceback, a log line and a test readable
-without the wording.  A released key's value never changes: it is stored with the result.
+without the wording.
 """
 
 from __future__ import annotations
@@ -16,10 +17,11 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 
 
 class MessageKey(StrEnum):
-    """The sentence a message stands for.  A value is written to disk, so it never changes."""
+    """The sentence a message stands for.  A value names that sentence, so it never changes."""
 
     #: A foreign error's own words, unchanged: there is nothing else to say.
     DETAIL = "detail"
@@ -37,9 +39,7 @@ class MessageKey(StrEnum):
     PACKAGE_NOT_INSTALLED = "package_not_installed"
     MODEL_PULL_FAILED = "model_pull_failed"
 
-    # ── The review, the queue and the speed test ──────────────────────────────────
-    LEFT_OUT_WARNING = "left_out_warning"
-    LEFT_OUT_WARNING_ONE = "left_out_warning_one"
+    # ── The saved work ────────────────────────────────────────────────────────────
     WORK_SAVED_BY_NEWER_VERSION = "work_saved_by_newer_version"
 
     # ── What a run says about a file and what it writes ───────────────────────────
@@ -80,7 +80,6 @@ class MessageKey(StrEnum):
 
     # ── The command line ──────────────────────────────────────────────────────────
     CONFIG_FILE_MISSING = "config_file_missing"
-    CLI_ERROR = "cli_error"
 
 
 @dataclass(frozen=True)
@@ -91,10 +90,15 @@ class Message:
     args: Mapping[str, Arg] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Refuse a value that could neither be stored nor rendered."""
+        """Refuse a value that could neither be stored nor rendered, and freeze a copy."""
         for name, value in self.args.items():
             if not _storable(value):
                 raise TypeError(f"{self.key}: {name} holds a {type(value).__name__}")
+        object.__setattr__(self, "args", MappingProxyType(dict(self.args)))
+
+    def __hash__(self) -> int:
+        """Return a hash of the key and the data, so a message can sit in a set."""
+        return hash((self.key, tuple(self.args.items())))
 
     def __str__(self) -> str:
         """Return the sentence, or its plain form while no language is installed."""
@@ -102,7 +106,7 @@ class Message:
         return plain_text(self) if render is None else render(self)
 
 
-#: What one message carries: a value JSON holds, a nested message, or a list of them.
+#: What one message carries: a value JSON holds, a nested message, or a tuple of messages.
 Arg = str | int | float | None | Message | tuple[Message, ...]
 
 #: What separates the messages of one line, in the order they were produced.
@@ -132,7 +136,7 @@ def message_of(error: BaseException) -> Message:
     """Return the message *error* was raised with, or the own words of a foreign error."""
     if error.args and isinstance(error.args[0], Message):
         return error.args[0]
-    return Message(MessageKey.DETAIL, {"text": str(error)})
+    return detail(str(error))
 
 
 def _plain_value(value: Arg) -> str:
@@ -148,7 +152,7 @@ def _storable(value: object) -> bool:
     """Whether *value* is one of the values a message may carry."""
     if isinstance(value, str | int | float | Message) or value is None:
         return True
-    return isinstance(value, tuple) and all(_storable(item) for item in value)
+    return isinstance(value, tuple) and all(isinstance(item, Message) for item in value)
 
 
 def render_all(messages: Iterable[Message]) -> str:
@@ -228,17 +232,7 @@ def model_pull_failed(reason: Message) -> Message:
     return Message(MessageKey.MODEL_PULL_FAILED, {"reason": reason})
 
 
-# ── The review, the queue and the speed test ────────────────────────────────
-
-
-def left_out_warning(count: int, words: int) -> Message:
-    """Return the warning about *count* passages of *words* words the answer left out."""
-    return Message(MessageKey.LEFT_OUT_WARNING, {"count": count, "words": words})
-
-
-def left_out_warning_one(words: int) -> Message:
-    """Return the same warning for one passage."""
-    return Message(MessageKey.LEFT_OUT_WARNING_ONE, {"words": words})
+# ── The saved work ─────────────────────────────────────────────────────────
 
 
 def work_saved_by_newer_version(name: str) -> Message:
@@ -362,7 +356,7 @@ def empty_answer_cut_off() -> Message:
     return Message(MessageKey.EMPTY_ANSWER_CUT_OFF)
 
 
-def answer_abandoned(seconds: float | None) -> Message:
+def answer_abandoned(seconds: float) -> Message:
     """Return what a request says about an answer still being written after *seconds*."""
     return Message(MessageKey.ANSWER_ABANDONED, {"seconds": seconds})
 
@@ -418,8 +412,3 @@ def unreachable(url: str, reason: Message) -> Message:
 def config_file_missing(path: Path) -> Message:
     """Return what ``--config`` says about a file that is not there."""
     return Message(MessageKey.CONFIG_FILE_MISSING, {"path": str(path)})
-
-
-def cli_error(text: str) -> Message:
-    """Return *text* as an error line of the command line."""
-    return Message(MessageKey.CLI_ERROR, {"text": text})

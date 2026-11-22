@@ -96,7 +96,7 @@ def image_not_encoded(path: Path) -> str:
     return f"Cannot encode image: {path}"
 
 
-def image_not_written(path: Path, reason: BaseException) -> str:
+def image_not_written(path: Path, reason: str) -> str:
     """Return what a run says about a page image that could not be written to disk."""
     return f"Cannot write image: {path}: {reason}"
 
@@ -119,22 +119,22 @@ def storage_root_unresolved(reasons: str) -> str:
 # ── A stage that failed ───────────────────────────────────────────────────────
 
 
-def input_read_failed(reason: BaseException) -> str:
+def input_read_failed(reason: str) -> str:
     """Return what a run says about an input file it could not read from disk."""
     return f"Could not read input file: {reason}"
 
 
-def preprocessing_failed(reason: BaseException) -> str:
+def preprocessing_failed(reason: str) -> str:
     """Return what a run says about a page it could not prepare."""
     return f"Preprocessing failed: {reason}"
 
 
-def preview_save_failed(reason: BaseException) -> str:
+def preview_save_failed(reason: str) -> str:
     """Return what a run says about a preview image it could not store."""
     return f"Could not persist preview image: {reason}"
 
 
-def cache_save_failed(reason: BaseException) -> str:
+def cache_save_failed(reason: str) -> str:
     """Return what a run says about the text of a file it read but could not keep."""
     return f"Could not persist OCR cache state: {reason}"
 
@@ -143,23 +143,23 @@ def cache_save_failed(reason: BaseException) -> str:
 EMPTY_OCR_ANSWER = "Empty response from OCR model."
 
 
-def ocr_failed(page: int | None, reason: BaseException) -> str:
+def ocr_failed(page: int | None, reason: str) -> str:
     """Return what a run says about one page, or the one image, the reader could not read."""
     what = "image" if page is None else f"page {page}"
     return f"OCR failed ({what}): {reason}"
 
 
-def personal_info_setup_failed(reason: BaseException) -> str:
+def personal_info_setup_failed(reason: str) -> str:
     """Return what a run says about the anonymizer it could not build."""
     return f"Cannot initialise anonymizer: {reason}"
 
 
-def personal_info_removal_failed(reason: BaseException) -> str:
+def personal_info_removal_failed(reason: str) -> str:
     """Return what a run says about a file whose personal data could not be hidden."""
     return f"Personal info removal failed: {reason}"
 
 
-def personal_info_restore_failed(reason: BaseException) -> str:
+def personal_info_restore_failed(reason: str) -> str:
     """Return what a run says about a file whose personal data could not be put back."""
     return f"PII restore failed: {reason}"
 
@@ -251,15 +251,9 @@ def run_done_tray(done: int, skipped: int = 0) -> str:
 
 PDF_NO_PAGES = "PDF has no pages"
 NO_EMBEDDED_TEXT = "no embedded text"
-OCR_IMAGE_LABEL = "image"
 RESULTS_CACHED = "results cached (no output files)"
 
 
 def text_layer_page_note(page: int, reason: str) -> str:
     """Return why the text layer of a PDF is not used: the *page* that ruled it out."""
     return f"page {page}: {reason or NO_EMBEDDED_TEXT}"
-
-
-def ocr_page_label(page: int) -> str:
-    """Return how a failed text recognition names the *page* it failed on."""
-    return f"page {page}"

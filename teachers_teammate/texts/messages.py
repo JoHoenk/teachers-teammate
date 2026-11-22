@@ -4,8 +4,8 @@ One renderer per key, so :func:`render` is the only place a message becomes a se
 renderers are the functions and constants of the other modules of this package: a key's name
 is the name of the sentence it stands for, and a test holds the two lists together.
 
-:func:`install` hands the renderer to ``domain``, which then answers ``str(message)`` with the
-sentence.  Nothing else below the adapters knows this module exists.
+:func:`install` hands the renderer to the package root, which then answers ``str(message)`` with
+the sentence.  Nothing below the adapters imports this module.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..messages import Message, MessageKey, plain_text, render_all, set_renderer
-from . import addons, cli, dialogs, review, run, servers
+from . import addons, review, run, servers
 
 #: The language the app speaks.  Only English exists so far.
 ENGLISH = "en"
@@ -48,9 +48,7 @@ _RENDERERS: dict[MessageKey, Callable[..., str]] = {
     MessageKey.READER_MODEL_MISMATCH: addons.reader_model_mismatch,
     MessageKey.PACKAGE_NOT_INSTALLED: addons.package_not_installed,
     MessageKey.MODEL_PULL_FAILED: addons.model_pull_failed,
-    # ── The review, the queue and the speed test ──────────────────────────────
-    MessageKey.LEFT_OUT_WARNING: review.left_out_warning,
-    MessageKey.LEFT_OUT_WARNING_ONE: review.left_out_warning_one,
+    # ── The saved work ────────────────────────────────────────────────────────
     MessageKey.WORK_SAVED_BY_NEWER_VERSION: review.work_saved_by_newer_version,
     # ── What a run says about a file and what it writes ───────────────────────
     MessageKey.IMAGE_NOT_ENCODED: run.image_not_encoded,
@@ -87,8 +85,7 @@ _RENDERERS: dict[MessageKey, Callable[..., str]] = {
     MessageKey.NO_MODELS_INSTALLED: servers.no_models_installed,
     MessageKey.UNREACHABLE: servers.unreachable,
     # ── The command line ─────────────────────────────────────────────────────
-    MessageKey.CONFIG_FILE_MISSING: cli.config_file_missing,
-    MessageKey.CLI_ERROR: dialogs.cli_error,
+    MessageKey.CONFIG_FILE_MISSING: run.config_file_missing,
 }
 
 
@@ -105,7 +102,7 @@ def _value(value: object) -> object:
     if isinstance(value, Message):
         return str(value)
     if isinstance(value, tuple):
-        return render_all(item for item in value if isinstance(item, Message))
+        return render_all(value)
     return value
 
 

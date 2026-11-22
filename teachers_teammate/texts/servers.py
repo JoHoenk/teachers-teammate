@@ -141,7 +141,7 @@ def card_place(kind: ServerKind, url: str) -> str:
 # ── Reaching the server ───────────────────────────────────────────────────────
 
 
-def cannot_reach(url: str, reason: BaseException) -> str:
+def cannot_reach(url: str, reason: str) -> str:
     """Return what the app says about a server whose answer could not be read."""
     return f"Cannot reach Ollama at {url}: {reason}"
 
@@ -156,17 +156,17 @@ def connection_timed_out(url: str) -> str:
     return f"Connection to Ollama at {url} timed out. Check the URL and network settings."
 
 
-def contact_failed(url: str, reason: BaseException) -> str:
+def contact_failed(url: str, reason: str) -> str:
     """Return what the app says about a server that failed in a way it cannot name."""
     return f"Unexpected error contacting Ollama at {url}: {reason}"
 
 
-def unreachable(url: str, reason: BaseException) -> str:
+def unreachable(url: str, reason: str) -> str:
     """Return what a proofreading request says about the server it cannot reach."""
     return f"cannot connect to Ollama at {url} — {reason}"
 
 
-def http_error(reason: BaseException) -> str:
+def http_error(reason: str) -> str:
     """Return what a request says about an answer the server refused with an HTTP error."""
     return f"HTTP error from Ollama: {reason}"
 
@@ -210,8 +210,6 @@ def no_first_token(seconds: float) -> str:
 
 def answer_abandoned(seconds: float) -> str:
     """Return what a request says about an answer still being written after *seconds*."""
-    if seconds is None:
-        return "the answer was still being written; the request was abandoned"
     return f"the answer was still being written after {seconds:g}s; the request was abandoned"
 
 

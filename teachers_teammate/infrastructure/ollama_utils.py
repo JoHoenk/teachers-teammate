@@ -215,7 +215,7 @@ def _mapped_stream[T](stream: Iterator[T], base_url: str) -> Iterator[T]:
         ) from exc
     except (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError) as exc:
         if started:
-            raise OCRError(str(exc)) from exc
+            raise OCRError(message_of(exc)) from exc
         raise OllamaUnreachableError(unreachable(base_url, message_of(exc))) from exc
     finally:
         # The reader thread closes the outer generator to stop the server generating; without

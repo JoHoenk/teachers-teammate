@@ -19,8 +19,8 @@ Which module owns what:
 ``fixes.py``         the readiness line's fixes: the line for what is missing and its button
 ``issues.py``        one sentence per unmet requirement of a step or a run
 ``main_window.py``   the main window's rows, steps, panel, results table, export and stats
-``messages.py``      the English wording of every key in the root ``messages.py``
 ``menus.py``         the main window's menu bar and what each entry offers
+``messages.py``      the English wording of every key in the root ``messages.py``
 ``models.py``        this computer, the model fields and their status line, the download warnings
 ``privacy.py``       what is sent for a file, the data-flow wording, a remembered answer
 ``report.py``        the banner, the progress lines and the closing block of a run's log
@@ -37,8 +37,9 @@ Rules that keep it one home:
 
 * **Dependencies point inward.**  This package may import ``pkg`` and ``domain``;
   ``domain`` and ``application`` never import it.  They return ids and data, the adapter
-  asks this package for the sentence.  ``infrastructure`` asks for the sentences it reports:
-  a failure it raises, a warning or reason it puts into a result, a line it prints.
+  asks this package for the sentence.  ``infrastructure`` raises a failure as a ``Message``
+  (``teachers_teammate.messages``, worded by ``messages.py`` here) and asks this package for the
+  sentences it puts into a result or prints.
 * **Dynamic parts are functions** — ``no_files_found(folder)``, never ``"…" % x`` at the
   call site.
 * **Dialogs go through one helper**, ``gui/_dialogs.py``: ``notify``, ``ask``, ``choose``,

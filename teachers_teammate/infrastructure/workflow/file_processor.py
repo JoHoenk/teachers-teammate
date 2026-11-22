@@ -63,11 +63,10 @@ from ...messages import (
     personal_info_restore_failed,
     preprocessing_failed,
     preview_save_failed,
-    text_files_failed,
 )
 from ...texts import report as report_text
 from ...texts.review import personal_info_still_hidden
-from ...texts.run import RESULTS_CACHED, docx_failed, output_not_saved
+from ...texts.run import RESULTS_CACHED, docx_failed, output_not_saved, text_files_failed
 from ..ocr_formats import plain_text_of
 from ..reporting import StdoutReporter
 from ..run_stats import RunStatsCollector

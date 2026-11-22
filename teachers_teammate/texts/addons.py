@@ -106,7 +106,7 @@ def download_too_large(name: str) -> str:
     )
 
 
-def model_pull_failed(reason: BaseException) -> str:
+def model_pull_failed(reason: str) -> str:
     """Return what a download of a model from the AI server says when it breaks off."""
     return f"Download failed: {reason}"
 
@@ -141,7 +141,7 @@ SPACY_REQUIRED = (
 )
 
 
-def spacy_not_loadable(reason: BaseException) -> str:
+def spacy_not_loadable(reason: str) -> str:
     """Return what the app says about a spaCy that is installed but cannot be imported."""
     return f"spacy is installed but cannot be loaded: {reason}"
 

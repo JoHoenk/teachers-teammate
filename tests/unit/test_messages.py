@@ -3,7 +3,7 @@
 ``messages.py`` says *which* sentence a failure is and carries the data it needs;
 ``texts/messages.py`` words it.  This test holds the two lists together: one factory per key,
 one renderer per key, the same parameter names on both sides, and a value for every key.  A
-released key is written to disk with a result, so the golden list below may only grow.
+key's value names its sentence for good, so the golden list below may only grow.
 """
 
 from __future__ import annotations
@@ -23,6 +23,9 @@ from teachers_teammate.texts import messages as wording
 
 #: The public functions of ``messages.py`` that are not a factory for one key.
 _NOT_FACTORIES = frozenset({"message_of", "plain_text", "render_all", "set_renderer"})
+
+#: Factories ``messages.py`` itself calls, so no other module needs to.
+_BASE_CASES = frozenset({"detail"})
 
 #: A sample argument per parameter annotation, to call every factory and renderer with.
 _SAMPLES: dict[str, object] = {
@@ -124,7 +127,7 @@ def test_the_value_of_a_key_only_grows() -> None:
     """
     Given  the released keys of ``messages``
     When   their values are listed
-    Then   each one is unchanged, because a stored result spells its warning with them
+    Then   each one is unchanged, because a message that is kept names its sentence by it
     """
     assert {key.name: key.value for key in MessageKey} == {
         "DETAIL": "detail",
@@ -139,8 +142,6 @@ def test_the_value_of_a_key_only_grows() -> None:
         "READER_MODEL_MISMATCH": "reader_model_mismatch",
         "PACKAGE_NOT_INSTALLED": "package_not_installed",
         "MODEL_PULL_FAILED": "model_pull_failed",
-        "LEFT_OUT_WARNING": "left_out_warning",
-        "LEFT_OUT_WARNING_ONE": "left_out_warning_one",
         "WORK_SAVED_BY_NEWER_VERSION": "work_saved_by_newer_version",
         "IMAGE_NOT_ENCODED": "image_not_encoded",
         "IMAGE_NOT_WRITTEN": "image_not_written",
@@ -175,7 +176,6 @@ def test_the_value_of_a_key_only_grows() -> None:
         "NO_MODELS_INSTALLED": "no_models_installed",
         "UNREACHABLE": "unreachable",
         "CONFIG_FILE_MISSING": "config_file_missing",
-        "CLI_ERROR": "cli_error",
     }
 
 
@@ -204,6 +204,34 @@ def test_a_message_refuses_a_value_it_could_not_store() -> None:
         Message(MessageKey.DETAIL, {"text": bad})
 
 
+def test_a_message_refuses_a_tuple_of_anything_but_messages() -> None:
+    """
+    Given  a tuple of plain text, which the wording could not render
+    When   a message is built with it
+    Then   it is refused, so a value is never dropped silently when the sentence is worded
+    """
+    bad: Any = ("a", "b")
+    with pytest.raises(TypeError):
+        Message(MessageKey.DETAIL, {"text": bad})
+
+
+def test_a_message_keeps_its_own_copy_of_its_data() -> None:
+    """
+    Given  a message built from a dict that the caller changes afterwards
+    When   the message is read and compared
+    Then   it still holds the values it was built with, equals a twin and hashes like it
+    """
+    data: dict[str, Any] = {"url": "http://host"}
+    message = messages.cannot_connect("http://host")
+    built = Message(MessageKey.CANNOT_CONNECT, data)
+    data["url"] = object()
+
+    assert built == message
+    assert hash(built) == hash(message)
+    assert built.args["url"] == "http://host"
+    assert len({built, message}) == 1
+
+
 def test_the_message_an_error_carries_comes_back() -> None:
     """
     Given  an error raised with a message and a foreign error that has only its own words
@@ -217,20 +245,24 @@ def test_the_message_an_error_carries_comes_back() -> None:
     )
 
 
-def _used_names() -> set[str]:
-    """Return every name and attribute the sources outside ``domain`` and ``texts`` use."""
-    used: set[str] = set()
+def _imported_names() -> set[str]:
+    """Return every name the sources outside ``domain`` and ``texts`` import from ``messages``.
+
+    A name that only looks the same (a local variable, a function of ``texts``) is not a use.
+    """
+    imported: set[str] = set()
     package = _root() / "teachers_teammate"
     for path in package.rglob("*.py"):
         relative = path.relative_to(package).as_posix()
         if relative.startswith(("domain/", "texts/")):
             continue
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.Name):
-                used.add(node.id)
-            elif isinstance(node, ast.Attribute):
-                used.add(node.attr)
-    return used
+            if (
+                isinstance(node, ast.ImportFrom)
+                and (node.module or "").split(".")[-1] == "messages"
+            ):
+                imported.update(alias.name for alias in node.names)
+    return imported
 
 
 def _called_name(node: ast.AST) -> str:
@@ -288,10 +320,10 @@ def test_no_factory_is_given_a_caught_error() -> None:
 def test_every_factory_is_used() -> None:
     """
     Given  the factories of ``messages.py``
-    When   the names the rest of the package calls are collected
+    When   the names the rest of the package imports from ``messages`` are collected
     Then   no factory is left over, so a key nothing reports does not linger
     """
-    unused = sorted(set(_factories()) - _used_names() - _NOT_FACTORIES)
+    unused = sorted(set(_factories()) - _imported_names() - _NOT_FACTORIES - _BASE_CASES)
     assert not unused, f"no call site reports these messages: {unused}"
 
 

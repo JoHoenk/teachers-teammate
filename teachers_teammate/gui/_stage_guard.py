@@ -15,8 +15,8 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QCheckBox, QWidget
 
 from ..application.composition import AppServices
-from ..application.run import RequirementIssue
 from ..config import Config
+from ..domain.requirements import RequirementIssue
 from ..domain.stages import Stage
 from ..texts import review as txt
 from ._background import LatestTask

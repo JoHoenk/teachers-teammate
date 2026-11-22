@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from PySide6.QtWidgets import QPushButton
 
-from teachers_teammate.application.run import IssueKind, RequirementIssue
+from teachers_teammate.domain.requirements import IssueKind, RequirementIssue
 from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog
 from teachers_teammate.gui._fix_targets import (
     COMMAND_CHOOSE_FOLDER,
@@ -56,7 +56,7 @@ def test_fix_for_nothing_to_read_offers_to_turn_recognition_on() -> None:
     When   its fix is asked
     Then   the line says there is nothing to read and the button turns recognition on
     """
-    fix = _fix("ocr", RequirementIssue("nothing", IssueKind.NOTHING_TO_READ))
+    fix = _fix("ocr", RequirementIssue(IssueKind.NOTHING_TO_READ))
 
     assert fix.line.startswith("Nothing to read")
     assert [(a.label, a.command, a.page) for a in fix.actions] == [
@@ -71,7 +71,7 @@ def test_fix_for_a_refused_recognition_offers_the_model_choice() -> None:
     When   its fix is asked
     Then   the line says it must run here and the button opens AI models on the reading step
     """
-    fix = _fix("ocr", RequirementIssue("Cloud.", IssueKind.OCR_NOT_ALLOWED))
+    fix = _fix("ocr", RequirementIssue(IssueKind.OCR_NOT_ALLOWED))
 
     assert fix.line == "Text recognition must run on this computer"
     assert fix.actions == (FixAction("Choose a model…", SettingsPage.AI_MODELS, FOCUS_OCR),)
@@ -84,7 +84,7 @@ def test_fix_for_a_missing_reader_offers_the_download() -> None:
     When   its fix is asked
     Then   the line says so and "Download…" opens the Reading models tab with the reader ticked
     """
-    fix = _fix("ocr", RequirementIssue("x", IssueKind.READER_MODEL_MISSING))
+    fix = _fix("ocr", RequirementIssue(IssueKind.READER_MODEL_MISSING))
 
     assert fix.line == "The built-in reader isn't downloaded yet"
     assert fix.actions == (
@@ -101,7 +101,7 @@ def test_fix_for_an_unreachable_ollama_offers_retry_and_finding_the_server() -> 
     When   its fix is asked
     Then   there is a "Check again" command and a button that opens the server search
     """
-    fix = _fix("", RequirementIssue("down", IssueKind.OLLAMA_UNREACHABLE))
+    fix = _fix("", RequirementIssue(IssueKind.OLLAMA_UNREACHABLE))
 
     assert fix.line == "Ollama isn't reachable"
     assert fix.actions == (
@@ -118,7 +118,7 @@ def test_fix_for_a_missing_ollama_offers_the_download_page_and_a_new_check() -> 
     Then   the line says Ollama wasn't found, and the buttons open the download page and
            check again
     """
-    fix = _fix("", RequirementIssue("down", IssueKind.OLLAMA_NOT_FOUND))
+    fix = _fix("", RequirementIssue(IssueKind.OLLAMA_NOT_FOUND))
 
     assert fix.line == "Ollama wasn't found on this computer"
     assert fix.actions == (
@@ -134,7 +134,7 @@ def test_fix_for_a_stopped_ollama_offers_to_start_it_where_the_app_can() -> None
     When   its fix is asked
     Then   the line says it isn't running, and the buttons start it and check again
     """
-    fix = _fix("", RequirementIssue("down", IssueKind.OLLAMA_NOT_RUNNING, startable=True))
+    fix = _fix("", RequirementIssue(IssueKind.OLLAMA_NOT_RUNNING, startable=True))
 
     assert fix.line == "Ollama isn't running"
     assert fix.actions == (
@@ -150,7 +150,7 @@ def test_fix_for_a_stopped_ollama_on_linux_names_the_service_command() -> None:
     When   its fix is asked
     Then   there is only "Check again", and its tooltip says how to start the service
     """
-    fix = _fix("", RequirementIssue("down", IssueKind.OLLAMA_NOT_RUNNING))
+    fix = _fix("", RequirementIssue(IssueKind.OLLAMA_NOT_RUNNING))
 
     assert fix.line == "Ollama isn't running"
     assert [a.label for a in fix.actions] == ["Check again"]
@@ -182,9 +182,9 @@ def test_fix_for_missing_models_says_how_many_and_preselects_them() -> None:
     When   their fixes are asked
     Then   each offers "Download…" with those models ticked, and the line counts them
     """
-    none = _fix("", RequirementIssue("x", IssueKind.NO_OLLAMA_MODEL, models=("qwen3:8b",)))
-    one = _fix("", RequirementIssue("x", IssueKind.MODEL_MISSING, models=("qwen3:8b",)))
-    two = _fix("", RequirementIssue("x", IssueKind.MODEL_MISSING, models=("a:1", "b:2")))
+    none = _fix("", RequirementIssue(IssueKind.NO_OLLAMA_MODEL, models=("qwen3:8b",)))
+    one = _fix("", RequirementIssue(IssueKind.MODEL_MISSING, models=("qwen3:8b",)))
+    two = _fix("", RequirementIssue(IssueKind.MODEL_MISSING, models=("a:1", "b:2")))
 
     assert none.line == "No AI model is downloaded in Ollama yet"
     assert one.line == "qwen3:8b isn't downloaded yet"
@@ -202,7 +202,7 @@ def test_fix_for_a_missing_package_ticks_the_provider_in_add_ons() -> None:
     When   its fix is asked
     Then   "Install…" opens the online-services tab with that provider ticked
     """
-    fix = _fix("correction", RequirementIssue("x", IssueKind.PACKAGE_MISSING, provider="mistral"))
+    fix = _fix("correction", RequirementIssue(IssueKind.PACKAGE_MISSING, provider="mistral"))
 
     assert fix.line == "Mistral support isn't installed"
     assert fix.actions == (
@@ -221,7 +221,7 @@ def test_fix_for_a_missing_key_picks_the_key_row_of_the_step(stage: str, focus: 
     When   its fix is asked
     Then   "Enter key…" opens AI models on the key row of that step
     """
-    fix = _fix(stage, RequirementIssue("x", IssueKind.KEY_MISSING, provider="mistral_eu"))
+    fix = _fix(stage, RequirementIssue(IssueKind.KEY_MISSING, provider="mistral_eu"))
 
     assert fix.line == "No API key for Mistral (EU) yet"
     assert fix.actions == (FixAction("Enter key…", SettingsPage.AI_MODELS, focus),)
@@ -234,7 +234,7 @@ def test_fix_for_outdated_add_ons_opens_the_update_line_of_add_ons() -> None:
     When   their fix is asked
     Then   "Update add-ons…" opens Settings → Add-ons on the update banner and explains why
     """
-    fix = _fix("correction", RequirementIssue("x", IssueKind.ADDONS_OUTDATED))
+    fix = _fix("correction", RequirementIssue(IssueKind.ADDONS_OUTDATED))
 
     assert fix.line == "Add-ons need an update after the app update"
     (action,) = fix.actions
@@ -253,9 +253,7 @@ def test_fix_for_a_package_that_waits_for_a_restart_offers_no_button() -> None:
     When   its fix is asked
     Then   the line is the service's sentence and there is nothing to press
     """
-    issue = RequirementIssue(
-        "Restart the app to finish installing name detection.", IssueKind.ADDON_RESTART_NEEDED
-    )
+    issue = RequirementIssue(IssueKind.ADDON_RESTART_NEEDED, name="name detection")
 
     fix = _fix("anonymizer", issue)
 
@@ -270,7 +268,7 @@ def test_fix_for_missing_name_detection_ticks_the_spacy_model() -> None:
     When   its fix is asked
     Then   the line names the language and "Download…" ticks only the spaCy model
     """
-    issue = RequirementIssue("x", IssueKind.NAME_DETECTION_MISSING, models=("de_core_news_sm",))
+    issue = RequirementIssue(IssueKind.NAME_DETECTION_MISSING, models=("de_core_news_sm",))
 
     fix = _fix("anonymizer", issue, language="german")
 
@@ -290,7 +288,7 @@ def test_fix_for_a_missing_spacy_installs_it_with_the_model() -> None:
     When   its fix is asked
     Then   the line says what is missing and "Install…" ticks spaCy and the model
     """
-    issue = RequirementIssue("x", IssueKind.PRIVACY_ADDON_MISSING, models=("de_core_news_sm",))
+    issue = RequirementIssue(IssueKind.PRIVACY_ADDON_MISSING, models=("de_core_news_sm",))
 
     fix = _fix("anonymizer", issue, language="german")
 
@@ -471,9 +469,7 @@ def test_the_dialog_offers_the_key_button_and_emits_it(qtbot) -> None:
     When   "Enter key…" is pressed
     Then   the dialog emits that action and closes
     """
-    issue = RequirementIssue(
-        "No API key for Mistral (EU) is set.", IssueKind.KEY_MISSING, provider="mistral_eu"
-    )
+    issue = RequirementIssue(IssueKind.KEY_MISSING, provider="mistral_eu")
     fix = _fix("correction", issue)
     dlg = DependencyGuardDialog("Proofread can't be turned on", [issue], fix.actions)
     qtbot.addWidget(dlg)
@@ -494,7 +490,7 @@ def test_the_dialog_gives_a_retry_no_button(qtbot) -> None:
     When   the dialog is built
     Then   only the server address gets a button (the caller checks again by itself)
     """
-    issue = RequirementIssue("down", IssueKind.OLLAMA_UNREACHABLE)
+    issue = RequirementIssue(IssueKind.OLLAMA_UNREACHABLE)
     dlg = DependencyGuardDialog("The run can't start", [issue], _fix("", issue).actions)
     qtbot.addWidget(dlg)
 

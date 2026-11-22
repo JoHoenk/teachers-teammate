@@ -2,7 +2,7 @@
 
 The readiness line above Run, the requirement guard that unticks a step, and the dialog that
 stops a run all ask :func:`fix_for`, so they say the same thing and open the same place.  The
-rows are matched on :class:`~teachers_teammate.application.run.IssueKind`, never on the
+rows are matched on :class:`~teachers_teammate.domain.requirements.IssueKind`, never on the
 sentence, so rewording a message can't break a fix.  Pure functions: no widgets.
 """
 
@@ -11,11 +11,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..application.run import IssueKind, RequirementIssue
 from ..domain.language import language_name
+from ..domain.requirements import IssueKind, RequirementIssue
 from ..domain.stages import Stage
 from ..texts import addons
 from ..texts import review as txt
+from ..texts.issues import issue_text
 from ._install_round import PACKAGE_PREFIX, READER_ITEM
 from ._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .settings._page import (
@@ -137,9 +138,8 @@ def _general_fix(issue: RequirementIssue) -> Fix | None:
     """Return the fix for a requirement that is not about one model or package, else ``None``."""
     kind = issue.kind
     if kind is IssueKind.ADDON_RESTART_NEEDED:
-        # Nothing to press: the install is done, the app has to start again.  The service
-        # words the sentence, because it names the step that waits (name detection, a service).
-        return Fix(issue.message, ())
+        # Nothing to press: the install is done, the app has to start again.
+        return Fix(issue_text(issue), ())
     if kind is IssueKind.NOTHING_TO_READ:
         return Fix(
             txt.NOTHING_TO_READ_LINE,

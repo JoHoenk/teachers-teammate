@@ -21,8 +21,9 @@ from teachers_teammate.application.speed_estimates import SpeedSummary
 from teachers_teammate.application.documents import WorkedOn
 from teachers_teammate.application.export import NothingToExport, WouldOverwriteInput
 from teachers_teammate.application.model_recommendations import ModelRecommendationService
-from teachers_teammate.application.run import IssueKind, RequirementIssue, RunPreflight, RunService
+from teachers_teammate.application.run import RunPreflight, RunService
 from teachers_teammate.application.setup_plan import SetupService
+from teachers_teammate.domain.requirements import IssueKind, RequirementIssue
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
     RECOMMENDED,
@@ -65,6 +66,7 @@ from teachers_teammate.domain.run_summary import (
 )
 from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts._types import Answer, Notice, Question, StandardButton
+from teachers_teammate.texts.issues import issue_text
 from tests.conftest import make_config
 
 from ._gui_harness import (
@@ -2937,7 +2939,7 @@ def test_run_with_ollama_unreachable_shows_clear_message_and_does_not_start(
 
     dialog = shown[0]
     assert dialog.windowTitle() == "The run can't start"
-    assert "Cannot connect to Ollama" in dialog.issues[0].message
+    assert "Cannot connect to Ollama" in issue_text(dialog.issues[0])
     assert [a.label for a in dialog.fix_actions] == ["Find server…"]  # "Check again" is no button
     assert main_window._run_controller._worker is None
     assert main_window._run_btn.isEnabled() is True
@@ -2993,7 +2995,7 @@ def test_run_shows_unmet_stage_requirement_dialog(
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(
             stage="correction",
-            stage_issues=(RequirementIssue("Model is not downloaded.", IssueKind.MODEL_MISSING),),
+            stage_issues=(RequirementIssue(IssueKind.MODEL_MISSING),),
         ),
     )
     shown: list[str] = []
@@ -3134,7 +3136,7 @@ def test_run_refuses_online_ocr_with_an_explanation(
     main_window._on_run()
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
-    assert "Runs on Ollama's servers." in shown[0].issues[0].message
+    assert "Runs on Ollama's servers." in issue_text(shown[0].issues[0])
     assert [a.label for a in shown[0].fix_actions] == ["Choose a model…"]
     assert main_window._run_controller._worker is None
     assert main_window._run_btn.isEnabled() is True
@@ -4138,11 +4140,7 @@ def _preflight_returns(monkeypatch, result: RunPreflight) -> list[dict]:
 
 _MISSING_KEY = RunPreflight(
     stage="correction",
-    stage_issues=(
-        RequirementIssue(
-            "No API key for Mistral (EU) is set.", IssueKind.KEY_MISSING, provider="mistral_eu"
-        ),
-    ),
+    stage_issues=(RequirementIssue(IssueKind.KEY_MISSING, provider="mistral_eu"),),
 )
 
 
@@ -4399,7 +4397,7 @@ def test_the_retry_runs_for_every_kind_that_means_ollama_is_not_answering(
            turns the line green without a click
     """
     result = RunPreflight(
-        ollama_unreachable="✗ down", ollama_issue=RequirementIssue("✗ down", kind)
+        ollama_unreachable="✗ down", ollama_issue=RequirementIssue(kind, reason="✗ down")
     )
 
     ready_window._readiness_controller.on_check_done(result, None)
@@ -4422,7 +4420,7 @@ def test_get_ollama_opens_the_download_page(qtbot, ready_window, monkeypatch) ->
     )
     result = RunPreflight(
         ollama_unreachable="✗ down",
-        ollama_issue=RequirementIssue("✗ down", IssueKind.OLLAMA_NOT_FOUND),
+        ollama_issue=RequirementIssue(IssueKind.OLLAMA_NOT_FOUND),
     )
     ready_window._readiness_controller.on_check_done(result, None)
 
@@ -4454,7 +4452,7 @@ def test_start_ollama_starts_it_in_the_background_and_checks_again(
     )
     result = RunPreflight(
         ollama_unreachable="✗ down",
-        ollama_issue=RequirementIssue("✗ down", IssueKind.OLLAMA_NOT_RUNNING, startable=True),
+        ollama_issue=RequirementIssue(IssueKind.OLLAMA_NOT_RUNNING, startable=True),
     )
     ready_window._readiness_controller.on_check_done(result, None)
 

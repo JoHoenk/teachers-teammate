@@ -12,7 +12,6 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Sequence
 import dataclasses
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 import threading
 
@@ -32,6 +31,7 @@ from ..domain.model_listing import ModelListing
 from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import TEXT_SUFFIX, output_folder_refusal
 from ..domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
+from ..domain.requirements import IssueKind, RequirementIssue
 from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..domain.stages import Stage
 from ..infrastructure.file_discovery import FileDiscovery
@@ -55,48 +55,6 @@ from .model_recommendations import ModelRecommendationService
 from .ports import HardwareProbe, OllamaServer
 from .providers import ProviderService
 from .reader import ReaderService
-
-
-class IssueKind(StrEnum):
-    """What is missing, so the GUI can offer the fix without reading the sentence."""
-
-    OCR_NOT_ALLOWED = "ocr_not_allowed"
-    #: The built-in reader's model files are not downloaded yet.
-    READER_MODEL_MISSING = "reader_model_missing"
-    #: An address on this computer that does not answer, and no Ollama program was found.
-    OLLAMA_NOT_FOUND = "ollama_not_found"
-    #: Ollama is installed on this computer but does not answer: it has to be started.
-    OLLAMA_NOT_RUNNING = "ollama_not_running"
-    #: An address that does not answer, and nothing can be started from here.
-    OLLAMA_UNREACHABLE = "ollama_unreachable"
-    NO_OLLAMA_MODEL = "no_ollama_model"
-    MODEL_MISSING = "model_missing"
-    PACKAGE_MISSING = "package_missing"
-    KEY_MISSING = "key_missing"
-    NAME_DETECTION_MISSING = "name_detection_missing"
-    #: spaCy itself is not installed, so no name detection model can run.
-    PRIVACY_ADDON_MISSING = "privacy_addon_missing"
-    #: Text recognition is switched off and no queued file has text to use without it.
-    NOTHING_TO_READ = "nothing_to_read"
-    #: An app update changed packages the add-ons share with it: they stay off until updated.
-    ADDONS_OUTDATED = "addons_outdated"
-    #: An install could not replace a file the running app has loaded: a restart finishes it.
-    ADDON_RESTART_NEEDED = "addon_restart_needed"
-
-
-@dataclasses.dataclass(frozen=True)
-class RequirementIssue:
-    """A single unmet requirement for enabling a pipeline stage or starting a run."""
-
-    #: The sentence for the dialog.
-    message: str
-    kind: IssueKind
-    #: The provider whose package or key is missing (``PACKAGE_MISSING``, ``KEY_MISSING``).
-    provider: str = ""
-    #: Ollama tags that are not downloaded, or the spaCy model that is missing.
-    models: tuple[str, ...] = ()
-    #: The app can start Ollama itself (``OLLAMA_NOT_RUNNING``): the fix offers a button.
-    startable: bool = False
 
 
 @dataclass(frozen=True)
@@ -155,26 +113,17 @@ class RunPreflight:
         every blocker, so the GUI shows and fixes them all the same way.
         """
         if self.nothing_to_read:
-            return Stage.OCR, RequirementIssue(
-                "Text recognition is switched off, and none of these files has text to use "
-                "without it.",
-                IssueKind.NOTHING_TO_READ,
-            )
+            return Stage.OCR, RequirementIssue(IssueKind.NOTHING_TO_READ)
         if self.ocr_not_allowed:
-            return Stage.OCR, RequirementIssue(self.ocr_not_allowed, IssueKind.OCR_NOT_ALLOWED)
+            return Stage.OCR, RequirementIssue(
+                IssueKind.OCR_NOT_ALLOWED, reason=self.ocr_not_allowed
+            )
         if self.ollama_unreachable:
             return "", self.ollama_issue or RequirementIssue(
-                self.ollama_unreachable, IssueKind.OLLAMA_UNREACHABLE
+                IssueKind.OLLAMA_UNREACHABLE, reason=self.ollama_unreachable
             )
         if self.missing_models:
-            listed = ", ".join(f"'{model}'" for model in self.missing_models)
-            noun = "Model" if len(self.missing_models) == 1 else "Models"
-            verb = "is" if len(self.missing_models) == 1 else "are"
-            return "", RequirementIssue(
-                f"{noun} {listed} {verb} not downloaded.",
-                IssueKind.MODEL_MISSING,
-                models=self.missing_models,
-            )
+            return "", RequirementIssue(IssueKind.MODEL_MISSING, models=self.missing_models)
         if self.stage_issues:
             return self.stage, self.stage_issues[0]
         return None
@@ -635,14 +584,15 @@ class RunService:
 
         A local address that does not answer is told apart by looking for the program: a
         teacher who has just installed the app needs to know whether to install Ollama or to
-        start it.  An address on another computer can only be unreachable.
+        start it.  An address on another computer can only be unreachable.  *message* is what
+        the server answered, which the dialog shows.
         """
         if not self._ollama.is_local(url, include_wsl_host=True):
-            return RequirementIssue(message, IssueKind.OLLAMA_UNREACHABLE)
+            return RequirementIssue(IssueKind.OLLAMA_UNREACHABLE, reason=message)
         if not self._ollama.program_found():
-            return RequirementIssue(message, IssueKind.OLLAMA_NOT_FOUND)
+            return RequirementIssue(IssueKind.OLLAMA_NOT_FOUND, reason=message)
         return RequirementIssue(
-            message, IssueKind.OLLAMA_NOT_RUNNING, startable=self._ollama.can_start()
+            IssueKind.OLLAMA_NOT_RUNNING, reason=message, startable=self._ollama.can_start()
         )
 
     def _ollama_wait(self, config: Config) -> WaitDetail:
@@ -777,11 +727,7 @@ class RunService:
         Ollama is checked by the preflight before the stages.
         """
         if engine == ENGINE_PPOCR and not self._reader.reader_installed():
-            return [
-                RequirementIssue(
-                    "The built-in reader is not downloaded yet.", IssueKind.READER_MODEL_MISSING
-                )
-            ]
+            return [RequirementIssue(IssueKind.READER_MODEL_MISSING)]
         return []
 
     def _llm_stage_issues(self, config: Config, stage: str) -> list[RequirementIssue]:
@@ -801,19 +747,9 @@ class RunService:
         if missing_package and self._addon_needs_update(missing_package):
             return [self._addons_outdated_issue()]
         if missing_package:
-            return [
-                RequirementIssue(
-                    f"{name} support is not installed yet.",
-                    IssueKind.PACKAGE_MISSING,
-                    provider=provider,
-                )
-            ]
+            return [RequirementIssue(IssueKind.PACKAGE_MISSING, provider=provider, name=name)]
         if self._providers.provider_key_missing(provider):
-            return [
-                RequirementIssue(
-                    f"No API key for {name} is set.", IssueKind.KEY_MISSING, provider=provider
-                )
-            ]
+            return [RequirementIssue(IssueKind.KEY_MISSING, provider=provider, name=name)]
         if provider != PROVIDER_OLLAMA:
             return []
         from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
@@ -821,39 +757,20 @@ class RunService:
         installed, unreachable = self._installed_ollama_models(config.ollama_url)
         models = (model,) if model else ()
         if unreachable:
-            return [
-                RequirementIssue(
-                    "Ollama is not running. Start it with `ollama serve`.",
-                    IssueKind.OLLAMA_UNREACHABLE,
-                )
-            ]
+            return [RequirementIssue(IssueKind.OLLAMA_UNREACHABLE, reason=unreachable)]
         if not installed:
-            return [
-                RequirementIssue(
-                    "No model is downloaded in Ollama yet.",
-                    IssueKind.NO_OLLAMA_MODEL,
-                    models=models,
-                )
-            ]
+            return [RequirementIssue(IssueKind.NO_OLLAMA_MODEL, models=models)]
         if model and not models_include(model, installed):
-            return [
-                RequirementIssue(
-                    f"Model '{model}' is not downloaded.", IssueKind.MODEL_MISSING, models=models
-                )
-            ]
+            return [RequirementIssue(IssueKind.MODEL_MISSING, models=models)]
         return []
 
     @staticmethod
     def _addons_outdated_issue() -> RequirementIssue:
-        return RequirementIssue(
-            "The add-ons need an update after the app update.", IssueKind.ADDONS_OUTDATED
-        )
+        return RequirementIssue(IssueKind.ADDONS_OUTDATED)
 
     @staticmethod
     def _addon_restart_issue(what: str) -> RequirementIssue:
-        return RequirementIssue(
-            f"Restart the app to finish installing {what}.", IssueKind.ADDON_RESTART_NEEDED
-        )
+        return RequirementIssue(IssueKind.ADDON_RESTART_NEEDED, name=what)
 
     def _addon_needs_update(self, distribution: str) -> bool:
         """Return whether *distribution* is installed as an add-on but kept off by an app update."""
@@ -874,17 +791,5 @@ class RunService:
         if required in installed_models:
             return []
         if not installed_models and not self._addons.is_module_importable("spacy"):
-            return [
-                RequirementIssue(
-                    "spaCy is not installed. Install it under Add-ons in the app.",
-                    IssueKind.PRIVACY_ADDON_MISSING,
-                    models=(required,),
-                )
-            ]
-        return [
-            RequirementIssue(
-                f"spaCy NER model '{required}' is not downloaded.",
-                IssueKind.NAME_DETECTION_MISSING,
-                models=(required,),
-            )
-        ]
+            return [RequirementIssue(IssueKind.PRIVACY_ADDON_MISSING, models=(required,))]
+        return [RequirementIssue(IssueKind.NAME_DETECTION_MISSING, models=(required,))]

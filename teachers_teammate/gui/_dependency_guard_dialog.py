@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..application.run import RequirementIssue
+from ..domain.requirements import RequirementIssue
+from ..texts.issues import issue_line
 from ._fix_targets import COMMAND_RETRY, FixAction
 
 
@@ -52,7 +53,7 @@ class DependencyGuardDialog(QDialog):
         layout.addWidget(title_lbl)
 
         for issue in issues:
-            row = QLabel(f"• {issue.message}")
+            row = QLabel(issue_line(issue))
             row.setWordWrap(True)
             layout.addWidget(row)
 

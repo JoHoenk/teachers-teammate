@@ -153,7 +153,6 @@ ALLOWED: dict[str, frozenset[str]] = {
     "teachers_teammate/gui/_dependency_guard_dialog.py": frozenset(
         {
             "f'<b>{title}:</b>'",
-            "f'• {issue.message}'",
         }
     ),
     "teachers_teammate/gui/_export_controller.py": frozenset(

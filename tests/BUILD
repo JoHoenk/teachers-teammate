@@ -1188,7 +1188,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_run_service.py"],
     args = ["unit/test_run_service.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB + _TEXTS_LIB,
 )
 
 # What the store says about a document.

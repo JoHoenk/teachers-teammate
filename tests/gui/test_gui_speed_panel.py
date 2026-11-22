@@ -26,7 +26,7 @@ from teachers_teammate.domain.performance_estimate import (
     TimeRange,
 )
 from teachers_teammate.exceptions import RunStoppedError
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import review as txt
 from teachers_teammate.gui._hardware_profile_selector import HardwareProfileSelector
 from teachers_teammate.gui.settings._speed_panel import SpeedPanel
 from teachers_teammate.texts.settings import WHERE_AI_MODELS

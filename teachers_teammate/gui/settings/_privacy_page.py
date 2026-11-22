@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import DEFAULTS
-from .. import _user_text as txt
+from ...texts import review as txt
 from .._anonymizer_config_widget import AnonymizerConfigWidget
 from .._privacy_settings import DISPLAY_ANONYMIZED_DEFAULT, FlowAcknowledgements
 from ._page import (

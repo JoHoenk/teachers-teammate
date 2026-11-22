@@ -21,7 +21,7 @@ from teachers_teammate.domain.model_catalog import (
 )
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.gui import _dialogs
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import addons as txt
 from teachers_teammate.gui._constants import _SPACY_MODEL_CHOICES
 from teachers_teammate.gui._install_round import PAGE_MODELS_ITEM, READER_ITEM
 from teachers_teammate.gui.settings.addons import _install_status

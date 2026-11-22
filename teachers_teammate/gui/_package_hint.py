@@ -7,9 +7,9 @@ import sys
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
+from ..texts.issues import PACKAGE_MISSING
 from ._model_guidance import PROVIDER_PREFIX, OpenDownloads
 
-PACKAGE_MISSING = "{name} support is not installed yet."
 INSTALL_BUTTON = "Install…"
 INSTALL_BUTTON_TOOLTIP = "Opens Add-ons, where this package can be installed with one click."
 PIP_HINT = "Or run:  pip install {pip}"

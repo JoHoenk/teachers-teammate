@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QComboBox, QLineEdit, QTextEdit
 
 from teachers_teammate.application.check_document import CheckDocument, check_document_of
 from teachers_teammate.domain.teacher_work import WorkStatus
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import review as txt
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui.check import CheckPage, CopyKind, CopyState, RunState
 from teachers_teammate.gui.check._page import _escape_is_for_the_focus

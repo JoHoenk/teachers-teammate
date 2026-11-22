@@ -142,12 +142,6 @@ PAGE_MODELS_SIZE_GB = math.ceil(sum(m.size for m in PAGE_MODELS) / 1e6) / 1e3
 PAGE_MODELS_NOT_DOWNLOADED = "page models not downloaded"
 """Why a model step of the automatic preparation did not act (debug log and CLI line)."""
 
-PAGE_MODELS_SKIPPED_NOTICE = (
-    "Turning and flattening pages is skipped: "
-    f"{PAGE_MODELS_NOT_DOWNLOADED} (--download-page-models)"
-)
-"""The one line a run prints when the automatic preparation has no page models."""
-
 READER_MODELS: tuple[LocalModel, ...] = (PPOCR_SMALL_DET, PPOCR_SMALL_REC)
 """The built-in reader's model sets: text detection, then text recognition."""
 

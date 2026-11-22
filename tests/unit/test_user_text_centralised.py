@@ -51,7 +51,7 @@ def _called(node: ast.expr) -> str:
 
 def test_no_new_literal_reaches_a_teacher() -> None:
     """
-    Given  the GUI and the CLI
+    Given  every scanned module: the GUI, the CLI, and the layers below them
     When   every literal handed to a sink that shows text is collected
     Then   each one is already on the allowlist, so no new sentence sits at its call site
     """
@@ -128,6 +128,28 @@ def test_a_literal_handed_to_a_text_function_is_a_finding() -> None:
     ]
 
 
+def test_a_sentence_in_a_field_or_a_constant_is_a_finding() -> None:
+    """
+    Given  a result built with a sentence in ``reason=`` and a ``*_WARNING`` module constant
+    When   the source is scanned
+    Then   both are findings, so the layers below the adapters are held to the same rule
+    """
+    source = (
+        'BATTERY_WARNING = "Running on battery."\n'
+        'NOT_A_SINK = "a developer log line"\n'
+        'result = StepResult(False, reason=f"step {n} failed")\n'
+        'raise StageError(message="Could not read")\n'
+    )
+
+    found = [(f.sink, f.kind) for f in inventory.scan_source(source, path="x.py")]
+
+    assert found == [
+        ("BATTERY_WARNING", inventory.CONSTANT),
+        ("StepResult", inventory.FIELD),
+        ("StageError", inventory.FIELD),
+    ]
+
+
 def test_names_and_values_handed_to_a_text_function_are_not_findings() -> None:
     """
     Given  calls of ``texts`` functions with variables, calls, numbers and an empty start folder
@@ -143,3 +165,37 @@ def test_names_and_values_handed_to_a_text_function_are_not_findings() -> None:
     )
 
     assert inventory.scan_source(source, path="x.py") == []
+
+
+def test_a_colour_a_local_name_and_a_debug_note_are_not_findings() -> None:
+    """
+    Given  a ``*_WARNING`` colour, a ``*_WARNING`` name inside a function, a step reason of the
+           automatic image preparation and an invariant raised in ``domain``
+    When   each source is scanned under its own path
+    Then   none is a finding: no teacher reads any of them
+    """
+    colour = 'COLOUR_WARNING = "#e67e22"\n'
+    local = 'def f():\n    LOCAL_WARNING = "Something is wrong here."\n'
+    step = 'result = StepResult(True, reason="outline too small")\n'
+    invariant = 'raise ValueError("a batch holds at least one edit")\n'
+
+    assert inventory.scan_source(colour, path="x.py") == []
+    assert inventory.scan_source(local, path="x.py") == []
+    path = "teachers_teammate/infrastructure/preprocessing/auto.py"
+    assert inventory.scan_source(step, path=path) == []
+    assert inventory.scan_source(invariant, path="teachers_teammate/domain/x.py") == []
+    assert [
+        f.kind for f in inventory.scan_source(invariant, path="teachers_teammate/gui/x.py")
+    ] == [inventory.ERROR]
+
+
+def test_the_csv_is_written_where_bazel_run_was_started(monkeypatch, tmp_path: Path) -> None:
+    """
+    Given  ``bazel run`` started in a folder, which it names in ``BUILD_WORKING_DIRECTORY``
+    When   a relative ``--out`` is resolved
+    Then   it lies in that folder, while an absolute one stays as it is
+    """
+    monkeypatch.setenv("BUILD_WORKING_DIRECTORY", str(tmp_path))
+
+    assert inventory.output_path(Path("user_text.csv")) == tmp_path / "user_text.csv"
+    assert inventory.output_path(Path("/elsewhere/a.csv")) == Path("/elsewhere/a.csv")

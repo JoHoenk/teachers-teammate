@@ -26,8 +26,8 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import DEFAULTS
+from ...texts import review as txt
 from ...texts.settings import PAGE_AI_MODELS, PAGE_AI_SETUP
-from .. import _user_text as txt
 from .._hardware_profile_selector import HardwareProfileSelector
 from .._ollama_status_line import OllamaStatusLine
 from ._page import (

@@ -25,8 +25,8 @@ from ..config import Config
 from ..domain.stages import Stage
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
+from ..texts import review as txt
 from . import _dialogs
-from . import _user_text as txt
 from ._background import run_in_background
 from ._config_panel import ConfigPanel
 from ._error_text import spacy_problem

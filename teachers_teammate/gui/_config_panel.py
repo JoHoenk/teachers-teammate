@@ -48,9 +48,10 @@ from ..domain.output_files import folder_problem
 from ..domain.stages import Stage
 from ..settings_schema import SECONDARY_MODEL_NONE, normalize_notes, normalize_settings
 from ..texts import dialogs as dlg
+from ..texts import review as txt
+from ..texts.privacy import uses_tooltip
 from ..texts.settings import WHERE_ADDONS, WHERE_AI_MODELS
 from . import _anonymizer_settings
-from . import _user_text as txt
 from ._constants import _LANGUAGES
 from ._data_flow_summary import (
     DataFlowSummary,
@@ -58,7 +59,6 @@ from ._data_flow_summary import (
     names_line,
     same_model_line,
     uses_line,
-    uses_tooltip,
 )
 from ._input_selection import InputSelection, SelectionHooks
 from ._prompt_editor import PromptEditor

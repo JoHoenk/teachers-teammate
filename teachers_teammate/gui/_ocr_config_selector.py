@@ -54,9 +54,17 @@ from ..domain.pdf_text_layer import (
 )
 from ..domain.setting_values import PreprocessMethod
 from ..settings_schema import PREPROCESS_METHODS, normalize_preprocess_method
-from . import _user_text as txt
+from ..texts import addons
+from ..texts import review as txt
+from ..texts.models import (
+    EXPERT_SETTINGS,
+    TEMPERATURE_TOOLTIP,
+    asking_for_models_text,
+    checking_models_text,
+)
+from ..texts.privacy import plain_http_note
 from ._collapsible_section import CollapsibleSection
-from ._data_flow_summary import LocationHint, plain_http_note
+from ._data_flow_summary import LocationHint
 from ._hardware_profile_selector import HardwareProfileSelector
 from ._model_fetch import (
     _STATUS_ERROR,
@@ -68,12 +76,6 @@ from ._model_fetch import (
     _status_ok,
 )
 from ._model_guidance import OllamaModelGuidance, OpenDownloads
-from ._model_wording import (
-    EXPERT_SETTINGS,
-    TEMPERATURE_TOOLTIP,
-    asking_for_models_text,
-    checking_models_text,
-)
 
 
 class OcrModelPicker(QWidget):
@@ -135,7 +137,7 @@ class OcrModelPicker(QWidget):
         self._ocr_engine = QComboBox()
         # Labels for the teacher, engine ids as data: nothing else reads the shown text.
         for engine in self._app_service.reader.list_ocr_engines():
-            self._ocr_engine.addItem(txt.OCR_ENGINE_LABELS.get(engine, engine), engine)
+            self._ocr_engine.addItem(addons.OCR_ENGINE_LABELS.get(engine, engine), engine)
         self._ocr_engine.setToolTip(
             "Pages are always read on a computer you control. Online services are not offered: "
             "they would receive the whole page, including names and grades."
@@ -157,7 +159,7 @@ class OcrModelPicker(QWidget):
         self._extra_warn.setVisible(False)
         form.addRow("", self._extra_warn)
 
-        self._install_btn = QPushButton(txt.READER_DOWNLOAD_LABEL)
+        self._install_btn = QPushButton(addons.READER_DOWNLOAD_LABEL)
         self._install_btn.setVisible(False)
         self._install_btn.clicked.connect(self._on_download_reader)
         form.addRow("", self._install_btn)
@@ -277,11 +279,11 @@ class OcrModelPicker(QWidget):
         self._ocr_model_row.setVisible(is_ollama)
         # Hint line and "Use best choice" button exist only for Ollama.
         self._guidance.setVisible(is_ollama)
-        self._engine_hint.setText(txt.OCR_ENGINE_HINTS.get(engine, ""))
+        self._engine_hint.setText(addons.OCR_ENGINE_HINTS.get(engine, ""))
 
         # The built-in reader has to be downloaded once; say so and offer the download here.
         reader_missing = engine == ENGINE_PPOCR and not self._app_service.reader.reader_installed()
-        self._extra_warn.setText(txt.READER_NOT_DOWNLOADED if reader_missing else "")
+        self._extra_warn.setText(addons.READER_NOT_DOWNLOADED if reader_missing else "")
         self._extra_warn.setVisible(reader_missing)
         self._install_btn.setVisible(reader_missing)
 
@@ -438,11 +440,11 @@ class ScanQualityControls(QWidget):
         self._page_models_row = QWidget()
         pm = QHBoxLayout(self._page_models_row)
         pm.setContentsMargins(0, 0, 0, 0)
-        pm_label = QLabel(txt.PAGE_MODELS_MISSING_LINE)
+        pm_label = QLabel(addons.PAGE_MODELS_MISSING_LINE)
         pm_label.setWordWrap(True)
         pm_label.setStyleSheet("color: #888; font-size: 11px;")
         pm.addWidget(pm_label, stretch=1)
-        self._page_models_btn = QPushButton(txt.PAGE_MODELS_DOWNLOAD_BUTTON)
+        self._page_models_btn = QPushButton(addons.PAGE_MODELS_DOWNLOAD_BUTTON)
         self._page_models_btn.clicked.connect(self._on_download_page_models)
         pm.addWidget(self._page_models_btn)
         form.addRow(self._page_models_row)

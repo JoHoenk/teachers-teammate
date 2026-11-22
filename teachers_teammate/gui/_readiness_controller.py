@@ -16,7 +16,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QWidget
 
 from ..application.composition import AppServices
-from ..application.run import IssueKind, RequirementIssue, RunPreflight
+from ..application.run import RunPreflight
 from ..config import DEFAULTS
 from ..domain.ollama_discovery import (
     OLLAMA_DOWNLOAD_URL,
@@ -24,10 +24,11 @@ from ..domain.ollama_discovery import (
     DiscoveryScope,
     ServerKind,
 )
+from ..domain.requirements import IssueKind, RequirementIssue
 from ..domain.stages import Stage
 from ..texts import dialogs as dlg
+from ..texts import review as txt
 from . import _dialogs
-from . import _user_text as txt
 from ._background import LatestTask, run_in_background
 from ._config_panel import ConfigPanel
 from ._fix_targets import (

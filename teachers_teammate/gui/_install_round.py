@@ -17,7 +17,7 @@ from PySide6.QtCore import QObject, Signal
 
 from ..application.addons import PAGE_MODELS_STATUS_KEY, READER_STATUS_KEY
 from ..application.composition import AppServices, inject_addon_packages_dir
-from . import _user_text as txt
+from ..texts import addons as txt
 from ._long_job import LongJobThread
 from ._model_guidance import SPACY_PREFIX
 

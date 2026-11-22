@@ -152,19 +152,22 @@ reference everywhere else. The package is Qt-free, so `gui/`, `cli.py`, `applica
 | `texts/_types.py` | The shapes: `Notice`, `Question`, `Choice`, `FilePrompt`, `Answer`. Text and nothing else. |
 | `texts/dialogs.py` | Every message box, question and file picker. |
 | `texts/settings.py` | Settings page titles, the `WHERE_*` "where do I change this" sentences, tab names. |
-| `texts/privacy.py` | The "what is sent for this file" wording. |
+| `texts/privacy.py` | The "what is sent for this file" wording, and what each privacy level and each place means (the levels, the places, the advice, the tooltips of the data-flow summary). |
 | `texts/check.py` | What the Check tab's widgets say around its text: the two editable views' tooltips, the ⋯ button, the source dialog's button, the scan switch, the strips, the side panel's tabs and its filter row. |
 | `texts/setup.py` | Every sentence of the Setup Assistant's pages. |
+| `texts/issues.py` | One sentence per unmet requirement of a step or a run, worded from a `RequirementIssue`. |
+| `texts/run.py` | What a run says: the battery warning, the line for a file a stop cut short. |
 | `texts/servers.py` | How a found Ollama server is described (the card). |
+| `texts/review.py` | The review and the unclear expressions, the prompt dialogs, the queue's rows and steps, the speed test, and how a stored result was sent. |
+| `texts/models.py` | This computer, the suitability of a model, the download warnings and the model list. |
+| `texts/addons.py` | The reading engines, the downloads of the built-in reader and the page models, and what the Add-ons page says during an install. |
 
 `texts/__init__.py` is the map — a docstring naming which module owns what, no logic.
 
-Wording that is built from application or infrastructure data (a stored result's
-`SentRecord`, an install failure, a model rating) cannot live in `texts/`, which imports only
-`domain`. It lives in two Qt-free modules of the GUI: `gui/_user_text.py` (the review, the
-engines, image preparation, add-ons, the Check tab's labels) and `gui/_model_wording.py`
-(hardware profiles and model recommendations). The same rule holds there: widgets import the
-names, they never build a sentence.
+Wording that is built from application data (a stored result's `SentRecord`, an install
+failure, a model rating) lives here too: the function takes that data as an argument and
+returns the sentence — `sent_lines(status, stage, location)`, never a lookup of the service.
+So `texts` imports `domain` and `pkg`, nothing else.
 
 Rules:
 
@@ -191,14 +194,17 @@ Rules:
   `save_file`, the path it proposes); build it with that argument — `dlg.save_export_to_folder(label, start)` —
   or the picker opens wherever Qt last was. A test patches this module once instead of every window.
 
-**The ratchet test.** `tests/unit/test_user_text_centralised.py` parses every module under
-`gui/` and `cli.py` with `ast` and fails on a string literal (or f-string) passed to a
-user-facing sink — `QMessageBox`/`QFileDialog` calls, `setText`/`setToolTip`/
+**The ratchet test.** `tests/unit/test_user_text_centralised.py` parses `gui/`, `cli.py`,
+`application/`, `infrastructure/` and `domain/` with `ast` and fails on a string literal (or
+f-string) passed to a user-facing sink — `QMessageBox`/`QFileDialog` calls, `setText`/`setToolTip`/
 `setPlaceholderText`/`setWindowTitle`/`setTitle`, widget constructors, `addTab`/`addMenu`/
-`addAction`, `print` and argparse `help` in `cli.py`, `raise …Error("…")`, and a literal handed to a
-function of `dlg` / `privacy` (`dlg.copy_failed("Could not copy")` — the sentence belongs in
-the function). A sentence that is only *returned* or kept in a local variable is not a sink, so
-the test cannot see it: build it in `texts/` and call it. The
+`addAction`, `print` and argparse `help` in `cli.py`, `raise …Error("…")`, a `message=` /
+`notice=` / `reason=` keyword argument, a module-level sentence constant named `*_MESSAGE` /
+`*_NOTICE` / `*_WARNING`, and a literal handed to a function of `dlg` / `privacy`
+(`dlg.copy_failed("Could not copy")` — the sentence belongs in the function). A sentence that is
+only *returned* or kept in a local variable is not a sink, so the test cannot see it: build it in
+`texts/` and call it. A `raise` in `domain/` (an invariant) and the step reasons of
+`infrastructure/preprocessing/` (debug log) are not sinks. The
 allowlist is `tools/user_text/allowlist.py`, keyed by file and literal text (not line
 number, which shifts on every edit). It may only shrink: a second test fails on an entry
 whose literal is gone, so moving a text means deleting its entry in the same change.
@@ -612,7 +618,7 @@ a memory warning and a blocking issue separately.  A model that is not catalogue
 and an unreadable memory give `""`.  It rates the models through
 `resolve_hardware_profile()`, so a hand-picked profile counts as it will at run time, and at the
 window the run really gives the model (`memory_at_context_gb`).  The wording of all this is in
-`gui/_model_wording.py`.
+`texts/models.py`.
 
 The check behaves as it would after Ollama unloaded every model, which is the case it has to warn
 about anyway, since Ollama unloads idle models to make room.  On Apple Silicon the whole model
@@ -628,7 +634,7 @@ Three questions, three answers, one owner each:
 | How long will a run take? | the estimate from the store | `application/speed_estimates.py` |
 | How long is left? | the pace of the run so far | `gui/_run_status.py` |
 
-No widget computes a duration: `gui/_user_text.py` formats the figures the service returns, and
+No widget computes a duration: `texts/review.py` formats the figures the service returns, and
 `gui/_run_status.py` turns them into the note on the progress bar.
 
 #### Where the teacher sees it
@@ -776,7 +782,7 @@ and `report --performance --catalog-lines` prints the `answer_length` lines for 
 |---|---|---|
 | Decisions (best model, suitability, hardware profile, `rate_model`) | `domain/model_catalog.py` | Pure functions, no I/O — table-test them. |
 | Caches (local hardware probe, model classification) | `application/model_recommendations.py` | One owner. Call `on_ollama_models_changed(url)` after every pull; it evicts the model list, the classifications and the server's speed facts. Only definite classifications are cached. The memory and GPU readers and the context choice live here too (`available_memory_gb`, `read_gpu_usage`, `context_choice`). |
-| Texts a teacher reads | `gui/_model_wording.py` (model wording), `teachers_teammate/texts/` (everything else) | Qt-free; widgets never build these sentences themselves. See "Where text lives" above. |
+| Texts a teacher reads | `teachers_teammate/texts/` | Qt-free; widgets never build these sentences themselves. See "Where text lives" above. |
 | Widgets | `gui/_hardware_profile_selector.py`, `gui/_model_guidance.py`, `gui/settings/_addons_page.py` | Presentation only. They rate models through `rate_ollama_models(..., cached_only=True)` — never contacting Ollama on the GUI thread. |
 
 Details that are easy to get wrong:
@@ -951,7 +957,7 @@ so it is stored with the result:
   whose result is not stored (`_without_orphan_sent`) and keeps the recognised text, so a
   stray record never costs a new reading; `DocumentStateView.sent` only lists stages that are
   done, so a stage `reconciled_view()` marks stale shows no line.
-- The wording lives in `gui/_user_text.py` (`_how_sent` builds the phrase once; `sent_lines`
+- The wording lives in `texts/review.py` (`_how_sent` builds the phrase once; `sent_lines`
   and `stored_result_line` frame it for the tooltip and the dialog);
   `GUI` writes the cells' lines from `view.sent` after every load, including `_on_file_done`; the dialog shows one line per stored result in a grey block at the
   top of the *What is sent* tab (`stored_lines()`, `objectName="stored_results"`).
@@ -1652,7 +1658,8 @@ changed constant and an `AUTO_VERSION` bump.
 carries them (see *Local model files*); otherwise they are downloaded only on request: **Download…** on Scan quality, the **Page models** box on Add-ons → Reading models
 (`page_models:all`, between the reader and the Ollama pulls in `InstallRound`), or
 `--download-page-models`.  Missing page models are **not** an `IssueKind`: a run never waits for
-them; the CLI prints one notice line (`page_models_notice_for_run`).  `UVDoc` answers an image at
+them; the CLI prints one notice line (`texts/addons.py:PAGE_MODELS_SKIPPED_NOTICE`).  `UVDoc`
+answers an image at
 the size it was given, so the page goes to it scaled to at most `FLATTEN_MAX_SIDE` (2048).
 
 **Identity.**  `cache_service._preprocess_fingerprint(ocr, source, store)` is the method; for
@@ -1665,7 +1672,7 @@ store reaches the key through `CacheReconciliationService(model_store=…)`,
 the default folder (the tests point that at an empty temporary one).
 
 **How to change it.**  A new step is a `Step` in `auto_steps`, with its gate and a named
-constant, a `STEP_LABELS` entry in `gui/_user_text.py` if it is worth a word in the preview
+constant, a `STEP_LABELS` entry in `texts/review.py` if it is worth a word in the preview
 caption, and an `AUTO_VERSION` bump.  It gets **no switch of its own**.  A step's `reason` text
 ("tilt 1.4°") goes to the debug log only.
 

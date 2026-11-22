@@ -9,9 +9,14 @@ Which module owns what:
 
 ===================  ==================================================================
 ``_types.py``        the shapes: :class:`Notice`, :class:`Question`, :class:`FilePrompt`
+``addons.py``        the reading engines, their downloads and the Add-ons page's installs
 ``check.py``         what the Check tab's widgets say around its text
 ``dialogs.py``       every message box, question and file picker
+``issues.py``        one sentence per unmet requirement of a step or a run
+``models.py``        this computer, the suitability of a model, the download warnings
 ``privacy.py``       what is sent for a file, and the data-flow wording
+``review.py``        the review, the prompt dialogs, the queue, the speed test, sent results
+``run.py``           what a run says: the battery warning, a stopped file
 ``servers.py``       how a found Ollama server is described (the card)
 ``settings.py``      the Settings window's page names and the "where to change it" phrases
 ``setup.py``         every sentence of the Setup Assistant's pages
@@ -19,7 +24,7 @@ Which module owns what:
 
 Rules that keep it one home:
 
-* **Dependencies point inward.**  This package may import ``domain`` enums and ids;
+* **Dependencies point inward.**  This package may import ``pkg`` and ``domain``;
   ``domain`` and ``application`` never import it.  They return ids and data, the adapter
   asks this package for the sentence.
 * **Dynamic parts are functions** — ``no_files_found(folder)``, never ``"…" % x`` at the

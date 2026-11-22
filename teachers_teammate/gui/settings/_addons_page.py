@@ -22,9 +22,9 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QPushButton, QTabWidget, QVBoxLayout, QWidget
 
 from ...config import DEFAULTS
+from ...texts import addons as txt
 from ...texts import dialogs as dlg
 from ...texts.settings import TAB_READING_MODELS
-from .. import _user_text as txt
 from .._background import LatestTask
 from .._install_round import (
     PACKAGE_PREFIX,

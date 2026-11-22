@@ -20,7 +20,7 @@ from teachers_teammate.domain.data_location import (
     StageLocation,
 )
 from teachers_teammate.domain.stages import Stage
-from teachers_teammate.gui._data_flow_summary import level_text, stage_tooltip
+from teachers_teammate.texts.privacy import level_text, stage_tooltip
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._what_is_sent_dialog import (
     NOTHING_LEAVES,

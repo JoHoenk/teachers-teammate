@@ -10,7 +10,7 @@ from teachers_teammate.domain.model_catalog import (
     Suitability,
     choose_profile,
 )
-from teachers_teammate.gui import _model_wording as wording
+from teachers_teammate.texts import models as wording
 
 # ── detection status line ───────────────────────────────────────────────────
 

@@ -67,7 +67,7 @@ def test_invalidate_from_stage_static_accumulates_oserror_failures(tmp_path: Pat
     """
     Given  a store whose invalidate_from_stage raises OSError
     When   _invalidate_from_stage() is called
-    Then   the failure names the file
+    Then   the failure names the file and keeps the reason
     """
     source = tmp_path / "bad.png"
     source.touch()
@@ -79,7 +79,7 @@ def test_invalidate_from_stage_static_accumulates_oserror_failures(tmp_path: Pat
         files=[source],
         store=mock_store,
     )
-    assert "bad.png" in failures[0]
+    assert failures == (("bad.png", "disk full"),)
 
 
 # ── The teacher's texts and decisions ──────────────────────────────────────

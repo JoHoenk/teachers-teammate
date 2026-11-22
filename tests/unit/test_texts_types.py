@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from teachers_teammate.domain.requirements import IssueKind, RequirementIssue
 from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts import privacy
+from teachers_teammate.texts.issues import issue_line, issue_text
 from teachers_teammate.texts._types import (
     Answer,
     Choice,
@@ -145,3 +147,56 @@ def test_the_spacy_explanations_differ_for_the_installed_app_and_a_checkout() ->
     assert "Add-ons" in privacy.spacy_missing("x", installed_app=True)
     assert "pip install" in privacy.spacy_missing("x", installed_app=False)
     assert "spacy download" in privacy.spacy_model_missing("no model")
+
+
+@pytest.mark.parametrize("kind", list(IssueKind))
+def test_every_requirement_issue_has_a_sentence_with_nothing_left_unfilled(
+    kind: IssueKind,
+) -> None:
+    """
+    Given  an issue of each kind, with and without the facts a sentence may name
+    When   the sentence for it is asked
+    Then   it is a real sentence: not empty, no placeholder left, no gap where a name belongs
+    """
+    bare = RequirementIssue(kind)
+    named = RequirementIssue(kind, provider="mistral", name="Mistral", models=("m:1b", "n:2b"))
+
+    for issue in (bare, named):
+        sentence = issue_text(issue)
+        assert sentence.strip()
+        assert "{" not in sentence
+        assert "  " not in sentence
+        assert "''" not in sentence
+        assert issue_line(issue) == f"• {sentence}"
+
+
+def test_an_issue_quotes_what_the_service_answered_when_there_is_an_answer() -> None:
+    """
+    Given  a refusal and a connection error that carry the service's own words
+    When   the sentence for each is asked
+    Then   the sentence is those words, not the fallback
+    """
+    assert issue_text(RequirementIssue(IssueKind.OCR_NOT_ALLOWED, reason="Cloud model.")) == (
+        "Cloud model."
+    )
+    unreachable = RequirementIssue(IssueKind.OLLAMA_UNREACHABLE, reason="✗ Cannot connect")
+    assert issue_text(unreachable) == "✗ Cannot connect"
+
+
+@pytest.mark.parametrize(
+    ("models", "sentence"),
+    [
+        (("a:1b",), "Model 'a:1b' is not downloaded."),
+        (("a:1b", "b:2b"), "Models 'a:1b', 'b:2b' are not downloaded."),
+        ((), "A model is not downloaded."),
+    ],
+)
+def test_the_models_that_are_not_downloaded_are_named_in_the_right_number(
+    models: tuple[str, ...], sentence: str
+) -> None:
+    """
+    Given  one model, several models and none named
+    When   the sentence for a missing model is asked
+    Then   it is singular, plural or general
+    """
+    assert issue_text(RequirementIssue(IssueKind.MODEL_MISSING, models=models)) == sentence

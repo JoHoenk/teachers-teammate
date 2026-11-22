@@ -13,7 +13,7 @@ from teachers_teammate.application.anonymization import AnonymizationService
 from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.application.run import RunService
 from teachers_teammate.gui import _main_window as main_window_module
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import review as txt
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._readiness_controller import ReadinessController
 from teachers_teammate.gui._privacy_settings import DISPLAY_ANONYMIZED_KEY

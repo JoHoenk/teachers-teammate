@@ -295,7 +295,7 @@ def test_run_files_a_stopped_file_is_neither_succeeded_nor_failed(tmp_path: Path
         stop.set()
         return ProcessingResult(
             False,
-            "Stopped before proofreading.",
+            "",
             "p.png",
             "raw",
             "",

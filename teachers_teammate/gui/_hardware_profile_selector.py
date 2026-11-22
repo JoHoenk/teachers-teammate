@@ -4,7 +4,7 @@ The widget presents the ``hardware_profile`` setting ("My computer") together
 with a plain-language status line that explains *why* a profile was chosen.
 All discovery runs in a background task (:class:`~._background.LatestTask`), so
 opening a dialog never blocks the UI, and closing it while detection is still
-running is harmless.  The wording lives in :mod:`._model_wording`.
+running is harmless.  The wording lives in :mod:`..texts.models`.
 
 The status line also names the memory that is free right now.  That figure is
 not part of the detection — it changes all the time and no suggestion depends on
@@ -23,8 +23,7 @@ from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidg
 from ..application.composition import AppServices
 from ..config import DEFAULTS
 from ..domain.model_catalog import PROFILE_SETTINGS, HardwareDetection
-from ._background import LatestTask
-from ._model_wording import (
+from ..texts.models import (
     CHECK_COMPUTER_FAILED,
     CHECKING_COMPUTER,
     NO_SUGGESTION_FOR_COMPUTER,
@@ -33,6 +32,7 @@ from ._model_wording import (
     profile_text,
     read_only_profile_text,
 )
+from ._background import LatestTask
 
 _logger = logging.getLogger(__name__)
 

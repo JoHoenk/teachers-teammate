@@ -15,7 +15,7 @@ from enum import Enum
 
 from ..domain.performance_estimate import TimeRange
 from ..domain.run_summary import RunStatus, RunSummary
-from ._user_text import format_duration
+from ..texts.review import format_duration
 
 #: Files whose own pace is blended with the estimate.  One file says little about a class set,
 #: and a first file that met a cold model would otherwise promise a time the run cannot keep.

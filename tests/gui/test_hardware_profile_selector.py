@@ -10,7 +10,7 @@ from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
 )
 from teachers_teammate.gui._hardware_profile_selector import HardwareProfileSelector
-from teachers_teammate.gui._model_wording import detection_status_text
+from teachers_teammate.texts.models import detection_status_text
 from ._service_stubs import services_of
 
 

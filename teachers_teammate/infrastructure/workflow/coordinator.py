@@ -66,7 +66,6 @@ def run_files(
             if on_file_done:
                 on_file_done(outcome)
             if outcome.status is FileStatus.STOPPED:
-                reporter.status(f"       → {result.message}")
                 stopped.append(file.name)
             elif outcome.status is FileStatus.SKIPPED:
                 _logger.info("%s", result.message)

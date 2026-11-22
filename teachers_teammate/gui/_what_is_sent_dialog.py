@@ -27,9 +27,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..application.data_flow import sent_location
 from ..application.sent_text import SentText, SentTexts
-from . import _user_text as txt
-from ._data_flow_summary import level_color, level_text
+from ..texts import review as txt
+from ..texts.privacy import level_text
+from ._data_flow_summary import level_color
 from ._diff_widget import DiffWidget
 from ._formatted_text import chip_placeholders
 
@@ -216,7 +218,8 @@ class WhatIsSentDialog(QDialog):
     def stored_lines(self) -> list[str]:
         """Return one line per stored result, saying how it was sent (empty when none is)."""
         return [
-            txt.stored_result_line(stage, status) for stage, status in self._report.stored.items()
+            txt.stored_result_line(stage, status, sent_location(status.record))
+            for stage, status in self._report.stored.items()
         ]
 
     def section_widgets(self) -> list[_SentSection]:

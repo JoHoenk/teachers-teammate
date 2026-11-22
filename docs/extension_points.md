@@ -85,7 +85,7 @@ Id in `OCR_ENGINE_NAMES` (`domain/data_location.py`); a `build_<engine>_ocr` fie
 `PipelineComponentFactory` / `StageBuilder.build_ocr` (`infrastructure/stage_builder.py`); its
 cache identity in `compute_ocr_config_hash` (`workflow/cache_service.py`); a check in
 `_check_engine` / `_ocr_engine_issues`, an `IssueKind` and its row in
-`gui/_fix_targets.py:fix_for`; its label in `gui/_user_text.py:OCR_ENGINE_LABELS`. The built-in
+`gui/_fix_targets.py:fix_for`; its label in `texts/addons.py:OCR_ENGINE_LABELS`. The built-in
 reader is `ppocr` (`infrastructure/ppocr/`), its version `READER_VERSION` in
 `domain/local_models.py`. See {doc}`development` → "Text recognition engines"
 

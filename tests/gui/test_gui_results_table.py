@@ -13,7 +13,8 @@ from PySide6.QtWidgets import QMenu
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.domain.proofreading.review import CorrectionReview, UnclearNote
 from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import review as txt
+from teachers_teammate.texts.run import stopped_message
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._types import FileDoneEvent, StageStatus
@@ -664,7 +665,6 @@ def _stopped_event(source: str, stage: str, **extra) -> FileDoneEvent:
             source_id=source,
             name="essay.png",
             status=FileStatus.STOPPED,
-            error=f"Stopped at {stage}.",
             stopped_stage=stage,
             **extra,
         ),
@@ -690,7 +690,7 @@ def test_a_stop_at_the_review_is_shown_in_the_review_cell(qtbot) -> None:
     table.add_result(_stopped_event("/e.png", "evaluation"))
 
     assert [table.item(0, col).text() for col in (1, 2, 3)] == ["✓", "✓", "stopped"]
-    assert "Stopped at evaluation." in table.item(0, 3).toolTip()
+    assert stopped_message("evaluation") in table.item(0, 3).toolTip()
 
 
 @pytest.mark.gui

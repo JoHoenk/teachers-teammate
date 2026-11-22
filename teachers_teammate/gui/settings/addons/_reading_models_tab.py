@@ -16,8 +16,8 @@ from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QVBoxLayout, QWidget
 from ....application.composition import AppServices
 from ....domain.data_location import ENGINE_PPOCR
 from ....domain.local_models import READER_SIZE_LABEL
+from ....texts import addons as txt
 from ....texts.settings import TAB_READING_MODELS
-from ... import _user_text as txt
 from ..._install_round import (
     PAGE_MODELS_ITEM,
     PAGE_MODELS_PREFIX,

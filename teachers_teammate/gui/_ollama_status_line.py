@@ -33,8 +33,8 @@ from ..domain.ollama_discovery import (
     OllamaState,
     ServerKind,
 )
+from ..texts import review as txt
 from ..texts.servers import card_found
-from . import _user_text as txt
 from ._background import LatestTask, run_in_background
 from ._server_card import ServerCard
 

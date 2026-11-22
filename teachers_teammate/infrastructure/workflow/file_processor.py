@@ -97,12 +97,6 @@ class ProcessingResult:
     telling."""
 
 
-#: What a stopped file says, by the step it did not get to.
-STOPPED_BEFORE_RECOGNITION = "Stopped before the text was read."
-STOPPED_BEFORE_PROOFREADING = "Stopped before proofreading."
-STOPPED_BEFORE_REVIEW = "Stopped before the review."
-STOPPED_GENERIC = "Stopped by user."
-
 REVIEW_UNMATCHED = (
     "The explanations could not be matched to the names in the text and were left out."
 )
@@ -165,7 +159,6 @@ class _Stopped(Exception):
 
 
 def _stopped_result(
-    message: str,
     stage: Stage,
     *,
     preview_img: str = "",
@@ -183,7 +176,7 @@ def _stopped_result(
     return _Stopped(
         ProcessingResult(
             False,
-            message,
+            "",
             preview_img=preview_img,
             raw_text=raw_text,
             correction_text=correction_text,
@@ -299,7 +292,7 @@ class FileProcessor:
         except RunStoppedError:
             # A cancelled request that no stage turned into a result itself: nothing of that
             # step was stored, and the steps before it already are.
-            return ProcessingResult(False, STOPPED_GENERIC, stopped=True)
+            return ProcessingResult(False, "", stopped=True)
         except _Stopped as stopped:
             return stopped.result
         except FileSkipped as left_out:
@@ -448,16 +441,14 @@ class FileProcessor:
             reading = None  # the file carries its own text; nothing of the teacher's is read in
 
         if self._stopping() and prepared.raw_text_hint is None:
-            raise _stopped_result(STOPPED_BEFORE_RECOGNITION, Stage.OCR, preview_img=preview_img)
+            raise _stopped_result(Stage.OCR, preview_img=preview_img)
 
         try:
             raw_text, ctx = self._run_ocr(
                 file, ocr_inputs, prepared, preview_img, source_image, ctx, reading=reading
             )
         except RunStoppedError as exc:
-            raise _stopped_result(
-                STOPPED_BEFORE_RECOGNITION, Stage.OCR, preview_img=preview_img
-            ) from exc
+            raise _stopped_result(Stage.OCR, preview_img=preview_img) from exc
         return raw_text, preview_img, source_image, ctx
 
     def _stopping(self) -> bool:
@@ -637,7 +628,6 @@ class FileProcessor:
 
         def stopped() -> _Stopped:
             return _stopped_result(
-                STOPPED_BEFORE_PROOFREADING,
                 Stage.CORRECTION,
                 preview_img=preview_img,
                 raw_text=texts.transcription,
@@ -796,7 +786,6 @@ class FileProcessor:
 
         def stopped() -> _Stopped:
             return _stopped_result(
-                STOPPED_BEFORE_REVIEW,
                 Stage.EVALUATION,
                 preview_img=preview_img,
                 raw_text=texts.transcription,

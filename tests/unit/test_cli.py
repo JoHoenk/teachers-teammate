@@ -34,8 +34,8 @@ class _AppServiceStub:
     def reader_refusal_for_run(self, config, files) -> str:
         return ""
 
-    def page_models_notice_for_run(self, config) -> str:
-        return ""
+    def page_models_skipped(self, config) -> bool:
+        return False
 
     def download_reader(self, on_progress=None, cancel=None) -> None:
         raise AssertionError("nothing may be downloaded")
@@ -847,13 +847,12 @@ def test_a_run_with_missing_page_models_prints_one_line_and_still_runs(
     Then   the one-line notice goes to stderr and the run starts (it is a notice, not a refusal)
     """
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
-    from teachers_teammate.domain.local_models import PAGE_MODELS_SKIPPED_NOTICE  # noqa: PLC0415
 
     started: list[bool] = []
 
     class _FakeAppService(_AppServiceStub):
-        def page_models_notice_for_run(self, config) -> str:
-            return PAGE_MODELS_SKIPPED_NOTICE
+        def page_models_skipped(self, config) -> bool:
+            return True
 
         def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             started.append(True)

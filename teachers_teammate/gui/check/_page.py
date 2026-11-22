@@ -52,7 +52,7 @@ from ...domain.teacher_work import (
     use_suggestion,
 )
 from ...texts import check as check_text
-from .. import _user_text as txt
+from ...texts import review as txt
 from .._export_menu import ExportKind
 from ._masking import Masking
 from ._run_strip import PRIMARY_STYLE, NextStepStrip, RunState, RunStrip

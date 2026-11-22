@@ -72,8 +72,7 @@ def test_run_ocr_reports_a_stop_as_stopped_by_user(tmp_path: Path, sample_png: P
     """
     Given  a stop_event that is already set
     When   run_ocr() is called
-    Then   the result carries "Stopped by user." as its error (the Benchmark app shows it
-           like before) and no text
+    Then   the result is flagged stopped, with no text and no error
     """
     stop = threading.Event()
     stop.set()
@@ -84,7 +83,8 @@ def test_run_ocr_reports_a_stop_as_stopped_by_user(tmp_path: Path, sample_png: P
     )
 
     assert result.raw_text == ""
-    assert result.error == "Stopped by user."
+    assert result.stopped is True
+    assert result.error is None
 
 
 def test_run_ocr_uses_text_input_directly(tmp_path: Path) -> None:

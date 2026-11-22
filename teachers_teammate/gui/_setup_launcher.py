@@ -19,11 +19,11 @@ from ..application.composition import AppServices
 from ..config import DEFAULTS
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import HardwareDetection
+from ..texts.models import profile_text
 from ..texts.settings import WHERE_ADDONS
 from ._background import LatestTask
 from ._config_panel import ConfigPanel
 from ._log_widget import LogWidget
-from ._model_wording import profile_text
 from ._privacy_view_controller import PrivacyViewController
 from ._pull_manager import PullManager
 

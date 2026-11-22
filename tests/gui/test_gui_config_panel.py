@@ -499,17 +499,13 @@ class _GuardService(LocalDataFlowStub):
     """Service stub reporting one missing Ollama model for the requirement check."""
 
     def check_stage_requirements(self, config, stage: str):
-        from teachers_teammate.application.run import (  # noqa: PLC0415
+        from teachers_teammate.domain.requirements import (  # noqa: PLC0415
             IssueKind,
             RequirementIssue,
         )
 
         _ = config, stage
-        return [
-            RequirementIssue(
-                "Model is not downloaded.", IssueKind.MODEL_MISSING, models=("qwen3.5:9b",)
-            )
-        ]
+        return [RequirementIssue(IssueKind.MODEL_MISSING, models=("qwen3.5:9b",))]
 
 
 @pytest.mark.gui
@@ -657,11 +653,14 @@ def test_only_the_latest_guard_check_of_a_stage_counts(qtbot, monkeypatch) -> No
     """
     import threading  # noqa: PLC0415
 
-    from teachers_teammate.application.run import IssueKind, RequirementIssue  # noqa: PLC0415
+    from teachers_teammate.domain.requirements import (  # noqa: PLC0415
+        IssueKind,
+        RequirementIssue,
+    )
     from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
 
     gates = [threading.Event(), threading.Event()]
-    answers = [[RequirementIssue("Model is not downloaded.", IssueKind.MODEL_MISSING)], []]
+    answers = [[RequirementIssue(IssueKind.MODEL_MISSING)], []]
     calls = {"n": 0}
     lock = threading.Lock()
     dialogs: list[object] = []
@@ -1075,7 +1074,7 @@ class _FlowServiceMissingPrivacy(_FlowService):
     """Like :class:`_FlowService`, but the privacy add-on is missing."""
 
     def check_stage_requirements(self, config, stage: str):
-        from teachers_teammate.application.run import (  # noqa: PLC0415
+        from teachers_teammate.domain.requirements import (  # noqa: PLC0415
             IssueKind,
             RequirementIssue,
         )
@@ -1083,7 +1082,6 @@ class _FlowServiceMissingPrivacy(_FlowService):
         _ = config, stage
         return [
             RequirementIssue(
-                "Privacy add-on is missing.",
                 IssueKind.NAME_DETECTION_MISSING,
                 models=("de_core_news_sm",),
             )
@@ -1501,7 +1499,7 @@ def test_proofreading_dialog_returns_the_explanation_options(qtbot) -> None:
     When   the user picks "Same as the text" and ticks "Corrections only"
     Then   explanation_values() returns explanation_language "" and correction_output "text"
     """
-    from teachers_teammate.gui import _user_text as txt  # noqa: PLC0415
+    from teachers_teammate.texts import review as txt  # noqa: PLC0415
     from teachers_teammate.gui._config_panel import _ProofreadingDialog  # noqa: PLC0415
 
     dlg = _ProofreadingDialog(
@@ -1792,7 +1790,10 @@ def test_ticking_recognition_checks_the_engine_and_unticks_when_it_is_missing(
     When   "Recognize text" is ticked
     Then   the requirement guard unticks it again and explains why, like any other step
     """
-    from teachers_teammate.application.run import IssueKind, RequirementIssue  # noqa: PLC0415
+    from teachers_teammate.domain.requirements import (  # noqa: PLC0415
+        IssueKind,
+        RequirementIssue,
+    )
     from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
 
     dialogs: list[object] = []
@@ -1801,7 +1802,7 @@ def test_ticking_recognition_checks_the_engine_and_unticks_when_it_is_missing(
     class _Service(_GuardService):
         def check_stage_requirements(self, config, stage: str):
             assert stage == "ocr"
-            return [RequirementIssue("The reader is missing.", IssueKind.READER_MODEL_MISSING)]
+            return [RequirementIssue(IssueKind.READER_MODEL_MISSING)]
 
     panel = ConfigPanel()
     qtbot.addWidget(panel)

@@ -7,7 +7,7 @@ import pytest
 from PySide6.QtWidgets import QDialog
 
 from teachers_teammate.domain.correction_prompts import NOTES_LIMIT
-from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.texts import review as txt
 from teachers_teammate.gui._config_panel import ConfigPanel, _ProofreadingDialog, _PromptDialog
 
 from ._service_stubs import services_of

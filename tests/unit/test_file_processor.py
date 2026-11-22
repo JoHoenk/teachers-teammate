@@ -39,9 +39,6 @@ from teachers_teammate.exceptions import (
 )
 from teachers_teammate.infrastructure.workflow.file_processor import (
     REVIEW_UNMATCHED,
-    STOPPED_BEFORE_PROOFREADING,
-    STOPPED_BEFORE_RECOGNITION,
-    STOPPED_BEFORE_REVIEW,
     FileProcessor,
     FileProcessorConfig,
 )
@@ -400,7 +397,8 @@ def test_stop_event_before_ocr_returns_stopped(tmp_path: Path) -> None:
 
     assert result.stopped is True
     assert result.ok is False
-    assert result.message == STOPPED_BEFORE_RECOGNITION
+    assert result.message == ""
+    assert result.stopped_stage == "ocr"
     assert result.raw_text == ""
     assert result.correction_text == ""
     assert result.evaluation_text == ""
@@ -419,7 +417,8 @@ def test_stop_during_ocr_request_returns_stopped(tmp_path: Path) -> None:
     result = fp.process(tmp_path / "doc.png")
 
     assert result.stopped is True
-    assert result.message == STOPPED_BEFORE_RECOGNITION
+    assert result.message == ""
+    assert result.stopped_stage == "ocr"
     assert result.preview_img == "preview.png"
     cache_svc.record_ocr.assert_not_called()
 
@@ -467,7 +466,8 @@ def test_stop_after_ocr_skips_proofreading_and_keeps_the_text(tmp_path: Path) ->
     result = fp.process(tmp_path / "doc.png")
 
     assert result.stopped is True
-    assert result.message == STOPPED_BEFORE_PROOFREADING
+    assert result.message == ""
+    assert result.stopped_stage == "correction"
     assert result.raw_text == "extracted text"
     assert result.correction_text == ""
     corrector.correct.assert_not_called()
@@ -540,7 +540,8 @@ def test_stop_before_review_keeps_the_stored_proofreading(tmp_path: Path) -> Non
     result = fp.process(tmp_path / "doc.png")
 
     assert result.stopped is True
-    assert result.message == STOPPED_BEFORE_REVIEW
+    assert result.message == ""
+    assert result.stopped_stage == "evaluation"
     assert result.correction_text == "proofread"
     evaluator.evaluate.assert_not_called()
 
@@ -563,7 +564,7 @@ def test_review_cut_off_by_stop_is_stopped_and_not_stored(tmp_path: Path) -> Non
     result = fp.process(tmp_path / "doc.png")
 
     assert result.stopped is True
-    assert result.message == STOPPED_BEFORE_REVIEW
+    assert result.message == ""
     assert result.stopped_stage == "evaluation"
     cache_svc.record_evaluation.assert_not_called()
 
@@ -653,7 +654,8 @@ def test_a_stop_before_the_review_does_not_anonymize_for_it(tmp_path: Path) -> N
 
     result = fp.process(tmp_path / "doc.png")
 
-    assert result.message == STOPPED_BEFORE_REVIEW
+    assert result.message == ""
+    assert result.stopped_stage == "evaluation"
     assert anonymizer.anonymize.call_count == 1
     evaluator.evaluate.assert_not_called()
 

@@ -36,6 +36,10 @@ class BenchmarkRunError(RuntimeError):
     """Raised when an OCR run fails so the GUI worker can surface it."""
 
 
+class BenchmarkRunStopped(BenchmarkRunError):
+    """Raised when the teacher stopped an OCR run: nothing is stored, nothing failed."""
+
+
 class BenchmarkApplicationService:
     """App-facing API for running, storing, and comparing benchmark OCR runs."""
 
@@ -114,6 +118,7 @@ class BenchmarkApplicationService:
 
         Raises:
             BenchmarkRunError: if the OCR run fails (engine missing, IO, etc.).
+            BenchmarkRunStopped: if the teacher stopped it.
         """
         # Always OCR: embedded PDF text would make every engine return the same text.
         ocr = dataclasses.replace(ocr, pdf_text_layer="never")
@@ -133,6 +138,8 @@ class BenchmarkApplicationService:
             # A benchmark that ends or is stopped must not leave its model in memory: the next
             # run would then measure a model that is already loaded.
             self._unload_models_it_loaded(ollama_url, ocr, before)
+        if result.stopped:
+            raise BenchmarkRunStopped
         if result.error is not None:
             raise BenchmarkRunError(result.error)
 

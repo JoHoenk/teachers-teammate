@@ -28,8 +28,8 @@ from teachers_teammate.domain.model_catalog import (
     Suitability,
 )
 from teachers_teammate.domain.providers import ProviderInfo
-from teachers_teammate.gui import _user_text as txt
-from teachers_teammate.gui._data_flow_summary import PLACE_OWN_SERVER, PLACE_THIS_COMPUTER
+from teachers_teammate.texts import review as txt
+from teachers_teammate.texts.privacy import PLACE_OWN_SERVER, PLACE_THIS_COMPUTER
 from teachers_teammate.gui.setup import SetupAssistant, SetupContext
 from teachers_teammate.gui.setup._flow import ORDER, SetupPageId
 from teachers_teammate.gui.setup._pages import _fit_words

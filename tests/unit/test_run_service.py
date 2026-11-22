@@ -12,13 +12,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.application.composition import inject_addon_packages_dir
-from teachers_teammate.application.run import IssueKind, RequirementIssue, RunPreflight, RunService
+from teachers_teammate.application.run import RunPreflight, RunService
 from teachers_teammate.domain.anonymization import AnonymizerConfig
+from teachers_teammate.domain.requirements import IssueKind, RequirementIssue
 from teachers_teammate.domain.run_summary import RunSummary
 from teachers_teammate.domain.teacher_work import MachineTexts, with_transcription
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.power import KEEP_AWAKE_REASON
 from teachers_teammate.interfaces import ProgressCallbacks, SleepBlocker
+from teachers_teammate.texts.issues import issue_text
 from tests.conftest import fake_reader_store, make_config
 from ._service_helpers import (
     _INSTALL,
@@ -276,14 +278,14 @@ def test_list_supported_suffixes_returns_frozenset_with_images() -> None:
 
 
 @pytest.mark.unit
-def test_page_models_notice_names_the_flag_only_when_the_automatic_preparation_lacks_them(
+def test_page_models_are_reported_skipped_only_for_an_automatic_run_that_reads_pages(
     tmp_path: Path,
 ) -> None:
     """
     Given  a service whose model store has no page models
-    When   page_models_notice_for_run() is asked for an automatic run, an "Original page" run
-           and a run with recognition off
-    Then   only the automatic run that reads pages gets the one-line notice naming the flag
+    When   page_models_skipped() is asked for an automatic run, an "Original page" run and a
+           run with recognition off
+    Then   only the automatic run that reads pages reports the page models as skipped
     """
     from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
@@ -299,9 +301,9 @@ def test_page_models_notice_names_the_flag_only_when_the_automatic_preparation_l
         tmp_path, ocr=OcrConfig(preprocess_method=PreprocessMethod.AUTO), recognition_enabled=False
     )
 
-    assert "--download-page-models" in svc.run.page_models_notice_for_run(auto)
-    assert svc.run.page_models_notice_for_run(original) == ""
-    assert svc.run.page_models_notice_for_run(off) == ""
+    assert svc.run.page_models_skipped(auto) is True
+    assert svc.run.page_models_skipped(original) is False
+    assert svc.run.page_models_skipped(off) is False
 
 
 # ── _invalidate_from_stage (static helper) ────────────────────────────────
@@ -786,14 +788,14 @@ def test_stage_requirements_distinguish_no_models_from_not_running(tmp_path: Pat
     with _server_answers([]):
         issues = svc.run.check_stage_requirements(cfg, "correction")
 
-    assert [i.message for i in issues] == ["No model is downloaded in Ollama yet."]
+    assert [issue_text(i) for i in issues] == ["No model is downloaded in Ollama yet."]
     assert issues[0].kind is IssueKind.NO_OLLAMA_MODEL
 
     with _server_answers([], "✗ Cannot connect to Ollama") as request:
         issues = svc.run.check_stage_requirements(cfg, "correction")
 
     request.assert_called_once()
-    assert [i.message for i in issues] == ["Ollama is not running. Start it with `ollama serve`."]
+    assert [issue_text(i) for i in issues] == ["✗ Cannot connect to Ollama"]
     assert issues[0].kind is IssueKind.OLLAMA_UNREACHABLE
 
 
@@ -889,7 +891,7 @@ def test_stage_requirements_report_a_missing_provider_package_before_asking_the_
     with patch.object(svc.addons, "is_module_importable", lambda *_a: False):
         issues = svc.run.check_stage_requirements(cfg, "correction")
 
-    assert [(i.message, i.kind, i.provider) for i in issues] == [
+    assert [(issue_text(i), i.kind, i.provider) for i in issues] == [
         ("Mistral support is not installed yet.", IssueKind.PACKAGE_MISSING, "mistral")
     ]
 
@@ -916,7 +918,7 @@ def test_stage_requirements_report_a_missing_api_key_after_the_package_check(
         package_first = svc.run.check_stage_requirements(cfg, "correction")
 
     assert [(i.kind, i.provider) for i in issues] == [(IssueKind.KEY_MISSING, "mistral_eu")]
-    assert "Mistral" in issues[0].message
+    assert "Mistral" in issue_text(issues[0])
     assert [i.kind for i in package_first] == [IssueKind.PACKAGE_MISSING]
     monkeypatch.setenv("MISTRAL_API_KEY", "k")
     with patch.object(svc.providers, "_importable", lambda *_a: True):
@@ -969,7 +971,7 @@ def test_stage_requirements_ask_for_a_restart_while_a_package_waits(
     issues = svc.run.check_stage_requirements(cfg, "anonymizer")
 
     assert [i.kind for i in issues] == [IssueKind.ADDON_RESTART_NEEDED]
-    assert issues[0].message == "Restart the app to finish installing name detection."
+    assert issue_text(issues[0]) == "Restart the app to finish installing name detection."
 
 
 @pytest.mark.unit
@@ -1140,7 +1142,7 @@ def test_the_blocker_is_the_first_unmet_requirement_in_one_shape() -> None:
     Then   each gives (stage, issue) with the matching kind and message, and a clear run gives
            None
     """
-    issue = RequirementIssue("No key.", IssueKind.KEY_MISSING, provider="openai")
+    issue = RequirementIssue(IssueKind.KEY_MISSING, provider="openai")
 
     def blocker(**fields) -> tuple[str, RequirementIssue]:
         found = RunPreflight(**fields).blocker
@@ -1149,16 +1151,13 @@ def test_the_blocker_is_the_first_unmet_requirement_in_one_shape() -> None:
 
     assert RunPreflight().blocker is None
     stage, found = blocker(ocr_not_allowed="Cloud model.")
-    assert (stage, found.kind, found.message) == (
-        "ocr",
-        IssueKind.OCR_NOT_ALLOWED,
-        "Cloud model.",
-    )
+    assert (stage, found.kind) == ("ocr", IssueKind.OCR_NOT_ALLOWED)
+    assert issue_text(found) == "Cloud model."
     stage, found = blocker(ollama_unreachable="✗ down")
     assert (stage, found.kind) == ("", IssueKind.OLLAMA_UNREACHABLE)
     stage, found = blocker(missing_models=("a:1", "b:2"))
     assert (stage, found.kind, found.models) == ("", IssueKind.MODEL_MISSING, ("a:1", "b:2"))
-    assert "'a:1', 'b:2'" in found.message
+    assert issue_text(found) == "Models 'a:1', 'b:2' are not downloaded."
     assert blocker(stage="evaluation", stage_issues=(issue,)) == ("evaluation", issue)
 
 

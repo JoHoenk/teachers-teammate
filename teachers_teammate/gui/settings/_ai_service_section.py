@@ -29,14 +29,22 @@ from ...domain.data_location import PROVIDER_OLLAMA, DataLocation, DataRegion
 from ...domain.model_listing import ListedModel, ModelListing
 from ...domain.providers import ProviderInfo
 from ...domain.stages import Stage
-from .._data_flow_summary import (
+from ...texts.models import (
+    SAME_MODEL_TIP,
+    USE_SUGGESTION,
+    asking_for_models_text,
+    checking_models_text,
+    retiring_model_text,
+    saved_model_not_offered_text,
+)
+from ...texts.privacy import (
     PLACE_ONLINE,
     PLACE_OWN_SERVER,
     PLACE_THIS_COMPUTER,
-    LocationHint,
     plain_http_note,
     text_note,
 )
+from .._data_flow_summary import LocationHint
 from .._hardware_profile_selector import HardwareProfileSelector
 from .._model_fetch import (
     _MODEL_GROUPS,
@@ -52,14 +60,6 @@ from .._model_fetch import (
 )
 from .._model_guidance import OllamaModelGuidance, OpenDownloads
 from .._model_item_delegate import ModelItem, fill_grouped, install
-from .._model_wording import (
-    SAME_MODEL_TIP,
-    USE_SUGGESTION,
-    asking_for_models_text,
-    checking_models_text,
-    retiring_model_text,
-    saved_model_not_offered_text,
-)
 from .._package_hint import INSTALL_BUTTON, INSTALL_BUTTON_TOOLTIP, PackageHint
 from ._credentials import ApiKeyDrafts, ApiKeyRow
 

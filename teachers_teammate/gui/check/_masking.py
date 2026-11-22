@@ -14,7 +14,7 @@ from collections.abc import Mapping
 
 from ...domain.anonymization import mask_with_offsets
 from ...domain.offset_map import OffsetMap
-from .. import _user_text as txt
+from ...texts import review as txt
 
 
 class Masking:

@@ -51,6 +51,7 @@ from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER
 from ..domain.stages import Stage
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
+from ..texts.privacy import advice_text, level_text, stage_tooltips
 from ..texts.settings import WHERE_GENERAL
 from . import _dialogs
 from ._app_bootstrap import create_app, finish_process
@@ -59,7 +60,6 @@ from ._chart_widget import ChartWidget
 from ._check_controller import CheckController, CheckHooks
 from ._config_panel import ConfigPanel
 from ._credential_store import CredentialStore
-from ._data_flow_summary import advice_text, level_text, stage_tooltips
 from ._export_controller import ExportController
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget

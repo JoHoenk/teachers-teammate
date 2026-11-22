@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QScrollArea, QVBoxLayout, QWidget
 
 from ....application.addons import bundled_status_key
-from ... import _user_text as txt
+from ....texts import addons as txt
 from ..._install_round import (
     PACKAGE_PREFIX,
     PAGE_MODELS_ITEM,

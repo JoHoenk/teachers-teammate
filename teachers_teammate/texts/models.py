@@ -24,7 +24,7 @@ from ..domain.model_catalog import (
     memory_for_models_gb,
     system_reserve_gb,
 )
-from ..texts.settings import WHERE_AI_SETUP
+from .settings import WHERE_AI_SETUP
 
 # ── "My computer" ─────────────────────────────────────────────────────────────
 

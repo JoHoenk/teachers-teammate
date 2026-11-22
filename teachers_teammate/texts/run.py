@@ -143,9 +143,10 @@ def cache_save_failed(reason: BaseException) -> str:
 EMPTY_OCR_ANSWER = "Empty response from OCR model."
 
 
-def ocr_failed(page: str, reason: BaseException) -> str:
-    """Return what a run says about one *page* the reader could not read."""
-    return f"OCR failed ({page}): {reason}"
+def ocr_failed(page: int | None, reason: BaseException) -> str:
+    """Return what a run says about one page, or the one image, the reader could not read."""
+    what = "image" if page is None else f"page {page}"
+    return f"OCR failed ({what}): {reason}"
 
 
 def personal_info_setup_failed(reason: BaseException) -> str:

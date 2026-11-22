@@ -5,6 +5,8 @@ from __future__ import annotations
 from enum import StrEnum
 import threading
 
+from .messages import Message
+
 
 class PipelineError(Exception):
     """A failure that ends one file, not the run: the file is ``FAILED``, the next one runs.
@@ -40,7 +42,9 @@ class StageError(PipelineError):
     :attr:`kind` says what failed, :attr:`stage` where.
     """
 
-    def __init__(self, message: str = "", *, kind: StageErrorKind, stage: str = "") -> None:
+    def __init__(
+        self, message: Message | str = "", *, kind: StageErrorKind, stage: str = ""
+    ) -> None:
         super().__init__(message)
         self.kind = kind
         self.stage = stage
@@ -72,7 +76,7 @@ class OCRError(StageError):
     an error (``None`` for connection failures, timeouts and empty responses).
     """
 
-    def __init__(self, message: str = "", *, status_code: int | None = None) -> None:
+    def __init__(self, message: Message | str = "", *, status_code: int | None = None) -> None:
         super().__init__(message, kind=StageErrorKind.ENGINE, stage="ocr")
         self.status_code = status_code
 
@@ -80,7 +84,7 @@ class OCRError(StageError):
 class AnonymizerError(StageError):
     """Hiding or restoring personal data failed (spaCy, a name model, a text over its limit)."""
 
-    def __init__(self, message: str = "", *, stage: str = "") -> None:
+    def __init__(self, message: Message | str = "", *, stage: str = "") -> None:
         super().__init__(message, kind=StageErrorKind.ANONYMIZER, stage=stage)
 
 

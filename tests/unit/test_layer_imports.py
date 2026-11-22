@@ -35,6 +35,8 @@ _COMPOSITION_MODULES: frozenset[str] = frozenset(
 )
 
 _PACKAGE = "teachers_teammate"
+"""The package root's own modules (``_PKG_SRCS`` in ``teachers_teammate/BUILD``)."""
+_PKG_MODULES = {"exceptions", "__version__", "messages"}
 _CORE_MODULES = {"atomic_file", "config", "interfaces", "settings_schema", "_model_defaults"}
 _CLI_MODULES = {"cli", "cli_composition", "__main__"}
 
@@ -50,7 +52,7 @@ def _package_dir() -> Path:
 
 def _layer_of(parts: list[str], package: Path) -> str:
     """Return the layer of the module whose dotted path below the package is *parts*."""
-    if not parts or parts[0] in {"exceptions", "__version__"}:
+    if not parts or parts[0] in _PKG_MODULES:
         return "pkg"
     first = parts[0]
     if (package / first).is_dir():

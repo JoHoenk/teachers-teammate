@@ -210,6 +210,8 @@ def no_first_token(seconds: float) -> str:
 
 def answer_abandoned(seconds: float) -> str:
     """Return what a request says about an answer still being written after *seconds*."""
+    if seconds is None:
+        return "the answer was still being written; the request was abandoned"
     return f"the answer was still being written after {seconds:g}s; the request was abandoned"
 
 

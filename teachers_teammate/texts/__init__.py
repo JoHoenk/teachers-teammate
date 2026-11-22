@@ -19,6 +19,7 @@ Which module owns what:
 ``fixes.py``         the readiness line's fixes: the line for what is missing and its button
 ``issues.py``        one sentence per unmet requirement of a step or a run
 ``main_window.py``   the main window's rows, steps, panel, results table, export and stats
+``messages.py``      the English wording of every key in the root ``messages.py``
 ``menus.py``         the main window's menu bar and what each entry offers
 ``models.py``        this computer, the model fields and their status line, the download warnings
 ``privacy.py``       what is sent for a file, the data-flow wording, a remembered answer
@@ -49,4 +50,11 @@ Rules that keep it one home:
 Out of scope on purpose: the LLM prompts (``domain/correction_prompts.py`` — versioned and
 hashed into the cache key), the developer log, developer exceptions that never reach a teacher, and
 the Word file's label tables, which follow the *document* language rather than the app's.
+
+Imported, this package installs English for :class:`~teachers_teammate.messages.Message`,
+so ``str(message)`` gives the sentence.  A second language would be installed here instead.
 """
+
+from .messages import install as install
+
+install()

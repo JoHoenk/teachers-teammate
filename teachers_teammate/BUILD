@@ -9,6 +9,7 @@ exports_files(["__init__.py"])
 _PKG_SRCS = [
     "__init__.py",
     "exceptions.py",
+    "messages.py",
 ]
 
 # domain/: pure business concepts, no import from any other layer.
@@ -80,6 +81,7 @@ _TEXTS_SRCS = [
     "texts/issues.py",
     "texts/main_window.py",
     "texts/menus.py",
+    "texts/messages.py",
     "texts/models.py",
     "texts/privacy.py",
     "texts/report.py",

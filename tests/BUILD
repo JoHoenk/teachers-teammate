@@ -433,6 +433,18 @@ py_test(
     deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
+# The catalogue of messages: one factory per key in ``messages.py``, one renderer per key
+# in ``texts/messages.py``, and a golden list of the key values a stored result keeps.
+py_test(
+    name = "test_messages",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_messages.py"],
+    args = ["unit/test_messages.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _DOMAIN_LIB + _TEXTS_LIB,
+)
+
 py_test(
     name = "test_markdown_shield",
     size = "small",
@@ -2988,6 +3000,7 @@ test_suite(
         ":test_make_constraints",
         ":test_make_version_resource",
         ":test_markdown_shield",
+        ":test_messages",
         ":test_model_catalog",
         ":test_model_listing",
         ":test_model_store",

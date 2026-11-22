@@ -51,6 +51,7 @@ from teachers_teammate.domain.model_catalog import (
     uses_from_capabilities,
 )
 from teachers_teammate.domain.performance_estimate import SpeedBand, SpeedSource
+from teachers_teammate.domain.stages import Stage
 from teachers_teammate.infrastructure.providers.ollama import PROVIDER_INFO
 
 
@@ -524,7 +525,7 @@ def test_default_ocr_model_is_a_catalogued_reading_model() -> None:
     spec = find_spec(DEFAULTS["ocr_model"])
     assert spec is not None
     assert spec.category == "ocr"
-    assert "ocr" not in _DEFAULT_MODELS  # no online provider ever reads pages
+    assert Stage.OCR not in _DEFAULT_MODELS  # no online provider ever reads pages
 
 
 def test_default_writing_models_equal_the_default_writing_model() -> None:
@@ -539,8 +540,8 @@ def test_default_writing_models_equal_the_default_writing_model() -> None:
     assert spec.category == "general"
     assert DEFAULTS["correction_model"] == expected
     assert DEFAULTS["evaluate_model"] == expected
-    assert _DEFAULT_MODELS["correction"]["ollama"] == expected
-    assert _DEFAULT_MODELS["evaluation"]["ollama"] == expected
+    assert _DEFAULT_MODELS[Stage.CORRECTION]["ollama"] == expected
+    assert _DEFAULT_MODELS[Stage.EVALUATION]["ollama"] == expected
     assert PROVIDER_INFO["default_model"] == expected
 
 

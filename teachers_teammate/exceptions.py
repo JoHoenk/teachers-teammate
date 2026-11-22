@@ -44,9 +44,10 @@ class StageError(PipelineError):
         super().__init__(message)
         self.kind = kind
         self.stage = stage
-        """``"ocr"``, ``"correction"`` or ``"evaluation"`` (the last for hiding the personal data
-        of the review); empty when the failure happened outside those three (preparing the
-        pages, reading or writing a file)."""
+        """The :class:`~teachers_teammate.domain.stages.Stage` that failed, as its word (``"ocr"``,
+        ``"correction"`` or ``"evaluation"``, the last for hiding the personal data of the review);
+        empty when the failure happened outside those three (preparing the pages, reading or
+        writing a file).  ``exceptions`` is in the package root, so it cannot import the enum."""
 
     def __str__(self) -> str:
         """Return the sentence a teacher reads."""

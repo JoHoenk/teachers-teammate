@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from ..application.run import IssueKind, RequirementIssue
 from ..domain.language import language_name
+from ..domain.stages import Stage
 from . import _user_text as txt
 from ._install_round import PACKAGE_PREFIX, READER_ITEM
 from ._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
@@ -173,8 +174,8 @@ def fix_for(
     """Return the line and the buttons for *issue*, found in *stage*.
 
     Args:
-        stage: The step the issue belongs to (``"correction"``, ``"evaluation"``, …); it decides
-            which key row ``Enter key…`` opens.
+        stage: The step the issue belongs to (a :class:`~teachers_teammate.domain.stages.Stage`);
+            it decides which key row ``Enter key…`` opens.
         issue: What is missing.
         display_name: Turns a provider id into the name the teacher knows.
         language: The document language, to name the language of a missing name detection.
@@ -221,7 +222,7 @@ def fix_for(
             ),
         )
     if kind is IssueKind.KEY_MISSING:
-        focus = FOCUS_REVIEW_KEY if stage == "evaluation" else FOCUS_PROOFREADING_KEY
+        focus = FOCUS_REVIEW_KEY if stage == Stage.EVALUATION else FOCUS_PROOFREADING_KEY
         return Fix(
             f"No API key for {display_name(issue.provider)} yet",
             (FixAction("Enter key…", SettingsPage.AI_MODELS, focus),),

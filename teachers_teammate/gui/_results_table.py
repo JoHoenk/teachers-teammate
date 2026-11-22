@@ -28,10 +28,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.queue import QueueRow, StageState
-from ..domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentStatus
+from ..domain.data_location import SentStatus
 from ..domain.formatted_text import TextFormat
 from ..domain.proofreading.review import CorrectionReview
 from ..domain.run_summary import FileOutcome, FileStatus
+from ..domain.stages import Stage
 from ..texts import dialogs as dlg
 from . import _dialogs
 from . import _user_text as txt
@@ -81,7 +82,7 @@ class LiveState:
     """
 
     stage: str = ""
-    """The stage that is running (``"ocr"``, ``"correction"``, ``"evaluation"``), else ``""``."""
+    """The stage that is running, or ``""`` while none is."""
     finished: bool = False
     """The run finished this file: its results are the run's, not an older cache's."""
     failed: bool = False
@@ -280,7 +281,7 @@ class ResultsTable(QTableWidget):
 
     def mark_processing(self, source_id: str) -> None:
         """Mark the recognition stage as running for the given file."""
-        self.mark_stage_running(source_id, "ocr")
+        self.mark_stage_running(source_id, Stage.OCR)
 
     def add_result(self, event: FileDoneEvent) -> None:
         """Show how the run ended for one file, on top of what the store says.
@@ -349,11 +350,11 @@ class ResultsTable(QTableWidget):
     def _draw_stage_cells(self, index: int, row: QueueRow, live: LiveState) -> None:
         """Draw the three stage cells of *index*."""
         for col, stage, state in (
-            (self._COL_OCR, "ocr", row.ocr),
-            (self._COL_CORRECTION, STAGE_CORRECTION, row.correction),
-            (self._COL_EVALUATION, STAGE_EVALUATION, row.evaluation),
+            (self._COL_OCR, Stage.OCR, row.ocr),
+            (self._COL_CORRECTION, Stage.CORRECTION, row.correction),
+            (self._COL_EVALUATION, Stage.EVALUATION, row.evaluation),
         ):
-            if stage == "ocr" and (live.skipped or row.source_id in self._skipped):
+            if stage == Stage.OCR and (live.skipped or row.source_id in self._skipped):
                 self._set_skipped_cell(index, live.warning or self._skipped.get(row.source_id, ""))
                 continue
             if live.stage == stage and not live.finished:
@@ -487,8 +488,8 @@ class ResultsTable(QTableWidget):
     def _stage_key(self, col: int) -> str:
         """Return the pipeline stage a column stands for (empty for other columns)."""
         return {
-            self._COL_CORRECTION: STAGE_CORRECTION,
-            self._COL_EVALUATION: STAGE_EVALUATION,
+            self._COL_CORRECTION: Stage.CORRECTION,
+            self._COL_EVALUATION: Stage.EVALUATION,
         }.get(col, "")
 
     def _set_note(self, row: int, col: int, note: str) -> None:
@@ -829,11 +830,11 @@ class ResultsTable(QTableWidget):
         elif action is select_checked:
             self.select_checked()
         elif action is rerun_ocr:
-            self.stage_run_requested.emit(selected_source_ids, "ocr")
+            self.stage_run_requested.emit(selected_source_ids, Stage.OCR)
         elif action is rerun_correction:
-            self.stage_run_requested.emit(selected_source_ids, "correction")
+            self.stage_run_requested.emit(selected_source_ids, Stage.CORRECTION)
         elif action is rerun_evaluation:
-            self.stage_run_requested.emit(selected_source_ids, "evaluation")
+            self.stage_run_requested.emit(selected_source_ids, Stage.EVALUATION)
         elif action in export_kinds:
             self.export_requested.emit(selected_source_ids, export_kinds[action])
         elif action is what_is_sent:

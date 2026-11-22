@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import pytest
+from teachers_teammate.domain.stages import Stage
 from tests.conftest import make_config
 from ._service_helpers import _make_svc, _ollama_config, reader_models_in_place
 
@@ -127,10 +128,8 @@ def test_the_data_flow_has_no_recognition_step_while_it_is_off_but_the_steps_vie
     Then   the flow omits text recognition (no page leaves anywhere), the all-steps view
            still lists it so the line under the step can say what ticking it would use
     """
-    from teachers_teammate.domain.data_location import STAGE_OCR  # noqa: PLC0415
-
     svc = _make_svc()
     cfg = _ollama_config(tmp_path, recognition_enabled=False, correction_enabled=False)
 
-    assert svc.data_flow.describe_data_flow(cfg).stage(STAGE_OCR) is None
-    assert svc.data_flow.describe_steps(cfg).stage(STAGE_OCR) is not None
+    assert svc.data_flow.describe_data_flow(cfg).stage(Stage.OCR) is None
+    assert svc.data_flow.describe_steps(cfg).stage(Stage.OCR) is not None

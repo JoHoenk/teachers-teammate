@@ -49,8 +49,6 @@ from ...application.setup_plan import (
 from ...config import DEFAULTS
 from ...domain.data_location import (
     STAGE_ANONYMIZATION,
-    STAGE_CORRECTION,
-    STAGE_OCR,
     DataLocation,
     DataRegion,
     StageLocation,
@@ -58,6 +56,7 @@ from ...domain.data_location import (
 from ...domain.language import LANGUAGES
 from ...domain.local_models import PAGE_MODELS_ADDON_ID
 from ...domain.model_catalog import DiskVerdict, Suitability, short_model_name
+from ...domain.stages import Stage
 from ...texts.setup import (
     CLASSES_HANDWRITTEN,
     CLASSES_HANDWRITTEN_NOTE,
@@ -755,7 +754,7 @@ class ProofreadingPage(SetupPage):
         if error is not None or not isinstance(plan, SetupPlan):
             self._suggestion.setText(SUGGESTION_UNKNOWN)
             return
-        step = next((row for row in plan.steps if row.stage == STAGE_CORRECTION), None)
+        step = next((row for row in plan.steps if row.stage == Stage.CORRECTION), None)
         if step is None or not step.model:
             self._suggestion.setText(SUGGESTION_UNKNOWN)
             return
@@ -1381,7 +1380,7 @@ def _download_words(download: PlannedDownload, language: str) -> tuple[str, str]
             return DONE_PURPOSE_NAMES, name_model_label(download.name)
         return DONE_PURPOSE_NAMES, language or download.name
     if kind is DownloadKind.OLLAMA_MODEL:
-        purpose = DONE_PURPOSE_READING if download.stage == STAGE_OCR else DONE_PURPOSE_PROOFREADING
+        purpose = DONE_PURPOSE_READING if download.stage == Stage.OCR else DONE_PURPOSE_PROOFREADING
         return purpose, short_model_name(download.name)
     purpose = DONE_PURPOSE_NAMES if download.stage == STAGE_ANONYMIZATION else DONE_PURPOSE_ADDON
     return purpose, download.name

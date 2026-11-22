@@ -47,6 +47,7 @@ from ..domain.model_catalog import (
     rate_model,
     uses_from_capabilities,
 )
+from ..domain.stages import Stage
 from ..exceptions import OllamaConnectionError
 from .context_choice import ContextChoice, context_choice
 from .ports import HardwareProbe
@@ -294,11 +295,13 @@ class ModelRecommendationService:
         return context_choice(
             proofreading_provider=proofreading_provider,
             proofreading_model=self._effective_model(
-                proofreading_provider, str(settings.get("correction_model") or ""), "correction"
+                proofreading_provider,
+                str(settings.get("correction_model") or ""),
+                Stage.CORRECTION,
             ),
             review_provider=review_provider,
             review_model=self._effective_model(
-                review_provider, str(settings.get("evaluate_model") or ""), "evaluation"
+                review_provider, str(settings.get("evaluate_model") or ""), Stage.EVALUATION
             ),
             card_gb=card_gb,
         )

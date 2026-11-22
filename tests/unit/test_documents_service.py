@@ -6,13 +6,13 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 import shutil
+from teachers_teammate.domain.stages import Stage
 from unittest.mock import MagicMock, patch
 import pytest
 from teachers_teammate.application.correction_options import proofreading_prompts
 from teachers_teammate.application.queue import StageState
 from teachers_teammate.application.run import windows_for
 from teachers_teammate.domain.anonymization import AnonymizerConfig
-from teachers_teammate.domain.data_location import STAGE_CORRECTION
 from teachers_teammate.domain.teacher_work import (
     current_texts,
     kept_over,
@@ -70,8 +70,8 @@ def test_a_privacy_setting_change_keeps_the_proofreading_and_says_so(tmp_path: P
     row = svc.documents.queue_rows(on, [source])[0]
 
     assert row.correction is StageState.DONE
-    assert row.sent[STAGE_CORRECTION].record == sent_record(off, STAGE_CORRECTION)
-    assert row.sent[STAGE_CORRECTION].other_privacy_settings is True
+    assert row.sent[Stage.CORRECTION].record == sent_record(off, Stage.CORRECTION)
+    assert row.sent[Stage.CORRECTION].other_privacy_settings is True
 
     # The next run with the new settings: nothing is invalidated, so the corrector is skipped
     # and the anonymizer is never asked for a text that is not sent again.
@@ -81,7 +81,7 @@ def test_a_privacy_setting_change_keeps_the_proofreading_and_says_so(tmp_path: P
 
     assert after.state.correction_done is True
     assert after.state.correction_text == "hello corrected"
-    assert after.state.correction_sent == sent_record(off, STAGE_CORRECTION).to_dict()
+    assert after.state.correction_sent == sent_record(off, Stage.CORRECTION).to_dict()
 
 
 @pytest.mark.unit

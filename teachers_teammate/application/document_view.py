@@ -10,8 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentRecord, SentStatus
+from ..domain.data_location import SentRecord, SentStatus
 from ..domain.proofreading.review import CorrectionReview
+from ..domain.stages import Stage
 from ..domain.teacher_work import WorkStatus
 from ..infrastructure.state_repository import DocumentState
 
@@ -103,8 +104,8 @@ def sent_statuses(state: DocumentState) -> dict[str, SentStatus]:
     """
     statuses: dict[str, SentStatus] = {}
     for stage, done, raw in (
-        (STAGE_CORRECTION, state.correction_done, state.correction_sent),
-        (STAGE_EVALUATION, state.evaluation_done, state.evaluation_sent),
+        (Stage.CORRECTION, state.correction_done, state.correction_sent),
+        (Stage.EVALUATION, state.evaluation_done, state.evaluation_sent),
     ):
         if not done:
             continue

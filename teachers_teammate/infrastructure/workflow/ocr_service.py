@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 import threading
 
+from ...domain.stages import Stage
 from ...exceptions import OCRError, RunStoppedError, StageError, stop_requested
 from ...interfaces import OCRProcessor
 from ..ocr_text_cleaner import clean_ocr_text
@@ -58,7 +59,7 @@ class OCRStageService:
                     raise RunStoppedError from exc
                 label = f"page {i + 1}" if len(ocr_inputs) > 1 else "image"
                 raise StageError(
-                    f"OCR failed ({label}): {exc}", kind=exc.kind, stage="ocr"
+                    f"OCR failed ({label}): {exc}", kind=exc.kind, stage=Stage.OCR
                 ) from exc
             page_text = clean_ocr_text(result)
             page_texts.append(page_text)

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QCheckBox, QWidget
 from ..application.composition import AppServices
 from ..application.run import RequirementIssue
 from ..config import Config
+from ..domain.stages import Stage
 from . import _user_text as txt
 from ._background import LatestTask
 from ._dependency_guard_dialog import DependencyGuardDialog
@@ -24,10 +25,10 @@ from ._fix_targets import FixAction, fix_for
 from .settings._page import SettingsPage
 
 #: The step the teacher sees for each stage the requirement guard can untick.
-_STAGE_STEP_TITLES = {
-    "ocr": txt.RECOGNIZE_TEXT,
-    "correction": txt.PROOFREAD,
-    "evaluation": txt.REVIEW_CONTENT,
+_STAGE_STEP_TITLES: dict[str, str] = {
+    Stage.OCR: txt.RECOGNIZE_TEXT,
+    Stage.CORRECTION: txt.PROOFREAD,
+    Stage.EVALUATION: txt.REVIEW_CONTENT,
     "anonymizer": txt.REMOVE_PERSONAL_INFO,
 }
 
@@ -95,13 +96,13 @@ class StageGuard(QObject):
         if not issues:
             # All met (or the check itself failed: never block the UI on that).  A review that
             # was ticked before proofreading came back is checked now.
-            if stage == "correction" and hooks.checkbox("evaluation").isChecked():
-                self.check("evaluation")
+            if stage == Stage.CORRECTION and hooks.checkbox(Stage.EVALUATION).isChecked():
+                self.check(Stage.EVALUATION)
             return
         checkbox = hooks.checkbox(stage)
         if not checkbox.isChecked():
             return  # the user unticked it in the meantime
-        if stage == "evaluation" and not hooks.checkbox("correction").isChecked():
+        if stage == Stage.EVALUATION and not hooks.checkbox(Stage.CORRECTION).isChecked():
             return  # no review without proofreading: its tick stays for when it comes back
         if _stage_inputs(hooks.config(), stage) != _stage_inputs(config, stage):
             return  # the user chose another model/provider/server: this answer is outdated
@@ -135,14 +136,14 @@ def _open_fix(hooks: GuardHooks, action: FixAction) -> None:
 
 def _stage_inputs(config: Config, stage: str) -> tuple[str, ...]:
     """Return the config values the requirements of *stage* depend on."""
-    if stage == "ocr":
+    if stage == Stage.OCR:
         return (config.ocr.engine,)
-    if stage == "correction":
+    if stage == Stage.CORRECTION:
         return (
             config.correction_provider,
             config.effective_correction_model,
             config.ollama_url,
         )
-    if stage == "evaluation":
+    if stage == Stage.EVALUATION:
         return (config.evaluate_provider, config.effective_evaluate_model, config.ollama_url)
     return (config.language,)

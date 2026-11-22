@@ -15,7 +15,7 @@ from ..domain.freshness import (
     correction_kept_over_settings,
     first_stale_stage_for_hashes,
 )
-from ..domain.stages import StageName
+from ..domain.stages import Stage
 from ..domain.teacher_work import TeacherWork, current_texts, work_status
 from ..infrastructure.state_repository import DocumentState, machine_texts, reset_fields
 from ..infrastructure.workflow.cache_service import ExpectedHashes, stage_hashes
@@ -70,7 +70,7 @@ def reconciled_view(
     )
 
 
-def _without_done_flags(state: DocumentState, stale_stage: StageName) -> DocumentState:
+def _without_done_flags(state: DocumentState, stale_stage: Stage) -> DocumentState:
     """Return *state* with the ``*_done`` flags of *stale_stage* and later cleared."""
     return replace(
         state,

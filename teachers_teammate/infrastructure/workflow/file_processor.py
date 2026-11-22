@@ -20,12 +20,7 @@ from ...domain.output_files import (
 )
 from ...domain.performance_estimate import SpeedStep
 from ...domain.proofreading.review import CorrectionReview, fits
-from ...domain.stages import (
-    PROGRESS_STAGE_CORRECTION,
-    PROGRESS_STAGE_OCR,
-    PROGRESS_STAGE_PREPROCESSING,
-    StageName,
-)
+from ...domain.stages import ProgressStage, Stage
 from ...domain.teacher_work import (
     CurrentTexts,
     TranscriptionWork,
@@ -97,8 +92,9 @@ class ProcessingResult:
     ``ok`` is ``False`` and ``message`` says before which step; the steps that were done are
     stored and reused by the next run."""
     stopped_stage: str = ""
-    """With ``stopped``: the step the stop cut short (``"ocr"``, ``"correction"`` or
-    ``"evaluation"``); empty when the file did not get as far as telling."""
+    """With ``stopped``: the :class:`~teachers_teammate.domain.stages.Stage` the stop cut short
+    (``"ocr"``, ``"correction"`` or ``"evaluation"``); empty when the file did not get as far as
+    telling."""
 
 
 #: What a stopped file says, by the step it did not get to.
@@ -170,7 +166,7 @@ class _Stopped(Exception):
 
 def _stopped_result(
     message: str,
-    stage: StageName,
+    stage: Stage,
     *,
     preview_img: str = "",
     raw_text: str = "",
@@ -208,7 +204,7 @@ class _LazyAnonymization:
         #: ``(text, mapping)`` once it was computed, else ``None``.
         self.result: tuple[str, AnonymizationMap] | None = None
 
-    def __call__(self, stage: str = "") -> tuple[str, AnonymizationMap]:
+    def __call__(self, stage: Stage | str = "") -> tuple[str, AnonymizationMap]:
         if self.result is None:
             self.result = self._compute(stage)
         return self.result
@@ -372,7 +368,7 @@ class FileProcessor:
             self._on_ocr_done(str(file.resolve()), file.name)
         return raw_text, preview_img, source_image, ctx
 
-    def _notify_stage(self, file: Path, stage: str) -> None:
+    def _notify_stage(self, file: Path, stage: ProgressStage) -> None:
         if self._on_stage_started:
             self._on_stage_started(str(file.resolve()), stage)
 
@@ -388,7 +384,7 @@ class FileProcessor:
             reading = None  # an emptied text is not a reading to go by
         if not is_text_input:
             self._reporter.status("       → Preprocessing...")
-            self._notify_stage(file, PROGRESS_STAGE_PREPROCESSING)
+            self._notify_stage(file, ProgressStage.PREPROCESSING)
         try:
             if self._recognize or reading is not None:
                 prepared = self._preprocess_service.preprocess_input(file)
@@ -452,7 +448,7 @@ class FileProcessor:
             reading = None  # the file carries its own text; nothing of the teacher's is read in
 
         if self._stopping() and prepared.raw_text_hint is None:
-            raise _stopped_result(STOPPED_BEFORE_RECOGNITION, "ocr", preview_img=preview_img)
+            raise _stopped_result(STOPPED_BEFORE_RECOGNITION, Stage.OCR, preview_img=preview_img)
 
         try:
             raw_text, ctx = self._run_ocr(
@@ -460,7 +456,7 @@ class FileProcessor:
             )
         except RunStoppedError as exc:
             raise _stopped_result(
-                STOPPED_BEFORE_RECOGNITION, "ocr", preview_img=preview_img
+                STOPPED_BEFORE_RECOGNITION, Stage.OCR, preview_img=preview_img
             ) from exc
         return raw_text, preview_img, source_image, ctx
 
@@ -518,7 +514,7 @@ class FileProcessor:
             if prepared.text_layer_note:
                 self._reporter.status(f"       → PDF {prepared.text_layer_note} — using OCR")
             self._reporter.status("       → Running OCR...")
-            self._notify_stage(file, PROGRESS_STAGE_OCR)
+            self._notify_stage(file, ProgressStage.OCR)
 
             def page_started(page: int, total: int) -> None:
                 if total > 1:
@@ -541,7 +537,7 @@ class FileProcessor:
 
         if not raw_text:
             raise StageError(
-                "Empty response from OCR model.", kind=StageErrorKind.ENGINE, stage="ocr"
+                "Empty response from OCR model.", kind=StageErrorKind.ENGINE, stage=Stage.OCR
             )
 
         try:
@@ -574,7 +570,7 @@ class FileProcessor:
         return _LazyAnonymization(lambda stage: self._hide_personal_info(text, stage=stage))
 
     def _hide_personal_info(
-        self, text: str, *, stage: str = "", before_model: bool = False
+        self, text: str, *, stage: Stage | str = "", before_model: bool = False
     ) -> tuple[str, AnonymizationMap]:
         """Hide personal data in *text* before a model sees it (no-op without an anonymizer).
 
@@ -597,7 +593,9 @@ class FileProcessor:
             self._reporter.status(f"       → Personal info removed ({len(anon_map)} items)")
         return anonymized, anon_map
 
-    def _restore_pii(self, text: str, anon_map: AnonymizationMap, *, stage: str = "") -> str:
+    def _restore_pii(
+        self, text: str, anon_map: AnonymizationMap, *, stage: Stage | str = ""
+    ) -> str:
         """Put the real personal data back into *text*; end the file when that fails."""
         if not (anon_map and text and self._anonymizer is not None):
             return text
@@ -640,7 +638,7 @@ class FileProcessor:
         def stopped() -> _Stopped:
             return _stopped_result(
                 STOPPED_BEFORE_PROOFREADING,
-                "correction",
+                Stage.CORRECTION,
                 preview_img=preview_img,
                 raw_text=texts.transcription,
                 text_format=text_format,
@@ -650,8 +648,8 @@ class FileProcessor:
         if self._stopping():
             raise stopped()
         self._reporter.status("       → Running correction...")
-        self._notify_stage(file, PROGRESS_STAGE_CORRECTION)
-        text_for_correction, anon_map = anonymized("correction")
+        self._notify_stage(file, ProgressStage.CORRECTION)
+        text_for_correction, anon_map = anonymized(Stage.CORRECTION)
 
         # A text that goes out in several pieces cannot be changed across a piece boundary;
         # say so before the requests start, so the teacher knows what to expect.
@@ -676,7 +674,7 @@ class FileProcessor:
             mode="exchange" if outcome.review is not None else "text",
             usable=not (outcome.failed or outcome.fell_back),
         )
-        corrected_text = self._restore_pii(outcome.text or "", anon_map, stage="correction")
+        corrected_text = self._restore_pii(outcome.text or "", anon_map, stage=Stage.CORRECTION)
         review, unmatched = self._restore_review_pii(
             outcome.review,
             anon_map,
@@ -799,7 +797,7 @@ class FileProcessor:
         def stopped() -> _Stopped:
             return _stopped_result(
                 STOPPED_BEFORE_REVIEW,
-                "evaluation",
+                Stage.EVALUATION,
                 preview_img=preview_img,
                 raw_text=texts.transcription,
                 correction_text=correction_text if stored else "",
@@ -815,7 +813,7 @@ class FileProcessor:
         # The proofread text has its real names back, so hide them again: the review may
         # run on an online service just like proofreading.
         text_for_evaluation, anon_map = self._hide_personal_info(
-            correction_text, stage="evaluation", before_model=True
+            correction_text, stage=Stage.EVALUATION, before_model=True
         )
         if self._stopping():
             raise stopped()
@@ -829,7 +827,7 @@ class FileProcessor:
         self._finish_sample(
             words=len(text_for_evaluation.split()), usable=evaluation.warning is None
         )
-        eval_text = self._restore_pii(evaluation.text or "", anon_map, stage="evaluation")
+        eval_text = self._restore_pii(evaluation.text or "", anon_map, stage=Stage.EVALUATION)
         eval_warnings: list[str] = [evaluation.warning] if evaluation.warning else []
         if eval_text:
             try:

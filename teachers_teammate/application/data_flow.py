@@ -16,9 +16,6 @@ from ..config import DEFAULTS, Config
 from ..domain.data_location import (
     OCR_ENGINE_NAMES,
     STAGE_ANONYMIZATION,
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
-    STAGE_OCR,
     DataFlow,
     DataFlowStage,
     DataLocation,
@@ -31,6 +28,7 @@ from ..domain.data_location import (
     llm_stage_location,
     online_ocr_reason,
 )
+from ..domain.stages import Stage
 from ..infrastructure.llm_factory import get_provider_info
 from ..infrastructure.ollama_utils import ollama_server
 
@@ -151,15 +149,15 @@ def _endpoint_url(record: SentRecord) -> str:
     return endpoint
 
 
-def llm_steps(correction_enabled: bool, evaluation_enabled: bool) -> tuple[str, ...]:
-    """Return the text steps a run takes, in order (``STAGE_CORRECTION``, ``STAGE_EVALUATION``).
+def llm_steps(correction_enabled: bool, evaluation_enabled: bool) -> tuple[Stage, ...]:
+    """Return the text steps a run takes, in order (``Stage.CORRECTION``, ``Stage.EVALUATION``).
 
     The content review reads the proofread text, so it only runs after proofreading.  The one
     place that says which steps exist: the data-flow box and the Settings window both ask it.
     """
     if not correction_enabled:
         return ()
-    return (STAGE_CORRECTION, STAGE_EVALUATION) if evaluation_enabled else (STAGE_CORRECTION,)
+    return (Stage.CORRECTION, Stage.EVALUATION) if evaluation_enabled else (Stage.CORRECTION,)
 
 
 def ticked_steps(
@@ -180,25 +178,25 @@ def ticked_steps(
         tuple(
             stage
             for stage in steps.stages
-            if (stage.stage != STAGE_OCR or recognition_enabled)
+            if (stage.stage != Stage.OCR or recognition_enabled)
             and (
-                stage.stage not in (STAGE_CORRECTION, STAGE_EVALUATION) or stage.stage in text_steps
+                stage.stage not in (Stage.CORRECTION, Stage.EVALUATION) or stage.stage in text_steps
             )
         )
     )
 
 
 #: Settings-key prefix and default-model task of each text step.
-_LLM_STEP_SETTINGS = {
-    STAGE_CORRECTION: ("correction", "correction"),
-    STAGE_EVALUATION: ("evaluate", "evaluation"),
+_LLM_STEP_SETTINGS: dict[Stage, tuple[str, Stage]] = {
+    Stage.CORRECTION: ("correction", Stage.CORRECTION),
+    Stage.EVALUATION: ("evaluate", Stage.EVALUATION),
 }
 
 
 def text_goes_online(
     settings: Mapping[str, object],
     describe: Callable[[str, str, str], StageLocation],
-    effective_model: Callable[[str, str, str], str],
+    effective_model: Callable[[str, str, Stage], str],
 ) -> bool:
     """Return whether a run with *settings* sends text to an online service.
 
@@ -284,7 +282,7 @@ def describe_data_flow(
     """
     hidden = config.anonymization_enabled
     ocr = ocr_location(config.ocr.engine, config.ocr.model, config.ollama_url)
-    stages = [DataFlowStage(STAGE_OCR, ocr, "page images")] if config.recognition_enabled else []
+    stages = [DataFlowStage(Stage.OCR, ocr, "page images")] if config.recognition_enabled else []
     stages += [
         DataFlowStage(
             STAGE_ANONYMIZATION,
@@ -296,7 +294,7 @@ def describe_data_flow(
         ),
     ]
     for step in llm_steps(config.correction_enabled, config.evaluation_enabled):
-        if step == STAGE_CORRECTION:
+        if step == Stage.CORRECTION:
             provider, model = config.correction_provider, config.effective_correction_model
         else:
             provider, model = config.evaluate_provider, config.effective_evaluate_model

@@ -10,9 +10,6 @@ from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.sent_text import SentText, SentTexts, describe_sent_texts
 from teachers_teammate.domain.proofreading.review import CorrectionReview, UnclearNote
 from teachers_teammate.domain.data_location import (
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
-    STAGE_OCR,
     DataFlow,
     DataFlowStage,
     DataLocation,
@@ -22,6 +19,7 @@ from teachers_teammate.domain.data_location import (
     SentStatus,
     StageLocation,
 )
+from teachers_teammate.domain.stages import Stage
 from teachers_teammate.gui._data_flow_summary import level_text, stage_tooltip
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._what_is_sent_dialog import (
@@ -121,8 +119,8 @@ def test_dialog_lists_one_section_per_outbound_step(qtbot) -> None:
     Then   it has one section per step, each holding the text that step receives
     """
     report = _report(
-        DataFlowStage(STAGE_CORRECTION, _EU, "text"),
-        DataFlowStage(STAGE_EVALUATION, _NON_EU, "text"),
+        DataFlowStage(Stage.CORRECTION, _EU, "text"),
+        DataFlowStage(Stage.EVALUATION, _NON_EU, "text"),
         correction_text="Anna wrote this.",
     )
     dialog = WhatIsSentDialog(report, file_name="essay.pdf")
@@ -141,7 +139,7 @@ def test_dialog_shows_hidden_names_and_the_prompt_on_request(qtbot) -> None:
     Then   the text is the anonymized one and the prompt becomes visible
     """
     report = _report(
-        DataFlowStage(STAGE_CORRECTION, _EU, "text", personal_info_hidden=True),
+        DataFlowStage(Stage.CORRECTION, _EU, "text", personal_info_hidden=True),
         anonymized="[PERSON_1] wrote this.",
         placeholders=("[PERSON_1]",),
     )
@@ -167,7 +165,7 @@ def test_dialog_offers_the_personal_information_comparison(qtbot) -> None:
     Then   it has a second tab comparing the original with the anonymized text
     """
     report = _report(
-        DataFlowStage(STAGE_CORRECTION, _EU, "text", personal_info_hidden=True),
+        DataFlowStage(Stage.CORRECTION, _EU, "text", personal_info_hidden=True),
         anonymized="[PERSON_1] wrote this.",
         placeholders=("[PERSON_1]",),
     )
@@ -185,7 +183,7 @@ def test_dialog_without_anonymization_has_only_the_sent_tab(qtbot) -> None:
     When   the dialog is opened
     Then   there is no comparison tab
     """
-    report = _report(DataFlowStage(STAGE_CORRECTION, _EU, "text"))
+    report = _report(DataFlowStage(Stage.CORRECTION, _EU, "text"))
     dialog = WhatIsSentDialog(report)
     qtbot.addWidget(dialog)
 
@@ -200,7 +198,7 @@ def test_dialog_says_everything_stays_here_for_a_local_run(qtbot) -> None:
     Then   it says everything stays here and lists no section
     """
     report = _report(
-        DataFlowStage(STAGE_OCR, StageLocation(DataLocation.THIS_COMPUTER, "Ollama"), "pages")
+        DataFlowStage(Stage.OCR, StageLocation(DataLocation.THIS_COMPUTER, "Ollama"), "pages")
     )
     dialog = WhatIsSentDialog(report)
     qtbot.addWidget(dialog)
@@ -217,7 +215,7 @@ def test_dialog_headline_states_the_privacy_level(qtbot) -> None:
     When   the dialog is opened
     Then   its headline names that consequence
     """
-    report = _report(DataFlowStage(STAGE_CORRECTION, _NON_EU, "text"))
+    report = _report(DataFlowStage(Stage.CORRECTION, _NON_EU, "text"))
     dialog = WhatIsSentDialog(report)
     qtbot.addWidget(dialog)
 
@@ -231,9 +229,9 @@ def test_section_details_name_the_destination(qtbot) -> None:
     When   the sections are read
     Then   each says where its text goes and how names are handled
     """
-    own = SentText(DataFlowStage(STAGE_CORRECTION, _OWN, "text"), "text")
+    own = SentText(DataFlowStage(Stage.CORRECTION, _OWN, "text"), "text")
     online = SentText(
-        DataFlowStage(STAGE_CORRECTION, _EU, "text", personal_info_hidden=True), "text"
+        DataFlowStage(Stage.CORRECTION, _EU, "text", personal_info_hidden=True), "text"
     )
 
     assert own.badge == "On another computer (192.168.1.9) · names as written"
@@ -252,11 +250,11 @@ def test_stage_tooltip_says_where_the_text_goes() -> None:
     Then   the line names the destination and how names are handled
     """
     local = DataFlowStage(
-        STAGE_CORRECTION, StageLocation(DataLocation.THIS_COMPUTER, "Ollama"), "text"
+        Stage.CORRECTION, StageLocation(DataLocation.THIS_COMPUTER, "Ollama"), "text"
     )
-    own = DataFlowStage(STAGE_CORRECTION, _OWN, "text", personal_info_hidden=True)
-    eu = DataFlowStage(STAGE_CORRECTION, _EU, "text", personal_info_hidden=True)
-    non_eu = DataFlowStage(STAGE_CORRECTION, _NON_EU, "text")
+    own = DataFlowStage(Stage.CORRECTION, _OWN, "text", personal_info_hidden=True)
+    eu = DataFlowStage(Stage.CORRECTION, _EU, "text", personal_info_hidden=True)
+    non_eu = DataFlowStage(Stage.CORRECTION, _NON_EU, "text")
 
     assert stage_tooltip(local) == "Stays on this computer (Ollama)"
     assert stage_tooltip(own) == "Sent to another computer (192.168.1.9), names hidden"
@@ -357,7 +355,7 @@ def test_the_tooltip_says_how_the_stored_result_was_sent(qtbot) -> None:
     """
     table = ResultsTable()
     qtbot.addWidget(table)
-    table.set_queue([_row(sent={STAGE_CORRECTION: _sent_status(other=True)})])
+    table.set_queue([_row(sent={Stage.CORRECTION: _sent_status(other=True)})])
     table.set_stage_tooltips({"correction": "Sent to Mistral (EU), names hidden"})
 
     correction = table.item(0, ResultsTable._COL_CORRECTION)
@@ -377,7 +375,7 @@ def test_the_tooltip_of_a_result_made_here_says_so(qtbot) -> None:
     """
     table = ResultsTable()
     qtbot.addWidget(table)
-    table.set_queue([_row(sent={STAGE_CORRECTION: _sent_status(provider="ollama")})])
+    table.set_queue([_row(sent={Stage.CORRECTION: _sent_status(provider="ollama")})])
 
     correction = table.item(0, ResultsTable._COL_CORRECTION)
     assert correction is not None
@@ -393,7 +391,7 @@ def test_a_stage_without_a_record_loses_its_sent_line(qtbot) -> None:
     """
     table = ResultsTable()
     qtbot.addWidget(table)
-    table.set_queue([_row(sent={STAGE_CORRECTION: _sent_status()})])
+    table.set_queue([_row(sent={Stage.CORRECTION: _sent_status()})])
     table.set_stage_tooltips({"correction": "Sent to Mistral (EU), names hidden"})
 
     table.update_row(_row())
@@ -415,8 +413,8 @@ def test_the_tooltip_tells_hiding_that_found_nothing_from_hiding_that_was_off(qt
     qtbot.addWidget(table)
     table.set_queue(
         [
-            _row("/tmp/a.pdf", "a.pdf", sent={STAGE_CORRECTION: searched}),
-            _row("/tmp/b.pdf", "b.pdf", sent={STAGE_CORRECTION: _sent_status(names_hidden=0)}),
+            _row("/tmp/a.pdf", "a.pdf", sent={Stage.CORRECTION: searched}),
+            _row("/tmp/b.pdf", "b.pdf", sent={Stage.CORRECTION: _sent_status(names_hidden=0)}),
         ]
     )
 
@@ -436,10 +434,10 @@ def test_the_dialog_lists_how_each_stored_result_was_sent(qtbot) -> None:
     Then   the "What is sent" tab starts with one line per stored result
     """
     report = _report(
-        DataFlowStage(STAGE_CORRECTION, _EU, "text", personal_info_hidden=True),
+        DataFlowStage(Stage.CORRECTION, _EU, "text", personal_info_hidden=True),
         stored={
-            STAGE_CORRECTION: _sent_status(),
-            STAGE_EVALUATION: _sent_status(names_hidden=0),
+            Stage.CORRECTION: _sent_status(),
+            Stage.EVALUATION: _sent_status(names_hidden=0),
         },
     )
     dialog = WhatIsSentDialog(report)
@@ -461,7 +459,7 @@ def test_the_dialog_says_nothing_about_stored_results_when_none_is_recorded(qtbo
     When   the dialog is opened
     Then   there is no stored-results block, so the tab only says what the next run sends
     """
-    report = _report(DataFlowStage(STAGE_CORRECTION, _EU, "text"))
+    report = _report(DataFlowStage(Stage.CORRECTION, _EU, "text"))
     dialog = WhatIsSentDialog(report)
     qtbot.addWidget(dialog)
 
@@ -523,7 +521,7 @@ def test_every_sent_text_of_a_report_names_its_stage() -> None:
     When   its section is inspected
     Then   the section is a SentText with the stage's own title
     """
-    report = _report(DataFlowStage(STAGE_CORRECTION, _EU, "text"))
+    report = _report(DataFlowStage(Stage.CORRECTION, _EU, "text"))
 
     assert all(isinstance(section, SentText) for section in report.sections)
     assert report.sections[0].title == "Proofreading"
@@ -536,7 +534,7 @@ def test_dialog_names_a_step_that_sends_page_images(qtbot) -> None:
     When   the dialog is opened
     Then   it does not claim that everything stays here, and says the pages are sent
     """
-    report = _report(DataFlowStage(STAGE_OCR, _OWN, "page images"))
+    report = _report(DataFlowStage(Stage.OCR, _OWN, "page images"))
     dialog = WhatIsSentDialog(report)
     qtbot.addWidget(dialog)
 

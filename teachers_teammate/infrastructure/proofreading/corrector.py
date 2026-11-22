@@ -29,6 +29,7 @@ from ...domain.proofreading.result import (
     StepName,
     stored_exchange_id,
 )
+from ...domain.stages import Stage
 from ...exceptions import StageError, StageErrorKind
 from ...interfaces import Corrector
 from .exchanges import Exchange, ExchangeCost, ProofreadContext, build_exchange
@@ -111,7 +112,7 @@ class ExchangeCorrector(Corrector):
         if result.failed:
             if any(report.failure == "transport" for report in result.reports):
                 raise StageError(
-                    warning or _NO_ANSWER, kind=StageErrorKind.PROVIDER, stage="correction"
+                    warning or _NO_ANSWER, kind=StageErrorKind.PROVIDER, stage=Stage.CORRECTION
                 )
             return CorrectionOutcome(
                 text=raw_text, review=None, warning=warning or _FAILED, failed=True

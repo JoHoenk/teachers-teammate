@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 import dataclasses
 import os
 from pathlib import Path
+from teachers_teammate.domain.stages import Stage
 import tempfile
 import threading
 
@@ -26,9 +27,6 @@ from teachers_teammate.application.speed_estimates import SpeedChoices, SpeedSum
 from teachers_teammate.config import DEFAULTS, Config
 from teachers_teammate.domain.data_location import (
     STAGE_ANONYMIZATION,
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
-    STAGE_OCR,
     DataFlow,
     DataFlowStage,
     DataLocation,
@@ -145,7 +143,7 @@ class LocalDataFlowStub:
     def describe_data_flow(self, config) -> DataFlow:
         _ = config
         here = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
-        return DataFlow((DataFlowStage(STAGE_OCR, here, "page images"),))
+        return DataFlow((DataFlowStage(Stage.OCR, here, "page images"),))
 
     def describe_steps(self, config) -> DataFlow:
         """Every step as if it were ticked, all on this computer."""
@@ -153,10 +151,10 @@ class LocalDataFlowStub:
         here = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
         return DataFlow(
             (
-                DataFlowStage(STAGE_OCR, here, "page images"),
+                DataFlowStage(Stage.OCR, here, "page images"),
                 DataFlowStage(STAGE_ANONYMIZATION, here, "text", detail="Off"),
-                DataFlowStage(STAGE_CORRECTION, here, "text"),
-                DataFlowStage(STAGE_EVALUATION, here, "text"),
+                DataFlowStage(Stage.CORRECTION, here, "text"),
+                DataFlowStage(Stage.EVALUATION, here, "text"),
             )
         )
 

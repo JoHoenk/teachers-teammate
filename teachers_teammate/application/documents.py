@@ -18,6 +18,7 @@ from ..domain.correction_prompts import notes_block
 from ..domain.formatted_text import TextFormat, normalize_text_format
 from ..domain.freshness import correction_kept_over_settings
 from ..domain.notation import with_notation_hint
+from ..domain.stages import Stage
 from ..domain.teacher_work import current_texts
 from ..infrastructure.anonymizer import anonymizer_config_from
 from ..infrastructure.onnx.store import ModelStore
@@ -301,7 +302,7 @@ class DocumentQueries:
         """Return the instructions the evaluator sends, or ``""`` when it sends none."""
 
         prompt = config.evaluate_prompt or DEFAULTS["evaluate_prompt"]
-        return with_notation_hint(prompt, text_format, task="evaluation")
+        return with_notation_hint(prompt, text_format, task=Stage.EVALUATION)
 
     def _merged(self, view: DocumentStateView, state: DocumentState) -> DocumentStateView:
         """Return *view* with the teacher's texts over the machine's."""

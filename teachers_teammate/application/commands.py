@@ -15,7 +15,7 @@ from pathlib import Path
 from ..config import Config
 from ..domain.context_budget import RunWindows
 from ..domain.formatted_text import normalize_text_format
-from ..domain.stages import normalize_stage
+from ..domain.stages import Stage, normalize_stage
 from ..domain.teacher_work import (
     TeacherWork,
     current_texts,
@@ -60,9 +60,9 @@ class WorkNotSavedError(Exception):
 
 
 #: What an explicit re-run of a stage takes with it from the teacher's work.
-_PART_DROP: dict[str, Callable[[TeacherWork], TeacherWork]] = {
-    "correction": without_corrections,
-    "ocr": without_work_for_reading,
+_PART_DROP: dict[Stage, Callable[[TeacherWork], TeacherWork]] = {
+    Stage.CORRECTION: without_corrections,
+    Stage.OCR: without_work_for_reading,
 }
 
 
@@ -118,7 +118,7 @@ class DocumentCommands:
         )
         if state.correction_done:
             try:
-                state = store.reset_from_stage(source, state, "correction")
+                state = store.reset_from_stage(source, state, Stage.CORRECTION)
             except OSError as exc:
                 _logger.warning("Could not reset the proofreading of %s: %s", source.name, exc)
         return reconciled_view(source, state, work, self._expected(config, source))

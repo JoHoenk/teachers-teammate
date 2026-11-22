@@ -34,6 +34,7 @@ from .domain.local_models import (
 )
 from .domain.output_files import folder_problem
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
+from .domain.stages import Stage
 from .exceptions import ConfigFileNotFoundError, ConfigFileParseError, ModelDownloadError
 from .settings_schema import CONTEXT_SETTINGS, DEFAULTS, PREPROCESS_METHODS, LoadedSettings
 from .texts import dialogs as dlg
@@ -107,9 +108,9 @@ def _add_correction_args(parser: argparse.ArgumentParser, providers: list[str] |
         help=(
             "Correction LLM model name. "
             "Auto-selected per provider when omitted: "
-            f"{default_model_for_task('ollama', 'correction')} (ollama), "
-            f"{default_model_for_task('openai', 'correction')} (openai), "
-            f"{default_model_for_task('anthropic', 'correction')} (anthropic)."
+            f"{default_model_for_task('ollama', Stage.CORRECTION)} (ollama), "
+            f"{default_model_for_task('openai', Stage.CORRECTION)} (openai), "
+            f"{default_model_for_task('anthropic', Stage.CORRECTION)} (anthropic)."
         ),
     )
     corr_grp.add_argument(

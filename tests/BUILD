@@ -958,6 +958,17 @@ py_test(
     deps = _COMMON_DEPS,
 )
 
+# A stage word and the Ollama address are spelled in one module each.
+py_test(
+    name = "test_names_have_one_home",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_names_have_one_home.py"],
+    args = ["unit/test_names_have_one_home.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
 py_test(
     name = "test_user_text_centralised",
     size = "small",
@@ -2879,6 +2890,7 @@ test_suite(
         ":test_model_catalog",
         ":test_model_listing",
         ":test_model_store",
+        ":test_names_have_one_home",
         ":test_ocr_formats",
         ":test_ocr_processor",
         ":test_ocr_stage_service",

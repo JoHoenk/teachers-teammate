@@ -131,8 +131,8 @@ class ProviderService:
     def check_connection(
         self,
         provider: str,
-        url: str = "http://127.0.0.1:11434",
         *,
+        url: str,
         model: str = "",
     ) -> tuple[bool, bool, str]:
         """Check whether an LLM *provider* answers, and whether *model* is there.

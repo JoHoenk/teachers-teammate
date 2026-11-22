@@ -14,11 +14,7 @@ from ..config import Config
 from ..domain.model_catalog import short_model_name
 from ..domain.ollama_discovery import WaitDetail, WaitKind
 from ..domain.performance_estimate import TimeRange
-from ..domain.stages import (
-    PROGRESS_STAGE_CORRECTION,
-    PROGRESS_STAGE_OCR,
-    PROGRESS_STAGE_PREPROCESSING,
-)
+from ..domain.stages import ProgressStage
 from ..texts import check as check_text
 from ._run_status import RunPace, RunProgress
 from ._types import FileDoneEvent
@@ -61,16 +57,16 @@ PROGRESS_RESOLUTION = 1000
 
 #: What the progress line says while a step of the run's file is on.
 _STAGE_PROGRESS_LABEL = {
-    PROGRESS_STAGE_PREPROCESSING: check_text.PROGRESS_PREPROCESSING,
-    PROGRESS_STAGE_OCR: check_text.PROGRESS_OCR,
-    PROGRESS_STAGE_CORRECTION: check_text.PROGRESS_CORRECTING,
+    ProgressStage.PREPROCESSING: check_text.PROGRESS_PREPROCESSING,
+    ProgressStage.OCR: check_text.PROGRESS_OCR,
+    ProgressStage.CORRECTION: check_text.PROGRESS_CORRECTING,
 }
 
 #: What the Check tab's run strip says while a step of the run's file is on.
 _RUN_STEP_TEXT = {
-    PROGRESS_STAGE_PREPROCESSING: check_text.RUN_PREPARING,
-    PROGRESS_STAGE_OCR: check_text.RUN_READING,
-    PROGRESS_STAGE_CORRECTION: "",  # empty: the strip names the proofreading model
+    ProgressStage.PREPROCESSING: check_text.RUN_PREPARING,
+    ProgressStage.OCR: check_text.RUN_READING,
+    ProgressStage.CORRECTION: "",  # empty: the strip names the proofreading model
 }
 
 
@@ -189,7 +185,9 @@ class RunSession:
         self.stage_label = ""
         self.wait_shown = False
 
-    def stage_started(self, name: str, stage: str, idx: int, total: int, now: float) -> str | None:
+    def stage_started(
+        self, name: str, stage: ProgressStage | str, idx: int, total: int, now: float
+    ) -> str | None:
         """Take the step *stage* of the file the run is on; return the progress text to show.
 
         A proofreading on an Ollama server may wait for the model: its clock starts at the first
@@ -197,7 +195,7 @@ class RunSession:
         ``None`` means the progress line keeps what it says.
         """
         self.pace_waits_for_first_token = bool(
-            stage == PROGRESS_STAGE_CORRECTION and self.waits_for_ollama
+            stage == ProgressStage.CORRECTION and self.waits_for_ollama
         )
         if not self.pace_waits_for_first_token:
             self.pace.work_started(now)

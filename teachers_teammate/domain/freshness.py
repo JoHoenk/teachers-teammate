@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .stages import StageName, normalize_stage
+from .stages import Stage, normalize_stage
 
 
 @dataclass(frozen=True)
@@ -52,14 +52,14 @@ class StageHashes:
 def reset_policy_from_stage(stage: str) -> ResetPolicy:
     """Return reset policy for stage invalidation beginning at *stage*."""
     stage_name = normalize_stage(stage)
-    if stage_name == "ocr":
+    if stage_name is Stage.OCR:
         return ResetPolicy(
             clear_ocr=True,
             clear_correction=True,
             clear_evaluation=True,
             clear_preview_artifacts=True,
         )
-    if stage_name == "correction":
+    if stage_name is Stage.CORRECTION:
         return ResetPolicy(
             clear_ocr=False,
             clear_correction=True,
@@ -74,7 +74,7 @@ def reset_policy_from_stage(stage: str) -> ResetPolicy:
     )
 
 
-def first_stale_stage_for_hashes(hashes: StageHashes) -> StageName | None:
+def first_stale_stage_for_hashes(hashes: StageHashes) -> Stage | None:
     """Return the earliest stale stage caused by runtime hash drift, if any.
 
     A frozen reading is not stale by its settings: the teacher's transcription is what the
@@ -91,7 +91,7 @@ def first_stale_stage_for_hashes(hashes: StageHashes) -> StageName | None:
         and hashes.ocr_config_hash != hashes.expected_ocr_config_hash
         and not hashes.ocr_frozen
     ):
-        return "ocr"
+        return Stage.OCR
     if hashes.correction_done and (
         hashes.correction_source != hashes.expected_correction_source
         or (
@@ -100,13 +100,13 @@ def first_stale_stage_for_hashes(hashes: StageHashes) -> StageName | None:
             and not hashes.correction_kept
         )
     ):
-        return "correction"
+        return Stage.CORRECTION
     if (
         hashes.evaluation_enabled
         and hashes.evaluation_done
         and hashes.eval_config_hash != hashes.expected_eval_config_hash
     ):
-        return "evaluation"
+        return Stage.EVALUATION
     return None
 
 

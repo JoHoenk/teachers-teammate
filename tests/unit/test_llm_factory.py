@@ -91,7 +91,7 @@ def test_build_llm_calls_provider_create(mocker) -> None:
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
     )
-    result = build_llm("openai", "gpt-4o-mini")
+    result = build_llm("openai", "gpt-4o-mini", base_url="")
     assert result is fake
     mock_provider.create.assert_called_once()
 
@@ -149,7 +149,7 @@ def test_build_llm_raises_value_error_for_unknown_provider() -> None:
     Then   a ValueError is raised
     """
     with pytest.raises(ValueError, match="Unknown correction provider"):
-        build_llm("nonexistent_provider_xyz", "some-model")
+        build_llm("nonexistent_provider_xyz", "some-model", base_url="")
 
 
 def test_build_llm_catches_system_exit_from_provider(mocker) -> None:
@@ -166,7 +166,7 @@ def test_build_llm_catches_system_exit_from_provider(mocker) -> None:
     )
 
     with pytest.raises(RuntimeError, match="could not be loaded"):
-        build_llm("openai", "gpt-4o")
+        build_llm("openai", "gpt-4o", base_url="")
 
 
 def test_build_llm_passes_base_url_when_provider_needs_it(mocker) -> None:
@@ -215,7 +215,7 @@ def test_build_llm_forwards_temperature_to_provider_create(mocker) -> None:
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
     )
 
-    build_llm("openai", "gpt-4o", temperature=0.3)
+    build_llm("openai", "gpt-4o", base_url="", temperature=0.3)
 
     mock_provider.create.assert_called_once_with("gpt-4o", temperature=0.3)
 

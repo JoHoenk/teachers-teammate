@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from teachers_teammate.domain.stages import Stage
 from typing import Any
 
 from teachers_teammate.application.setup_plan import (
@@ -24,9 +25,6 @@ from teachers_teammate.domain.local_models import (
 )
 from teachers_teammate.domain.data_location import (
     STAGE_ANONYMIZATION,
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
-    STAGE_OCR,
 )
 from teachers_teammate.domain.model_catalog import (
     DiskVerdict,
@@ -152,8 +150,8 @@ def test_a_first_start_with_nothing_installed_proposes_the_best_models_with_thei
 
     models = _downloads(plan, DownloadKind.OLLAMA_MODEL)
     assert [(d.name, d.stage, d.size_gb, d.possible) for d in models] == [
-        ("qwen2.5vl:7b", STAGE_OCR, find_spec("qwen2.5vl:7b").download_gb, True),
-        ("gemma4:e4b", STAGE_CORRECTION, find_spec("gemma4:e4b").download_gb, True),
+        ("qwen2.5vl:7b", Stage.OCR, find_spec("qwen2.5vl:7b").download_gb, True),
+        ("gemma4:e4b", Stage.CORRECTION, find_spec("gemma4:e4b").download_gb, True),
     ]
     assert plan.disk is DiskVerdict.ENOUGH
 
@@ -172,8 +170,8 @@ def test_an_installed_model_that_fits_is_kept_without_a_download() -> None:
 
     assert plan.settings["ocr_model"] == "qwen3-vl:8b"
     assert plan.settings["correction_model"] == "mistral:latest"
-    assert _step(plan, STAGE_OCR).installed is True
-    assert _step(plan, STAGE_CORRECTION).installed is True
+    assert _step(plan, Stage.OCR).installed is True
+    assert _step(plan, Stage.CORRECTION).installed is True
     assert _downloads(plan, DownloadKind.OLLAMA_MODEL) == []
 
 
@@ -191,7 +189,7 @@ def test_an_installed_model_that_is_too_slow_is_replaced_by_the_recommendation()
 
     assert plan.settings["ocr_model"] == "qwen2.5vl:7b"
     assert [
-        d.name for d in _downloads(plan, DownloadKind.OLLAMA_MODEL) if d.stage == STAGE_OCR
+        d.name for d in _downloads(plan, DownloadKind.OLLAMA_MODEL) if d.stage == Stage.OCR
     ] == ["qwen2.5vl:7b"]
 
 
@@ -211,7 +209,7 @@ def test_another_installed_catalog_model_that_fits_is_used() -> None:
     )
 
     assert plan.settings["ocr_model"] == "glm-ocr:q8_0"
-    assert all(d.stage != STAGE_OCR for d in _downloads(plan, DownloadKind.OLLAMA_MODEL))
+    assert all(d.stage != Stage.OCR for d in _downloads(plan, DownloadKind.OLLAMA_MODEL))
 
 
 def test_an_installed_best_model_wins_over_an_installed_good_one() -> None:
@@ -238,8 +236,8 @@ def test_typed_pages_turn_recognition_off_and_leave_the_reading_model_alone() ->
 
     assert plan.panel["recognition_enabled"] is False
     assert "ocr_model" not in plan.settings
-    assert all(step.stage != STAGE_OCR for step in plan.steps)
-    assert all(download.stage != STAGE_OCR for download in plan.downloads)
+    assert all(step.stage != Stage.OCR for step in plan.steps)
+    assert all(download.stage != Stage.OCR for download in plan.downloads)
 
 
 def test_the_built_in_reader_is_kept_and_nothing_is_downloaded_when_it_is_there() -> None:
@@ -254,9 +252,9 @@ def test_the_built_in_reader_is_kept_and_nothing_is_downloaded_when_it_is_there(
     )
 
     assert "ocr_model" not in plan.settings
-    row = _step(plan, STAGE_OCR)
+    row = _step(plan, Stage.OCR)
     assert (row.provider, row.kept, row.installed) == ("ppocr", True, True)
-    assert all(download.stage != STAGE_OCR for download in plan.downloads)
+    assert all(download.stage != Stage.OCR for download in plan.downloads)
 
 
 def test_the_built_in_reader_without_its_models_adds_a_download_and_no_proposal() -> None:
@@ -271,10 +269,10 @@ def test_the_built_in_reader_without_its_models_adds_a_download_and_no_proposal(
     )
 
     (download,) = _downloads(plan, DownloadKind.READER_MODEL)
-    assert (download.name, download.stage) == ("ppocr", STAGE_OCR)
-    assert _step(plan, STAGE_OCR).kept is True
+    assert (download.name, download.stage) == ("ppocr", Stage.OCR)
+    assert _step(plan, Stage.OCR).kept is True
     assert "ocr_model" not in plan.settings
-    assert not [d for d in _downloads(plan, DownloadKind.OLLAMA_MODEL) if d.stage == STAGE_OCR]
+    assert not [d for d in _downloads(plan, DownloadKind.OLLAMA_MODEL) if d.stage == Stage.OCR]
 
 
 def test_handwritten_pages_with_automatic_preparation_plan_the_page_models() -> None:
@@ -288,7 +286,7 @@ def test_handwritten_pages_with_automatic_preparation_plan_the_page_models() -> 
     )
 
     (download,) = _downloads(plan, DownloadKind.PAGE_MODELS)
-    assert (download.name, download.stage) == (PAGE_MODELS_ADDON_ID, STAGE_OCR)
+    assert (download.name, download.stage) == (PAGE_MODELS_ADDON_ID, Stage.OCR)
     assert download.size_gb == PAGE_MODELS_SIZE_GB
     assert f"{PAGE_MODELS_SIZE_GB * 1000:.0f} MB" == PAGE_MODELS_SIZE_LABEL
 
@@ -338,7 +336,7 @@ def test_the_page_models_are_planned_for_the_built_in_reader_too() -> None:
         facts=_facts(reader_installed=True, page_models_installed=False),
     )
 
-    assert [d.kind for d in plan.downloads if d.stage == STAGE_OCR] == [DownloadKind.PAGE_MODELS]
+    assert [d.kind for d in plan.downloads if d.stage == Stage.OCR] == [DownloadKind.PAGE_MODELS]
 
 
 def test_typed_pages_need_no_reader_download() -> None:
@@ -377,7 +375,7 @@ def test_online_proofreading_takes_the_chosen_pair_and_the_review_follows_it() -
     assert plan.settings["evaluate_provider"] == "mistral"
     assert plan.settings["evaluate_model"] == "mistral-small-latest"
     assert plan.review_kept is False
-    assert all(d.stage != STAGE_CORRECTION for d in _downloads(plan, DownloadKind.OLLAMA_MODEL))
+    assert all(d.stage != Stage.CORRECTION for d in _downloads(plan, DownloadKind.OLLAMA_MODEL))
 
 
 def test_an_online_service_without_a_model_gets_its_default_for_the_review() -> None:
@@ -411,7 +409,7 @@ def test_a_review_with_its_own_model_is_kept() -> None:
     assert plan.review_kept is True
     assert "evaluate_provider" not in plan.settings
     assert "evaluate_model" not in plan.settings
-    row = _step(plan, STAGE_EVALUATION)
+    row = _step(plan, Stage.EVALUATION)
     assert (row.provider, row.model, row.kept) == ("openai", "gpt-4o", True)
 
 
@@ -428,7 +426,7 @@ def test_proofreading_off_leaves_the_correction_and_review_keys_alone() -> None:
     assert "correction_model" not in plan.settings
     assert "evaluate_provider" not in plan.settings
     assert "evaluate_model" not in plan.settings
-    assert [d.stage for d in _downloads(plan, DownloadKind.OLLAMA_MODEL)] == [STAGE_OCR]
+    assert [d.stage for d in _downloads(plan, DownloadKind.OLLAMA_MODEL)] == [Stage.OCR]
 
 
 # ── names ───────────────────────────────────────────────────────────────────
@@ -639,7 +637,7 @@ def test_a_chosen_local_model_is_used_and_pulled_when_it_is_missing() -> None:
     plan = _plan(answers=_answers(local_model="qwen3:8b"))
 
     assert plan.settings["correction_model"] == "qwen3:8b"
-    assert _step(plan, STAGE_CORRECTION).model == "qwen3:8b"
+    assert _step(plan, Stage.CORRECTION).model == "qwen3:8b"
     assert "qwen3:8b" in [d.name for d in _downloads(plan, DownloadKind.OLLAMA_MODEL)]
     assert _BEST["general"] not in [d.name for d in _downloads(plan, DownloadKind.OLLAMA_MODEL)]
 
@@ -655,7 +653,7 @@ def test_a_chosen_local_model_that_is_installed_needs_no_download() -> None:
         facts=_facts(installed_tags=frozenset({"qwen3:8b"})),
     )
 
-    assert _step(plan, STAGE_CORRECTION).installed is True
+    assert _step(plan, Stage.CORRECTION).installed is True
     assert "qwen3:8b" not in [d.name for d in _downloads(plan, DownloadKind.OLLAMA_MODEL)]
 
 

@@ -11,10 +11,10 @@ import dataclasses
 
 from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
-from teachers_teammate.domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentRecord
+from teachers_teammate.domain.data_location import SentRecord
 from teachers_teammate.application.document_view import to_view
 from teachers_teammate.domain.freshness import StageHashes, first_stale_stage_for_hashes
-from teachers_teammate.domain.stages import STAGE_ORDER
+from teachers_teammate.domain.stages import STAGE_ORDER, Stage
 from teachers_teammate.infrastructure.state_repository import (
     DocumentState,
     OcrResultRecord,
@@ -587,8 +587,8 @@ def test_record_correction_result_stores_the_text_that_was_sent(tmp_path: Path) 
 
     view = to_view(source, loaded)
     assert view is not None
-    assert view.sent[STAGE_CORRECTION].record == _sent()
-    assert view.sent[STAGE_CORRECTION].other_privacy_settings is False
+    assert view.sent[Stage.CORRECTION].record == _sent()
+    assert view.sent[Stage.CORRECTION].other_privacy_settings is False
 
 
 def test_record_evaluation_result_stores_how_it_was_sent(tmp_path: Path) -> None:
@@ -622,7 +622,7 @@ def test_record_evaluation_result_stores_how_it_was_sent(tmp_path: Path) -> None
 
     view = to_view(source, loaded)
     assert view is not None
-    assert view.sent[STAGE_EVALUATION].record == _sent(names_hidden=0)
+    assert view.sent[Stage.EVALUATION].record == _sent(names_hidden=0)
 
 
 def test_a_state_without_a_sent_record_reports_none(tmp_path: Path) -> None:
@@ -804,7 +804,7 @@ def test_the_view_has_no_sent_line_for_a_stage_that_is_not_done(tmp_path: Path) 
 
     view = to_view(source, dataclasses.replace(state, evaluation_done=False))
 
-    assert set(view.sent) == {STAGE_CORRECTION}
+    assert set(view.sent) == {Stage.CORRECTION}
 
 
 # ── schema version ────────────────────────────────────────────────────────

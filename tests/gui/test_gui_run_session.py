@@ -6,11 +6,7 @@ from pathlib import Path
 
 from teachers_teammate.domain.performance_estimate import TimeRange
 from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
-from teachers_teammate.domain.stages import (
-    PROGRESS_STAGE_CORRECTION,
-    PROGRESS_STAGE_OCR,
-    PROGRESS_STAGE_PREPROCESSING,
-)
+from teachers_teammate.domain.stages import ProgressStage, Stage
 from teachers_teammate.gui._run_session import RunSession, StopStage
 from teachers_teammate.gui._types import FileDoneEvent
 from tests.conftest import make_config
@@ -77,7 +73,7 @@ def test_a_proofreading_on_an_ollama_server_waits_for_the_first_token(tmp_path: 
     session.start(config, ["/q/a.png"])
     session.file_started("/q/a.png", "a.png", 1, 1)
 
-    session.stage_started("a.png", PROGRESS_STAGE_CORRECTION, 1, 1, 10.0)
+    session.stage_started("a.png", ProgressStage.CORRECTION, 1, 1, 10.0)
 
     assert session.waits_for_ollama is True
     assert session.pace_waits_for_first_token is True
@@ -99,7 +95,7 @@ def test_a_reading_starts_the_clock_at_once(tmp_path: Path) -> None:
     session = RunSession()
     session.start(config, ["/q/a.png"])
 
-    text = session.stage_started("a.png", PROGRESS_STAGE_OCR, 1, 1, 10.0)
+    text = session.stage_started("a.png", ProgressStage.OCR, 1, 1, 10.0)
 
     assert session.pace._work_started_at == 10.0
     assert session.pace_waits_for_first_token is False
@@ -123,7 +119,7 @@ def test_a_wait_note_replaces_the_step_until_the_answer_begins(tmp_path: Path) -
     session = RunSession()
     session.start(config, ["/q/a.png"])
     session.file_started("/q/a.png", "a.png", 1, 1)
-    session.stage_started("a.png", PROGRESS_STAGE_CORRECTION, 1, 1, 10.0)
+    session.stage_started("a.png", ProgressStage.CORRECTION, 1, 1, 10.0)
     stage_step = session.stage_step
 
     detail = session.stage_detail("/q/a.png", "still working with other:8b")
@@ -227,7 +223,7 @@ def test_the_preprocessing_names_the_step_of_the_check_strip(tmp_path: Path) -> 
     session = RunSession()
     session.start(config, ["/q/a.png"])
 
-    session.stage_started("a.png", PROGRESS_STAGE_PREPROCESSING, 1, 1, 10.0)
+    session.stage_started("a.png", ProgressStage.PREPROCESSING, 1, 1, 10.0)
 
     assert session.step == session.stage_step
     assert session.step != ""

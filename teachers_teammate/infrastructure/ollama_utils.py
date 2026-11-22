@@ -23,7 +23,7 @@ from ..domain.context_budget import (
     answers_with_the_same_text,
 )
 from ..domain.model_catalog import LoadedModel, ServerFacts, normalize_tag
-from ..domain.ollama_discovery import WaitDetail, WaitKind, is_private_host
+from ..domain.ollama_discovery import DEFAULT_SERVER_URL, WaitDetail, WaitKind, is_private_host
 from ..exceptions import OllamaConnectionError, RunStoppedError, stop_requested
 from ..interfaces import Reporter
 from .reporting import StdoutReporter
@@ -35,8 +35,6 @@ if TYPE_CHECKING:
     from ..exceptions import OCRError
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
 # How long to wait for the TCP connection to be established.
 _CONNECT_TIMEOUT = 10
@@ -112,7 +110,7 @@ def normalize_ollama_url(url: str) -> str:
     """
     cleaned = (url or "").strip()
     if not cleaned:
-        return _DEFAULT_OLLAMA_URL
+        return DEFAULT_SERVER_URL
     if "://" not in cleaned:
         cleaned = f"http://{cleaned}"
     return cleaned.rstrip("/")

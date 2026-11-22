@@ -9,19 +9,14 @@ from pathlib import Path
 
 from ...config import Config, OcrConfig
 from ...domain.context_budget import RunWindows, window_from_setting
-from ...domain.data_location import (
-    ENGINE_OLLAMA,
-    ENGINE_PPOCR,
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
-    SentRecord,
-)
+from ...domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, SentRecord
 from ...domain.freshness import (
     StageHashes,
     correction_kept_over_settings,
     first_stale_stage_for_hashes,
 )
 from ...domain.local_models import reader_fingerprint
+from ...domain.stages import Stage
 from ...domain.teacher_work import (
     TeacherWork,
     current_texts,
@@ -86,7 +81,7 @@ def compute_ocr_config_hash(
         # The reader has no model tag, language or prompt of its own: a new model revision or
         # reader version re-reads the pages, a changed language or Ollama model does not.
         return compute_config_hash(
-            "ocr",
+            Stage.OCR,
             ocr.engine,
             ocr.engine,
             reader_fingerprint(),
@@ -96,7 +91,7 @@ def compute_ocr_config_hash(
             "-",
         )
     return compute_config_hash(
-        "ocr",
+        Stage.OCR,
         ocr.engine,
         # The engine is hashed twice on purpose: a "provider" slot used to sit here, and
         # keeping the shape keeps every existing cached OCR result valid.
@@ -152,7 +147,7 @@ def privacy_fingerprint(config: Config) -> str:
     return compute_config_hash(*anonymization_fingerprint(config))
 
 
-def sent_record(config: Config, stage: str, *, names_hidden: int = 0) -> SentRecord:
+def sent_record(config: Config, stage: Stage, *, names_hidden: int = 0) -> SentRecord:
     """Return how a result of *stage* is sent with *config*.
 
     *names_hidden* is the number of placeholders the text was sent with (0 when names went
@@ -160,7 +155,7 @@ def sent_record(config: Config, stage: str, *, names_hidden: int = 0) -> SentRec
     Ollama host.  A provider whose region depends on a setting (a custom base URL, a regional
     endpoint) adds that setting here; none does today, so an online provider has no endpoint.
     """
-    if stage == STAGE_EVALUATION:
+    if stage == Stage.EVALUATION:
         provider, model = config.evaluate_provider, config.effective_evaluate_model
     else:
         provider, model = config.correction_provider, config.effective_correction_model
@@ -218,7 +213,7 @@ def compute_correction_config_hash(config: Config, windows: RunWindows | None = 
     # them invalidates the cached corrections of that model and no other.
     profile = config.correction_profile
     return compute_config_hash(
-        "correction",
+        Stage.CORRECTION,
         config.correction_provider,
         config.effective_correction_model,
         config.language,
@@ -243,7 +238,7 @@ def compute_eval_config_hash(config: Config, windows: RunWindows | None = None) 
     Like the proofreading's, it describes the settings whatever the switch.
     """
     return compute_config_hash(
-        "evaluation",
+        Stage.EVALUATION,
         config.evaluate_provider,
         config.effective_evaluate_model,
         config.language,
@@ -565,7 +560,7 @@ class CacheReconciliationService:
             correction_warning=correction_warning,
             sent_text=sent_text,
             sent_map=sent_map,
-            sent=sent_record(self._config, STAGE_CORRECTION, names_hidden=len(sent_map or {})),
+            sent=sent_record(self._config, Stage.CORRECTION, names_hidden=len(sent_map or {})),
             source_hash=text_identity(source_text),
         )
         return dataclasses.replace(ctx, state=new_state)
@@ -589,6 +584,6 @@ class CacheReconciliationService:
             ctx.state,
             evaluation_text=evaluation_text,
             eval_config_hash=ctx.eval_config_hash,
-            sent=sent_record(self._config, STAGE_EVALUATION, names_hidden=names_hidden),
+            sent=sent_record(self._config, Stage.EVALUATION, names_hidden=names_hidden),
         )
         return dataclasses.replace(ctx, state=new_state)

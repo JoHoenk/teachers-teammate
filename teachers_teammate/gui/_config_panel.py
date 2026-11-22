@@ -41,12 +41,10 @@ from ..domain.correction_policy import LEVELS
 from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import (
     STAGE_ANONYMIZATION,
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
-    STAGE_OCR,
     DataFlow,
 )
 from ..domain.output_files import folder_problem
+from ..domain.stages import Stage
 from ..settings_schema import SECONDARY_MODEL_NONE, normalize_notes, normalize_settings
 from ..texts import dialogs as dlg
 from ..texts.settings import WHERE_ADDONS, WHERE_AI_MODELS
@@ -96,9 +94,9 @@ _UNSTORED_KEYS = frozenset({"recursive"})
 
 #: The settings key each stage the requirement guard can untick is stored under.
 _STAGE_KEYS = {
-    "ocr": "recognition_enabled",
-    "correction": "correction_enabled",
-    "evaluation": "evaluation_enabled",
+    Stage.OCR: "recognition_enabled",
+    Stage.CORRECTION: "correction_enabled",
+    Stage.EVALUATION: "evaluation_enabled",
     "anonymizer": "anonymization_enabled",
 }
 
@@ -661,7 +659,7 @@ class ConfigPanel(QScrollArea):
         An unticked step keeps its line, in grey, so the teacher sees what ticking it would
         use.  The model is not part of the data flow, so it comes from *config*.
         """
-        ocr = steps.stage(STAGE_OCR)
+        ocr = steps.stage(Stage.OCR)
         # Only Ollama has a model; the built-in reader is named by the engine itself.
         ocr_model = config.ocr.model if config.ocr.engine == "ollama" else ""
         self._ocr_uses.set_line(
@@ -671,7 +669,7 @@ class ConfigPanel(QScrollArea):
         names = steps.stage(STAGE_ANONYMIZATION)
         self._anonymization_uses.set_line(names_line(names) if names else "")
 
-        proofread = steps.stage(STAGE_CORRECTION)
+        proofread = steps.stage(Stage.CORRECTION)
         proofread_on = self._correction_enabled.isChecked()
         self._correction_uses.set_line(
             uses_line(proofread, config.effective_correction_model, enabled=proofread_on)
@@ -679,7 +677,7 @@ class ConfigPanel(QScrollArea):
             else "",
             uses_tooltip(proofread) if proofread else "",
         )
-        review = steps.stage(STAGE_EVALUATION)
+        review = steps.stage(Stage.EVALUATION)
         if review is None:
             self._evaluation_uses.set_line("")
             return
@@ -705,7 +703,7 @@ class ConfigPanel(QScrollArea):
         # skipped (or not needed) now.
         self._recognition_note.setVisible(False)
         if checked:
-            self._guard_stage("ocr")  # switched on: the engine has to be there
+            self._guard_stage(Stage.OCR)  # switched on: the engine has to be there
 
     def show_recognition_note(self, *, skipped: int = 0, not_needed: bool = False) -> None:
         """Say under "Recognize text" what the switch does to the documents in the queue.
@@ -743,7 +741,7 @@ class ConfigPanel(QScrollArea):
         # The review comes back with proofreading, so its requirements count again: they are
         # checked once proofreading's are met (see ``_stage_guard``), so a
         # problem both share is explained once, by proofreading.
-        self._guard_stage("correction")
+        self._guard_stage(Stage.CORRECTION)
 
     def _sync_review_enabled(self) -> None:
         """Enable "Review content" only while "Proofread" is ticked.
@@ -759,7 +757,7 @@ class ConfigPanel(QScrollArea):
         self._settings_dict["evaluation_enabled"] = checked
         self.refresh_data_flow()
         if checked:
-            self._guard_stage("evaluation")
+            self._guard_stage(Stage.EVALUATION)
 
     def set_anonymization_enabled(self, enabled: bool) -> None:
         """Tick or untick "Remove personal info" as the teacher would.
@@ -991,11 +989,11 @@ class ConfigPanel(QScrollArea):
 
     def _stage_checkbox(self, stage: str) -> QCheckBox:
         """Return the enable checkbox of pipeline *stage*."""
-        if stage == "ocr":
+        if stage == Stage.OCR:
             return self._recognition_enabled
-        if stage == "correction":
+        if stage == Stage.CORRECTION:
             return self._correction_enabled
-        if stage == "evaluation":
+        if stage == Stage.EVALUATION:
             return self._evaluation_enabled
         return self._anonymization_enabled
 

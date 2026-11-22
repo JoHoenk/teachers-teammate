@@ -20,6 +20,7 @@ from typing import Any
 
 from PySide6.QtWidgets import QCheckBox, QFileDialog, QMessageBox, QWidget
 
+from ..texts import dialogs as dlg
 from ..texts._types import (
     Answer,
     Choice,
@@ -70,11 +71,13 @@ def answering(answerer: Answerer) -> Iterator[list[Asked]]:
         The calls that were answered while the block ran.
     """
     asked: list[Asked] = []
-    _ANSWERING.append((answerer, asked))
+    entry = (answerer, asked)
+    _ANSWERING.append(entry)
     try:
         yield asked
     finally:
-        _ANSWERING.remove((answerer, asked))
+        # By identity: the same answerer may be open twice, with records that compare equal.
+        _ANSWERING[:] = [open_one for open_one in _ANSWERING if open_one is not entry]
 
 
 def _answer(call: str, item: Notice | Question | FilePrompt) -> Any:
@@ -85,6 +88,21 @@ def _answer(call: str, item: Notice | Question | FilePrompt) -> Any:
     question = Asked(call, item)
     asked.append(question)
     return answerer(question)
+
+
+def _checked_answer(question: Question, answer: object) -> Answer:
+    """Return *answer* as the teacher's, refusing one the real box could not give.
+
+    ``None`` is a declined box.  Anything else must be an :class:`Answer` whose button is one
+    of the question's.
+    """
+    if answer is None:
+        return Answer()
+    if not isinstance(answer, Answer):
+        raise TypeError(dlg.answerer_gave_no_answer(type(answer).__name__))
+    if answer.choice is not None and answer.choice not in question.choices:
+        raise ValueError(dlg.answerer_gave_foreign_button(repr(answer.choice), question.title))
+    return answer
 
 
 def _notice_icon(kind: NoticeKind) -> QMessageBox.Icon:
@@ -137,7 +155,7 @@ def choose(parent: QWidget | None, question: Question) -> Answer:
     """Show *question*; return the button the teacher clicked and the tick box state."""
     answer = _answer("choose", question)
     if answer is not _UNANSWERED:
-        return answer if isinstance(answer, Answer) else Answer()
+        return _checked_answer(question, answer)
     box = QMessageBox(parent)
     box.setIcon(_question_icon(question.kind))
     box.setWindowTitle(question.title)

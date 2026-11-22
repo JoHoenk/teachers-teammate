@@ -55,20 +55,22 @@ from teachers_teammate.infrastructure.addon_manager import (
     prepare_packages_dir,
 )
 
-# The helper modes below (smoke test, a script handed over, forget keys, spaCy model download)
-# are not a start of the app: one of them runs while the app, or an install it started, is using
-# the folder, so they leave the clean-up to a normal start.
+# The helper modes below (smoke test, forget keys, spaCy model download) are not a start of the
+# app: one of them runs while the app, or an install it started, is using the folder, so they
+# leave the clean-up to a normal start.
 _HELPER_MODES = (
     "--_smoke_test",
     "--_addon_smoke_test",
-    "--_run_script",
     "--_forget_keys",
     "--_set_update_check",
     "--_spacy_download_mode",
 )
-if not any(mode in sys.argv for mode in _HELPER_MODES):
-    prepare_packages_dir()
-inject_packages_dir()
+# A script handed over runs on the bundle alone: the add-on folder is the teacher's own, and the
+# script's isolation (``TEACHERS_TEAMMATE_TMPDIR``) does not reach it.
+if "--_run_script" not in sys.argv:
+    if not any(mode in sys.argv for mode in _HELPER_MODES):
+        prepare_packages_dir()
+    inject_packages_dir()
 
 # ── smoke test dispatch ──────────────────────────────────────────────────────
 # A build is checked by running the app with `--_smoke_test <file>`: the checks live in

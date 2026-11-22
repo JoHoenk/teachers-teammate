@@ -178,9 +178,32 @@ def test_the_keychain_counts_only_when_keyring_has_a_working_backend(
     When   the app asks for the keychain
     Then   only the working backend counts; the others mean "use the settings file"
     """
+    monkeypatch.delenv("TEACHERS_TEAMMATE_TMPDIR", raising=False)
     monkeypatch.setitem(sys.modules, "keyring", module)
 
     assert (real_keyring() is not None) is usable
+
+
+@pytest.mark.gui
+def test_under_an_override_folder_the_keychain_is_never_used(monkeypatch, tmp_path) -> None:
+    """
+    Given  a run under ``TEACHERS_TEAMMATE_TMPDIR`` on a machine with a working keychain
+    When   the app asks for the keychain and for where a new key would be kept
+    Then   there is none and the settings file is named, so the teacher's own keys are neither
+           read nor written
+    """
+    asked: list[str] = []
+
+    def get_keyring() -> SimpleNamespace:
+        asked.append("backend")
+        return SimpleNamespace(priority=5)
+
+    monkeypatch.setenv("TEACHERS_TEAMMATE_TMPDIR", str(tmp_path))
+    monkeypatch.setitem(sys.modules, "keyring", SimpleNamespace(get_keyring=get_keyring))
+
+    assert real_keyring() is None
+    assert CredentialStore.location() is KeyLocation.SETTINGS_FILE
+    assert asked == []
 
 
 @pytest.mark.gui
@@ -190,6 +213,7 @@ def test_a_keychain_that_raises_while_loading_counts_as_missing(monkeypatch) -> 
     When   the app asks for the keychain
     Then   it is treated as missing instead of crashing
     """
+    monkeypatch.delenv("TEACHERS_TEAMMATE_TMPDIR", raising=False)
 
     def broken() -> None:
         raise RuntimeError("D-Bus is not available")

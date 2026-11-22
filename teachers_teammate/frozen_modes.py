@@ -693,19 +693,46 @@ def _write_result(out_path: Path, result: dict[str, object]) -> None:
     out_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
 
-def _script_exit_code(code: object) -> int:
-    """Return the exit code a ``SystemExit`` stands for (a message counts as 1, as Python does)."""
+def _script_exit(exc: SystemExit) -> tuple[int, str]:
+    """Return the exit code a ``SystemExit`` stands for and its message, if it carries one.
+
+    A message counts as code 1, as Python counts it.
+    """
+    code = exc.code
     if code is None:
-        return 0
-    return code if isinstance(code, int) else 1
+        return 0, ""
+    if isinstance(code, int):
+        return code, ""
+    return 1, str(code)
+
+
+def _add_failure(out_path: Path, failure: str, extra: dict[str, object]) -> None:
+    """Add *failure* to the result the script already wrote, or write a result of its own.
+
+    What the script recorded before it failed stays: a walk that got through nine steps says so.
+    """
+    result: dict[str, object] = {}
+    try:
+        loaded = json.loads(out_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            result = loaded
+    except OSError, ValueError:
+        pass
+    failed = result.get("failed")
+    result["ok"] = False
+    result["failed"] = [*(failed if isinstance(failed, list) else []), failure]
+    result.update(extra)
+    _write_result(out_path, result)
 
 
 def run_script(script: Path, out_path: Path, args: list[str]) -> int:
     """Run *script* in this process as ``__main__``; 0 when what it checked passed.
 
-    The script writes the result file itself.  This runner writes it only when the script did
-    not: an exception that got away, a missing script, a script that ended without a result.  On
-    Windows the windowed build has no stderr, so the file is the only place a crash shows.
+    The script writes the result file itself.  This runner adds to it when the script failed
+    without saying so (an exception that got away, an exit with a message) and writes it when
+    there is none (a missing script, a script that ended without a result).  A result left by an
+    earlier run is removed first, so a script that writes nothing cannot pass on it.  On Windows
+    the windowed build has no stderr, so the file is the only place a crash shows.
 
     Args:
         script: The path of the script to run.
@@ -715,32 +742,33 @@ def run_script(script: Path, out_path: Path, args: list[str]) -> int:
     Returns:
         0, the exit code the script chose, or 1 for a failure of its own.
     """
+    out_path.unlink(missing_ok=True)
     if not script.is_file():
         _write_result(out_path, {"ok": False, "failed": [f"no script at {script}"]})
         return 2
     previous = sys.argv
     sys.argv = [str(script), str(out_path), *args]
-    code: int | None = None
+    code = 0
+    message = ""
     try:
         runpy.run_path(str(script), run_name="__main__")
     except SystemExit as exc:
-        code = _script_exit_code(exc.code)
+        code, message = _script_exit(exc)
     except BaseException as exc:  # noqa: BLE001 — anything the script raises is its failure
-        _write_result(
+        _add_failure(
             out_path,
-            {
-                "ok": False,
-                "failed": [f"uncaught: {type(exc).__name__}: {exc}"],
-                "traceback": traceback.format_exc(),
-            },
+            f"uncaught: {type(exc).__name__}: {exc}",
+            {"traceback": traceback.format_exc()},
         )
         return 1
     finally:
         sys.argv = previous
-    if not out_path.is_file():
+    if message:
+        _add_failure(out_path, f"exit: {message}", {})
+    elif not out_path.is_file():
         _write_result(out_path, {"ok": False, "failed": ["the script wrote no result"]})
         return code or 1
-    return 0 if code is None else code
+    return code
 
 
 def run_smoke_test(out_path: Path) -> int:

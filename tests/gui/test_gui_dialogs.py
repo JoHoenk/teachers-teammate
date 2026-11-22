@@ -390,3 +390,41 @@ def test_an_answerer_that_declines_and_cancels_says_so(qtbot, monkeypatch) -> No
     assert (answer.choice, answer.checked, answer.accepted) == (None, False, False)
     assert folder is None
     assert several == []
+
+
+@pytest.mark.gui
+def test_the_same_answerer_can_be_open_twice(qtbot, monkeypatch) -> None:
+    """
+    Given  one answerer opened inside itself, both records still empty and so equal
+    When   the inner block ends and a question is asked
+    Then   the outer record gets it, the stack is clean after both blocks, and the real box is
+           back
+    """
+    yes = Answer(dlg.clear_all_runs("x").choices[0])
+
+    def answerer(_asked: _dialogs.Asked) -> Answer:
+        return yes
+
+    with _dialogs.answering(answerer) as outer:
+        with _dialogs.answering(answerer):
+            pass
+        _dialogs.choose(None, dlg.clear_all_runs("x"))
+
+    assert len(outer) == 1
+    assert _dialogs._ANSWERING == []
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    "wrong", [True, "Yes", Choice(label="Elsewhere"), Answer(Choice(label="Elsewhere"))]
+)
+def test_an_answerer_must_answer_a_question_with_an_answer(qtbot, wrong: object) -> None:
+    """
+    Given  an answerer that returns something a box could not give: a bool, a string, a button
+           that is not the question's
+    When   the question is asked
+    Then   the script is told, instead of the answer counting as the teacher declining
+    """
+    with _dialogs.answering(lambda _asked: wrong):
+        with pytest.raises((TypeError, ValueError)):
+            _dialogs.choose(None, dlg.clear_all_runs("x"))

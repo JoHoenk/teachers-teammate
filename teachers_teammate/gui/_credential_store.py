@@ -10,6 +10,9 @@ which of the two is in use, so the Settings window never claims more than is tru
 A key found in the settings file is moved into the secret store the first time the store is
 available (:meth:`CredentialStore.load_into_environment`), and the plain copy is deleted.
 A key set in the environment before the app started always wins and is never written.
+
+Under ``TEACHERS_TEAMMATE_TMPDIR`` (a test, the smoke test, the app walkthrough) there is no
+secret store: the folder holds everything of the run, and the teacher's own keys stay out of it.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ import logging
 import os
 from types import ModuleType
 
+from ..config import override_root
 from ._qsettings import app_settings
 
 LOG = logging.getLogger(__name__)
@@ -54,8 +58,11 @@ def _keyring() -> ModuleType | None:
     """Return the ``keyring`` module if it is installed and has a usable backend, else ``None``.
 
     ``keyring`` picks its backend from what the system offers; with none it falls back to a
-    "fail" backend whose priority is 0, which must not count as a store.
+    "fail" backend whose priority is 0, which must not count as a store.  An override folder
+    means no store at all.
     """
+    if override_root() is not None:
+        return None
     try:
         import keyring  # noqa: PLC0415
     except ImportError:

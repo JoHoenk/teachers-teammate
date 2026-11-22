@@ -655,6 +655,58 @@ def test_run_script_leaves_the_result_the_script_wrote_alone(tmp_path: Path) -> 
     assert out.read_text(encoding="utf-8") == '{"ok": true, "steps": []}'
 
 
+def test_run_script_keeps_what_the_script_wrote_before_it_failed(tmp_path: Path) -> None:
+    """
+    Given  a script that wrote its steps so far and then raised
+    When   the app runs it
+    Then   the result keeps those steps and adds the failure and the traceback
+    """
+    script = _script(
+        tmp_path,
+        "import json, pathlib, sys\n"
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps({'ok': True, 'steps': ['run']}))\n"
+        "raise ValueError('step two broke')\n",
+    )
+    out = tmp_path / "e2e.json"
+
+    assert frozen_modes.run_script(script, out, []) == 1
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert (result["ok"], result["steps"]) == (False, ["run"])
+    assert result["failed"] == ["uncaught: ValueError: step two broke"]
+    assert "traceback" in result
+
+
+def test_run_script_does_not_pass_on_the_result_of_an_earlier_run(tmp_path: Path) -> None:
+    """
+    Given  a result file an earlier run left behind, saying ok
+    When   a script that writes nothing is run
+    Then   the earlier result is gone: the run fails and says the script wrote none
+    """
+    out = tmp_path / "e2e.json"
+    out.write_text('{"ok": true, "steps": []}', encoding="utf-8")
+
+    assert frozen_modes.run_script(_script(tmp_path, "pass\n"), out, []) == 1
+
+    assert json.loads(out.read_text(encoding="utf-8"))["failed"] == ["the script wrote no result"]
+
+
+def test_run_script_records_the_message_of_an_exit(tmp_path: Path) -> None:
+    """
+    Given  a script that exits with a message and wrote no result
+    When   the app runs it
+    Then   the exit code is 1 and the result carries the message, which a windowed build cannot
+           print
+    """
+    script = _script(tmp_path, "raise SystemExit('the reader is missing')\n")
+    out = tmp_path / "e2e.json"
+
+    assert frozen_modes.run_script(script, out, []) == 1
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert (result["ok"], result["failed"]) == (False, ["exit: the reader is missing"])
+
+
 def test_run_script_records_a_script_that_wrote_no_result(tmp_path: Path) -> None:
     """
     Given  a script that ends without writing its result

@@ -33,6 +33,7 @@ from teachers_teammate.domain.model_catalog import (
     Suitability,
     find_spec,
 )
+from teachers_teammate.domain.ollama_address import is_local_ollama_url
 
 #: The recommendation the fake ``best`` names per task.
 _BEST: dict[str, str] = {"ocr": "qwen2.5vl:7b", "general": "gemma4:e4b"}
@@ -84,6 +85,7 @@ def _facts(**overrides: Any) -> SetupFacts:
         system_memory_gb=32.0,
         card_gb=8.0,
         ollama_running=True,
+        ollama_here=True,
         installed_tags=frozenset(),
         free_disk_gb=200.0,
         removal_on=False,
@@ -109,11 +111,22 @@ def _plan(
     facts: SetupFacts | None = None,
     ratings: dict[str, Suitability] | None = None,
 ):
-    """Return the setup plan for *answers*, *current* and *facts* with fake ratings."""
+    """Return the setup plan for *answers*, *current* and *facts* with fake ratings.
+
+    Without *facts*, the server counts as this computer when the answers' address says so,
+    the question the GUI asks before it builds the Setup Assistant's pages.
+    """
+    chosen = answers or _answers()
     return build_setup_plan(
-        answers or _answers(),
+        chosen,
         current if current is not None else _current(),
-        facts or _facts(),
+        facts
+        if facts is not None
+        else _facts(
+            ollama_here=is_local_ollama_url(
+                chosen.ollama_url, own_addresses=tuple, windows_hosts=tuple
+            )
+        ),
         rate=_rater(ratings or {}),
         best=_best,
         default_model=_default_model,
@@ -685,11 +698,16 @@ def test_the_privacy_case_follows_where_the_text_goes() -> None:
     Then   they are online, network PC, this computer and this computer
     """
     network = "http://192.168.1.20:11434"
-    assert _answers(proofreading=ProofreadingPlace.ONLINE).privacy_case is PrivacyCase.ONLINE
-    assert _answers(ollama_url=network).privacy_case is PrivacyCase.NETWORK_PC
-    assert _answers().privacy_case is PrivacyCase.THIS_COMPUTER
     assert (
-        _answers(proofreading=ProofreadingPlace.OFF, ollama_url=network).privacy_case
+        _answers(proofreading=ProofreadingPlace.ONLINE).privacy_case(ollama_here=False)
+        is PrivacyCase.ONLINE
+    )
+    assert _answers(ollama_url=network).privacy_case(ollama_here=False) is PrivacyCase.NETWORK_PC
+    assert _answers().privacy_case(ollama_here=True) is PrivacyCase.THIS_COMPUTER
+    assert (
+        _answers(proofreading=ProofreadingPlace.OFF, ollama_url=network).privacy_case(
+            ollama_here=False
+        )
         is PrivacyCase.THIS_COMPUTER
     )
 
@@ -702,7 +720,7 @@ def test_proofreading_on_another_pc_can_remove_names_before_the_text_leaves() ->
     """
     plan = _plan(
         answers=_answers(ollama_url="http://192.168.1.20:11434", remove_names=True),
-        facts=_facts(name_detection=False),
+        facts=_facts(name_detection=False, ollama_here=False),
     )
 
     assert plan.panel["anonymization_enabled"] is True

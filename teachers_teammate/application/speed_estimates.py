@@ -41,6 +41,7 @@ from ..domain.model_catalog import (
     rate_model,
     request_profile,
 )
+from ..domain.ollama_address import normalize_ollama_url
 from ..domain.performance_estimate import (
     TYPICAL_PAGE_WORDS,
     MachineFactors,
@@ -81,6 +82,7 @@ from ..infrastructure.speed_store import (
     StepRecord,
     now_stamp,
 )
+from .ports import OllamaClientFactory, OllamaServer
 
 _logger = logging.getLogger(__name__)
 
@@ -340,10 +342,11 @@ class SpeedEstimateService:
         self,
         *,
         effective_model: Callable[[str, str, str], str],
+        ollama: OllamaServer,
+        client_factory: OllamaClientFactory,
         store: SpeedStore | None = None,
         samples: SampleStore | None = None,
         probe_factory: Callable[..., PerformanceProbe] | None = None,
-        client_factory: Callable[[str, threading.Event | None], object] | None = None,
     ) -> None:
         """Create the service.
 
@@ -351,17 +354,21 @@ class SpeedEstimateService:
             effective_model: ``(provider, model, task)`` → the model a run would use;
                 :meth:`choices` and :meth:`choices_for_config` need it, so the page tests what a
                 run would use rather than what an empty field happens to mean.
+            ollama: The server whose facts decide whether a stored measurement is out of date.
+            client_factory: Builds the Ollama client of a URL and a cancel event.  The probe
+                drives that client, so building one is one of the few things this layer cannot
+                do itself.
             store: Where measurements live; the default store under the storage root.
             samples: Where the samples of real runs live; the default store under the storage
                 root.
             probe_factory: Builds the probe; a test replaces it.
-            client_factory: Builds the Ollama client for a URL and a cancel event; a test replaces it.
         """
         self._effective_model = effective_model
+        self._ollama = ollama
+        self._client_factory = client_factory
         self._store = store or SpeedStore()
         self._samples = samples or SampleStore()
-        self._probe_factory = probe_factory or PerformanceProbe
-        self._client_factory = client_factory
+        self._probe_factory: Callable[..., PerformanceProbe] = probe_factory or PerformanceProbe
         self._lock = threading.RLock()
         self._facts: dict[str, ServerFacts] = {}
 
@@ -392,25 +399,19 @@ class SpeedEstimateService:
         cannot be reached gives empty facts, which makes every stored measurement out of date
         rather than wrong.
         """
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
         url = normalize_ollama_url(ollama_url)
-        facts = self._client(url).server_facts()
+        facts = self._ollama.server_facts(url)
         with self._lock:
             self._facts[url] = facts
         return facts
 
     def cached_server_facts(self, ollama_url: str) -> ServerFacts | None:
         """Return the cached facts of *ollama_url*, or ``None`` while they are unknown."""
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
         with self._lock:
             return self._facts.get(normalize_ollama_url(ollama_url))
 
     def forget_server_facts(self, ollama_url: str) -> None:
         """Forget the cached facts of *ollama_url* (call after a pull or a server restart)."""
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
         with self._lock:
             self._facts.pop(normalize_ollama_url(ollama_url), None)
 
@@ -432,12 +433,10 @@ class SpeedEstimateService:
         Raises:
             :exc:`~teachers_teammate.exceptions.RunStoppedError`: the teacher stopped the test.
         """
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
         url = normalize_ollama_url(choices.ollama_url)
         probe = self._probe_factory(
             # The client gets the event too: it is what abandons a request that is waiting.
-            self._client(url, cancel_event),
+            self._client_factory(url, cancel_event),
             cancel_event=cancel_event,
             gpu_found=hardware is not None and hardware.gpu_name is not None,
             on_battery=_on_battery(),
@@ -503,8 +502,6 @@ class SpeedEstimateService:
         facts, so it is safe on the GUI thread.  A caller that has not fetched them yet gets the
         measurement without the out-of-date check.
         """
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
         url = normalize_ollama_url(choices.ollama_url)
         facts = self.cached_server_facts(url) if cached_only else self.refresh_server_facts(url)
         rows: list[StepEstimate] = []
@@ -641,8 +638,6 @@ class SpeedEstimateService:
         longer fits the server: a figure that has moved on is worse than none.  One read of the
         store answers for the whole list, because a model list is filled in one go.
         """
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
         url = normalize_ollama_url(ollama_url)
         facts = self.cached_server_facts(url)
         step = SpeedStep.READING if category == "ocr" else SpeedStep.PROOFREADING
@@ -680,8 +675,6 @@ class SpeedEstimateService:
         they exist, because they are what a run does.  Both ends are ``None`` while nothing
         was measured here.
         """
-        from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
-
         url = normalize_ollama_url(ollama_url)
         speeds: dict[str, ModelSpeed] = {}
         for record in self._store.records():
@@ -709,16 +702,6 @@ class SpeedEstimateService:
                 if read_factor is not None:
                     reading.append(read_factor)
         return MachineFactors(writing=median_factor(writing), reading=median_factor(reading))
-
-    # ── the client ─────────────────────────────────────────────────────────
-
-    def _client(self, url: str, cancel_event: threading.Event | None = None):
-        """Return an Ollama client for *url*; it abandons a waiting request when *cancel_event* is set."""
-        if self._client_factory is not None:
-            return self._client_factory(url, cancel_event)
-        from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-
-        return OllamaClient(url, cancel_event=cancel_event)
 
 
 def _steps_of(choices: SpeedChoices) -> tuple[tuple[SpeedStep, str], ...]:

@@ -16,8 +16,9 @@ from collections.abc import Callable
 import logging
 import threading
 
+from ..domain.ollama_address import normalize_ollama_url
 from ..domain.performance_estimate import SpeedStep
-from .ollama_utils import ChatStats, normalize_ollama_url
+from .ollama_utils import ChatStats
 from .speed_store import RunSample, SampleKey, now_stamp
 
 _logger = logging.getLogger(__name__)

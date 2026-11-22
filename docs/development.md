@@ -843,6 +843,12 @@ Rules in `domain/ollama_discovery.py` (pure: `OLLAMA_HOST` parsing, `/proc/net/r
 (`probe_server`, `discover_this_computer`, `scan_network`) and `infrastructure/wsl.py`.  The only
 entry point for the GUI is `OllamaServerService.discover_ollama_servers(scope)`.
 
+What an address *is* — its normal form, its host, whether it points at this computer, whether a
+model name is installed — is `domain/ollama_address.py`, pure and reachable without a lazy import.
+It takes this computer's names as lookups, so the cheap loopback check answers the default address
+without a socket or DNS call.  Both lookups are required arguments; `OllamaServerService.is_local`
+and `ollama_utils.ollama_server` pass `own_host_names` and `windows_host_addresses`.
+
 - `DiscoveryScope.THIS_COMPUTER`: the `OLLAMA_HOST` address, `127.0.0.1:11434`, and -- inside WSL --
   the Windows host (default gateway, then name servers; no `wsl.exe`, that would start a
   distribution).  Windows -> Ollama in WSL needs nothing: WSL2 forwards localhost.
@@ -855,9 +861,10 @@ entry point for the GUI is `OllamaServerService.discover_ollama_servers(scope)`.
   (`AiSetupPage.set_server_url`); the main window runs one silent THIS_COMPUTER search per saved
   address when Ollama is unreachable and offers the hit as "Use it" (`found_server_fix`,
   `COMMAND_USE_SERVER`).
-- Privacy: `is_local_ollama_url(url, include_wsl_host=True)` (used by `application/data_flow.py` only)
-  counts the Windows host of WSL as this computer.  Hardware and memory probing keep the default
-  (`False`): from inside WSL those figures belong to the Linux side.
+- Privacy: `OllamaServerService.is_local(url, include_wsl_host=True)` counts the Windows host of
+  WSL as this computer; the rule itself is `domain/ollama_address.py:is_local_ollama_url`.
+  Hardware and memory probing keep the default (`False`): from inside WSL those figures belong
+  to the Linux side.
 
 ### Remembered "don't ask again" answers
 

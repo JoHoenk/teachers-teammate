@@ -73,6 +73,7 @@ filegroup(
         "unit/test_gpu_detector.py",
         "unit/test_model_catalog.py",
         "unit/test_model_listing.py",
+        "unit/test_ollama_address.py",
         "unit/test_ollama_discovery.py",
         "unit/test_ollama_utils.py",
         "unit/test_preprocessor.py",
@@ -647,6 +648,15 @@ py_test(
 )
 
 py_test(
+    name = "test_ollama_address",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_ollama_address.py"],
+    args = ["unit/test_ollama_address.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
+)
+
+py_test(
     name = "test_ollama_discovery",
     size = "small",
     srcs = _COMMON_SRCS + [
@@ -655,7 +665,7 @@ py_test(
     ],
     args = ["unit/test_ollama_discovery.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -2925,6 +2935,7 @@ test_suite(
         ":test_ocr_stage_service",
         ":test_ocr_text_cleaner",
         ":test_offset_map",
+        ":test_ollama_address",
         ":test_ollama_discovery",
         ":test_ollama_install",
         ":test_ollama_utils",

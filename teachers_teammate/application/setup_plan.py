@@ -49,7 +49,6 @@ from ..domain.model_catalog import (
 )
 from ..domain.ollama_discovery import OllamaState
 from ..domain.stages import Stage
-from ..infrastructure.ollama_utils import is_local_ollama_url
 from ..settings_schema import normalize_preprocess_method
 from .addons import AddonService
 from .anonymization import AnonymizationService
@@ -124,14 +123,15 @@ class SetupAnswers:
     #: ``""`` for none.  Becomes the saved extra detection model and is downloaded when missing.
     extra_names_model: str = ""
 
-    @property
-    def privacy_case(self) -> PrivacyCase:
-        """Return where the text goes: online, to another PC in the network, or nowhere."""
+    def privacy_case(self, *, ollama_here: bool) -> PrivacyCase:
+        """Return where the text goes: online, to another PC in the network, or nowhere.
+
+        *ollama_here* is whether :attr:`ollama_url` is this computer (see
+        :meth:`OllamaServerService.is_local`): only the caller can ask that.
+        """
         if self.proofreading is ProofreadingPlace.ONLINE:
             return PrivacyCase.ONLINE
-        if self.proofreading is ProofreadingPlace.LOCAL and not is_local_ollama_url(
-            self.ollama_url, include_wsl_host=True
-        ):
+        if self.proofreading is ProofreadingPlace.LOCAL and not ollama_here:
             return PrivacyCase.NETWORK_PC
         return PrivacyCase.THIS_COMPUTER
 
@@ -144,6 +144,8 @@ class SetupFacts:
     system_memory_gb: float | None
     card_gb: float | None
     ollama_running: bool
+    #: The server that runs the models is this computer (or the Windows host behind WSL).
+    ollama_here: bool
     installed_tags: frozenset[str]
     free_disk_gb: float | None
     #: "Remove personal info" is ticked in the main window right now.
@@ -464,7 +466,8 @@ def _names_plan(
     becomes the extra detection model (its download is listed with the others); without one the
     saved choice is left alone.
     """
-    removal = answers.privacy_case is not PrivacyCase.THIS_COMPUTER and answers.remove_names
+    case = answers.privacy_case(ollama_here=facts.ollama_here)
+    removal = case is not PrivacyCase.THIS_COMPUTER and answers.remove_names
     if not (removal or answers.hide_names):
         return {}, {}, [], False
     panel = {"anonymization_enabled": True} if removal and not facts.removal_on else {}
@@ -698,6 +701,7 @@ class SetupService:
             system_memory_gb=hardware.system_memory_gb,
             card_gb=hardware.card_gb,
             ollama_running=running,
+            ollama_here=local,
             installed_tags=(
                 frozenset(self._providers.list_provider_models(PROVIDER_OLLAMA, base_url=url))
                 if running
@@ -723,6 +727,17 @@ class SetupService:
         from ..infrastructure.system_locale import system_language  # noqa: PLC0415
 
         return system_language()
+
+    def privacy_case(self, answers: SetupAnswers) -> PrivacyCase:
+        """Return where the text goes for *answers*: the rule the setup plan follows as well.
+
+        Looks at the Ollama address only when the proofreading is local, so no other answer waits
+        for a lookup of this computer's names.
+        """
+        here = answers.proofreading is not ProofreadingPlace.LOCAL or self._ollama.is_local(
+            answers.ollama_url, include_wsl_host=True
+        )
+        return answers.privacy_case(ollama_here=here)
 
     def plan_setup(self, answers: SetupAnswers, current: Mapping[str, Any]) -> SetupPlan:
         """Return the setup plan for *answers*: the settings to write and the downloads to run.

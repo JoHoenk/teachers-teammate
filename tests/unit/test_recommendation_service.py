@@ -7,13 +7,15 @@ which profile this computer gets, which models fit on it, and what changes when 
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import logging
 from typing import cast
 
 import pytest
 
 from teachers_teammate.application.model_recommendations import ModelRecommendationService
+from teachers_teammate.application.ports import OllamaServer
+from teachers_teammate.domain.ollama_address import is_local_ollama_url
 from teachers_teammate.infrastructure.gpu_detector import SystemHardwareProbe
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.model_catalog import (
@@ -37,11 +39,41 @@ def _effective_model(provider: str, model: str, task: str) -> str:
     return model or str(DEFAULTS[key])
 
 
+class _FakeServer:
+    """An Ollama server as the port shows it: what a model can do, and where it runs.
+
+    *caps* answers ``model_capabilities``; every tag it was asked about is recorded, which is
+    what "the server was not asked twice" means.  ``is_local`` answers as the address rule does
+    when no own names are handed in, and raises when the server is not supposed to be asked.
+    """
+
+    def __init__(self, caps: Callable[[str], frozenset[str] | None] | None = None) -> None:
+        self.asked: list[str] = []
+        self.timeouts: list[float] = []
+        self._caps = caps
+
+    def model_capabilities(self, url: str, tag: str, *, timeout: float) -> frozenset[str] | None:
+        """Return what *tag* can do, recording that the server was asked."""
+        _ = url
+        self.timeouts.append(timeout)
+        self.asked.append(tag)
+        if self._caps is None:
+            raise AssertionError(f"the server was asked about {tag!r}")
+        return self._caps(tag)
+
+    @staticmethod
+    def is_local(url: str, *, include_wsl_host: bool = False) -> bool:
+        """Answer as the address rule does, with no own names handed in."""
+        _ = include_wsl_host
+        return is_local_ollama_url(url, own_addresses=tuple, windows_hosts=tuple)
+
+
 def _service(
     *,
     forget_models: list[str] | None = None,
     forget_facts: list[str] | None = None,
     machine_factor: float | None = None,
+    server: _FakeServer | None = None,
 ) -> ModelRecommendationService:
     """Return the service, wired as the app wires it, with the calls it makes recorded."""
     return ModelRecommendationService(
@@ -52,6 +84,7 @@ def _service(
             (lambda _url, _category: machine_factor) if machine_factor is not None else None
         ),
         hardware=SystemHardwareProbe(),
+        ollama=cast(OllamaServer, server if server is not None else _FakeServer()),
     )
 
 
@@ -284,27 +317,18 @@ def test_the_free_memory_and_the_gpu_load_are_read_on_demand(monkeypatch) -> Non
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
-def test_classify_ollama_models_uses_catalog_and_caches_capabilities(monkeypatch) -> None:
+def test_classify_ollama_models_uses_catalog_and_caches_capabilities() -> None:
     """
     Given  a mix of catalogued and custom model tags
     When   classify_ollama_models is called twice
     Then   catalogued tags resolve from the catalog, unknown tags via
            model_capabilities, and the result is cached (no second server call)
     """
-    service = _service()
-    caps_calls: list[str] = []
-
-    class _FakeClient:
-        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
-            _ = url, timeout
-
-        def model_capabilities(self, tag: str):
-            caps_calls.append(tag)
-            return frozenset({"vision"}) if "vl" in tag else frozenset({"completion"})
-
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
-
-    monkeypatch.setattr(ollama_utils, "OllamaClient", _FakeClient)
+    server = _FakeServer(
+        lambda tag: frozenset({"vision"}) if "vl" in tag else frozenset({"completion"})
+    )
+    service = _service(server=server)
+    caps_calls = server.asked
 
     tags = ["qwen3-vl:8b", "my-custom-vl:latest", "my-custom-text:latest"]
     result = service.classify_ollama_models(tags, _URL)
@@ -330,28 +354,18 @@ def test_classify_ollama_models_uses_catalog_and_caches_capabilities(monkeypatch
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
-def test_unknown_classification_is_not_cached(monkeypatch) -> None:
+def test_unknown_classification_is_not_cached() -> None:
     """
     Given  a custom model whose capabilities could not be read (None)
     When   it is classified twice
     Then   the server is asked both times — "unknown" is never cached, so a
            model that was not pulled yet is recognised as soon as it is
     """
-    service = _service()
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
-
     answers = iter([None, frozenset({"vision"})])
-    asked: list[str] = []
+    server = _FakeServer(lambda _tag: next(answers))
+    service = _service(server=server)
+    asked = server.asked
 
-    class _FakeClient:
-        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
-            _ = url, timeout
-
-        def model_capabilities(self, tag: str):
-            asked.append(tag)
-            return next(answers)
-
-    monkeypatch.setattr(ollama_utils, "OllamaClient", _FakeClient)
     assert service.classify_ollama_models(["my-model:latest"], _URL) == {"my-model:latest": None}
     assert service.classify_ollama_models(["my-model:latest"], _URL) == {
         "my-model:latest": frozenset({"ocr", "general"})
@@ -360,7 +374,7 @@ def test_unknown_classification_is_not_cached(monkeypatch) -> None:
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
-def test_unreachable_server_is_asked_once_not_per_model(monkeypatch) -> None:
+def test_unreachable_server_is_asked_once_not_per_model() -> None:
     """
     Given  several custom models and a server that cannot be reached
     When   they are classified
@@ -368,22 +382,13 @@ def test_unreachable_server_is_asked_once_not_per_model(monkeypatch) -> None:
            model), every model maps to None, and a later call asks again
     """
     from teachers_teammate.exceptions import OllamaConnectionError  # noqa: PLC0415
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
 
-    asked: list[str] = []
-    timeouts: list[float] = []
+    def down(_tag: str) -> frozenset[str] | None:
+        raise OllamaConnectionError("down")
 
-    class _DownClient:
-        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
-            _ = url
-            timeouts.append(timeout)
-
-        def model_capabilities(self, tag: str):
-            asked.append(tag)
-            raise OllamaConnectionError("down")
-
-    monkeypatch.setattr(ollama_utils, "OllamaClient", _DownClient)
-    service = _service()
+    server = _FakeServer(down)
+    service = _service(server=server)
+    asked, timeouts = server.asked, server.timeouts
     tags = ["a:latest", "b:latest", "c:latest"]
     assert service.classify_ollama_models(tags, _URL) == dict.fromkeys(tags)
     assert asked == ["a:latest"]
@@ -394,20 +399,14 @@ def test_unreachable_server_is_asked_once_not_per_model(monkeypatch) -> None:
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
-def test_cached_only_classification_never_contacts_the_server(monkeypatch) -> None:
+def test_cached_only_classification_never_contacts_the_server() -> None:
     """
     Given  a custom model that is not classified yet
     When   classify_ollama_models is called with cached_only=True
     Then   the server is not contacted and the model maps to None
     """
-    service = _service()
+    service = _service()  # its server raises whenever it is asked
 
-    def exploding_client(url, **_kw):
-        raise AssertionError("cached_only must not contact the server")
-
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
-
-    monkeypatch.setattr(ollama_utils, "OllamaClient", exploding_client)
     result = service.classify_ollama_models(
         ["qwen3-vl:8b", "custom:latest"], "http://x:1", cached_only=True
     )
@@ -415,7 +414,7 @@ def test_cached_only_classification_never_contacts_the_server(monkeypatch) -> No
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_rate_ollama_models_rates_catalog_and_custom_models(monkeypatch) -> None:
+def test_rate_ollama_models_rates_catalog_and_custom_models() -> None:
     """
     Given  a catalogued model and a custom vision model on the server
     When   rate_ollama_models is called for the reading task on 8 GB
@@ -423,18 +422,8 @@ def test_rate_ollama_models_rates_catalog_and_custom_models(monkeypatch) -> None
            a WORKS model for reading (the single rating path of the widgets)
     """
     from teachers_teammate.domain.model_catalog import Suitability  # noqa: PLC0415
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
 
-    class _FakeClient:
-        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
-            _ = url, timeout
-
-        def model_capabilities(self, tag: str):
-            _ = tag
-            return frozenset({"vision"})
-
-    monkeypatch.setattr(ollama_utils, "OllamaClient", _FakeClient)
-    service = _service()
+    service = _service(server=_FakeServer(lambda _tag: frozenset({"vision"})))
     ratings = service.rate_ollama_models(["qwen3-vl:8b", "my-vision:latest"], "ocr", "8gb", _URL)
     best, custom = ratings
     assert best.suitability is Suitability.GOOD  # BEST on 8 GB is the default reading model
@@ -536,7 +525,9 @@ def test_the_context_choice_resolves_the_models_a_run_would_use() -> None:
         )
 
     service = ModelRecommendationService(
-        effective_model=effective_model, hardware=SystemHardwareProbe()
+        effective_model=effective_model,
+        hardware=SystemHardwareProbe(),
+        ollama=cast(OllamaServer, _FakeServer()),
     )
     settings: Mapping[str, object] = {
         "correction_provider": "ollama",

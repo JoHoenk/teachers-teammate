@@ -213,7 +213,7 @@ class ServerProbe:
     """What the Ollama server says about itself: version, models, what is loaded."""
 
     def __init__(self, url: str, *, fetch: Fetch | None = None, timeout: float = 15.0) -> None:
-        from teachers_teammate.infrastructure.ollama_utils import (  # noqa: PLC0415
+        from teachers_teammate.domain.ollama_address import (  # noqa: PLC0415
             normalize_ollama_url,
         )
 

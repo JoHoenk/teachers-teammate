@@ -15,6 +15,8 @@ from teachers_teammate.application.data_flow import llm_location
 from teachers_teammate.application.ollama_server import OllamaStatus
 from teachers_teammate.application.setup_plan import (
     LocalModelChoices,
+    PrivacyCase,
+    ProofreadingPlace,
     SetupAnswers,
     SetupFacts,
     SetupPlan,
@@ -422,12 +424,12 @@ class SetupAppService(DummyAppService):
 
     def setup_facts(self, answers: SetupAnswers, current: Mapping[str, object]) -> SetupFacts:
         """Answer with canned facts about this computer."""
-        _ = answers
         return SetupFacts(
             profile="16gb",
             system_memory_gb=32.0,
             card_gb=16.0,
             ollama_running=self.ollama_running,
+            ollama_here=self.is_local(answers.ollama_url, include_wsl_host=True),
             installed_tags=frozenset(self.installed),
             free_disk_gb=self.free_disk_gb,
             removal_on=bool(current.get("anonymization_enabled")),
@@ -437,6 +439,13 @@ class SetupAppService(DummyAppService):
             installed_spacy_models=frozenset(self.installed_spacy),
             missing_package=self.missing_provider_package(answers.online_choice[0]) or "",
         )
+
+    def privacy_case(self, answers: SetupAnswers) -> PrivacyCase:
+        """Answer as the real service does: the address is asked only for a local proofreading."""
+        here = answers.proofreading is not ProofreadingPlace.LOCAL or self.is_local(
+            answers.ollama_url, include_wsl_host=True
+        )
+        return answers.privacy_case(ollama_here=here)
 
     def plan_setup(self, answers: SetupAnswers, current: Mapping[str, object]) -> SetupPlan:
         """Answer with the real plan for these answers and facts."""

@@ -883,7 +883,7 @@ class PrivacyPage(SetupPage):
         """Say where the text goes, and offer what fits: removal when it leaves, hiding when not."""
         answers = self.assistant().answers()
         service = self._context.app_service.anonymization
-        case = answers.privacy_case
+        case = self._context.app_service.setup.privacy_case(answers)
         self._case = case
         leaves = case is not PrivacyCase.THIS_COMPUTER
         self._sending.setVisible(leaves)

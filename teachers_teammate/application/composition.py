@@ -22,6 +22,7 @@ from ..infrastructure import power
 from ..infrastructure.addon_manager import AddonPackages
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.gpu_detector import SystemHardwareProbe
+from ..infrastructure.ollama_utils import OllamaClient
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline
 from ..infrastructure.spacy_models import SpacyModels
@@ -111,11 +112,15 @@ def build_app_services(
     hardware = SystemHardwareProbe()
     addon_state = AddonPackages()
     names = SpacyModels()
-    providers = ProviderService()
+    providers = ProviderService(ollama=ollama)
     reader = ReaderService(
         model_store=model_store, component_factory=component_factory, providers=providers
     )
-    speeds = SpeedEstimateService(effective_model=providers.effective_model)
+    speeds = SpeedEstimateService(
+        effective_model=providers.effective_model,
+        ollama=ollama,
+        client_factory=lambda url, cancel_event: OllamaClient(url, cancel_event=cancel_event),
+    )
     anonymization = AnonymizationService(names=names)
     addons = AddonService(
         model_store=model_store,
@@ -135,6 +140,7 @@ def build_app_services(
         invalidate_speed_facts=speeds.forget_server_facts,
         machine_factor=lambda url, task: speeds.machine_factors(url).for_category(task),
         hardware=hardware,
+        ollama=ollama,
     )
     # Refreshing a server's model list also drops what was classified from it.
     providers.watch_classifications(recommendations.invalidate_classification)

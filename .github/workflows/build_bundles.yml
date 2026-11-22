@@ -16,12 +16,18 @@ on:
         required: true
         type: string
         default: "v0.0.0-rc.1"
-  # The installer scripts and the bundle spec are only exercised on their own system, so a
-  # change to any of them builds and tests the bundles here rather than after the release.
+  # The installer scripts and the bundle spec are only exercised on their own system, and the app
+  # walkthrough runs on the bundles: a change to any of them, or to the app or the walkthrough,
+  # builds and tests the bundles here rather than after the release.
   pull_request:
     paths:
+      - "teachers_teammate/**"
+      - "tests/e2e/**"
       - "tools/packaging/**"
       - "tools/build/**"
+      - "requirements*.txt"
+      - "MODULE.bazel*"
+      - ".python-version"
       - ".github/workflows/build_*.yml"
 
 # A new push to the same pull request cancels the run it supersedes; a dispatch is never

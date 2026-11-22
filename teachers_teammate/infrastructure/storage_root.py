@@ -45,6 +45,7 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import threading
 
 from ..config import override_root
 from ..exceptions import ConfigFileNotFoundError, StorageResolutionError
@@ -186,8 +187,13 @@ def resolve_data_folder(name: str) -> Path:
 
 
 def _probe_writable(path: Path) -> tuple[bool, str | None]:
-    """Try to create, write, read, and delete a sentinel file in *path*."""
-    sentinel = path / ".pp_write_probe"
+    """Try to create, write, read, and delete a sentinel file in *path*.
+
+    The name carries the process and the thread: the GUI thread and a worker probe the same
+    folder at the same time, and neither may delete the other's file between its write and its
+    read.
+    """
+    sentinel = path / f".pp_write_probe-{os.getpid()}-{threading.get_ident()}"
     fd = -1
     try:
         path.mkdir(parents=True, exist_ok=True)

@@ -31,6 +31,10 @@
     Where the installed copy's smoke test writes its JSON result (default: smoke.json in the
     current folder). The file is kept, so a CI job can upload it.
 
+.PARAMETER WalkthroughResult
+    Where the app walkthrough writes its JSON result (default: e2e.json in the current folder),
+    and its pictures in an e2e-shots folder beside it. Both are kept for a CI upload.
+
 .PARAMETER SkipOldVersion
     Skip the update-from-v0.5.6 step (it downloads v0.5.6 from GitHub).
 
@@ -44,6 +48,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Setup,
     [Parameter(Mandatory = $true)][string]$Version,
     [string]$SmokeResult = 'smoke.json',
+    [string]$WalkthroughResult = 'e2e.json',
     [switch]$SkipOldVersion
 )
 
@@ -52,6 +57,11 @@ Set-StrictMode -Version Latest
 
 $Setup = (Resolve-Path $Setup).Path
 $SmokeResult = [System.IO.Path]::GetFullPath($SmokeResult, (Get-Location).Path)
+$WalkthroughResult = [System.IO.Path]::GetFullPath($WalkthroughResult, (Get-Location).Path)
+# The walkthrough itself lives in the repository, outside the installed copy: the installed
+# bundle runs it with its own runner, so nothing of the test lives in what a teacher gets.
+$WalkthroughScript = Join-Path $PSScriptRoot '..\..\tests\e2e\walkthrough.py'
+$WalkthroughShots = Join-Path (Split-Path -Parent $WalkthroughResult) 'e2e-shots'
 $LatestRelease = Join-Path $PSScriptRoot 'latest_release.py'
 
 $AppName = "Teacher's Teammate"
@@ -240,6 +250,36 @@ function Assert-SmokeTestPasses([string]$Directory) {
     Assert-True ($json -match '"ok":\s*true') "the smoke test result says ok"
 }
 
+function Assert-WalkthroughPasses([string]$Directory) {
+    <# The installed copy must work like an opened app: walk through it and keep the result. #>
+    $walkthrough = (Resolve-Path $WalkthroughScript).Path
+    # Quoted: Start-Process joins the elements, and a maintainer's checkout can sit under a
+    # path with a space in it (C:\Users\First Last\...).
+    $arguments = @(
+        '--_run_script', "`"$walkthrough`"", "`"$WalkthroughResult`"",
+        '--screenshots', "`"$WalkthroughShots`"")
+    $process = Start-Process -FilePath (Join-Path $Directory 'teachers-teammate.exe') `
+        -ArgumentList $arguments -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        # A windowed build has no stderr, so the result file is where a crash shows. It is
+        # missing altogether when Qt aborts before the script's first line.
+        if (Test-Path -LiteralPath $WalkthroughResult) {
+            Write-Host (Get-Content -LiteralPath $WalkthroughResult -Raw)
+        } else {
+            Write-Host "the walkthrough wrote no result at $WalkthroughResult"
+        }
+    }
+    Assert-Equal 0 $process.ExitCode 'the installed copy walks through the app'
+    # The top level only: every step that passed inside "steps" says "ok": true as well.
+    $result = if (Test-Path -LiteralPath $WalkthroughResult) {
+        Get-Content -LiteralPath $WalkthroughResult -Raw | ConvertFrom-Json
+    } else {
+        $null
+    }
+    $saysOk = $null -ne $result -and $null -ne $result.PSObject.Properties['ok'] -and $result.ok
+    Assert-True $saysOk 'the walkthrough result says ok'
+}
+
 function Get-LatestReleaseSetup([string]$Directory) {
     <# Download the newest published release's setup; a missing release fails, never skips. #>
     $asset = & python $LatestRelease download --pattern '*-w64-setup.exe' --dir $Directory
@@ -287,6 +327,7 @@ Assert-Equal $Version (Get-UninstallValue "HKCU:\$UninstKey" 'DisplayVersion') '
 Assert-Equal $UserDir (Get-UninstallValue "HKCU:\$RegKey" 'InstallDir') 'the install folder is recorded'
 Assert-Equal 'user' (Get-UninstallValue "HKCU:\$RegKey" 'Scope') 'the scope is recorded'
 Assert-SmokeTestPasses $UserDir
+Assert-WalkthroughPasses $UserDir
 
 # The shortcuts: a per-user install writes into the user's Start menu and desktop, and both
 # point at the installed copy, not at the setup.

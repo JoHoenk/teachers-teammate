@@ -1,4 +1,4 @@
-"""The app walkthrough run in this process: the real window, the real reader, no teacher.
+"""The app walkthrough run as the bundle runs it: the real window, the real reader, no teacher.
 
 What is real here: :class:`~teachers_teammate.gui._main_window.MainWindow` built by
 :func:`~teachers_teammate.gui.composition.build_main_window`, every controller, the real
@@ -11,21 +11,26 @@ types into the Check tab and answers the boxes
 it is started, not a harness around it.  Only the model folder is pointed at what Bazel fetched
 (``TEACHERS_TEAMMATE_MODELS_DIR``), which is how the app finds a downloaded model.
 
-The script itself is ``tests/e2e/walkthrough.py``: the bundle runs the same file with
-``--_run_script``, so a step that passes here passes there, and this test runs the same entry
-point (``main``) the runner calls.
+Every walk is a process of its own (``tests/e2e/walk_checked.py``, which calls the same
+``walkthrough.main`` the bundle runner calls): a walk leaves windows, pool threads and queued
+signals behind, and a second walk in the same process would wait for what the first one left;
+a hung or aborted walk ends only its own process, and the test prints the result it left.
 
-The failure tests replace one thing each and check that the walk reports it: a reader that
-raises, a box the step did not expect, a window the step did not open, and a slot that raises.
-One more test checks the other half of a report: a wait that runs out says what the guards caught.
+The failure tests break one thing each in the child and check that the walk reports it: a reader
+that raises, a box the step did not expect, a window the step did not open, a slot that raises,
+and a reader that never returns.  The last three tests need no model and no child: a wait that
+runs out says what the guards caught, a window is quoted as the teacher read it, and a slot's
+exception is reported once.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 import json
+import os
 from pathlib import Path
-import threading
+import subprocess
+import sys
 import time
 from typing import Any
 
@@ -35,25 +40,39 @@ import pytest
 from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.gui import _dialogs, _handles
 from teachers_teammate.gui._app_bootstrap import create_app
-from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._results_table import ResultsTable
-from teachers_teammate.gui._run_controller import RunController
 from teachers_teammate.gui.composition import build_main_window
-from teachers_teammate.infrastructure import stage_builder
 from teachers_teammate.infrastructure.onnx.store import MODELS_DIR_ENV
-from teachers_teammate.texts import dialogs as dlg
 from tests.conftest import models_store, skip_no_page_models, skip_no_reader_models
 from tests.e2e import walkthrough
 
 pytestmark = [pytest.mark.gui]
 
+#: Longer than the child's own watchdog, so the child writes its result before this gives up.
+CHILD_S = walkthrough.WALK_S + 120.0
 
-def _walk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[int, dict[str, Any]]:
-    """Run the walk on the fetched models; return its exit code and what it wrote."""
-    monkeypatch.setenv(MODELS_DIR_ENV, str(models_store(tmp_path).root))
+
+def _walk(tmp_path: Path, fault: str = "plain") -> tuple[int, dict[str, Any], str]:
+    """Walk in a process of its own; return its exit code, what it wrote and what it printed."""
     out = tmp_path / "e2e.json"
-    code = walkthrough.main([str(out)])
-    return code, json.loads(out.read_text(encoding="utf-8"))
+    env = dict(os.environ)
+    env[MODELS_DIR_ENV] = str(models_store(tmp_path).root)
+    # What Bazel puts on this process's path is what the child imports the app and the tests from.
+    env["PYTHONPATH"] = os.pathsep.join(entry for entry in sys.path if entry)
+    try:
+        done = subprocess.run(
+            [sys.executable, "-m", "tests.e2e.walk_checked", fault, str(out)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=CHILD_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"the walk ({fault}) ran past {CHILD_S:g} s: {exc.stdout!r} {exc.stderr!r}")
+    printed = f"{done.stdout}\n{done.stderr}"
+    assert out.is_file(), f"the walk ({fault}) wrote no result (exit {done.returncode}): {printed}"
+    return done.returncode, json.loads(out.read_text(encoding="utf-8")), printed
 
 
 def _pump(condition: Callable[[], bool], *, what: str, seconds: float = 20.0) -> None:
@@ -69,17 +88,15 @@ def _pump(condition: Callable[[], bool], *, what: str, seconds: float = 20.0) ->
 @skip_no_page_models
 @pytest.mark.needs_reader_models
 @pytest.mark.needs_page_models
-def test_the_walk_passes_on_the_real_models(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_walk_passes_on_the_real_models(tmp_path: Path) -> None:
     """
     Given  the reader's and the page models' real files
     When   the walk plays teacher in the main window and writes its result
     Then   every step passes, nothing was unexpected, and the exit code says so
     """
-    code, result = _walk(tmp_path, monkeypatch)
+    code, result, printed = _walk(tmp_path)
 
-    assert result["failed"] == []
+    assert result["failed"] == [], printed
     assert [step["name"] for step in result["steps"]] == [
         name for name, _method in walkthrough.STEPS
     ]
@@ -87,7 +104,7 @@ def test_the_walk_passes_on_the_real_models(
         step for step in result["steps"] if not step["ok"]
     ]
     assert result["ok"] is True
-    assert code == 0
+    assert code == 0, printed
     assert result["modals"] == []
     assert result["exceptions"] == []
     assert all(entry["expected"] for entry in result["dialogs"]), [
@@ -95,26 +112,25 @@ def test_the_walk_passes_on_the_real_models(
     ]
     assert result["platform"]
     assert result["versions"]["app"] and result["versions"]["qt"]
+    assert result["hang"] == {}
+    # What the reader made of the pages is in the result, so a slack that hides a misreading shows.
+    assert set(result["readings"]) == {
+        Path(name).stem + walkthrough.DOCX_SUFFIX
+        for name in (walkthrough.PNG_NAME, walkthrough.PDF_NAME)
+    }
 
 
 @skip_no_reader_models
 @skip_no_page_models
 @pytest.mark.needs_reader_models
 @pytest.mark.needs_page_models
-def test_a_reader_that_raises_fails_the_run_step(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_reader_that_raises_fails_the_run_step(tmp_path: Path) -> None:
     """
     Given  a text reader that raises
     When   the walk runs the queue
     Then   the run step fails and the result names the step and the reader's message
     """
-
-    def broken(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("the reader is broken")
-
-    monkeypatch.setattr(stage_builder, "PpOcrProcessor", broken)
-    code, result = _walk(tmp_path, monkeypatch)
+    code, result, _printed = _walk(tmp_path, "reader-raises")
 
     assert code == 1
     assert result["ok"] is False
@@ -127,22 +143,13 @@ def test_a_reader_that_raises_fails_the_run_step(
 @skip_no_page_models
 @pytest.mark.needs_reader_models
 @pytest.mark.needs_page_models
-def test_an_unexpected_dialog_fails_the_step_it_happened_in(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_an_unexpected_dialog_fails_the_step_it_happened_in(tmp_path: Path) -> None:
     """
     Given  the app asks something the step did not announce
     When   the walk runs
     Then   that step fails and the call is in the record as unexpected
     """
-    run_as_asked = MainWindow._on_run
-
-    def noisy_on_run(self: MainWindow) -> None:
-        _dialogs.notify(self, dlg.no_files_selected())
-        run_as_asked(self)
-
-    monkeypatch.setattr(MainWindow, "_on_run", noisy_on_run)
-    code, result = _walk(tmp_path, monkeypatch)
+    code, result, _printed = _walk(tmp_path, "unexpected-dialog")
 
     assert code == 1
     assert result["failed"][0].startswith("run: "), result["failed"]
@@ -154,27 +161,13 @@ def test_an_unexpected_dialog_fails_the_step_it_happened_in(
 @skip_no_page_models
 @pytest.mark.needs_reader_models
 @pytest.mark.needs_page_models
-def test_an_unexpected_window_is_closed_and_fails_its_step(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_an_unexpected_window_is_closed_and_fails_its_step(tmp_path: Path) -> None:
     """
     Given  a run has started and the app opens a window of its own, saying what it wants
     When   the walk runs
     Then   the window is closed, and the step fails with the window's own title and sentences
     """
-    run_as_asked = MainWindow._on_run
-
-    def modal_on_run(self: MainWindow) -> None:
-        run_as_asked(self)
-        dialog = QDialog(self)
-        dialog.setWindowTitle("The run can't start")
-        layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel("<b>The run can't start:</b>"))
-        layout.addWidget(QLabel("The built-in reader is not downloaded yet."))
-        dialog.exec()
-
-    monkeypatch.setattr(MainWindow, "_on_run", modal_on_run)
-    code, result = _walk(tmp_path, monkeypatch)
+    code, result, _printed = _walk(tmp_path, "unexpected-window")
 
     assert code == 1
     assert result["modals"] == [
@@ -184,6 +177,45 @@ def test_an_unexpected_window_is_closed_and_fails_its_step(
     assert "The built-in reader is not downloaded yet." in result["failed"][0]
     # The window was closed rather than answered badly, so the run itself went through.
     assert result["steps"][-1]["name"] == "run"
+
+
+@skip_no_reader_models
+@skip_no_page_models
+@pytest.mark.needs_reader_models
+@pytest.mark.needs_page_models
+def test_an_exception_in_a_slot_fails_the_step_it_happened_in(tmp_path: Path) -> None:
+    """
+    Given  a slot of the window raises while the run goes on
+    When   the walk runs
+    Then   the exception is in the result and the step it happened in fails
+    """
+    code, result, _printed = _walk(tmp_path, "slot-raises")
+
+    assert code == 1
+    assert "RuntimeError: a slot broke" in result["exceptions"], result["failed"]
+    assert result["failed"][0].startswith("run: "), result["failed"]
+
+
+@skip_no_reader_models
+@skip_no_page_models
+@pytest.mark.needs_reader_models
+@pytest.mark.needs_page_models
+def test_a_walk_that_hangs_is_ended_with_its_stacks_in_the_result(tmp_path: Path) -> None:
+    """
+    Given  a reader that never returns and a watchdog set to twenty seconds
+    When   the walk runs
+    Then   the process ends with exit 1, and the result names the step, every thread's stack and
+           what the app was running
+    """
+    code, result, _printed = _walk(tmp_path, "hangs")
+
+    assert code == 1
+    assert result["ok"] is False
+    assert "timed out in step run" in result["failed"], result["failed"]
+    assert "Thread" in result["hang"]["stacks"]
+    assert result["hang"]["step"] == "run"
+    assert result["hang"]["worker_running"] is True
+    assert set(result["hang"]["background_tasks"]) == {"local", "network"}
 
 
 def test_a_wait_that_runs_out_names_what_the_guards_caught(qtbot, tmp_path: Path) -> None:
@@ -264,41 +296,39 @@ def test_a_slot_exception_is_reported_by_one_guard_only(qtbot, tmp_path: Path) -
 @skip_no_page_models
 @pytest.mark.needs_reader_models
 @pytest.mark.needs_page_models
-def test_an_exception_in_a_slot_fails_the_step_it_happened_in(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """
-    Given  a slot of the window raises while the run goes on
-    When   the walk runs
-    Then   the exception is in the result and the step it happened in fails
-    """
-
-    def broken(self: RunController, _steps: int) -> None:
-        raise RuntimeError("a slot broke")
-
-    monkeypatch.setattr(RunController, "_set_steps_done", broken)
-    code, result = _walk(tmp_path, monkeypatch)
-
-    assert code == 1
-    assert "RuntimeError: a slot broke" in result["exceptions"], result["failed"]
-    assert result["failed"][0].startswith("run: "), result["failed"]
-
-
-@skip_no_reader_models
-@skip_no_page_models
-@pytest.mark.needs_reader_models
-@pytest.mark.needs_page_models
-def test_the_walk_leaves_no_thread_running(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_walk_leaves_no_thread_running(tmp_path: Path) -> None:
     """
     Given  a walk that ends by closing the window
     When   the entry point returns
-    Then   no thread the walk started is still running
+    Then   no thread of Python's the walk started is still running (the child exits with 3 if one is)
     """
-    before = set(threading.enumerate())
-    code, result = _walk(tmp_path, monkeypatch)
+    code, result, printed = _walk(tmp_path)
 
-    assert code == 0, result["failed"]
-    assert set(threading.enumerate()) - before == set()
+    assert code == 0, (result["failed"], printed)
+
+
+@pytest.mark.parametrize(
+    ("text", "words", "expected"),
+    [
+        ("Hello World", "Hello World", True),
+        ("hello   world\n", "Hello World", True),
+        ("Document: Hello Wor1d", "Hello World", True),
+        ("Hello Warld", "Hello World", True),
+        ("First Pag", "First Page", True),
+        ("Goodbye", "Hello World", False),
+        ("Hello", "Hello World", False),
+        ("", "Hello World", False),
+    ],
+)
+def test_a_reading_is_compared_with_the_slack_of_one_character_in_eight(
+    text: str, words: str, expected: bool
+) -> None:
+    """
+    Given  a text the reader made of a page and the words drawn on it
+    When   they are compared
+    Then   case, spacing and one wrong, missing or extra character do not matter, a word does
+    """
+    assert walkthrough._reads(text, words) is expected
 
 
 @skip_no_reader_models

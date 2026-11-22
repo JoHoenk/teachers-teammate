@@ -84,10 +84,11 @@ jobs:
           sudo apt-get update -qq
           # Qt's xcb platform plugin links these; make_deb.sh measures the .deb's Depends: line
           # from what the bundle needs, which only works when they are installed here.
+          # xvfb and xauth are the display the app walkthrough opens its window on.
           sudo apt-get install -y --no-install-recommends \
             libxcb-xinerama0 libegl1 libgl1 libglib2.0-0 libxcb-cursor0 libxcb-icccm4 \
             libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libxcb-util1 \
-            libxcb-xkb1 libxkbcommon-x11-0
+            libxcb-xkb1 libxkbcommon-x11-0 xvfb xauth
 
       - name: Create the build environment
         uses: ./.github/actions/build-venv
@@ -318,18 +319,85 @@ jobs:
           retention-days: ${{ inputs.retention_days }}
           path: dist/teachers-teammate-*-macos.dmg
 
+      # ── The app walkthrough ──────────────────────────────────────────────
+      # tests/e2e/walkthrough.py is the only check that builds the real main window on the
+      # system's own platform plugin — the smoke test runs offscreen — and that reads the three
+      # documents with the models the bundle carries. The script sits outside the bundle and is
+      # run by the bundle's own runner, so the macOS signature is untouched. Its e2e.json names
+      # the step that failed and what the guards caught; the screenshots are what a teacher
+      # would have seen.
+      #
+      # After the packages are uploaded, on purpose: a failed walk must not cost this platform
+      # its installers (the release is blocked by the red job all the same), and nothing the app
+      # writes while it runs can end up inside one of them.
+      - name: Walk through the app (Linux)
+        if: runner.os == 'Linux'
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          xvfb-run -a ./dist/teachers-teammate/teachers-teammate \
+            --_run_script tests/e2e/walkthrough.py e2e.json --screenshots e2e-shots \
+            || { cat e2e.json; exit 1; }
+
+      - name: Walk through the app (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath dist/teachers-teammate/teachers-teammate.exe `
+            -ArgumentList '--_run_script', 'tests/e2e/walkthrough.py', 'e2e.json', `
+            '--screenshots', 'e2e-shots' `
+            -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            # A windowed build has no stderr; the result file is where a crash shows. It is
+            # missing altogether when Qt aborts before the script's first line.
+            if (Test-Path e2e.json) {
+              Get-Content e2e.json
+            } else {
+              Write-Host 'the walkthrough wrote no result'
+            }
+            throw "the app walkthrough exited with $($process.ExitCode)"
+          }
+
+      - name: Walk through the app (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate \
+            --_run_script tests/e2e/walkthrough.py e2e.json --screenshots e2e-shots \
+            || { cat e2e.json; exit 1; }
+
+      # The walk runs the app from outside the bundle, so the signature the build verified has
+      # to be intact afterwards.
+      - name: Verify the app is untouched after the walk (macOS)
+        if: runner.os == 'macOS'
+        run: codesign --verify --deep --strict dist/teachers-teammate.app
+
+      - name: Upload the walkthrough result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}-e2e
+          retention-days: ${{ inputs.retention_days }}
+          path: |
+            e2e.json
+            e2e-shots/
+          if-no-files-found: warn
+
   # ── Install the built packages on the systems we support ──────────────────
   # Build once, install in a matrix: the build job makes the file, these jobs prove it
-  # installs, upgrades and starts on each system. Read-only, like the build. All three check
-  # out, because they run the packaging scripts from the repository (test_deb_install.sh,
-  # test_macos_install.sh, test_windows_installer.ps1: everything is in them, so a maintainer can
-  # run the same test on a clean machine) and download the newest published release with `gh` —
-  # the version a teacher has today, which is the one path a fresh install never takes. A missing
-  # release or a failed download fails the job on purpose: a renamed asset must not switch the
-  # test off silently.
+  # installs, upgrades and walks through the app on each system. Read-only, like the build. All
+  # three check out, because they run the packaging scripts from the repository
+  # (test_deb_install.sh, test_macos_install.sh, test_windows_installer.ps1: everything is in
+  # them, so a maintainer can run the same test on a clean machine) and download the newest
+  # published release with `gh` — the version a teacher has today, which is the one path a fresh
+  # install never takes. A missing release or a failed download fails the job on purpose: a
+  # renamed asset must not switch the test off silently.
   #
-  # Each matrix leg uploads its smoke result under a name of its own (`...-<image or os>`):
-  # upload-artifact accepts two artifacts with one name, and they could not be told apart.
+  # Each matrix leg uploads its smoke and walkthrough results under a name of its own
+  # (`...-<image or os>`): upload-artifact accepts two artifacts with one name, and they could
+  # not be told apart.
 
   install-linux:
     name: Install the .deb (${{ matrix.image }})
@@ -369,7 +437,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 tools/packaging/latest_release.py download --pattern '*_amd64.deb' --dir old
 
+      # The time limits below cover everything the step does, the walk included: a walk that
+      # hangs is ended by the script's own watchdog, and this bounds the installs around it, so
+      # neither can run into the job's six hours.
       - name: Install, upgrade, remove and purge the .deb in a clean container
+        timeout-minutes: 30
         shell: bash
         env:
           IMAGE: ${{ matrix.image }}
@@ -382,6 +454,17 @@ jobs:
           name: ${{ inputs.artifact_prefix }}-linux-installed-smoke-${{ matrix.slug }}
           retention-days: ${{ inputs.retention_days }}
           path: smoke/smoke.json
+
+      - name: Upload the walkthrough result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-linux-installed-e2e-${{ matrix.slug }}
+          retention-days: ${{ inputs.retention_days }}
+          path: |
+            smoke/e2e.json
+            smoke/e2e-shots/
+          if-no-files-found: warn
 
   install-macos:
     name: Install the dmg (${{ matrix.os }})
@@ -417,9 +500,10 @@ jobs:
         run: python3 tools/packaging/latest_release.py download --pattern '*-macos.dmg' --dir old
 
       # M2 (a teacher who already has the app drags the new one over it), the licenses in the
-      # dmg, the replaced bundle, M1 (version, identifier, floor, icon) and the installed app's
-      # smoke test: all in the script.
+      # dmg, the replaced bundle, M1 (version, identifier, floor, icon), the installed app's
+      # smoke test and its walkthrough: all in the script.
       - name: Install the newest release, replace it with the new dmg and start it
+        timeout-minutes: 20
         shell: bash
         run: bash tools/packaging/test_macos_install.sh dist/*-macos.dmg old/*-macos.dmg smoke.json
 
@@ -430,6 +514,17 @@ jobs:
           name: ${{ inputs.artifact_prefix }}-macos-installed-smoke-${{ matrix.os }}
           retention-days: ${{ inputs.retention_days }}
           path: smoke.json
+
+      - name: Upload the walkthrough result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-macos-installed-e2e-${{ matrix.os }}
+          retention-days: ${{ inputs.retention_days }}
+          path: |
+            e2e.json
+            e2e-shots/
+          if-no-files-found: warn
 
   install-windows:
     name: Install the setup (${{ matrix.os }})
@@ -461,8 +556,11 @@ jobs:
 
       # The runner is elevated, so the per-user runs inside the script pass /SCOPE=user. The
       # script starts the installed app with --_smoke_test, so a missing runtime DLL on a clean
-      # image shows here too, and it keeps the result for the upload below.
+      # image shows here too, and it walks through the installed copy, so this is where the app's
+      # window is built on a Windows that is not the build image. Both results are kept for the
+      # uploads below.
       - name: Test the installer
+        timeout-minutes: 60
         shell: pwsh
         env:
           # Steps 9 and 10 download the shipped v0.5.6 and the newest published release with
@@ -484,3 +582,14 @@ jobs:
           name: ${{ inputs.artifact_prefix }}-windows-installed-smoke-${{ matrix.os }}
           retention-days: ${{ inputs.retention_days }}
           path: smoke.json
+
+      - name: Upload the walkthrough result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-windows-installed-e2e-${{ matrix.os }}
+          retention-days: ${{ inputs.retention_days }}
+          path: |
+            e2e.json
+            e2e-shots/
+          if-no-files-found: warn

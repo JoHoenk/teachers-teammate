@@ -920,6 +920,25 @@ py_test(
 )
 
 py_test(
+    name = "test_packaging_walkthrough",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_packaging_walkthrough.py"],
+    args = ["unit/test_packaging_walkthrough.py"],
+    data = [
+        "//tools/packaging:test_deb_install.sh",
+        "//tools/packaging:test_macos_install.sh",
+        "//tools/packaging:test_windows_installer.ps1",
+    ],
+    env = {
+        "DEB_INSTALL_SCRIPT": "$(rlocationpath //tools/packaging:test_deb_install.sh)",
+        "MACOS_INSTALL_SCRIPT": "$(rlocationpath //tools/packaging:test_macos_install.sh)",
+        "WINDOWS_INSTALLER_SCRIPT": "$(rlocationpath //tools/packaging:test_windows_installer.ps1)",
+    },
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
     name = "test_addon_constraints",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_addon_constraints.py"],
@@ -2843,9 +2862,9 @@ py_test(
 py_test(
     name = "test_gui_main_walkthrough",
     size = "large",
-    timeout = "eternal",  # several walks in one process, each ended by its own watchdog
     srcs = _COMMON_SRCS + [
         "e2e/__init__.py",
+        "e2e/walk_checked.py",
         "e2e/walkthrough.py",
         "gui/test_gui_main_walkthrough.py",
     ],
@@ -2976,6 +2995,7 @@ test_suite(
         ":test_ollama_discovery",
         ":test_ollama_install",
         ":test_ollama_utils",
+        ":test_packaging_walkthrough",
         ":test_performance_estimate",
         ":test_performance_probe",
         ":test_pipeline_txt_integration",

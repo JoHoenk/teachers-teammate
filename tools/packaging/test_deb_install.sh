@@ -13,8 +13,9 @@
 #
 # apt resolves Depends, so a library missing from the control file fails here rather than on a
 # user's machine. The upgrade from the newest release comes first, because it is the one path a
-# fresh install never takes; then the launcher, the smoke test and the remove/purge pair. Not a
-# real desktop (no window, no X11/Wayland, no fonts): that stays on the VM list.
+# fresh install never takes; then the xcb plugin, the launcher, the smoke test, the app
+# walkthrough and the remove/purge pair. Not a real desktop (no window manager): that stays on
+# the VM list, and the walkthrough brings the one font its window needs.
 #
 # CI runs this script (build_artifacts.yml, job install-linux); nothing else is in the workflow.
 
@@ -34,15 +35,18 @@ docker run --rm \
     -v "${OLD}:/old:ro" \
     -v "${SMOKE}:/smoke" \
     -v "${ROOT}/tools/packaging/check_desktop_entry.py:/check_desktop_entry.py:ro" \
+    -v "${ROOT}/tests/e2e/walkthrough.py:/walkthrough.py:ro" \
     "${IMAGE}" bash -c '
     set -euo pipefail
     # The Ubuntu images drop /usr/share/doc (all but copyright) at install time, which would
     # hide the notice files this job checks for; a desktop install keeps them.
     rm -f /etc/dpkg/dpkg.cfg.d/excludes
     apt-get update -qq
-    # desktop-file-validate reads the launcher the package installs; python3 runs
-    # check_desktop_entry.py (the bare images have none, and the bundle needs none).
-    apt-get install -y -qq --no-install-recommends desktop-file-utils python3
+    # desktop-file-validate reads the launcher the package installs, python3 runs
+    # check_desktop_entry.py (the bare images have none, and the bundle needs none), and
+    # xvfb, xauth and a font are the display the app walkthrough opens its window on.
+    apt-get install -y -qq --no-install-recommends desktop-file-utils python3 \
+        xvfb xauth fonts-dejavu-core
 
     # ── L3: the upgrade from the newest published release ──
     old_deb=$(find /old -name "teachers-teammate_*_amd64.deb" | head -n 1)
@@ -77,7 +81,9 @@ docker run --rm \
     cat /smoke/smoke.json
 
     # The bootloader puts _internal on LD_LIBRARY_PATH, which is how the libraries the bundle
-    # carries are found; a bare ldd would report them as missing.
+    # carries are found; a bare ldd would report them as missing. Before the walk, because a
+    # missing one stops Qt before the script writes its result: this names the plugin where a
+    # bare exit code would not.
     if LD_LIBRARY_PATH=/opt/teachers-teammate/_internal \
         ldd /opt/teachers-teammate/_internal/PySide6/Qt/plugins/platforms/libqxcb.so \
         | grep "not found"; then
@@ -87,6 +93,16 @@ docker run --rm \
 
     # ── L1: the launcher, its Exec, its Icon and the icon size ──
     python3 /check_desktop_entry.py
+
+    # The installed app does what a teacher does, in its own window on the xcb plugin and with
+    # the models the .deb carries. The container runs as root: the walk isolates itself into a
+    # temporary folder under /tmp and touches nothing else here.
+    if ! xvfb-run -a teachers-teammate --_run_script /walkthrough.py /smoke/e2e.json \
+        --screenshots /smoke/e2e-shots; then
+        cat /smoke/e2e.json || true
+        exit 1
+    fi
+    cat /smoke/e2e.json
 
     # ── L2: remove and purge leave nothing behind ──
     apt-get remove -y -qq teachers-teammate

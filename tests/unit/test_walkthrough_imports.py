@@ -23,6 +23,7 @@ STDLIB = frozenset(
         "collections.abc",
         "contextlib",
         "dataclasses",
+        "faulthandler",
         "json",
         "logging",
         "os",

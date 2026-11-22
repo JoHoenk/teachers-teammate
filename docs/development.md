@@ -155,6 +155,8 @@ reference everywhere else. The package is Qt-free, so `gui/`, `cli.py`, `applica
 | `texts/privacy.py` | The "what is sent for this file" wording, and what each privacy level and each place means (the levels, the places, the advice, the tooltips of the data-flow summary). |
 | `texts/check.py` | What the Check tab's widgets say around its text: the two editable views' tooltips, the ⋯ button, the source dialog's button, the scan switch, the strips, the side panel's tabs and its filter row. |
 | `texts/setup.py` | Every sentence of the Setup Assistant's pages. |
+| `texts/issues.py` | One sentence per unmet requirement of a step or a run, worded from a `RequirementIssue`. |
+| `texts/run.py` | What a run says: the battery warning, the line for a file a stop cut short. |
 | `texts/servers.py` | How a found Ollama server is described (the card). |
 | `texts/review.py` | The review and the unclear expressions, the prompt dialogs, the queue's rows and steps, the speed test, and how a stored result was sent. |
 | `texts/models.py` | This computer, the suitability of a model, the download warnings and the model list. |
@@ -165,7 +167,7 @@ reference everywhere else. The package is Qt-free, so `gui/`, `cli.py`, `applica
 Wording that is built from application data (a stored result's `SentRecord`, an install
 failure, a model rating) lives here too: the function takes that data as an argument and
 returns the sentence — `sent_lines(status, stage, location)`, never a lookup of the service.
-So `texts` imports `domain` and `pkg`, nothing inward.
+So `texts` imports `domain` and `pkg`, nothing else.
 
 Rules:
 
@@ -192,14 +194,17 @@ Rules:
   `save_file`, the path it proposes); build it with that argument — `dlg.save_export_to_folder(label, start)` —
   or the picker opens wherever Qt last was. A test patches this module once instead of every window.
 
-**The ratchet test.** `tests/unit/test_user_text_centralised.py` parses every module under
-`gui/` and `cli.py` with `ast` and fails on a string literal (or f-string) passed to a
-user-facing sink — `QMessageBox`/`QFileDialog` calls, `setText`/`setToolTip`/
+**The ratchet test.** `tests/unit/test_user_text_centralised.py` parses `gui/`, `cli.py`,
+`application/`, `infrastructure/` and `domain/` with `ast` and fails on a string literal (or
+f-string) passed to a user-facing sink — `QMessageBox`/`QFileDialog` calls, `setText`/`setToolTip`/
 `setPlaceholderText`/`setWindowTitle`/`setTitle`, widget constructors, `addTab`/`addMenu`/
-`addAction`, `print` and argparse `help` in `cli.py`, `raise …Error("…")`, and a literal handed to a
-function of `dlg` / `privacy` (`dlg.copy_failed("Could not copy")` — the sentence belongs in
-the function). A sentence that is only *returned* or kept in a local variable is not a sink, so
-the test cannot see it: build it in `texts/` and call it. The
+`addAction`, `print` and argparse `help` in `cli.py`, `raise …Error("…")`, a `message=` /
+`notice=` / `reason=` keyword argument, a module-level sentence constant named `*_MESSAGE` /
+`*_NOTICE` / `*_WARNING`, and a literal handed to a function of `dlg` / `privacy`
+(`dlg.copy_failed("Could not copy")` — the sentence belongs in the function). A sentence that is
+only *returned* or kept in a local variable is not a sink, so the test cannot see it: build it in
+`texts/` and call it. A `raise` in `domain/` (an invariant) and the step reasons of
+`infrastructure/preprocessing/` (debug log) are not sinks. The
 allowlist is `tools/user_text/allowlist.py`, keyed by file and literal text (not line
 number, which shifts on every edit). It may only shrink: a second test fails on an entry
 whose literal is gone, so moving a text means deleting its entry in the same change.

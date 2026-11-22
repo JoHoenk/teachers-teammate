@@ -275,3 +275,32 @@ def test_ocr_worker_file_done_event_carries_the_stopped_flag(qtbot, tmp_path: Pa
     assert [(e.outcome.status, e.outcome.stopped_stage) for e in events] == [
         (FileStatus.STOPPED, "correction")
     ]
+
+
+@pytest.mark.gui
+def test_ocr_worker_logs_the_step_a_stopped_file_did_not_reach(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a pipeline that reports a file as stopped before proofreading
+    When   run() is invoked
+    Then   the log pane gets the line that says so
+    """
+    from teachers_teammate.texts.run import stopped_message  # noqa: PLC0415
+
+    class _Stopped(_DummyAppService):
+        def run_selected(self, _config, _files, *, progress=None, **_kwargs) -> RunSummary:
+            assert progress is not None and progress.on_file_done is not None
+            progress.on_file_done(
+                FileOutcome("/tmp/a.png", "a.png", FileStatus.STOPPED, stopped_stage="correction")
+            )
+            return RunSummary(stopped=("a.png",))
+
+    worker = OCRWorker(
+        make_config(tmp_path), [Path("/tmp/a.png")], app_service=services_of(_Stopped())
+    )
+    lines: list[str] = []
+    worker.log_line.connect(lines.append)
+
+    worker.run()
+    qtbot.wait(10)
+
+    assert f"       → {stopped_message('correction')}\n" in lines

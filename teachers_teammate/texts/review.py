@@ -345,7 +345,7 @@ def _how_sent(record: SentRecord, location: StageLocation) -> tuple[str, str]:
     The one place that words where a result was made and what it was made from; the tooltip
     and the dialog only put a frame around it.  *verb* is ``Sent`` when the text left this
     computer and ``Made`` when it did not.  *location* is where the result was made
-    (:meth:`~teachers_teammate.application.data_flow.DataFlowService.sent_location`).
+    (:func:`~teachers_teammate.application.data_flow.sent_location`).
     """
     if location.location is DataLocation.THIS_COMPUTER:
         return "Made", f"on this computer ({location.service})"

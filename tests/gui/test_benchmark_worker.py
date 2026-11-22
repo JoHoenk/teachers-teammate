@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from teachers_teammate.domain.setting_values import PreprocessMethod
-from teachers_teammate.application.benchmark_service import BenchmarkRunError
+from teachers_teammate.application.benchmark_service import (
+    BenchmarkRunError,
+    BenchmarkRunStopped,
+)
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.gui.benchmark._benchmark_worker import BenchmarkWorker
 from teachers_teammate.infrastructure.benchmark.run_store import StoredRun
@@ -43,6 +46,12 @@ class _FailService:
     def run_and_store(self, source, *, ocr, language, ollama_url, stop_event, on_progress):
         _ = (source, ocr, language, ollama_url, stop_event, on_progress)
         raise BenchmarkRunError("engine missing")
+
+
+class _StoppedService:
+    def run_and_store(self, source, *, ocr, language, ollama_url, stop_event, on_progress):
+        _ = (source, ocr, language, ollama_url, stop_event, on_progress)
+        raise BenchmarkRunStopped
 
 
 def _worker(service) -> BenchmarkWorker:
@@ -83,3 +92,20 @@ def test_worker_emits_finished_err(qtbot) -> None:
     worker.wait(3000)
 
     assert "engine missing" in blocker.args[0]
+
+
+@pytest.mark.gui
+def test_worker_reports_a_stopped_run_with_the_stop_sentence(qtbot) -> None:
+    """
+    Given  a service whose run_and_store raises BenchmarkRunStopped
+    When   the worker runs
+    Then   finished_err fires with the sentence for a stop, not a failure text
+    """
+    from teachers_teammate.texts.run import STOPPED_BY_USER  # noqa: PLC0415
+
+    worker = _worker(_StoppedService())
+    with qtbot.waitSignal(worker.finished_err, timeout=3000) as blocker:
+        worker.start()
+    worker.wait(3000)
+
+    assert blocker.args[0] == STOPPED_BY_USER

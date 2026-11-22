@@ -9,6 +9,7 @@ import pytest
 from teachers_teammate.application.benchmark_service import (
     BenchmarkApplicationService,
     BenchmarkRunError,
+    BenchmarkRunStopped,
 )
 from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.config import OcrConfig
@@ -84,6 +85,23 @@ def test_run_and_store_raises_on_runner_error(tmp_path: Path) -> None:
     source = _source(tmp_path)
 
     with pytest.raises(BenchmarkRunError, match="boom"):
+        service.run_and_store(source, ocr=OcrConfig(engine="ppocr"), language="English")
+    assert service.list_runs(source) == []
+
+
+def test_run_and_store_raises_stopped_and_stores_nothing_when_the_run_was_stopped(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a runner that reports the run as stopped
+    When   run_and_store() is called
+    Then   BenchmarkRunStopped is raised and nothing is stored
+    """
+    runner = lambda *a, **k: OcrRunResult("", None, 0.1, None, stopped=True)  # noqa: E731
+    service = _service(tmp_path, runner)
+    source = _source(tmp_path)
+
+    with pytest.raises(BenchmarkRunStopped):
         service.run_and_store(source, ocr=OcrConfig(engine="ppocr"), language="English")
     assert service.list_runs(source) == []
 

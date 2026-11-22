@@ -4,7 +4,8 @@
 module is the checklist for getting there and the source of the ratchet test's
 allowlist: it parses a module with ``ast`` and reports every literal handed to a sink
 that shows text — a message box, a widget's label, a menu entry, a CLI line, an
-exception message.
+exception message, a field of a result or a request, a module constant a teacher is
+shown.
 
 Run it as a program to write the CSV::
 
@@ -18,17 +19,26 @@ import ast
 from collections.abc import Iterable, Iterator
 import csv
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import sys
 
 #: The modules whose literals a teacher can read, relative to the repository root.
-SCANNED: tuple[str, ...] = ("teachers_teammate/gui", "teachers_teammate/cli.py")
+SCANNED: tuple[str, ...] = (
+    "teachers_teammate/gui",
+    "teachers_teammate/cli.py",
+    "teachers_teammate/application",
+    "teachers_teammate/infrastructure",
+    "teachers_teammate/domain",
+)
 
 DIALOG = "dialog"
 WIDGET = "widget"
 CLI = "cli"
 ERROR = "error"
 TEXT_CALL = "text-call"
+FIELD = "field"
+CONSTANT = "constant"
 
 #: ``positions`` is the tuple of positional arguments that show text; ``None`` means all of
 #: them.  A sink is named by its full dotted path when the last component alone is too
@@ -81,10 +91,25 @@ _KEYWORDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "add_mutually_exclusive_group": (CLI, ()),
 }
 
-#: The names the GUI gives the modules of ``teachers_teammate/texts``.  A sentence is *defined*
-#: there, so a literal handed to one of their functions is a sentence written at the call site
-#: after all (``dlg.copy_failed("Could not copy")``).
-TEXT_MODULES: frozenset[str] = frozenset({"dlg", "privacy"})
+#: Keyword arguments that carry prose wherever they appear: a result a teacher reads, the reason
+#: a step refused, the line a run prints.  Below the adapters a field like this holds data, so a
+#: literal in it is a sentence written at the call site.
+_FIELD_KEYWORDS: tuple[str, ...] = ("message", "notice", "reason")
+
+#: Suffixes of a module constant that holds a sentence a teacher reads (``BATTERY_WARNING``).
+_CONSTANT_SUFFIXES: tuple[str, ...] = ("_MESSAGE", "_NOTICE", "_WARNING")
+
+#: Where a field holds a note for the debug log, never for a teacher: the reason of a step of the
+#: automatic image preparation.
+_DEBUG_ONLY_FIELDS: tuple[str, ...] = ("teachers_teammate/infrastructure/preprocessing/",)
+
+#: Where a raised exception states an invariant of the code, never something a teacher reads.
+_INVARIANT_ERRORS: tuple[str, ...] = ("teachers_teammate/domain/",)
+
+#: The names the adapters give the modules of ``teachers_teammate/texts``.  A sentence is
+#: *defined* there, so a literal handed to one of their functions is a sentence written at the
+#: call site after all (``dlg.copy_failed("Could not copy")``).
+TEXT_MODULES: frozenset[str] = frozenset({"addon_text", "check_text", "dlg", "privacy", "txt"})
 
 #: Suffixes of an exception class whose message a teacher may read through ``str(exc)``.
 _ERROR_SUFFIXES = ("Error", "Exception")
@@ -146,6 +171,15 @@ def _text_module_call(func: ast.expr) -> str | None:
     return None
 
 
+def _constant_target(node: ast.Assign | ast.AnnAssign) -> str | None:
+    """Return the name of a constant whose name says a teacher reads its sentence."""
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    for target in targets:
+        if isinstance(target, ast.Name) and target.id.endswith(_CONSTANT_SUFFIXES):
+            return target.id
+    return None
+
+
 def _shown_arguments(call: ast.Call, positions: tuple[int, ...] | None) -> Iterator[ast.expr]:
     """Yield the arguments of *call* that a teacher reads."""
     if positions is None:
@@ -163,40 +197,90 @@ def _keyword_arguments(call: ast.Call, names: tuple[str, ...]) -> Iterator[ast.e
             yield keyword.value
 
 
+def _finding(path: str, node: ast.expr, sink: str, kind: str) -> Finding | None:
+    """Return the finding for *node* when it holds a literal, else ``None``."""
+    text = _literal(node)
+    return None if text is None else Finding(path, node.lineno, sink, kind, text)
+
+
+def _text_call_findings(call: ast.Call, path: str, name: str) -> list[Finding]:
+    """Return the sentences *call* hands to a function of ``texts``; an empty one says nothing."""
+    found = [_finding(path, argument, name, TEXT_CALL) for argument in call.args]
+    found += [_finding(path, keyword.value, name, TEXT_CALL) for keyword in call.keywords]
+    return [finding for finding in found if finding is not None and finding.text]
+
+
+def _call_findings(call: ast.Call, path: str) -> list[Finding]:
+    """Return the sentences *call* shows, by its sink arguments or by a prose keyword."""
+    findings: list[Finding] = []
+    last = _call_name(call.func)[1]
+    sink = _sink(call.func)
+    if sink is not None:
+        name, kind, positions = sink
+        findings.extend(
+            finding
+            for argument in _shown_arguments(call, positions)
+            if (finding := _finding(path, argument, name, kind)) is not None
+        )
+    text_call = _text_module_call(call.func)
+    if text_call is not None:
+        findings.extend(_text_call_findings(call, path, text_call))
+    # A function of ``texts`` already reported its keywords above: once is enough.
+    fields = () if text_call is not None else ((FIELD, _FIELD_KEYWORDS),)
+    for kind, names in (*fields, _KEYWORDS.get(last, ("", ()))):
+        findings.extend(
+            finding
+            for argument in _keyword_arguments(call, names)
+            if (finding := _finding(path, argument, last, kind)) is not None
+        )
+    return findings
+
+
+def _constant_findings(node: ast.Assign | ast.AnnAssign, path: str) -> list[Finding]:
+    """Return the sentence a module constant holds when its name says a teacher reads it."""
+    name = _constant_target(node)
+    value = node.value
+    if name is None or value is None:
+        return []
+    finding = _finding(path, value, name, CONSTANT)
+    if finding is None or " " not in finding.text:
+        return []  # a colour or an id named ``*_WARNING`` is no sentence
+    return [finding]
+
+
+def _raise_findings(node: ast.Raise, path: str) -> list[Finding]:
+    """Return the message of a raised exception a teacher may read through ``str(exc)``."""
+    if not isinstance(node.exc, ast.Call) or not node.exc.args:
+        return []
+    last = _call_name(node.exc.func)[1]
+    if not last.endswith(_ERROR_SUFFIXES):
+        return []
+    finding = _finding(path, node.exc.args[0], last, ERROR)
+    return [] if finding is None else [finding]
+
+
 def scan_source(source: str, *, path: str) -> list[Finding]:
     """Return every literal in *source* that reaches a teacher, in line order."""
+    tree = ast.parse(source, filename=path)
     findings: list[Finding] = []
-    for node in ast.walk(ast.parse(source, filename=path)):
+    for node in tree.body:  # a constant is a module's own: a local one is not a sink
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            findings.extend(_constant_findings(node, path))
+    for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            sink = _sink(node.func)
-            if sink is not None:
-                name, kind, positions = sink
-                for argument in _shown_arguments(node, positions):
-                    text = _literal(argument)
-                    if text is not None:
-                        findings.append(Finding(path, argument.lineno, name, kind, text))
-            text_call = _text_module_call(node.func)
-            if text_call is not None:
-                for argument in [*node.args, *(k.value for k in node.keywords)]:
-                    text = _literal(argument)
-                    if text:
-                        findings.append(Finding(path, argument.lineno, text_call, TEXT_CALL, text))
-            keyword_sink = _KEYWORDS.get(_call_name(node.func)[1])
-            if keyword_sink is not None:
-                kind, names = keyword_sink
-                for argument in _keyword_arguments(node, names):
-                    text = _literal(argument)
-                    if text is not None:
-                        findings.append(
-                            Finding(path, argument.lineno, _call_name(node.func)[1], kind, text)
-                        )
-        elif isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
-            _, last = _call_name(node.exc.func)
-            if last.endswith(_ERROR_SUFFIXES) and node.exc.args:
-                text = _literal(node.exc.args[0])
-                if text is not None:
-                    findings.append(Finding(path, node.exc.args[0].lineno, last, ERROR, text))
-    return sorted(findings)
+            findings.extend(_call_findings(node, path))
+        elif isinstance(node, ast.Raise):
+            findings.extend(_raise_findings(node, path))
+    return sorted(f for f in findings if not _is_exempt(f))
+
+
+def _is_exempt(finding: Finding) -> bool:
+    """Return whether *finding* sits where its kind is no teacher's text (see the tuples above)."""
+    if finding.kind == FIELD:
+        return finding.path.startswith(_DEBUG_ONLY_FIELDS) and finding.sink == "StepResult"
+    if finding.kind == ERROR:
+        return finding.path.startswith(_INVARIANT_ERRORS)
+    return False
 
 
 def scan_file(path: Path, *, root: Path) -> list[Finding]:
@@ -234,6 +318,16 @@ def write_csv(findings: Iterable[Finding], out: Path) -> None:
             writer.writerow([finding.path, finding.line, finding.sink, finding.kind, finding.text])
 
 
+def output_path(out: Path) -> Path:
+    """Return where to write *out*: a relative path is the folder ``bazel run`` was started in.
+
+    ``bazel run`` changes into the runfiles, which are no place for a file anyone looks for.
+    """
+    if out.is_absolute():
+        return out
+    return Path(os.environ.get("BUILD_WORKING_DIRECTORY", Path.cwd())) / out
+
+
 def main(argv: list[str] | None = None) -> int:
     """Write the inventory CSV; return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -241,11 +335,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=Path("user_text.csv"), help="the CSV to write")
     arguments = parser.parse_args(argv)
     findings = scan(arguments.root)
-    write_csv(findings, arguments.out)
+    out = output_path(arguments.out)
+    write_csv(findings, out)
     duplicates = len(findings) - len({(f.path, f.text) for f in findings})
     print(
         f"{len(findings)} literals in {len({f.path for f in findings})} files "
-        f"({duplicates} repeats within a file) → {arguments.out}"
+        f"({duplicates} repeats within a file) → {out}"
     )
     return 0
 

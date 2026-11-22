@@ -166,12 +166,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Export",
         }
     ),
-    "teachers_teammate/gui/_run_controller.py": frozenset(
-        {
-            "",
-            "Run Selected",
-        }
-    ),
     "teachers_teammate/gui/_hardware_profile_selector.py": frozenset(
         {
             '<a href="detect">Detect again</a>',
@@ -188,9 +182,16 @@ ALLOWED: dict[str, frozenset[str]] = {
             "f'<p>Version <b>{ver}</b></p><p>Batch OCR pipeline for scanned documents and handwritten notes.<br>Extracts text from PDFs and images, optionally produces<br>proofread DOCX reports via a local language model.</p>'",
         }
     ),
+    "teachers_teammate/gui/_main_window.py": frozenset(
+        {
+            "Teacher's Teammate",
+            'f\'Version <b>{version}</b> is available — <a href="{url}" style="color:#ffd966;">Download</a> · turn this check off under {WHERE_GENERAL}\'',
+            "✕",
+        }
+    ),
     "teachers_teammate/gui/_menu_bar.py": frozenset(
         {
-            "About Teacher\u2019s Teammate…",
+            "About Teacher’s Teammate…",
             "All settings…",
             "Answer a few questions to set up the AI for this computer.",
             "Benchmark…",
@@ -208,13 +209,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Try a document with different text-recognition settings and compare the results.",
             "User Guide…",
             "f'{PAGE_TITLES[page]}…'",
-        }
-    ),
-    "teachers_teammate/gui/_main_window.py": frozenset(
-        {
-            "Teacher's Teammate",
-            'f\'Version <b>{version}</b> is available — <a href="{url}" style="color:#ffd966;">Download</a> · turn this check off under {WHERE_GENERAL}\'',
-            "✕",
         }
     ),
     "teachers_teammate/gui/_model_guidance.py": frozenset(
@@ -268,11 +262,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Word document",
         }
     ),
-    "teachers_teammate/gui/_step_section.py": frozenset(
-        {
-            "i",
-        }
-    ),
     "teachers_teammate/gui/_results_table.py": frozenset(
         {
             "",
@@ -287,6 +276,12 @@ ALLOWED: dict[str, frozenset[str]] = {
             "✗",
         }
     ),
+    "teachers_teammate/gui/_run_controller.py": frozenset(
+        {
+            "",
+            "Run Selected",
+        }
+    ),
     "teachers_teammate/gui/_stats_widget.py": frozenset(
         {
             "Install psutil for live system stats.",
@@ -294,7 +289,12 @@ ALLOWED: dict[str, frozenset[str]] = {
             "f'{mem.used / 2 ** 30:.1f} / {mem.total / 2 ** 30:.1f} GB'",
             "f'{usage.busy_percent} %'",
             "f'{usage.vram_used_mb / 1024:.1f} / {usage.vram_total_mb / 1024:.1f} GB'",
-            "\u2013",
+            "–",
+        }
+    ),
+    "teachers_teammate/gui/_step_section.py": frozenset(
+        {
+            "i",
         }
     ),
     "teachers_teammate/gui/_system_monitor.py": frozenset(
@@ -436,6 +436,189 @@ ALLOWED: dict[str, frozenset[str]] = {
     "teachers_teammate/gui/settings/addons/_update_banner.py": frozenset(
         {
             "f'<b>{txt.ADDONS_OUTDATED_LINE}.</b> {txt.ADDONS_OUTDATED_NOTE}'",
+        }
+    ),
+    "teachers_teammate/infrastructure/addon_manager.py": frozenset(
+        {
+            "Add-ons are updated only in the installed app",
+        }
+    ),
+    "teachers_teammate/infrastructure/anonymizer.py": frozenset(
+        {
+            "f'spacy is installed but cannot be loaded: {exc}'",
+            "spacy is required for anonymization",
+        }
+    ),
+    "teachers_teammate/infrastructure/evaluation.py": frozenset(
+        {
+            "The text is too long for a content review with a local model.",
+        }
+    ),
+    "teachers_teammate/infrastructure/gpu_detector.py": frozenset(
+        {
+            "GlobalMemoryStatusEx failed",
+        }
+    ),
+    "teachers_teammate/infrastructure/image_io.py": frozenset(
+        {
+            "f'Cannot encode image: {path}'",
+            "f'Cannot write image: {path}: {exc}'",
+        }
+    ),
+    "teachers_teammate/infrastructure/input_provider_factory.py": frozenset(
+        {
+            "f\"Unsupported input suffix '{suffix}'. Supported: {supported}\"",
+        }
+    ),
+    "teachers_teammate/infrastructure/llm_factory.py": frozenset(
+        {
+            "f\"Provider '{provider}' could not be loaded — check that all required packages are installed.\"",
+            "f\"Unknown correction provider '{provider}'. Available: {', '.join(available)}.\"",
+        }
+    ),
+    "teachers_teammate/infrastructure/ollama_utils.py": frozenset(
+        {
+            "f\"Model '{model_name}' not found in Ollama. Available: {avail_str}\"",
+            "f'Cannot connect to Ollama at {self.base_url}. Is it running? Start it with: ollama serve'",
+            "f'Cannot reach Ollama at {self.base_url}: {exc}'",
+            "f'Connected to Ollama at {self.base_url} but no models are installed. Pull a model first: ollama pull <model-name>'",
+            "f'Connection to Ollama at {self.base_url} timed out. Check the URL and network settings.'",
+            "f'Download failed: {exc}'",
+            "f'HTTP error from Ollama: {exc}'",
+            "f'No output within {first_token_timeout}s — the model may still be loading into memory. Try again in a moment, or check that Ollama is running.'",
+            "f'Unexpected error contacting Ollama at {self.base_url}: {exc}'",
+            "f'cannot connect to Ollama at {base_url} — {exc}'",
+            "f'cannot connect to Ollama at {self.base_url} — {exc}'",
+            "f'the answer was still being written after {total_timeout:g}s; the request was abandoned'",
+            "model returned an empty response",
+            "model returned an empty response (stopped at its output limit)",
+        }
+    ),
+    "teachers_teammate/infrastructure/onnx/store.py": frozenset(
+        {
+            "The download was cancelled.",
+            "f'The download of {file.name} was damaged on the way (the checksum does not match). Please try again.'",
+            "f'The model files of {model.repo} are not downloaded yet.'",
+        }
+    ),
+    "teachers_teammate/infrastructure/performance_probe.py": frozenset(
+        {
+            "the server reported no token counts for the page",
+            "the server reported no token counts for the paragraph",
+        }
+    ),
+    "teachers_teammate/infrastructure/pipeline.py": frozenset(
+        {
+            "f\"Preview is only available for image-based inputs: '{source_path.name}'.\"",
+        }
+    ),
+    "teachers_teammate/infrastructure/ppocr/detect.py": frozenset(
+        {
+            "f'unexpected detector output shape {tuple(output.shape)}'",
+        }
+    ),
+    "teachers_teammate/infrastructure/ppocr/engine.py": frozenset(
+        {
+            "f'Cannot read image: {image_path}'",
+            "f'{_MODEL_MISMATCH} ({exc})'",
+        }
+    ),
+    "teachers_teammate/infrastructure/preprocessing/page_models.py": frozenset(
+        {
+            "f'the flatten model answered the shape {out.shape}'",
+            "f'the orientation model answered {scores.size} classes'",
+        }
+    ),
+    "teachers_teammate/infrastructure/preprocessing/steps.py": frozenset(
+        {
+            "f'Cannot read image: {image_path}'",
+        }
+    ),
+    "teachers_teammate/infrastructure/proofreading/chunking.py": frozenset(
+        {
+            "Explanations are missing for part of the text.",
+        }
+    ),
+    "teachers_teammate/infrastructure/proofreading/corrector.py": frozenset(
+        {
+            "this port sends no request",
+        }
+    ),
+    "teachers_teammate/infrastructure/proofreading/exchanges/base.py": frozenset(
+        {
+            "f'unknown exchange {kind!r} (known: {known})'",
+        }
+    ),
+    "teachers_teammate/infrastructure/proofreading/exchanges/t.py": frozenset(
+        {
+            "Part of the text lost its formatting.",
+            "The AI left out {count} passages ({words} words); they are kept as you wrote them.",
+            "The model added text of its own; keeping original text.",
+            "The model answered with a remark around the text; keeping original text.",
+            "The model dropped part of the text; keeping original text.",
+        }
+    ),
+    "teachers_teammate/infrastructure/proofreading/port.py": frozenset(
+        {
+            "a structured request needs a schema",
+        }
+    ),
+    "teachers_teammate/infrastructure/providers/_helpers.py": frozenset(
+        {
+            "f'{package_name} is not installed. Run: pip install {package_name}'",
+        }
+    ),
+    "teachers_teammate/infrastructure/providers/ollama.py": frozenset(
+        {
+            "langchain-ollama is not installed. Run: pip install langchain-ollama",
+        }
+    ),
+    "teachers_teammate/infrastructure/reporting.py": frozenset(
+        {
+            "f'ERROR: {line}'",
+        }
+    ),
+    "teachers_teammate/infrastructure/stage_builder.py": frozenset(
+        {
+            "f'Cannot initialise anonymizer: {exc}'",
+        }
+    ),
+    "teachers_teammate/infrastructure/storage_root.py": frozenset(
+        {
+            "f'Config file not found: {p}'",
+            "f'Could not resolve writable storage root:\\n{reasons}'",
+        }
+    ),
+    "teachers_teammate/infrastructure/teacher_work_store.py": frozenset(
+        {
+            "f'the work of {name} was saved by a newer version of the app'",
+        }
+    ),
+    "teachers_teammate/infrastructure/workflow/file_processor.py": frozenset(
+        {
+            "Empty response from OCR model.",
+            "f'Could not persist OCR cache state: {exc}'",
+            "f'Could not persist preview image: {exc}'",
+            "f'Could not read input file: {exc}'",
+            "f'PII restore failed: {exc}'",
+            "f'Personal info removal failed: {exc}'",
+            "f'Preprocessing failed: {exc}'",
+            "f'{self._shown(target)} would be read as an input document by the next run; choose an output folder outside the input folder.'",
+            "f'{self._shown(target)} would replace the output of {owner.name}; rename one of the two documents.'",
+            "f'{target.name} is the input document and would be overwritten'",
+        }
+    ),
+    "teachers_teammate/infrastructure/workflow/ocr_service.py": frozenset(
+        {
+            "f'OCR failed ({label}): {exc}'",
+        }
+    ),
+    "teachers_teammate/infrastructure/workflow/preprocess_service.py": frozenset(
+        {
+            "f\"Input '{file.name}' contains an image unit without image_path.\"",
+            "f\"Input '{file.name}' produced no units.\"",
+            "f\"Input '{file.name}' produced no usable image or text content.\"",
+            "f\"Unsupported input unit kind '{unit.kind}' for '{file.name}'.\"",
         }
     ),
 }

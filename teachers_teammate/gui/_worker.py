@@ -12,9 +12,9 @@ from PySide6.QtCore import QThread, Signal
 
 from ..application.composition import AppServices
 from ..config import Config
-from ..domain.run_summary import FileOutcome, KeepAwakeState, RunSummary
+from ..domain.run_summary import FileOutcome, FileStatus, KeepAwakeState, RunSummary
 from ..interfaces import CallbackReporter, ProgressCallbacks
-from ..texts.run import BATTERY_WARNING
+from ..texts.run import BATTERY_WARNING, stopped_message
 from ._types import FileDoneEvent
 
 
@@ -105,6 +105,8 @@ class OCRWorker(QThread):
 
         def on_file_done(outcome: FileOutcome) -> None:
             source_id = outcome.source_id
+            if outcome.status is FileStatus.STOPPED:
+                self.log_line.emit(f"       → {stopped_message(outcome.stopped_stage)}\n")
             now = time.monotonic()
             start = file_start_times.get(source_id, now)
             ocr_t = ocr_done_times.get(source_id, now)

@@ -27,6 +27,9 @@ py_library(
 py_binary(
     name = "inventory",
     srcs = ["inventory.py"],
+    # The sources it scans: ``bazel run`` starts in the runfiles, where they sit under the
+    # paths ``SCANNED`` names.
+    data = ["//teachers_teammate:user_text_sources"],
     main = "inventory.py",
     visibility = ["//visibility:public"],
     deps = [":user_text_lib"],

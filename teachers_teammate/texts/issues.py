@@ -23,11 +23,27 @@ PACKAGE_MISSING = "{name} support is not installed yet."
 KEY_MISSING = "No API key for {name} is set."
 NAME_DETECTION_MISSING = "spaCy NER model '{model}' is not downloaded."
 ADDON_RESTART_NEEDED = "Restart the app to finish installing {name}."
+MODEL_NOT_DOWNLOADED = "A model is not downloaded."
+NAME_DETECTION_MODEL_MISSING = "A spaCy NER model is not downloaded."
+
+#: What a template names when the issue names nothing (the service always does).
+_UNNAMED: dict[IssueKind, str] = {
+    IssueKind.PACKAGE_MISSING: "AI service",
+    IssueKind.KEY_MISSING: "AI service",
+    IssueKind.ADDON_RESTART_NEEDED: "the add-ons",
+}
+
+#: What an issue says when the service gave no answer of its own to quote.
+OCR_NOT_ALLOWED = "This kind of text recognition cannot be used here."
+OLLAMA_NOT_FOUND = "Ollama is not installed."
+OLLAMA_NOT_RUNNING = "Ollama is not running."
 OLLAMA_UNREACHABLE = "Ollama does not answer."
 
 
 def models_missing(models: tuple[str, ...]) -> str:
-    """Return the sentence for downloaded-to-be models: one is singular, more are plural."""
+    """Return the sentence for models that are not downloaded: one is singular, more plural."""
+    if not models:
+        return MODEL_NOT_DOWNLOADED
     listed = ", ".join(f"'{model}'" for model in models)
     noun, verb = ("Model", "is") if len(models) == 1 else ("Models", "are")
     return f"{noun} {listed} {verb} not downloaded."
@@ -46,6 +62,14 @@ _SENTENCES: dict[IssueKind, str] = {
     IssueKind.ADDON_RESTART_NEEDED: ADDON_RESTART_NEEDED,
 }
 
+#: The issues that quote what the service answered, and what they say without it.
+_QUOTING: dict[IssueKind, str] = {
+    IssueKind.OCR_NOT_ALLOWED: OCR_NOT_ALLOWED,
+    IssueKind.OLLAMA_NOT_FOUND: OLLAMA_NOT_FOUND,
+    IssueKind.OLLAMA_NOT_RUNNING: OLLAMA_NOT_RUNNING,
+    IssueKind.OLLAMA_UNREACHABLE: OLLAMA_UNREACHABLE,
+}
+
 
 def issue_line(issue: RequirementIssue) -> str:
     """Return the bullet line a dialog lists for *issue*."""
@@ -56,9 +80,12 @@ def issue_text(issue: RequirementIssue) -> str:
     """Return the sentence a teacher reads for *issue*."""
     if issue.kind is IssueKind.MODEL_MISSING:
         return models_missing(issue.models)
+    if issue.kind is IssueKind.NAME_DETECTION_MISSING and not issue.models:
+        return NAME_DETECTION_MODEL_MISSING
     template = _SENTENCES.get(issue.kind)
     if template is None:
         # A refusal or a connection error: the service's answer is the sentence, and it is the
         # one place that knows what it looked at.
-        return issue.reason or OLLAMA_UNREACHABLE
-    return template.format(name=issue.name, model=issue.models[0] if issue.models else "")
+        return issue.reason or _QUOTING[issue.kind]
+    name = issue.name or _UNNAMED.get(issue.kind, "")
+    return template.format(name=name, model=issue.models[0] if issue.models else "")

@@ -1,9 +1,9 @@
 """Plain-language "where is my data processed?" widgets.
 
-Presentation only: the sentences come from :mod:`teachers_teammate.texts.privacy` and the
+Presentation only: the words come from :mod:`teachers_teammate.texts.privacy` and the
 places from the application service
-(:meth:`~teachers_teammate.application.data_flow.DataFlowService.describe_data_flow`), so
-the colours and the dots here never decide anything.
+(:meth:`~teachers_teammate.application.data_flow.DataFlowService.describe_data_flow`); the
+colours and the dots here only dress them, they never decide anything.
 """
 
 from __future__ import annotations
@@ -13,8 +13,74 @@ from html import escape
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from ..domain.data_location import DataFlow, PrivacyLevel, StageLocation
+from ..domain.data_location import (
+    DataFlow,
+    DataFlowStage,
+    DataLocation,
+    PrivacyLevel,
+    StageLocation,
+)
 from ..texts import privacy
+
+#: One colour per level: green keeps everything here, yellow sends anonymized text into the
+#: EU, orange sends it out of it, red sends names.
+_LEVEL_COLORS = {
+    PrivacyLevel.LOCAL: "#27ae60",
+    PrivacyLevel.OWN_SERVER: "#e67e22",
+    PrivacyLevel.ANON_EU: "#c9a227",
+    PrivacyLevel.ANON_NON_EU: "#e67e22",
+    PrivacyLevel.NAMES_EU: "#c0392b",
+    PrivacyLevel.NAMES_NON_EU: "#c0392b",
+}
+
+#: The grey of everything that is not a warning: a step that is off, a detail line.
+_GREY = "#888"
+
+
+def level_color(level: PrivacyLevel) -> str:
+    """Return the colour that stands for *level*."""
+    return _LEVEL_COLORS[level]
+
+
+def level_dot(level: PrivacyLevel) -> str:
+    """Return the coloured dot that stands for *level*, as rich text."""
+    return f'<span style="color:{level_color(level)};">●</span>'
+
+
+def location_level(location: StageLocation) -> PrivacyLevel:
+    """Return the worst level *location* can stand for, for hints that know nothing of names."""
+    if location.location is DataLocation.THIS_COMPUTER:
+        return PrivacyLevel.LOCAL
+    if location.location is DataLocation.OTHER_COMPUTER:
+        return PrivacyLevel.OWN_SERVER
+    return PrivacyLevel.NAMES_NON_EU
+
+
+def _marked(stage: DataFlowStage, text: str, *, enabled: bool) -> str:
+    """Return *text* (plain words) behind the step's dot; grey all over while unticked."""
+    if not enabled:
+        return f'<span style="color:{_GREY};">● {escape(text)}</span>'
+    return f"{level_dot(stage.privacy_level)} {escape(text)}"
+
+
+def uses_line(stage: DataFlowStage, model: str, *, enabled: bool = True) -> str:
+    """Return the "uses" line under a step as rich text: ``● <model> · <place>``.
+
+    The dot has the colour of the step's privacy level while the step is on; an unticked step
+    is grey all over, but still names what ticking it would use.
+    """
+    return _marked(stage, privacy.uses_text(stage, model), enabled=enabled)
+
+
+def same_model_line(stage: DataFlowStage, *, enabled: bool = True) -> str:
+    """Return the "uses" line of a step that runs the same model as the step before it."""
+    return _marked(stage, privacy.SAME_MODEL_AS_PROOFREADING, enabled=enabled)
+
+
+def names_line(stage: DataFlowStage) -> str:
+    """Return the grey line under personal-info removal, empty while the step is off."""
+    text = privacy.names_text(stage)
+    return f'<span style="color:{_GREY};">{escape(text)}</span>' if text else ""
 
 
 class LocationHint(QLabel):
@@ -28,7 +94,7 @@ class LocationHint(QLabel):
 
     def set_location(self, location: StageLocation, note: str = "", details: str = "") -> None:
         """Show *location* with a short *note* (one line); *details* go into the tooltip."""
-        text = f"{privacy.level_dot(privacy.location_level(location))} "
+        text = f"{level_dot(location_level(location))} "
         text += f"<b>{escape(location.label)}</b>"
         if note:
             text += f" — {escape(note)}"
@@ -39,7 +105,7 @@ class LocationHint(QLabel):
 class UsesLine(QWidget):
     """The grey line under a step in the main window: what it uses, and a "change…" link.
 
-    The text comes from :func:`~teachers_teammate.texts.privacy.uses_line`; the link (when the step has a place in Settings)
+    The text comes from :func:`uses_line`; the link (when the step has a place in Settings)
     emits :attr:`change_requested`.
     """
 
@@ -102,7 +168,7 @@ class DataFlowSummary(QFrame):
         """Re-render for *flow*."""
         level = flow.level
         rows = [
-            f'<span style="color:{privacy.level_color(level)};">'
+            f'<span style="color:{level_color(level)};">'
             f"<b>{'●' if level is PrivacyLevel.LOCAL else '▲'} {escape(privacy.level_text(level))}"
             "</b></span>"
         ]

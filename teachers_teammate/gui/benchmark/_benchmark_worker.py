@@ -8,8 +8,9 @@ import threading
 
 from PySide6.QtCore import QThread, Signal
 
-from ...application.benchmark_service import BenchmarkApplicationService
+from ...application.benchmark_service import BenchmarkApplicationService, BenchmarkRunStopped
 from ...config import DEFAULTS, OcrConfig
+from ...texts.run import STOPPED_BY_USER
 from .._qt_stream import QtStream
 
 
@@ -56,6 +57,9 @@ class BenchmarkWorker(QThread):
                     stop_event=self.stop_event,
                     on_progress=lambda msg: self.log_line.emit(msg + "\n"),
                 )
+        except BenchmarkRunStopped:
+            self.finished_err.emit(STOPPED_BY_USER)
+            return
         except (Exception, SystemExit) as exc:  # noqa: BLE001  # surface any failure to the GUI without crashing
             self.finished_err.emit(str(exc))
             return

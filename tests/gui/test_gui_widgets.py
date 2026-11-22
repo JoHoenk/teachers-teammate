@@ -1014,7 +1014,7 @@ def test_uses_line_names_model_and_place_and_falls_back_to_the_engine() -> None:
         DataLocation,
         DataRegion,
     )
-    from teachers_teammate.texts.privacy import uses_line  # noqa: PLC0415
+    from teachers_teammate.gui._data_flow_summary import uses_line  # noqa: PLC0415
 
     online = _stage("correction", DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU)
     reader = _stage("ocr", DataLocation.THIS_COMPUTER, "Built-in reader", "page images")
@@ -1032,7 +1032,7 @@ def test_uses_line_shows_the_short_model_name_and_no_place_on_this_computer() ->
     Then   the line names the short model name and does not repeat "this computer"
     """
     from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
-    from teachers_teammate.texts.privacy import uses_line  # noqa: PLC0415
+    from teachers_teammate.gui._data_flow_summary import uses_line  # noqa: PLC0415
 
     stage = _stage("ocr", DataLocation.THIS_COMPUTER, "Ollama", "page images")
     tag = "hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0"
@@ -1053,7 +1053,7 @@ def test_uses_line_is_grey_while_the_step_is_off_and_escapes_names() -> None:
            is grey all over
     """
     from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
-    from teachers_teammate.texts.privacy import level_color, uses_line  # noqa: PLC0415
+    from teachers_teammate.gui._data_flow_summary import level_color, uses_line  # noqa: PLC0415
 
     stage = _stage("correction", DataLocation.ONLINE, "<b>x</b>")
 

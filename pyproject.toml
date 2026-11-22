@@ -150,6 +150,9 @@ ignore = [
     "RUF059",  # Unused unpacked values are acceptable in negative-path checks.
     "SLF001",  # Tests intentionally touch private members to validate behavior.
 ]
+"tools/user_text/allowlist.py" = [
+    "RUF001",  # The entries reproduce a source sentence verbatim, its dashes and quotes included.
+]
 
 [tool.ruff.lint.pylint]
 # Match the design limits configured for pylint so only one tool reports violations.

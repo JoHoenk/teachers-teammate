@@ -7,7 +7,6 @@ read their wording from here, so one sentence about a step reads the same everyw
 from __future__ import annotations
 
 from collections.abc import Sequence
-from html import escape
 
 from ..domain.data_location import (
     Advice,
@@ -23,9 +22,6 @@ from ..domain.model_catalog import short_model_name
 from ._types import Notice, NoticeKind
 from .review import NAMES_IN_LANGUAGES, REMOVE_PERSONAL_INFO
 from .settings import WHERE_ADDONS
-
-#: The grey of everything that is not a warning: a step that is off, a detail line.
-_GREY = "#888"
 
 WHAT_IS_SENT_TITLE = "What is sent for this file"
 WHAT_IS_SENT_WORKING = "Working out what is sent…"
@@ -92,24 +88,13 @@ LEVEL_TEXT = {
     PrivacyLevel.NAMES_NON_EU: "Text with names is sent to a service outside the EU.",
 }
 
-#: One colour per level: green keeps everything here, yellow sends anonymized text into the
-#: EU, orange sends it out of it, red sends names.
-_LEVEL_COLORS = {
-    PrivacyLevel.LOCAL: "#27ae60",
-    PrivacyLevel.OWN_SERVER: "#e67e22",
-    PrivacyLevel.ANON_EU: "#c9a227",
-    PrivacyLevel.ANON_NON_EU: "#e67e22",
-    PrivacyLevel.NAMES_EU: "#c0392b",
-    PrivacyLevel.NAMES_NON_EU: "#c0392b",
-}
-
 #: Where a step runs, in the few words the panel has room for.  The service list on the AI
 #: models page uses the same words, so the two never describe one place differently.
 PLACE_THIS_COMPUTER = "this computer"
 PLACE_OWN_SERVER = "own server"
 PLACE_ONLINE = "online"
 
-#: The dot and the words of a step that runs the same model as the one before it.
+#: The words of a step that runs the same model as the one before it.
 SAME_MODEL_AS_PROOFREADING = "Same model as proofreading"
 
 ADVICE_TEXT = {
@@ -141,25 +126,6 @@ def advice_text(advice: Advice) -> str:
     return ADVICE_TEXT[advice]
 
 
-def level_color(level: PrivacyLevel) -> str:
-    """Return the colour that stands for *level*."""
-    return _LEVEL_COLORS[level]
-
-
-def level_dot(level: PrivacyLevel) -> str:
-    """Return the coloured dot that stands for *level*, as rich text."""
-    return f'<span style="color:{level_color(level)};">●</span>'
-
-
-def location_level(location: StageLocation) -> PrivacyLevel:
-    """Return the worst level *location* can stand for, for hints that know nothing of names."""
-    if location.location is DataLocation.THIS_COMPUTER:
-        return PrivacyLevel.LOCAL
-    if location.location is DataLocation.OTHER_COMPUTER:
-        return PrivacyLevel.OWN_SERVER
-    return PrivacyLevel.NAMES_NON_EU
-
-
 def short_place(location: StageLocation) -> str:
     """Return where a step runs in a few words, e.g. ``Mistral (EU) · EU``.
 
@@ -180,50 +146,29 @@ def and_list(items: Sequence[str]) -> str:
     return f"{', '.join(items[:-1])} and {items[-1]}"
 
 
-def _marked(stage: DataFlowStage, text: str, *, enabled: bool) -> str:
-    """Return *text* (already escaped) behind the step's dot; grey all over while unticked."""
-    if not enabled:
-        return f'<span style="color:{_GREY};">● {text}</span>'
-    return f"{level_dot(stage.privacy_level)} {text}"
-
-
-def uses_line(stage: DataFlowStage, model: str, *, enabled: bool = True) -> str:
-    """Return the "uses" line under a step as rich text: ``● <model> · <place>``.
+def uses_text(stage: DataFlowStage, model: str) -> str:
+    """Return what a step uses, as plain words: ``<model> · <place>``.
 
     Without a model (the built-in reader has none) the engine's name stands in.  The model is
     the short name (:func:`short_model_name`); the full tag belongs in the tooltip.  The place
-    is shown only when it is not this computer, because that is the case the line warns about.
-    The dot has the colour of the step's privacy level while the step is on; an unticked step
-    is grey all over, but still names what ticking it would use.
+    is added only when it is not this computer, because that is the case the line warns about.
     """
-    name = short_model_name(model) if model else stage.location.service
-    text = escape(name)
+    text = short_model_name(model) if model else stage.location.service
     if stage.location.location is not DataLocation.THIS_COMPUTER:
-        text = f"{text} · {escape(short_place(stage.location))}"
-    return _marked(stage, text, enabled=enabled)
+        text = f"{text} · {short_place(stage.location)}"
+    return text
 
 
-def same_model_line(stage: DataFlowStage, *, enabled: bool = True) -> str:
-    """Return the "uses" line of a step that runs the same model as the step before it."""
-    return _marked(stage, escape(SAME_MODEL_AS_PROOFREADING), enabled=enabled)
+def names_text(stage: DataFlowStage) -> str:
+    """Return the words under personal-info removal: the languages whose names are hidden.
 
-
-def detail_line(stage: DataFlowStage) -> str:
-    """Return the "uses" line of a step that has no place of its own (personal-info removal)."""
-    return f'<span style="color:{_GREY};">{escape(stage.detail)}</span>'
-
-
-def names_line(stage: DataFlowStage) -> str:
-    """Return the line under personal-info removal: the languages whose names are hidden.
-
-    Empty while the step is off — the checkbox already says so, and "Off" under it only
-    repeated that.  The languages come from the models that will be loaded.
+    Empty while the step is off — the checkbox already says so.  The languages come from the
+    models that will be loaded.
     """
     if not stage.personal_info_hidden:
         return ""
     names = [language_name(code) for code in stage.languages]
-    text = NAMES_IN_LANGUAGES.format(languages=and_list(names)) if names else stage.detail
-    return f'<span style="color:{_GREY};">{escape(text)}</span>'
+    return NAMES_IN_LANGUAGES.format(languages=and_list(names)) if names else stage.detail
 
 
 def stage_tooltip(stage: DataFlowStage) -> str:

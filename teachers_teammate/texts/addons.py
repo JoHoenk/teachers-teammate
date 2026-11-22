@@ -24,7 +24,6 @@ from ..exceptions import (
 # ── The engines, the built-in reader and the page models ──────────────────────
 
 
-
 def provider_package_label(services: Sequence[str], pip: str, *, connector: bool) -> str:
     """Return the Add-ons box label of a provider package: who needs it, and its pip name."""
     kind = " LangChain connector" if connector else ""

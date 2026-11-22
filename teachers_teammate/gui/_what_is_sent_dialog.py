@@ -30,7 +30,8 @@ from PySide6.QtWidgets import (
 from ..application.data_flow import sent_location
 from ..application.sent_text import SentText, SentTexts
 from ..texts import review as txt
-from ..texts.privacy import level_color, level_text
+from ..texts.privacy import level_text
+from ._data_flow_summary import level_color
 from ._diff_widget import DiffWidget
 from ._formatted_text import chip_placeholders
 

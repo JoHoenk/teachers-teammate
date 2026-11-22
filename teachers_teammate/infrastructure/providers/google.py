@@ -49,7 +49,7 @@ PROVIDER = ProviderInfo(
     env_key="GOOGLE_API_KEY",
     can_list_models=True,
     package=AddonPackage(
-        module="langchain_google_genai", pip="langchain-google-genai", minimum=">=2.0"
+        module="langchain_google_genai", pip="langchain-google-genai", version_spec=">=2.0"
     ),
     models=(
         "gemini-2.5-pro",

@@ -38,7 +38,9 @@ PROVIDER = ProviderInfo(
     key_url="https://console.mistral.ai/api-keys",
     env_key=common.ENV_KEY,
     can_list_models=True,
-    package=AddonPackage(module="langchain_mistralai", pip="langchain-mistralai", minimum=">=1.1"),
+    package=AddonPackage(
+        module="langchain_mistralai", pip="langchain-mistralai", version_spec=">=1.1"
+    ),
     models=tuple(common.FALLBACK_MODELS),
 )
 

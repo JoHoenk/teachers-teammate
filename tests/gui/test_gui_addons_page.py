@@ -359,10 +359,15 @@ class _ProviderPackagesService(_StubService):
             "openai": ("langchain_openai", "langchain-openai"),
         }
 
+    def list_providers(self) -> list[str]:
+        return ["mistral", "mistral_eu", "openai"]
+
     def get_provider_info(self, provider: str) -> ProviderInfo:
-        package = None
-        if provider in ("mistral", "mistral_eu"):  # one package serves both
-            package = AddonPackage(module="langchain_mistralai", pip="langchain-mistralai")
+        package = (
+            AddonPackage(module="langchain_mistralai", pip="langchain-mistralai")
+            if provider in ("mistral", "mistral_eu")  # one package serves both
+            else AddonPackage(module="langchain_openai", pip="langchain-openai")
+        )
         return ProviderInfo(name=provider, display_name=provider.title(), package=package)
 
     def get_installation_status(self, *, ollama_models=None, **kwargs) -> dict[str, bool]:

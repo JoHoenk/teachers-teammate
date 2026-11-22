@@ -449,7 +449,8 @@ def test_an_unrecognised_region_string_counts_as_unknown(mocker) -> None:
     When   its data region is asked for
     Then   it is "unknown" rather than a claim of privacy
     """
-    module = mocker.Mock(PROVIDER=mocker.Mock(data_region="europe-ish"))
+    module = mocker.Mock(spec=["PROVIDER"])
+    module.PROVIDER = mocker.Mock(data_region="europe-ish")
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory._import_provider_module",
         return_value=module,

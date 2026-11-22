@@ -24,7 +24,7 @@ PROVIDER = ProviderInfo(
     needs_base_url=True,
     can_list_models=True,
     # The app talks to Ollama directly; the LangChain connector is an optional extra.
-    package=AddonPackage(module="langchain_ollama", pip="langchain-ollama", minimum=">=0.2"),
+    package=AddonPackage(module="langchain_ollama", pip="langchain-ollama", version_spec=">=0.2"),
     package_optional=True,
 )
 

@@ -110,6 +110,13 @@ EXPLANATIONS_SUPPORTED_TOOLTIP = (
 
 # ── Text recognition: the engines and the built-in reader ─────────────────────
 
+
+def provider_package_label(services: Sequence[str], pip: str, *, connector: bool) -> str:
+    """Return the Add-ons box label of a provider package: who needs it, and its pip name."""
+    kind = " LangChain connector" if connector else ""
+    return f"{' and '.join(services)}{kind} — {pip}"
+
+
 #: The engine choice, by engine id.
 OCR_ENGINE_LABELS = {
     ENGINE_OLLAMA: "Ollama (AI model)",

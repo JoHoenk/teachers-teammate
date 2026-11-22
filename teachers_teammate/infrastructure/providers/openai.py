@@ -27,7 +27,7 @@ PROVIDER = ProviderInfo(
     env_key="OPENAI_API_KEY",
     can_list_models=True,
     strict_json_schema=True,
-    package=AddonPackage(module="langchain_openai", pip="langchain-openai", minimum=">=0.2"),
+    package=AddonPackage(module="langchain_openai", pip="langchain-openai", version_spec=">=0.2"),
     models=("gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"),
 )
 

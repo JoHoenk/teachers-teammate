@@ -209,18 +209,15 @@ if _INCOMPLETE:
     )
 datas.append((str(_MODELS), "teachers_teammate/_models"))
 binaries = []
+# Providers are discovered at runtime from the providers folder (bundled as data above);
+# PyInstaller cannot see the modules behind that discovery.
+_PROVIDERS_PACKAGE = "teachers_teammate.infrastructure.providers"
+_PROVIDER_MODULES = [
+    _PROVIDERS_PACKAGE if path.stem == "__init__" else f"{_PROVIDERS_PACKAGE}.{path.stem}"
+    for path in sorted((ROOT / "teachers_teammate" / "infrastructure" / "providers").glob("*.py"))
+]
 hiddenimports = [
-    # Providers are discovered at runtime from the providers folder (bundled as data above);
-    # PyInstaller cannot see the modules behind that discovery.
-    "teachers_teammate.infrastructure.providers",
-    "teachers_teammate.infrastructure.providers.ollama",
-    "teachers_teammate.infrastructure.providers.openai",
-    "teachers_teammate.infrastructure.providers.anthropic",
-    "teachers_teammate.infrastructure.providers.google",
-    "teachers_teammate.infrastructure.providers.mistral",
-    "teachers_teammate.infrastructure.providers.mistral_eu",
-    "teachers_teammate.infrastructure.providers._mistral_common",
-    "teachers_teammate.infrastructure.providers.cohere",
+    *_PROVIDER_MODULES,
     # Menu actions open these in-process through a lazy import.
     "teachers_teammate.gui",
     "teachers_teammate.gui.benchmark",

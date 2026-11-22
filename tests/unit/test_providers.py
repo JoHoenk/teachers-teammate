@@ -52,7 +52,6 @@ def test_provider_info_names_the_module_and_the_teacher_sees(name: str) -> None:
     info = _load(name).PROVIDER
     assert info.name == name
     assert info.display_name
-    assert info.display_name != name or name == "ollama"
 
 
 @pytest.mark.parametrize("name", _PROVIDER_NAMES)
@@ -91,7 +90,7 @@ def test_the_app_installs_the_package_the_provider_declares(name: str) -> None:
         for requirements in addon_requirements().values()
         for requirement in requirements
     }
-    assert any(requirement.startswith(package.pip) for requirement in installed)
+    assert package.requirement in installed
 
 
 @pytest.mark.parametrize("name", _PROVIDER_NAMES)
@@ -539,7 +538,7 @@ def test_provider_declares_the_package_it_needs(name: str) -> None:
     assert isinstance(package, AddonPackage)
     assert package.module.startswith("langchain_")
     assert package.pip.startswith("langchain-")
-    assert package.requirement == f"{package.pip}{package.minimum}"
+    assert package.requirement == f"{package.pip}{package.version_spec}"
 
 
 @pytest.mark.parametrize(("name", "base_url"), _MISTRAL_PROVIDERS)

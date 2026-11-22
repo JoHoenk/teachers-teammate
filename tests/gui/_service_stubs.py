@@ -46,7 +46,7 @@ from teachers_teammate.domain.model_catalog import (
 )
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.performance_estimate import ProbeResult, TimeRange
-from teachers_teammate.domain.providers import ProviderInfo
+from teachers_teammate.domain.providers import ProviderInfo, display_name_of
 
 
 def services_of(stub: object) -> AppServices:
@@ -200,8 +200,7 @@ class LocalDataFlowStub:
 
     def display_name(self, provider: str) -> str:
         """Mirror the real service: the name a teacher reads, or the provider id."""
-        info = self.get_provider_info(provider)
-        return (info.display_name if info is not None else "") or provider
+        return display_name_of(provider, self.get_provider_info(provider))
 
     def env_key(self, provider: str) -> str:
         """Mirror the real service: the variable the provider reads its key from."""
@@ -220,6 +219,21 @@ class LocalDataFlowStub:
             if info is not None and info.env_key == env_key and info.key_url:
                 return info.key_url
         return ""
+
+    def package_services(self, pip: str) -> list[str]:
+        """Mirror the real service: the names of the providers that declare the package *pip*."""
+        return [
+            self.display_name(provider)
+            for provider in self.list_providers()
+            if (info := self.get_provider_info(provider)) is not None
+            and info.package is not None
+            and info.package.pip == pip
+        ]
+
+    def package_is_connector(self, provider: str) -> bool:
+        """Mirror the real service: whether the provider's package is an optional connector."""
+        info = self.get_provider_info(provider)
+        return info is not None and info.package is not None and info.package_optional
 
     def provider_key_missing(self, provider: str) -> bool:
         """Mirror the real service: a key is missing when the provider needs one and none is set."""

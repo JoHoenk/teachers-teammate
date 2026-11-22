@@ -102,14 +102,15 @@ def _llm_addons() -> dict[str, AddonPackage]:
     seen: set[str] = set()
     for provider in list_providers():
         info = get_provider_info(provider)
-        package = info.package if info is not None else None
-        if package is None or package.pip in seen:
+        if info is None or info.package is None or info.package.pip in seen:
             continue
-        seen.add(package.pip)
-        addons[f"{_LLM_ADDON_PREFIX}{provider}"] = package
+        seen.add(info.package.pip)
+        addons[f"{_LLM_ADDON_PREFIX}{info.name}"] = info.package
     return addons
 
 
+# Runs at import, before the add-on folder is on ``sys.path``: a provider module must not
+# import its package at the top level, which is found only after that folder is injected.
 _LLM_ADDONS: dict[str, AddonPackage] = _llm_addons()
 
 _ADDON_PACKAGES: dict[str, list[str]] = {
@@ -131,7 +132,7 @@ _ADDON_CHECK_MODULE: dict[str, str] = {
 _ADDON_STALE_PREFIXES: dict[str, list[str]] = {
     PRIVACY_ADDON_ID: ["spacy"],
     ADDON_LLM_CORE: ["langchain_core"],
-    **{addon: list(package.stale_prefixes) for addon, package in _LLM_ADDONS.items()},
+    **{addon: [package.module] for addon, package in _LLM_ADDONS.items()},
 }
 
 

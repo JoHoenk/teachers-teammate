@@ -363,10 +363,10 @@ def test_llm_location_unknown_provider_is_online() -> None:
     """
     Given  a provider that does not declare self_hosted in its PROVIDER
     When   llm_location() classifies it
-    Then   it is an online service named after the provider (the safe default)
+    Then   it is an online service named by the provider's id (the safe default)
     """
     loc = llm_location("newvendor", "m", "http://127.0.0.1:11434", lambda _p: None)
-    assert loc == StageLocation(DataLocation.ONLINE, "Newvendor", region=DataRegion.UNKNOWN)
+    assert loc == StageLocation(DataLocation.ONLINE, "newvendor", region=DataRegion.UNKNOWN)
 
 
 def test_llm_location_self_hosted_provider_follows_the_server() -> None:

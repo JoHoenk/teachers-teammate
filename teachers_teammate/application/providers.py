@@ -16,7 +16,7 @@ import time
 from .._model_defaults import default_model_for_task
 from ..domain.data_location import PROVIDER_OLLAMA, StageLocation
 from ..domain.model_listing import ModelListing
-from ..domain.providers import ProviderInfo
+from ..domain.providers import ProviderInfo, display_name_of
 from ..infrastructure.llm_factory import (
     check_provider_connection,
     get_provider_data_region,
@@ -71,8 +71,7 @@ class ProviderService:
 
     def display_name(self, provider: str) -> str:
         """Return the name a teacher reads for *provider* (its id when it declares none)."""
-        info = self.get_provider_info(provider)
-        return (info.display_name if info is not None else "") or provider
+        return display_name_of(provider, self.get_provider_info(provider))
 
     def env_key(self, provider: str) -> str:
         """Return the environment variable *provider* reads its key from (``""`` = none)."""
@@ -92,6 +91,18 @@ class ProviderService:
                 if info is not None and info.key_url:
                     return info.key_url
         return ""
+
+    def package_services(self, pip: str) -> list[str]:
+        """Return the names of the services that need the package *pip* (Mistral and EU share one)."""
+        return [
+            self.display_name(provider)
+            for provider in list_providers()
+            if (package := provider_package(provider)) is not None and package[1] == pip
+        ]
+
+    def package_is_connector(self, provider: str) -> bool:
+        """Return whether *provider*'s package is an optional connector (the app works without it)."""
+        return provider_package(provider) is not None and not provider_package_required(provider)
 
     def provider_key_missing(self, provider: str) -> bool:
         """Return whether *provider* needs an API key that is not set in the environment.

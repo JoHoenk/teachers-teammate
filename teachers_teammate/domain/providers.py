@@ -21,17 +21,12 @@ class AddonPackage:
     #: pip name without a version (``langchain-openai``).
     pip: str
     #: Version range this release was tested with (``">=0.2"``), appended to :attr:`pip`.
-    minimum: str = ""
+    version_spec: str = ""
 
     @property
     def requirement(self) -> str:
         """The pip requirement: the package with its version range."""
-        return f"{self.pip}{self.minimum}"
-
-    @property
-    def stale_prefixes(self) -> tuple[str, ...]:
-        """``sys.modules`` prefixes to forget after an install, so ``find_spec`` probes again."""
-        return (self.module,)
+        return f"{self.pip}{self.version_spec}"
 
 
 @dataclass(frozen=True)
@@ -66,3 +61,8 @@ class ProviderInfo:
     package_optional: bool = False
     #: Models to offer when the service cannot be asked; empty when the list is always live.
     models: tuple[str, ...] = ()
+
+
+def display_name_of(provider: str, info: ProviderInfo | None) -> str:
+    """Return the name a teacher reads for *provider*: what it declares, else its id."""
+    return (info.display_name if info is not None else "") or provider

@@ -238,6 +238,34 @@ def test_names_and_key_answers_come_from_the_declaration() -> None:
 
 
 @pytest.mark.unit
+def test_a_shared_package_names_every_service_that_needs_it() -> None:
+    """
+    Given  the shipped providers, two of which share one package
+    When   the service is asked which services need that package
+    Then   both are named, and a package nobody declares has none
+    """
+    service = ProviderService()
+
+    assert service.package_services("langchain-mistralai") == ["Mistral", "Mistral (EU)"]
+    assert service.package_services("langchain-openai") == ["OpenAI (ChatGPT)"]
+    assert service.package_services("no-such-package") == []
+
+
+@pytest.mark.unit
+def test_only_ollamas_package_is_an_optional_connector() -> None:
+    """
+    Given  the shipped providers
+    When   the service is asked whether a provider's package is an optional connector
+    Then   it is for Ollama, which the app talks to directly, and not for an online service
+    """
+    service = ProviderService()
+
+    assert service.package_is_connector("ollama") is True
+    assert service.package_is_connector("openai") is False
+    assert service.package_is_connector("nonexistent") is False
+
+
+@pytest.mark.unit
 def test_provider_needs_key_follows_the_declaration() -> None:
     """
     Given  a service talked to directly, an online service and a name nobody declares

@@ -28,7 +28,7 @@ from ..domain.data_location import (
     llm_stage_location,
     online_ocr_reason,
 )
-from ..domain.providers import ProviderInfo
+from ..domain.providers import ProviderInfo, display_name_of
 from ..domain.stages import Stage
 from ..infrastructure.llm_factory import get_provider_info
 from ..infrastructure.ollama_utils import ollama_server
@@ -110,7 +110,7 @@ def llm_location(
     vendor-hosted online service — the safe default for a new provider.
     """
     info = provider_info(provider)
-    name = (info.display_name if info is not None else "") or provider.capitalize()
+    name = display_name_of(provider, info)
     region = data_region_of(provider, info, provider_region)
     country = info.vendor_country if info is not None else ""
     self_hosted = info is not None and info.self_hosted

@@ -31,7 +31,7 @@ PROVIDER = ProviderInfo(
     # The vendor's page where a key is created; the Settings window links to it.
     key_url="https://dashboard.cohere.com/api-keys",
     env_key="COHERE_API_KEY",
-    package=AddonPackage(module="langchain_cohere", pip="langchain-cohere", minimum=">=0.1"),
+    package=AddonPackage(module="langchain_cohere", pip="langchain-cohere", version_spec=">=0.1"),
     models=(
         "command-r-plus",
         "command-r",

@@ -20,7 +20,9 @@ PROVIDER = ProviderInfo(
     # The vendor's page where a key is created; the Settings window links to it.
     key_url="https://console.anthropic.com/settings/keys",
     env_key="ANTHROPIC_API_KEY",
-    package=AddonPackage(module="langchain_anthropic", pip="langchain-anthropic", minimum=">=0.1"),
+    package=AddonPackage(
+        module="langchain_anthropic", pip="langchain-anthropic", version_spec=">=0.1"
+    ),
     models=(
         "claude-opus-4-5",
         "claude-sonnet-4-5",

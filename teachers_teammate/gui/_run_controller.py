@@ -19,10 +19,10 @@ from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton, QStyle, QWidget
 
 from ..application.composition import AppServices
 from ..config import Config
-from ..domain.data_location import STAGE_CORRECTION
 from ..domain.ollama_discovery import WaitDetail
 from ..domain.performance_estimate import TimeRange
 from ..domain.run_summary import FileStatus, KeepAwakeState, RunSummary
+from ..domain.stages import Stage
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts.run import BATTERY_WARNING
@@ -466,7 +466,7 @@ class RunController(QObject):
             self._set_progress_text(f"[{idx}/{total}] {name} — {check_text.PROGRESS_CORRECTING}")
             # The reading is stored, so the row can be opened while the proofreading runs.
             self._hooks.sync_row(source_id)
-            self._table.mark_stage_running(source_id, STAGE_CORRECTION)
+            self._table.mark_stage_running(source_id, Stage.CORRECTION)
 
     def _on_file_done(self, event: FileDoneEvent) -> None:
         outcome = event.outcome

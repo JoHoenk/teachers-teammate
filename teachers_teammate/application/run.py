@@ -33,6 +33,7 @@ from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import TEXT_SUFFIX, output_folder_refusal
 from ..domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
 from ..domain.run_summary import KeepAwakeState, RunSummary
+from ..domain.stages import Stage
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline
@@ -149,18 +150,18 @@ class RunPreflight:
     def blocker(self) -> tuple[str, RequirementIssue] | None:
         """The first blocker as ``(stage, issue)``, or ``None`` when nothing blocks the run.
 
-        The stage is ``"ocr"`` for a refused recognition and ``""`` for a server or a model
-        that does not belong to one stage.  One shape for every blocker, so the GUI shows and
+        The stage is :attr:`~teachers_teammate.domain.stages.Stage.OCR` for a refused recognition
+        and ``""`` for a server or a model that does not belong to one stage.  One shape for every blocker, so the GUI shows and
         fixes them all the same way.
         """
         if self.nothing_to_read:
-            return "ocr", RequirementIssue(
+            return Stage.OCR, RequirementIssue(
                 "Text recognition is switched off, and none of these files has text to use "
                 "without it.",
                 IssueKind.NOTHING_TO_READ,
             )
         if self.ocr_not_allowed:
-            return "ocr", RequirementIssue(self.ocr_not_allowed, IssueKind.OCR_NOT_ALLOWED)
+            return Stage.OCR, RequirementIssue(self.ocr_not_allowed, IssueKind.OCR_NOT_ALLOWED)
         if self.ollama_unreachable:
             return "", self.ollama_issue or RequirementIssue(
                 self.ollama_unreachable, IssueKind.OLLAMA_UNREACHABLE
@@ -573,13 +574,13 @@ class RunService:
             if missing:
                 return RunPreflight(missing_models=tuple(missing))
 
-        stages: list[str] = ["ocr"] if recognition and config.recognition_enabled else []
+        stages: list[str] = [Stage.OCR] if recognition and config.recognition_enabled else []
         if config.anonymization_enabled or config.text_anonymized_enabled:
             stages.append("anonymizer")
         if config.correction_enabled:
-            stages.append("correction")
+            stages.append(Stage.CORRECTION)
         if config.evaluation_enabled:
-            stages.append("evaluation")
+            stages.append(Stage.EVALUATION)
         for stage in stages:
             issues = self.check_stage_requirements(config, stage)
             if issues:
@@ -741,7 +742,7 @@ class RunService:
         leaving them enabled would silently run the whole chain again.  Evaluation also needs
         correction text (cached, or computed first).
         """
-        if stage == "ocr":
+        if stage == Stage.OCR:
             return dataclasses.replace(
                 config,
                 # Asking for this stage by hand overrides the "Recognize text" tick.
@@ -750,21 +751,21 @@ class RunService:
                 evaluation_enabled=False,
                 anonymization_enabled=False,
             )
-        if stage == "correction":
+        if stage == Stage.CORRECTION:
             return dataclasses.replace(config, correction_enabled=True, evaluation_enabled=False)
-        if stage == "evaluation":
+        if stage == Stage.EVALUATION:
             return dataclasses.replace(config, evaluation_enabled=True, correction_enabled=True)
         return config
 
     def check_stage_requirements(self, config: Config, stage: str) -> list[RequirementIssue]:
         """Return unmet requirements for enabling *stage*.
 
-        *stage* is 'ocr', 'correction', 'evaluation' or 'anonymizer'.
+        *stage* is a :class:`~teachers_teammate.domain.stages.Stage` or ``"anonymizer"``.
         Empty list means all requirements are satisfied.
         """
-        if stage == "ocr":
+        if stage == Stage.OCR:
             return self._ocr_engine_issues(config.ocr.engine)
-        if stage in ("correction", "evaluation"):
+        if stage in (Stage.CORRECTION, Stage.EVALUATION):
             return self._llm_stage_issues(config, stage)
         if stage == "anonymizer":
             return self._name_detection_issues(config.language)
@@ -785,10 +786,12 @@ class RunService:
 
     def _llm_stage_issues(self, config: Config, stage: str) -> list[RequirementIssue]:
         """Return what proofreading or the content review still needs (package, key, model)."""
-        provider = config.correction_provider if stage == "correction" else config.evaluate_provider
+        provider = (
+            config.correction_provider if stage == Stage.CORRECTION else config.evaluate_provider
+        )
         model = (
             (config.effective_correction_model or "")
-            if stage == "correction"
+            if stage == Stage.CORRECTION
             else (config.effective_evaluate_model or "")
         )
         name = str(self._providers.get_provider_info(provider).get("display_name", provider))

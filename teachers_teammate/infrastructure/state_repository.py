@@ -33,7 +33,7 @@ from ..domain.data_location import SentRecord
 from ..domain.formatted_text import normalize_text_format
 from ..domain.freshness import reset_policy_from_stage, should_invalidate_preview_artifact
 from ..domain.proofreading.review import CorrectionReview
-from ..domain.stages import StageName, normalize_stage
+from ..domain.stages import Stage, normalize_stage
 from ..domain.teacher_work import MachineTexts
 from .atomic_file import write_text_atomic
 from .storage_root import document_stem
@@ -215,15 +215,15 @@ _PREVIEW_FIELDS: Mapping[str, object] = {
 #: ``DocumentState`` for a stage belongs here — ``tests/unit/test_state_repository.py`` fails
 #: on a stage field the table does not name.  ``()`` stands for an empty list;
 #: :func:`_fresh` makes it a new one.
-_CLEARED: Mapping[StageName, Mapping[str, object]] = {
-    "ocr": {
+_CLEARED: Mapping[Stage, Mapping[str, object]] = {
+    Stage.OCR: {
         **_PREVIEW_FIELDS,
         "ocr_done": False,
         "ocr_config_hash": "",
         "raw_text": "",
         "raw_text_format": "plain",
     },
-    "correction": {
+    Stage.CORRECTION: {
         "correction_done": False,
         "correction_config_hash": "",
         "correction_source_hash": "",
@@ -234,7 +234,7 @@ _CLEARED: Mapping[StageName, Mapping[str, object]] = {
         "correction_sent_map": None,
         "correction_sent": None,
     },
-    "evaluation": {
+    Stage.EVALUATION: {
         "evaluation_done": False,
         "eval_config_hash": "",
         "evaluation_text": "",
@@ -250,7 +250,7 @@ def _fresh(fields: Mapping[str, object]) -> dict[str, object]:
     }
 
 
-def _cleared(stage: StageName) -> dict[str, object]:
+def _cleared(stage: Stage) -> dict[str, object]:
     """Return the fields a reset of *stage* clears, with fresh values."""
     return _fresh(_CLEARED[stage])
 
@@ -260,16 +260,16 @@ def _cleared_preview() -> dict[str, object]:
     return _fresh(_PREVIEW_FIELDS)
 
 
-def reset_fields(stage: StageName) -> dict[str, object]:
+def reset_fields(stage: Stage) -> dict[str, object]:
     """Return the fields a reset from *stage* onward clears, with fresh values."""
     policy = reset_policy_from_stage(stage)
     cleared: dict[str, object] = {}
     if policy.clear_ocr:
-        cleared.update(_cleared("ocr"))
+        cleared.update(_cleared(Stage.OCR))
     if policy.clear_correction:
-        cleared.update(_cleared("correction"))
+        cleared.update(_cleared(Stage.CORRECTION))
     if policy.clear_evaluation:
-        cleared.update(_cleared("evaluation"))
+        cleared.update(_cleared(Stage.EVALUATION))
     return cleared
 
 
@@ -427,8 +427,8 @@ class StateRepository:
             ocr_config_hash=record.ocr_config_hash,
             preview_config_hash=record.preview_config_hash,
             page_images=pages,
-            **_cleared("correction"),
-            **_cleared("evaluation"),
+            **_cleared(Stage.CORRECTION),
+            **_cleared(Stage.EVALUATION),
         )
         self.save(input_file, new_state)
         return new_state
@@ -470,7 +470,7 @@ class StateRepository:
             correction_sent=sent.to_dict() if sent is not None else None,
             correction_config_hash=correction_config_hash,
             correction_source_hash=source_hash,
-            **_cleared("evaluation"),
+            **_cleared(Stage.EVALUATION),
         )
         self.save(input_file, new_state)
         return new_state
@@ -504,7 +504,7 @@ class StateRepository:
         state: DocumentState,
         *,
         source_hash: str,
-        stale_stage: StageName | None,
+        stale_stage: Stage | None,
         preview_config_hash: str,
     ) -> DocumentState:
         """Apply the freshness verdict to *state* and save it once.
@@ -539,7 +539,7 @@ class StateRepository:
         self,
         input_file: Path,
         state: DocumentState,
-        stage: str,
+        stage: Stage | str,
     ) -> DocumentState:
         """Reset a loaded state from *stage* onward and persist the change.
 

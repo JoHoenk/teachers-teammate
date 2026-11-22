@@ -41,6 +41,7 @@ from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
 from teachers_teammate.domain.notation import with_notation_hint
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
+from teachers_teammate.domain.stages import Stage
 from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX
 from teachers_teammate.infrastructure.proofreading.port import (
     REVIEW_TIMEOUT_CAP,  # noqa: F401  # re-exported for the tests that pin the timeout
@@ -215,7 +216,9 @@ def instruction_parts(
     :func:`~teachers_teammate.domain.model_catalog.request_profile`.
     """
     policy = fill_placeholders(_resolve_prompt(prompt, language), level=level)
-    fixed = with_notation_hint(resolve_format(mode, answer_format), text_format, task="correction")
+    fixed = with_notation_hint(
+        resolve_format(mode, answer_format), text_format, task=Stage.CORRECTION
+    )
     if mode == "review" and compact_json:
         fixed = f"{fixed}\n{COMPACT_ANSWER_RULE}"
     return policy, fixed

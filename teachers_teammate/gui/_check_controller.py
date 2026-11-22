@@ -22,7 +22,7 @@ from ..application.check_document import CheckDocument
 from ..application.commands import WorkNotSavedError
 from ..application.composition import AppServices
 from ..config import Config
-from ..domain.data_location import STAGE_CORRECTION
+from ..domain.stages import Stage
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from . import _dialogs
@@ -351,7 +351,7 @@ class CheckController(QObject):
             self._hooks.warn_busy()  # nothing starts, so the tab must not be marked as the origin
             return
         self._session.from_check = True
-        self._hooks.run_stage([self._open], STAGE_CORRECTION)
+        self._hooks.run_stage([self._open], Stage.CORRECTION)
 
     # ── The two tab labels ───────────────────────────────────────────────
 

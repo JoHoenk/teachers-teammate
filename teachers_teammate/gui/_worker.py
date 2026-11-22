@@ -38,7 +38,7 @@ class OCRWorker(QThread):
 
     log_line = Signal(str)
     file_started = Signal(str, str, int, int)  # (source_id, name, idx, total)
-    # stage is "preprocessing" or "ocr"; not emitted when OCR comes from the cache.
+    # stage is a ProgressStage; not emitted when the reading comes from the cache.
     stage_started = Signal(str, str, str, int, int)  # (source_id, name, stage, idx, total)
     ocr_done = Signal(str, str, int, int)  # (source_id, name, idx, total)
     # What Ollama is doing while a request has no answer yet (a WaitDetail).

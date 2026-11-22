@@ -12,9 +12,6 @@ from teachers_teammate.application.sent_text import (
     describe_sent_texts,
 )
 from teachers_teammate.domain.data_location import (
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
-    STAGE_OCR,
     DataFlow,
     DataFlowStage,
     DataLocation,
@@ -22,6 +19,7 @@ from teachers_teammate.domain.data_location import (
     PrivacyLevel,
     StageLocation,
 )
+from teachers_teammate.domain.stages import Stage
 
 _LOCAL = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
 _EU = StageLocation(DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU)
@@ -33,7 +31,7 @@ def _flow(*stages: DataFlowStage) -> DataFlow:
     return DataFlow(stages=stages)
 
 
-def _stage(location: StageLocation, stage: str = STAGE_CORRECTION, *, hidden: bool = False):
+def _stage(location: StageLocation, stage: str = Stage.CORRECTION, *, hidden: bool = False):
     return DataFlowStage(stage, location, "text", personal_info_hidden=hidden)
 
 
@@ -58,7 +56,7 @@ def test_a_local_run_sends_nothing() -> None:
     When   describe_sent_texts() is asked what is sent
     Then   there is no section, and the level stays local
     """
-    flow = _flow(DataFlowStage(STAGE_OCR, _LOCAL, "page images"))
+    flow = _flow(DataFlowStage(Stage.OCR, _LOCAL, "page images"))
 
     report = describe_sent_texts(flow, raw_text="Anna wrote this.")
 
@@ -83,7 +81,7 @@ def test_proofreading_receives_the_extracted_text() -> None:
 
     assert len(report.sections) == 1
     section = report.sections[0]
-    assert section.stage.stage == STAGE_CORRECTION
+    assert section.stage.stage == Stage.CORRECTION
     assert section.text == "Anna wrote this."
     assert section.placeholders == ()
     assert section.prompt == "Fix it."
@@ -98,7 +96,7 @@ def test_content_review_receives_the_proofread_text() -> None:
     When   describe_sent_texts() is asked what is sent
     Then   it holds the proofread text, not the extracted one
     """
-    flow = _flow(_stage(_EU, STAGE_CORRECTION), _stage(_NON_EU, STAGE_EVALUATION))
+    flow = _flow(_stage(_EU, Stage.CORRECTION), _stage(_NON_EU, Stage.EVALUATION))
 
     report = describe_sent_texts(
         flow,
@@ -110,8 +108,8 @@ def test_content_review_receives_the_proofread_text() -> None:
 
     texts = [(s.stage.stage, s.text) for s in report.sections]
     assert texts == [
-        (STAGE_CORRECTION, "Anna wrotes this."),
-        (STAGE_EVALUATION, "Anna wrote this."),
+        (Stage.CORRECTION, "Anna wrotes this."),
+        (Stage.EVALUATION, "Anna wrote this."),
     ]
     assert report.sections[1].prompt == "Review it."
 
@@ -143,8 +141,8 @@ def test_a_text_is_anonymized_once_for_both_steps() -> None:
     Then   the anonymizer runs once, and both sections show the same hidden text
     """
     flow = _flow(
-        _stage(_EU, STAGE_CORRECTION, hidden=True),
-        _stage(_EU, STAGE_EVALUATION, hidden=True),
+        _stage(_EU, Stage.CORRECTION, hidden=True),
+        _stage(_EU, Stage.EVALUATION, hidden=True),
     )
     counter = _Counter()
 
@@ -244,7 +242,7 @@ def test_page_images_sent_to_another_computer_leave_the_computer() -> None:
     When   the report is described
     Then   it has no sections but still says something leaves, and names that step
     """
-    ocr = _stage(_OWN, STAGE_OCR)
+    ocr = _stage(_OWN, Stage.OCR)
 
     report = describe_sent_texts(_flow(ocr), raw_text="text")
 

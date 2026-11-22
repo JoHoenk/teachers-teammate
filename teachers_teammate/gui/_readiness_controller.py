@@ -24,6 +24,7 @@ from ..domain.ollama_discovery import (
     DiscoveryScope,
     ServerKind,
 )
+from ..domain.stages import Stage
 from ..texts import dialogs as dlg
 from . import _dialogs
 from . import _user_text as txt
@@ -265,7 +266,9 @@ class ReadinessController(QObject):
         results = self._results_problem()
         # The Check tab's next-step button proofreads, or sets proofreading up when the last
         # check found the proofreading step unable to run.
-        self._page.set_proofreading_ready(self.blocker is None or self.blocker[0] != "correction")
+        self._page.set_proofreading_ready(
+            self.blocker is None or self.blocker[0] != Stage.CORRECTION
+        )
         self.show_recognition_state()
         self.line.show_state(
             readiness(

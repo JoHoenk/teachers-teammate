@@ -61,6 +61,7 @@ from ..domain.performance_estimate import (
     reading_page_time,
 )
 from ..domain.proofreading.result import StepName
+from ..domain.stages import Stage
 from ..infrastructure.ollama_utils import PROOFREADING_NUM_CTX
 from ..infrastructure.performance_probe import (
     PerformanceProbe,
@@ -200,7 +201,7 @@ class SpeedChoices:
     ) -> SpeedChoices:
         """Build the choices; a step that is ``None``/``False`` or not on Ollama gets no model."""
 
-        def ollama_model(choice: tuple[str, str] | None, task: str) -> str:
+        def ollama_model(choice: tuple[str, str] | None, task: Stage) -> str:
             if choice is None or choice[0] != "ollama":
                 return ""
             return effective_model(choice[0], choice[1], task)
@@ -208,8 +209,8 @@ class SpeedChoices:
         return cls(
             ollama_url=ollama_url,
             reading_model=ocr.model if reading and ocr.engine == "ollama" else "",
-            writing_model=ollama_model(correction, "correction"),
-            review_model=ollama_model(evaluation, "evaluation"),
+            writing_model=ollama_model(correction, Stage.CORRECTION),
+            review_model=ollama_model(evaluation, Stage.EVALUATION),
             correction_output=normalize_output_mode(correction_output),
             language=language,
             num_ctx=PROOFREADING_NUM_CTX,

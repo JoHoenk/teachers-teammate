@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from teachers_teammate.domain.stages import Stage
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,7 +26,6 @@ from teachers_teammate.infrastructure.state_repository import (
     compute_file_hash,
 )
 from teachers_teammate.infrastructure.storage_root import document_stem
-from teachers_teammate.domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION
 from teachers_teammate.domain.freshness import first_stale_stage_for_hashes
 from teachers_teammate.domain.teacher_work import (
     CorrectionsWork,
@@ -715,7 +715,7 @@ def test_record_correction_delegates_to_repo(tmp_path: Path) -> None:
         correction_warning="",
         sent_text="",
         sent_map=None,
-        sent=sent_record(svc._config, STAGE_CORRECTION),
+        sent=sent_record(svc._config, Stage.CORRECTION),
         source_hash=text_identity(""),
     )
     assert result.state is new_state
@@ -767,7 +767,7 @@ def test_record_evaluation_delegates_to_repo(tmp_path: Path) -> None:
         ctx.state,
         evaluation_text="quality: good",
         eval_config_hash=ctx.eval_config_hash,
-        sent=sent_record(svc._config, STAGE_EVALUATION),
+        sent=sent_record(svc._config, Stage.EVALUATION),
     )
     assert result.state is new_state
 
@@ -791,8 +791,8 @@ def test_sent_record_names_the_step_and_where_it_ran(tmp_path: Path) -> None:
         evaluate_model="mistral-large-latest",
     )
 
-    proofreading = sent_record(cfg, STAGE_CORRECTION, names_hidden=3)
-    review = sent_record(cfg, STAGE_EVALUATION)
+    proofreading = sent_record(cfg, Stage.CORRECTION, names_hidden=3)
+    review = sent_record(cfg, Stage.EVALUATION)
 
     assert proofreading.provider == "ollama"
     assert proofreading.model == "qwen3.5:9b"
@@ -813,7 +813,7 @@ def test_sent_record_says_whether_hiding_was_on_when_no_name_was_found(tmp_path:
     """
     cfg = make_config(tmp_path, correction_enabled=True, anonymization_enabled=True)
 
-    record = sent_record(cfg, STAGE_CORRECTION, names_hidden=0)
+    record = sent_record(cfg, Stage.CORRECTION, names_hidden=0)
 
     assert record.hiding_on is True
     assert record.names_hidden == 0

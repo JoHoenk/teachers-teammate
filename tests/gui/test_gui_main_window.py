@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
+from teachers_teammate.domain.stages import Stage
 import threading
 from typing import Any, ClassVar
 
@@ -711,7 +712,6 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
     Then   the proofreading cell says how the result was sent, not only after a reload
     """
     from teachers_teammate.domain.data_location import (  # noqa: PLC0415
-        STAGE_CORRECTION,
         SentRecord,
         SentStatus,
     )
@@ -733,7 +733,7 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
         correction_done=True,
         evaluation_done=False,
         sent={
-            STAGE_CORRECTION: SentStatus(
+            Stage.CORRECTION: SentStatus(
                 SentRecord(provider="mistral_eu", model="m", names_hidden=2, privacy="p")
             )
         },

@@ -8,6 +8,7 @@ from ..config import DEFAULTS, Config
 from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
 from ..domain.prompt_text import migrate_saved_default
+from ..domain.stages import Stage
 
 #: What each step of the proofreading exchange is called where a teacher reads it.
 PROMPT_STEP_TITLES: dict[str, str] = {
@@ -43,7 +44,7 @@ def evaluation_fixed_instructions(text_format: TextFormat = "plain") -> str:
 
     Markdown is the only format with a hint, so for plain text this is ``""``.
     """
-    return with_notation_hint("", text_format, task="evaluation").strip()
+    return with_notation_hint("", text_format, task=Stage.EVALUATION).strip()
 
 
 def review_has_own_model(
@@ -57,12 +58,12 @@ def review_has_own_model(
     Setup Assistant leaves a review that has its own model alone.
     """
 
-    def effective(provider_key: str, model_key: str, task: str) -> tuple[str, str]:
+    def effective(provider_key: str, model_key: str, task: Stage) -> tuple[str, str]:
         provider = str(values.get(provider_key) or DEFAULTS[provider_key])
         return provider, effective_model(provider, str(values.get(model_key) or ""), task)
 
-    return effective("evaluate_provider", "evaluate_model", "evaluation") != effective(
-        "correction_provider", "correction_model", "correction"
+    return effective("evaluate_provider", "evaluate_model", Stage.EVALUATION) != effective(
+        "correction_provider", "correction_model", Stage.CORRECTION
     )
 
 

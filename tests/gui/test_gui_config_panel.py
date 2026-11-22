@@ -6,6 +6,7 @@ import dataclasses
 from pathlib import Path
 
 import pytest
+from teachers_teammate.domain.stages import Stage
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui.settings import SettingsPage
 
@@ -1770,17 +1771,15 @@ def test_switching_recognition_off_takes_it_out_of_the_data_flow_box(qtbot) -> N
     Then   the box no longer lists text recognition (no page is read), while the line under
            the step keeps naming what ticking it would use
     """
-    from teachers_teammate.domain.data_location import STAGE_OCR  # noqa: PLC0415
-
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel.set_service(services_of(_GuardService()))
     assert panel.data_flow() is not None
-    assert panel.data_flow().stage(STAGE_OCR) is not None
+    assert panel.data_flow().stage(Stage.OCR) is not None
 
     panel._recognition_enabled.setChecked(False)
 
-    assert panel.data_flow().stage(STAGE_OCR) is None
+    assert panel.data_flow().stage(Stage.OCR) is None
     assert panel._ocr_uses.text() != ""
 
 

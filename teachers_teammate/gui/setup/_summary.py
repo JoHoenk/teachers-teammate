@@ -19,18 +19,16 @@ from ...application.setup_plan import DownloadKind, PlannedDownload, PlannedStep
 from ...domain.data_location import (
     OCR_ENGINE_NAMES,
     STAGE_ANONYMIZATION,
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
-    STAGE_OCR,
 )
 from ...domain.model_catalog import licence_note
+from ...domain.stages import Stage
 from .. import _user_text as txt
 
 #: The step names the summary uses; the same words as the "uses" lines in the main window.
 STEP_NAMES: dict[str, str] = {
-    STAGE_OCR: "Reading handwriting",
-    STAGE_CORRECTION: "Proofreading",
-    STAGE_EVALUATION: "Content review",
+    Stage.OCR: "Reading handwriting",
+    Stage.CORRECTION: "Proofreading",
+    Stage.EVALUATION: "Content review",
     STAGE_ANONYMIZATION: txt.REMOVE_PERSONAL_INFO,
 }
 CLASSES_NAME = "Your classes"
@@ -96,11 +94,11 @@ def summary_rows(
         place_of: Names where a provider runs in the few words the panel has room for.
         key_missing: The online providers the setup plan uses that have no key yet.
     """
-    correction = next((step for step in plan.steps if step.stage == STAGE_CORRECTION), None)
+    correction = next((step for step in plan.steps if step.stage == Stage.CORRECTION), None)
     rows = [_classes_row(plan)]
     for step in plan.steps:
         rows.append(_step_row(step, plan, correction, place_of, key_missing))
-        if step.stage == STAGE_OCR:
+        if step.stage == Stage.OCR:
             rows += _page_models_rows(plan)
     return rows
 
@@ -144,7 +142,7 @@ def _step_row(
             name=name, detail=ROW_NAMES_ON.format(language=language), downloads=downloads
         )
     if step.kept:
-        if step.stage == STAGE_OCR:
+        if step.stage == Stage.OCR:
             detail = ROW_KEPT.format(engine=OCR_ENGINE_NAMES.get(step.provider, step.provider))
         else:
             detail = ROW_KEEPS_OWN
@@ -167,7 +165,7 @@ def _step_row(
 
 def _same_as_correction(step: PlannedStep, correction: PlannedStep | None) -> bool:
     """Return whether *step* runs the same model as the proofreading, so the row can say so."""
-    if correction is None or step.stage != STAGE_EVALUATION:
+    if correction is None or step.stage != Stage.EVALUATION:
         return False
     return (step.provider, step.model) == (correction.provider, correction.model)
 

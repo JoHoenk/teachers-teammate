@@ -26,9 +26,6 @@ from ..domain.data_location import (
     ENGINE_PPOCR,
     RETIRED_OCR_ENGINES,
     STAGE_ANONYMIZATION,
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
-    STAGE_OCR,
 )
 from ..domain.local_models import (
     PAGE_MODELS_ADDON_ID,
@@ -50,6 +47,7 @@ from ..domain.model_catalog import (
     suitability_rank,
 )
 from ..domain.ollama_discovery import OllamaState
+from ..domain.stages import Stage
 from ..infrastructure.ollama_utils import is_local_ollama_url
 from ..settings_schema import normalize_preprocess_method
 from .addons import AddonService
@@ -365,7 +363,7 @@ def _reading_plan(
         # A reader that is chosen is kept like any working choice (its files are downloaded
         # when they are missing); the assistant never proposes to switch to the reader.
         row = PlannedStep(
-            stage=STAGE_OCR,
+            stage=Stage.OCR,
             provider=ENGINE_PPOCR,
             model=READER_MODEL_NAME,
             installed=facts.reader_installed,
@@ -374,7 +372,7 @@ def _reading_plan(
         return {}, [row], ""
     tag, rating, installed = _propose(_current(current, "ocr_model"), "ocr", facts, rate, best)
     row = PlannedStep(
-        stage=STAGE_OCR, provider="ollama", model=tag, rating=rating, installed=installed
+        stage=Stage.OCR, provider="ollama", model=tag, rating=rating, installed=installed
     )
     return {"ocr_model": tag}, [row], tag
 
@@ -392,7 +390,7 @@ def _proofreading_plan(
         # The teacher named the model: it is used as chosen, and pulled when it is missing.
         tag = answers.local_model
         row = PlannedStep(
-            stage=STAGE_CORRECTION,
+            stage=Stage.CORRECTION,
             provider="ollama",
             model=tag,
             rating=rate(tag, "general"),
@@ -407,7 +405,7 @@ def _proofreading_plan(
         )
         tag, rating, installed = _propose(candidate, "general", facts, rate, best)
         row = PlannedStep(
-            stage=STAGE_CORRECTION,
+            stage=Stage.CORRECTION,
             provider="ollama",
             model=tag,
             rating=rating,
@@ -416,9 +414,9 @@ def _proofreading_plan(
         return {"correction_provider": "ollama", "correction_model": tag}, [row], "ollama", tag
     if place is ProofreadingPlace.ONLINE:
         provider, model = answers.online_choice
-        row = PlannedStep(stage=STAGE_CORRECTION, provider=provider, model=model)
+        row = PlannedStep(stage=Stage.CORRECTION, provider=provider, model=model)
         return {"correction_provider": provider, "correction_model": model}, [row], provider, model
-    return {}, [PlannedStep(stage=STAGE_CORRECTION, provider="", model="")], "", ""
+    return {}, [PlannedStep(stage=Stage.CORRECTION, provider="", model="")], "", ""
 
 
 def _review_plan(
@@ -433,15 +431,15 @@ def _review_plan(
     )
     if kept or place is ProofreadingPlace.OFF:
         row = PlannedStep(
-            stage=STAGE_EVALUATION,
+            stage=Stage.EVALUATION,
             provider=_current(current, "evaluate_provider"),
             model=_current(current, "evaluate_model"),
             kept=kept,
         )
         return {}, [row], kept
     provider, model = pair
-    review_model = model or default_model(provider, "correction")
-    row = PlannedStep(stage=STAGE_EVALUATION, provider=provider, model=review_model)
+    review_model = model or default_model(provider, Stage.CORRECTION)
+    row = PlannedStep(stage=Stage.EVALUATION, provider=provider, model=review_model)
     return {"evaluate_provider": provider, "evaluate_model": review_model}, [row], kept
 
 
@@ -495,7 +493,7 @@ def _downloads_plan(
     if facts.missing_package and place is ProofreadingPlace.ONLINE:
         downloads.append(
             PlannedDownload(
-                kind=DownloadKind.PACKAGE, name=facts.missing_package, stage=STAGE_CORRECTION
+                kind=DownloadKind.PACKAGE, name=facts.missing_package, stage=Stage.CORRECTION
             )
         )
     wanted_models = [facts.spacy_model, *extra_models] if names_wanted else []
@@ -526,7 +524,7 @@ def _downloads_plan(
             PlannedDownload(
                 kind=DownloadKind.READER_MODEL,
                 name=ENGINE_PPOCR,
-                stage=STAGE_OCR,
+                stage=Stage.OCR,
                 size_gb=READER_SIZE_GB,
             )
         )
@@ -535,13 +533,13 @@ def _downloads_plan(
             PlannedDownload(
                 kind=DownloadKind.PAGE_MODELS,
                 name=PAGE_MODELS_ADDON_ID,
-                stage=STAGE_OCR,
+                stage=Stage.OCR,
                 size_gb=PAGE_MODELS_SIZE_GB,
             )
         )
-    proposed = [(reading_tag, STAGE_OCR)]
+    proposed = [(reading_tag, Stage.OCR)]
     if local_proofreading:
-        proposed.append((correction_model, STAGE_CORRECTION))
+        proposed.append((correction_model, Stage.CORRECTION))
     for tag, stage in proposed:
         if not tag or _installed(tag, facts):
             continue
@@ -736,7 +734,7 @@ class SetupService:
         facts = self.setup_facts(answers, current)
         tools = self._plan_tools(answers, facts)
         plan = build_setup_plan(answers, current, facts, **tools)
-        step = next((row for row in plan.steps if row.stage == "correction"), None)
+        step = next((row for row in plan.steps if row.stage == Stage.CORRECTION), None)
         choices = build_model_choices(
             facts, suggested=step.model if step is not None else "", rate=tools["rate"]
         )

@@ -28,6 +28,7 @@ from .domain.model_catalog import (
 from .domain.output_files import DocxFormat
 from .domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
 from .domain.setting_values import ContextSetting, PreprocessMethod
+from .domain.stages import Stage
 from .exceptions import ConfigFileParseError
 from .interfaces import SUPPORTED_SUFFIXES as SUPPORTED_SUFFIXES  # noqa: PLC0414
 
@@ -249,13 +250,13 @@ class Config:
     def effective_correction_model(self) -> str:
         if self.correction_model:
             return self.correction_model
-        return default_model_for_task(self.correction_provider, "correction")
+        return default_model_for_task(self.correction_provider, Stage.CORRECTION)
 
     @property
     def effective_evaluate_model(self) -> str:
         if self.evaluate_model:
             return self.evaluate_model
-        return default_model_for_task(self.evaluate_provider, "evaluation")
+        return default_model_for_task(self.evaluate_provider, Stage.EVALUATION)
 
     @property
     def correction_profile(self) -> RequestProfile:

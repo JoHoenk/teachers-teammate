@@ -48,6 +48,7 @@ from ..application.run import RunPreflight
 from ..config import DEFAULTS, Config
 from ..domain.data_location import DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
+from ..domain.stages import Stage
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts.settings import WHERE_GENERAL
@@ -808,7 +809,7 @@ class MainWindow(QMainWindow):
             service.commands.keep_teacher_work(config, files=worked_on.unanswered)
         elif answer.choice.id == dlg.PROOFREAD_AGAIN:
             failures = service.commands.invalidate_from_stage(
-                config, files=worked_on.unanswered, stage="correction"
+                config, files=worked_on.unanswered, stage=Stage.CORRECTION
             )
             if failures:
                 _dialogs.notify(self, dlg.cache_invalidation_failed(list(failures)))
@@ -863,7 +864,7 @@ class MainWindow(QMainWindow):
         self._check_requirements_then(
             config,
             lambda _preflight: self._run_stage(config, selected_source_ids, stage),
-            recognition=stage == "ocr" or self._recognition_needed(selected_source_ids),
+            recognition=stage == Stage.OCR or self._recognition_needed(selected_source_ids),
             files=self._queued_files(selected_source_ids),
         )
 
@@ -872,7 +873,7 @@ class MainWindow(QMainWindow):
         # A typed edit is stored first: after the invalidation it would be stored on top of the
         # state the run is about to work on, and a run would redo or skip the wrong thing.
         self._check_controller.page.flush_pending_edit()
-        if stage == "evaluation":
+        if stage == Stage.EVALUATION:
             # A content review is made from the corrected text; nothing of the teacher's goes.
             self._invalidate_and_run(config, selected_source_ids, stage)
             return
@@ -881,7 +882,7 @@ class MainWindow(QMainWindow):
         service = self._app_service
         run_in_background(
             lambda: service.documents.worked_on_documents(
-                config, files, run_proofreads=stage == "correction"
+                config, files, run_proofreads=stage == Stage.CORRECTION
             ),
             lambda result, error: self._confirm_rerun_then(
                 config, selected_source_ids, stage, result, error
@@ -905,7 +906,7 @@ class MainWindow(QMainWindow):
         if error is not None or not isinstance(result, WorkedOn):
             _dialogs.notify(self, dlg.could_not_check_work())
             return
-        if stage == "correction":
+        if stage == Stage.CORRECTION:
             names = result.worked_on
         else:
             # Reading again takes both parts of the work: the transcription and the corrections.
@@ -913,7 +914,7 @@ class MainWindow(QMainWindow):
         if names:
             question = (
                 dlg.proofread_again([path.name for path in names])
-                if stage == "correction"
+                if stage == Stage.CORRECTION
                 else dlg.read_again([path.name for path in names])
             )
             if not _dialogs.ask(self, question):

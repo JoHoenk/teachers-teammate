@@ -10,14 +10,15 @@ name.  There is no OCR task: text recognition runs only on engines the user cont
 from __future__ import annotations
 
 from .domain.model_catalog import DEFAULT_WRITING_MODEL
+from .domain.stages import Stage
 
 _OLLAMA_GENERAL_DEFAULT = DEFAULT_WRITING_MODEL
 
 #: The online correction defaults must answer the review JSON schema.  All of
 #: them support structured output; ``claude-3-haiku-20240307`` was retired by the provider
 #: and is replaced by its current small model.
-_DEFAULT_MODELS: dict[str, dict[str, str]] = {
-    "correction": {
+_DEFAULT_MODELS: dict[Stage, dict[str, str]] = {
+    Stage.CORRECTION: {
         "ollama": _OLLAMA_GENERAL_DEFAULT,
         "openai": "gpt-4o-mini",
         "anthropic": "claude-haiku-4-5",
@@ -26,7 +27,7 @@ _DEFAULT_MODELS: dict[str, dict[str, str]] = {
         "mistral_eu": "mistral-small-latest",
         "cohere": "command-r-plus",
     },
-    "evaluation": {
+    Stage.EVALUATION: {
         "ollama": _OLLAMA_GENERAL_DEFAULT,
         "openai": "gpt-4o-mini",
         "anthropic": "claude-haiku-4-5",
@@ -38,7 +39,7 @@ _DEFAULT_MODELS: dict[str, dict[str, str]] = {
 }
 
 
-def default_model_for_task(provider: str, task: str) -> str:
+def default_model_for_task(provider: str, task: Stage | str) -> str:
     """Return the default model name for *provider* and pipeline *task*."""
-    task_defaults = _DEFAULT_MODELS.get(task, _DEFAULT_MODELS["correction"])
+    task_defaults = _DEFAULT_MODELS.get(Stage(task), _DEFAULT_MODELS[Stage.CORRECTION])
     return task_defaults.get(provider, "gpt-4o-mini")

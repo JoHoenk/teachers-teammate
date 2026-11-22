@@ -10,9 +10,9 @@ import pytest
 from PySide6.QtWidgets import QApplication, QTabWidget, QWidget
 
 from teachers_teammate.application.queue import StageState
-from teachers_teammate.domain.data_location import STAGE_CORRECTION
 from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
+from teachers_teammate.domain.stages import Stage
 from teachers_teammate.domain.teacher_work import WorkTooNewError
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _main_window as main_window_module
@@ -1283,7 +1283,7 @@ def test_proofreading_from_check_asks_the_window_for_one_stage_run(alone) -> Non
 
     alone.controller.on_proofread_requested()
 
-    assert alone.stages == [([alone.sources[0]], STAGE_CORRECTION)]
+    assert alone.stages == [([alone.sources[0]], Stage.CORRECTION)]
     assert alone.session.from_check is True
 
 

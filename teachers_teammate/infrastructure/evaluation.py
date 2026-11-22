@@ -24,6 +24,7 @@ from ..domain.context_budget import (
 from ..domain.evaluation import EvaluationOutcome
 from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
+from ..domain.stages import Stage
 from ..interfaces import Evaluator
 from ._llm_invoke import InvokeAnswer, invoke_langchain_chain, invoke_ollama_chat, tidy_answer
 
@@ -60,7 +61,7 @@ class LangChainEvaluator(Evaluator):
     ) -> EvaluationOutcome:
         result = invoke_langchain_chain(
             self._llm,
-            system=with_notation_hint(self._prompt, text_format, task="evaluation"),
+            system=with_notation_hint(self._prompt, text_format, task=Stage.EVALUATION),
             human="Language: {language}\n\nCorrected text:\n\n{text}",
             variables={"text": corrected_text, "language": language},
             fallback="",
@@ -97,7 +98,7 @@ class NativeOllamaEvaluator(Evaluator):
 
     def _message(self, corrected_text: str, language: str, text_format: TextFormat) -> str:
         """Return the review request for this text."""
-        system = with_notation_hint(self._prompt, text_format, task="evaluation")
+        system = with_notation_hint(self._prompt, text_format, task=Stage.EVALUATION)
         return f"{system}\n\nLanguage: {language}\n\nCorrected text:\n\n{corrected_text}"
 
     def fits(self, text: str, language: str, *, text_format: TextFormat = "plain") -> bool:

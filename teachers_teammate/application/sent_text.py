@@ -11,13 +11,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from ..domain.data_location import (
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
     DataFlow,
     DataFlowStage,
     PrivacyLevel,
     SentStatus,
 )
+from ..domain.stages import Stage
 
 #: Returns ``(anonymized_text, placeholders)`` for a text: one spaCy pass per text.
 Anonymize = Callable[[str], tuple[str, Mapping[str, str]]]
@@ -115,8 +114,8 @@ def describe_sent_texts(
     for the dialog's original-vs-anonymized comparison.  *stored* says how the results that
     are already stored were sent; it is reported next to what the next run would send.
     """
-    corpus = {STAGE_CORRECTION: raw_text, STAGE_EVALUATION: correction_text}
-    prompts = {STAGE_CORRECTION: correction_prompt, STAGE_EVALUATION: evaluation_prompt}
+    corpus = {Stage.CORRECTION: raw_text, Stage.EVALUATION: correction_text}
+    prompts = {Stage.CORRECTION: correction_prompt, Stage.EVALUATION: evaluation_prompt}
     hidden_texts: dict[str, tuple[str, Mapping[str, str]]] = {}
 
     def hidden(text: str) -> tuple[str, Mapping[str, str]]:

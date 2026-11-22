@@ -17,9 +17,6 @@ from teachers_teammate.application.data_flow import (
 )
 from teachers_teammate.domain.data_location import (
     STAGE_ANONYMIZATION,
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
-    STAGE_OCR,
     Advice,
     DataFlow,
     DataFlowStage,
@@ -35,6 +32,7 @@ from teachers_teammate.domain.data_location import (
     is_ollama_cloud_model,
     online_ocr_reason,
 )
+from teachers_teammate.domain.stages import Stage
 from tests.conftest import make_config
 
 _PROVIDERS = {
@@ -242,12 +240,12 @@ def test_data_flow_reports_only_steps_that_leave() -> None:
     """
     flow = DataFlow(
         (
-            DataFlowStage(STAGE_OCR, _HERE, "page images"),
-            DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", personal_info_hidden=True),
+            DataFlowStage(Stage.OCR, _HERE, "page images"),
+            DataFlowStage(Stage.CORRECTION, _CLOUD, "text", personal_info_hidden=True),
         )
     )
     assert flow.leaves_computer is True
-    assert [s.stage for s in flow.outbound] == [STAGE_CORRECTION]
+    assert [s.stage for s in flow.outbound] == [Stage.CORRECTION]
     assert flow.fingerprint == "v2|correction:online:eu:OpenAI::1"
 
 
@@ -257,8 +255,8 @@ def test_data_flow_fingerprint_changes_when_hiding_names_changes() -> None:
     When   the fingerprints are compared
     Then   they differ, so "don't ask again" never carries over to weaker privacy
     """
-    hidden = DataFlow((DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", True),))
-    exposed = DataFlow((DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", False),))
+    hidden = DataFlow((DataFlowStage(Stage.CORRECTION, _CLOUD, "text", True),))
+    exposed = DataFlow((DataFlowStage(Stage.CORRECTION, _CLOUD, "text", False),))
     assert hidden.fingerprint != exposed.fingerprint
 
 
@@ -268,7 +266,7 @@ def test_data_flow_local_only_has_no_outbound_and_no_advice() -> None:
     When   the flow is inspected
     Then   nothing leaves, the fingerprint is empty and there is no advice
     """
-    flow = DataFlow((DataFlowStage(STAGE_OCR, _HERE, "page images"),))
+    flow = DataFlow((DataFlowStage(Stage.OCR, _HERE, "page images"),))
     assert flow.leaves_computer is False
     assert flow.fingerprint == ""
     assert flow.advice == ()
@@ -280,7 +278,7 @@ def test_data_flow_advises_hiding_names_for_exposed_online_text() -> None:
     When   the advice is read
     Then   it tells the teacher the names are sent as written
     """
-    flow = DataFlow((DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", False),))
+    flow = DataFlow((DataFlowStage(Stage.CORRECTION, _CLOUD, "text", False),))
     assert flow.advice == (Advice.NAMES_SENT_AS_WRITTEN,)
 
 
@@ -290,7 +288,7 @@ def test_data_flow_warns_that_name_replacement_can_miss_a_name() -> None:
     When   the advice is read
     Then   it says detection is not perfect instead of promising the names are hidden
     """
-    flow = DataFlow((DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", True),))
+    flow = DataFlow((DataFlowStage(Stage.CORRECTION, _CLOUD, "text", True),))
     assert flow.advice == (Advice.NAMES_MAY_BE_MISSED,)
 
 
@@ -300,7 +298,7 @@ def test_data_flow_advice_is_empty_when_everything_stays_local() -> None:
     When   the advice is read
     Then   there is none, however names are handled
     """
-    flow = DataFlow((DataFlowStage(STAGE_CORRECTION, _HERE, "text", True),))
+    flow = DataFlow((DataFlowStage(Stage.CORRECTION, _HERE, "text", True),))
     assert flow.advice == ()
 
 
@@ -321,7 +319,7 @@ def test_stage_summary_for_leaving_step_says_what_is_received() -> None:
     When   its summary is built
     Then   the line says where it runs and that names are sent as written
     """
-    stage = DataFlowStage(STAGE_EVALUATION, _CLOUD, "text", False)
+    stage = DataFlowStage(Stage.EVALUATION, _CLOUD, "text", False)
     assert stage.summary == (
         "Content review: Online service (OpenAI) · EU — receives text, names sent as written"
     )
@@ -333,7 +331,7 @@ def test_stage_summary_does_not_promise_names_are_hidden() -> None:
     When   its summary is built
     Then   it says "where detected": detection can miss a name
     """
-    stage = DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", True)
+    stage = DataFlowStage(Stage.CORRECTION, _CLOUD, "text", True)
     assert stage.summary.endswith("names replaced where detected")
 
 
@@ -411,9 +409,9 @@ def test_describe_data_flow_default_settings_stay_local(tmp_path: Path) -> None:
     )
     flow = describe_data_flow(cfg, _info)
     assert [s.stage for s in flow.stages] == [
-        STAGE_OCR,
+        Stage.OCR,
         STAGE_ANONYMIZATION,
-        STAGE_CORRECTION,
+        Stage.CORRECTION,
     ]
     assert flow.leaves_computer is False
 
@@ -434,10 +432,10 @@ def test_describe_data_flow_online_proofreading_and_review(tmp_path: Path) -> No
     exposed = describe_data_flow(make_config(tmp_path, **base), _info)
     hidden = describe_data_flow(make_config(tmp_path, anonymization_enabled=True, **base), _info)
 
-    assert [s.stage for s in exposed.outbound] == [STAGE_CORRECTION, STAGE_EVALUATION]
+    assert [s.stage for s in exposed.outbound] == [Stage.CORRECTION, Stage.EVALUATION]
     assert not any(s.personal_info_hidden for s in exposed.outbound)
     assert all(s.personal_info_hidden for s in hidden.outbound)
-    assert exposed.stage(STAGE_CORRECTION).location.service == "OpenAI (ChatGPT)"
+    assert exposed.stage(Stage.CORRECTION).location.service == "OpenAI (ChatGPT)"
 
 
 def test_describe_data_flow_review_needs_proofreading(tmp_path: Path) -> None:
@@ -449,7 +447,7 @@ def test_describe_data_flow_review_needs_proofreading(tmp_path: Path) -> None:
     cfg = make_config(
         tmp_path, correction_enabled=False, evaluation_enabled=True, evaluate_provider="openai"
     )
-    assert describe_data_flow(cfg, _info).stage(STAGE_EVALUATION) is None
+    assert describe_data_flow(cfg, _info).stage(Stage.EVALUATION) is None
 
 
 def test_describe_data_flow_remote_ollama_for_ocr(tmp_path: Path) -> None:
@@ -465,7 +463,7 @@ def test_describe_data_flow_remote_ollama_for_ocr(tmp_path: Path) -> None:
         ollama_url="http://school-server:11434",
     )
     flow = describe_data_flow(cfg, _info)
-    ocr = flow.stage(STAGE_OCR)
+    ocr = flow.stage(Stage.OCR)
     assert ocr.location.location is DataLocation.OTHER_COMPUTER
     assert ocr.receives == "page images"
     assert Advice.PAGES_TO_OTHER_COMPUTER in flow.advice
@@ -481,7 +479,7 @@ def _correction_stage(tmp_path: Path, url: str) -> tuple[DataFlow, DataFlowStage
         ollama_url=url,
     )
     flow = describe_data_flow(cfg, _info)
-    correction = flow.stage(STAGE_CORRECTION)
+    correction = flow.stage(Stage.CORRECTION)
     assert correction is not None
     return flow, correction
 
@@ -701,7 +699,7 @@ def test_privacy_level_of_one_step(
     When   its privacy level is read
     Then   the level matches the place, and an undeclared region counts as outside the EU
     """
-    assert DataFlowStage(STAGE_CORRECTION, location, "text", hidden).privacy_level is level
+    assert DataFlowStage(Stage.CORRECTION, location, "text", hidden).privacy_level is level
 
 
 def test_privacy_level_severity_orders_the_levels() -> None:
@@ -750,9 +748,9 @@ def test_data_flow_level_is_the_worst_step() -> None:
     """
     flow = DataFlow(
         (
-            DataFlowStage(STAGE_OCR, _HERE, "page images"),
-            DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", True),
-            DataFlowStage(STAGE_EVALUATION, _OUTSIDE, "text", True),
+            DataFlowStage(Stage.OCR, _HERE, "page images"),
+            DataFlowStage(Stage.CORRECTION, _CLOUD, "text", True),
+            DataFlowStage(Stage.EVALUATION, _OUTSIDE, "text", True),
         )
     )
     assert flow.level is PrivacyLevel.ANON_NON_EU
@@ -776,7 +774,7 @@ def test_data_flow_advises_an_eu_service_outside_the_eu() -> None:
     When   the advice is read
     Then   it suggests a service in the EU instead
     """
-    flow = DataFlow((DataFlowStage(STAGE_CORRECTION, _OUTSIDE, "text", True),))
+    flow = DataFlow((DataFlowStage(Stage.CORRECTION, _OUTSIDE, "text", True),))
     assert flow.advice == (Advice.NAMES_MAY_BE_MISSED, Advice.SERVICE_OUTSIDE_EU)
 
 
@@ -786,7 +784,7 @@ def test_data_flow_gives_no_region_advice_inside_the_eu() -> None:
     When   the advice is read
     Then   no service-outside-the-EU advice is given
     """
-    flow = DataFlow((DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", True),))
+    flow = DataFlow((DataFlowStage(Stage.CORRECTION, _CLOUD, "text", True),))
     assert Advice.SERVICE_OUTSIDE_EU not in flow.advice
 
 
@@ -847,7 +845,7 @@ def test_describe_data_flow_uses_the_region_callback(tmp_path: Path) -> None:
         tmp_path, correction_enabled=True, correction_provider="openai", correction_model="m"
     )
     flow = describe_data_flow(cfg, _info, provider_region=lambda _p: DataRegion.EU.value)
-    assert flow.stage(STAGE_CORRECTION).location.region is DataRegion.EU
+    assert flow.stage(Stage.CORRECTION).location.region is DataRegion.EU
 
 
 # ── Fingerprint formats ────────────────────────────────────────────────────
@@ -859,8 +857,8 @@ def test_fingerprint_includes_the_region() -> None:
     When   the fingerprints are compared
     Then   they differ, so an answer for an EU service does not carry over
     """
-    european = DataFlow((DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", True),))
-    outside = DataFlow((DataFlowStage(STAGE_CORRECTION, _OUTSIDE, "text", True),))
+    european = DataFlow((DataFlowStage(Stage.CORRECTION, _CLOUD, "text", True),))
+    outside = DataFlow((DataFlowStage(Stage.CORRECTION, _OUTSIDE, "text", True),))
     assert european.fingerprint != outside.fingerprint
 
 
@@ -905,7 +903,7 @@ def test_data_flow_gives_no_region_advice_for_an_own_server() -> None:
     Then   it does not tell the user to leave for an EU service: only a vendor has a region
     """
     own_server = StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", host="192.168.1.9")
-    flow = DataFlow((DataFlowStage(STAGE_CORRECTION, own_server, "text", False),))
+    flow = DataFlow((DataFlowStage(Stage.CORRECTION, own_server, "text", False),))
 
     assert Advice.SERVICE_OUTSIDE_EU not in flow.advice
 
@@ -918,8 +916,8 @@ def test_llm_steps_lists_the_review_only_after_proofreading() -> None:
     """
     assert llm_steps(False, False) == ()
     assert llm_steps(False, True) == ()
-    assert llm_steps(True, False) == (STAGE_CORRECTION,)
-    assert llm_steps(True, True) == (STAGE_CORRECTION, STAGE_EVALUATION)
+    assert llm_steps(True, False) == (Stage.CORRECTION,)
+    assert llm_steps(True, True) == (Stage.CORRECTION, Stage.EVALUATION)
 
 
 def _locate(provider: str, model: str, url: str) -> StageLocation:

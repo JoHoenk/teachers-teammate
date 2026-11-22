@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 
 from ...application.correction_options import review_has_own_model
 from ...config import DEFAULTS, OcrConfig
+from ...domain.stages import Stage
 from ...settings_schema import CONTEXT_SETTINGS
 from .. import _user_text as txt
 from .._background import LatestTask
@@ -318,7 +319,9 @@ class AiModelsPage(SettingsPageBase):
         day: an empty proofreading model is written out as its proofreading default.
         """
         provider, model = self._shared.choice()
-        return provider, self._app_service.providers.effective_model(provider, model, "correction")
+        return provider, self._app_service.providers.effective_model(
+            provider, model, Stage.CORRECTION
+        )
 
     def owned_keys(self) -> frozenset[str]:
         return frozenset((*_OCR_KEYS, *_PROOFREADING_KEYS, *_REVIEW_KEYS, "proofreading_context"))

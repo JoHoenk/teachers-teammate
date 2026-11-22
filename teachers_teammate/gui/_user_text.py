@@ -12,8 +12,6 @@ from collections.abc import Sequence
 from ..application.data_flow import sent_location
 from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import (
-    STAGE_CORRECTION,
-    STAGE_EVALUATION,
     DataLocation,
     SentRecord,
     SentStatus,
@@ -21,6 +19,7 @@ from ..domain.data_location import (
 )
 from ..domain.local_models import PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
 from ..domain.proofreading.review import CHANGE_CATEGORIES
+from ..domain.stages import Stage
 from ..exceptions import (
     RECOGNITION_OFF_MESSAGE,
     AddonInstallError,
@@ -480,7 +479,7 @@ OTHER_PRIVACY_SETTINGS = (
 )
 STORED_RESULT = "The stored {stage} was {how}."
 #: What the "other privacy settings" line tells the teacher to do, per step.
-_AGAIN = {STAGE_CORRECTION: "proofread", STAGE_EVALUATION: "review"}
+_AGAIN = {Stage.CORRECTION: "proofread", Stage.EVALUATION: "review"}
 
 
 def names_note(count: int, *, hiding_on: bool = False) -> str:

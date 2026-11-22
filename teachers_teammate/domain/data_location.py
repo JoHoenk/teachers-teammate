@@ -11,6 +11,8 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 
+from .stages import Stage
+
 
 class OcrEngine(StrEnum):
     """The engines that read pages on a computer the user controls.
@@ -40,18 +42,15 @@ RETIRED_OCR_ENGINES: dict[str, str] = {"tesseract": ENGINE_PPOCR, "paddleocr": E
 #: How a teacher knew each retired engine (for the notice that it was replaced).
 RETIRED_ENGINE_NAMES: dict[str, str] = {"tesseract": "Tesseract", "paddleocr": "PaddleOCR"}
 
-STAGE_OCR = "ocr"
-STAGE_CORRECTION = "correction"
-STAGE_EVALUATION = "evaluation"
 #: Not a pipeline stage: the box lists personal-info removal to show whether it is on.
 STAGE_ANONYMIZATION = "anonymization"
 
 
-_STAGE_TITLES = {
-    STAGE_OCR: "Text recognition",
+_STAGE_TITLES: dict[str, str] = {
+    Stage.OCR: "Text recognition",
     STAGE_ANONYMIZATION: "Personal info removal",
-    STAGE_CORRECTION: "Proofreading",
-    STAGE_EVALUATION: "Content review",
+    Stage.CORRECTION: "Proofreading",
+    Stage.EVALUATION: "Content review",
 }
 
 
@@ -410,10 +409,10 @@ class DataFlow:
     def advice(self) -> tuple[Advice, ...]:
         """What the user can still do to keep more on this computer."""
         tips: list[Advice] = []
-        ocr = self.stage(STAGE_OCR)
+        ocr = self.stage(Stage.OCR)
         if ocr is not None and ocr.leaves_computer:
             tips.append(Advice.PAGES_TO_OTHER_COMPUTER)
-        text_steps = [s for s in self.outbound if s.stage != STAGE_OCR]
+        text_steps = [s for s in self.outbound if s.stage != Stage.OCR]
         if any(not s.personal_info_hidden for s in text_steps):
             tips.append(Advice.NAMES_SENT_AS_WRITTEN)
         elif text_steps:

@@ -343,8 +343,8 @@ def test_a_stopped_file_keeps_the_tick_of_the_step_that_finished(main_window, mo
     source = "/tmp/essay.png"
     monkeypatch.setattr(
         main_window._app_service.documents,
-        "queue_row",
-        lambda *_a, **_k: queue_row(source, "essay.png", ocr=StageState.DONE),
+        "queue_rows",
+        lambda *_a, **_k: [queue_row(source, "essay.png", ocr=StageState.DONE)],
     )
     main_window._results_table.set_queue([queue_row(source, "essay.png")])
     main_window._results_table.mark_processing(source)
@@ -748,15 +748,17 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
         main_window._app_service.documents,
-        "queue_row",
-        lambda *_a, **_k: queue_row(
-            source_id,
-            "page.png",
-            ocr=StageState.DONE,
-            correction=StageState.DONE,
-            has_text=True,
-            sent=view.sent,
-        ),
+        "queue_rows",
+        lambda *_a, **_k: [
+            queue_row(
+                source_id,
+                "page.png",
+                ocr=StageState.DONE,
+                correction=StageState.DONE,
+                has_text=True,
+                sent=view.sent,
+            )
+        ],
     )
 
     main_window._run_controller._on_file_done(
@@ -2805,10 +2807,10 @@ def test_main_window_file_done_keeps_the_row_when_the_store_cannot_be_read(
         [queue_row(source, "page.png", ocr=StageState.DONE, has_text=True, text_format="markdown")]
     )
 
-    def _unreadable(*_args: object, **_kwargs: object) -> QueueRow:
+    def _unreadable(*_args: object, **_kwargs: object) -> list[QueueRow]:
         raise OSError("the state folder is gone")
 
-    monkeypatch.setattr(main_window._app_service.documents, "queue_row", _unreadable)
+    monkeypatch.setattr(main_window._app_service.documents, "queue_rows", _unreadable)
 
     main_window._run_controller._on_file_done(
         FileDoneEvent(
@@ -4684,8 +4686,8 @@ def test_a_skipped_file_opens_no_error_dialog_and_is_counted_apart(
     source = "/tmp/scan.png"
     monkeypatch.setattr(
         main_window._app_service.documents,
-        "queue_row",
-        lambda *_a, **_k: queue_row(source, "scan.png"),
+        "queue_rows",
+        lambda *_a, **_k: [queue_row(source, "scan.png")],
     )
     main_window._results_table.set_queue([queue_row(source, "scan.png")])
 
@@ -5141,6 +5143,52 @@ def test_rerunning_a_stage_the_teacher_did_not_touch_asks_nothing(
 
     assert asked == []
     assert ran == ["run"]
+
+
+@pytest.mark.gui
+def test_reading_again_clears_the_rows_before_the_run_starts(main_window, stored) -> None:
+    """
+    Given  two queued documents with a stored reading
+    When   *Read again* is confirmed for both
+    Then   neither row shows a reading any more, so a run that stops early leaves none behind
+    """
+    source_ids = stored("a.png", "b.png")
+    cfg = main_window._config_panel.to_config()
+
+    main_window._invalidate_and_run(cfg, source_ids, Stage.OCR)
+
+    assert [main_window._results_table.row_for(sid).ocr for sid in source_ids] == [
+        StageState.NONE,
+        StageState.NONE,
+    ]
+
+
+@pytest.mark.gui
+def test_a_queue_refresh_between_run_and_start_does_not_lose_the_selection(
+    main_window, stored, monkeypatch
+) -> None:
+    """
+    Given  two queued documents, both selected, and Run pressed while the requirements are
+           still being checked
+    When   the queue is refreshed (the background probe of this computer finished) and the
+           check then lets the run through
+    Then   the run starts on both documents instead of saying that no file is selected
+    """
+    source_ids = stored("a.png", "b.png")
+    main_window._config_panel.set_input_dir(str(Path(source_ids[0]).parent))
+    main_window._results_table.selectAll()
+    started: list[list[str]] = []
+    monkeypatch.setattr(
+        main_window._run_controller, "start", lambda _cfg, ids, *_a, **_k: started.append(ids)
+    )
+    shown = record_notices(monkeypatch)
+
+    main_window._refresh_queue_from_inputs()
+    assert main_window._results_table.queued_source_ids() == source_ids
+    main_window._continue_run(main_window._config_panel.to_config())
+
+    assert started == [source_ids]
+    assert shown == []
 
 
 # ── What the review of the branch found ───────────────────────────────────────

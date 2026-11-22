@@ -17,6 +17,7 @@ point (``main``) the runner calls.
 
 The failure tests replace one thing each and check that the walk reports it: a reader that
 raises, a box the step did not expect, a window the step did not open, and a slot that raises.
+One more test checks the other half of a report: a wait that runs out says what the guards caught.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ import threading
 import time
 from typing import Any
 
-from PySide6.QtWidgets import QAbstractButton, QApplication, QDialog
+from PySide6.QtWidgets import QAbstractButton, QApplication, QDialog, QLabel, QVBoxLayout
 import pytest
 
 from teachers_teammate.application.composition import build_app_services
@@ -157,24 +158,106 @@ def test_an_unexpected_window_is_closed_and_fails_its_step(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
-    Given  the app opens a window of its own during a step
+    Given  a run has started and the app opens a window of its own, saying what it wants
     When   the walk runs
-    Then   the window is closed, the walk goes on, and the step that opened it fails
+    Then   the window is closed, and the step fails with the window's own title and sentences
     """
     run_as_asked = MainWindow._on_run
 
     def modal_on_run(self: MainWindow) -> None:
-        QDialog(self).exec()
         run_as_asked(self)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("The run can't start")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("<b>The run can't start:</b>"))
+        layout.addWidget(QLabel("The built-in reader is not downloaded yet."))
+        dialog.exec()
 
     monkeypatch.setattr(MainWindow, "_on_run", modal_on_run)
     code, result = _walk(tmp_path, monkeypatch)
 
     assert code == 1
-    assert result["modals"] == ["QDialog"]
+    assert result["modals"] == [
+        "QDialog: The run can't start / The built-in reader is not downloaded yet."
+    ], result
     assert result["failed"][0].startswith("run: "), result["failed"]
+    assert "The built-in reader is not downloaded yet." in result["failed"][0]
     # The window was closed rather than answered badly, so the run itself went through.
     assert result["steps"][-1]["name"] == "run"
+
+
+def test_a_wait_that_runs_out_names_what_the_guards_caught(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a walk whose guards caught a window the step did not open
+    When   a wait runs out before the step's condition holds
+    Then   the failure names the window and its words, not only the wait
+    """
+    walk = walkthrough.Walk(root=tmp_path, service=build_app_services())
+    window = QDialog()
+    qtbot.addWidget(window)
+    window.setWindowTitle("The run can't start")
+    layout = QVBoxLayout(window)
+    layout.addWidget(QLabel("<b>The run can't start:</b>"))
+    layout.addWidget(QLabel("The built-in reader is not downloaded yet."))
+
+    walk._modals.caught(window)
+    with pytest.raises(walkthrough._Failed) as caught:
+        walk._settle(lambda: False, "the run to end", 0.01)
+
+    assert str(caught.value).startswith("the run to end did not happen within 0.01 s")
+    assert (
+        "a window opened: QDialog: The run can't start / "
+        "The built-in reader is not downloaded yet." in str(caught.value)
+    )
+
+
+def test_a_closed_window_is_quoted_as_the_teacher_read_it(qtbot) -> None:
+    """
+    Given  a window with a bold sentence, a text holding "<" and "&", a line break and a hidden label
+    When   the walk records it as closed
+    Then   the record has the visible words only, with entities decoded and lines apart
+    """
+    walk = walkthrough.Modals()
+    window = QDialog()
+    qtbot.addWidget(window)
+    window.setWindowTitle("Title")
+    layout = QVBoxLayout(window)
+    layout.addWidget(QLabel("<b>Title:</b>"))
+    layout.addWidget(QLabel("Files < 5 MB are read"))
+    layout.addWidget(QLabel("Tom &amp; Jerry<br>second line"))
+    hidden = QLabel("on a page nobody saw")
+    layout.addWidget(hidden)
+    window.show()
+    hidden.hide()
+
+    walk.caught(window)
+
+    assert walk.record == ["QDialog: Title / Files < 5 MB are read / Tom & Jerry second line"], (
+        walk.record
+    )
+
+
+def test_a_slot_exception_is_reported_by_one_guard_only(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a slot raised and a guard already reported it
+    When   a later guard looks for what no step expected
+    Then   it finds nothing, until another slot raises, and the result keeps both
+    """
+    walk = walkthrough.Walk(root=tmp_path, service=build_app_services())
+
+    walk._on_exception(RuntimeError, RuntimeError("first"), None)
+    first = walk._unexpected()
+    again = walk._unexpected()
+    walk._on_exception(ValueError, ValueError("second"), None)
+    second = walk._unexpected()
+
+    assert "an exception in a slot: RuntimeError: first" in first
+    assert again == []
+    assert second
+    assert all(line.startswith("an exception in a slot:") and "second" in line for line in second)
+    kept = walk.result()["exceptions"]
+    assert "RuntimeError: first" in kept
+    assert "ValueError: second" in kept
 
 
 @skip_no_reader_models
@@ -197,7 +280,7 @@ def test_an_exception_in_a_slot_fails_the_step_it_happened_in(
     code, result = _walk(tmp_path, monkeypatch)
 
     assert code == 1
-    assert "RuntimeError: a slot broke" in result["exceptions"], result["exceptions"]
+    assert "RuntimeError: a slot broke" in result["exceptions"], result["failed"]
     assert result["failed"][0].startswith("run: "), result["failed"]
 
 

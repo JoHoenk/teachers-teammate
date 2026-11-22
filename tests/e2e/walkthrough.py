@@ -42,11 +42,12 @@ from typing import Any
 from docx import Document
 from PIL import Image, ImageDraw, ImageFont
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, qVersion
-from PySide6.QtGui import QAction, QKeyEvent, QPixmap, QTextCursor
+from PySide6.QtGui import QAction, QKeyEvent, QPixmap, QTextCursor, QTextDocumentFragment
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
     QDialog,
+    QLabel,
     QLineEdit,
     QTabWidget,
     QTextEdit,
@@ -352,7 +353,11 @@ class Answers:
 
 
 class Modals:
-    """A window the step did not open: recorded, then closed, so the walk cannot hang in it."""
+    """A window the step did not open: recorded, then closed, so the walk cannot hang in it.
+
+    A line carries what the window says, its title and the sentences it lists: a bundle that
+    lost a model file opens a window saying so, and the result must name it.
+    """
 
     def __init__(self) -> None:
         #: One line per window that was closed this way, for the result.
@@ -369,8 +374,31 @@ class Modals:
             return
         self._closed.append(window)
         line = window.objectName() or type(window).__name__
+        title = window.windowTitle()
+        said = [text for text in (title, *self._said(window, title)) if text]
+        if said:
+            line = f"{line}: {' / '.join(said)}"
         self.record.append(line)
         self.unexpected.append(line)
+
+    @classmethod
+    def _said(cls, window: QWidget, title: str) -> list[str]:
+        """Return what *window* tells a teacher: its labels' sentences, without the title again."""
+        lines = []
+        for label in window.findChildren(QLabel):
+            if not label.isVisibleTo(window):
+                continue
+            text = cls._plain(label.text())
+            if text and text not in (title, f"{title}:"):
+                lines.append(text)
+        return lines
+
+    @staticmethod
+    def _plain(text: str) -> str:
+        """Return *text* without Qt's markup: a dialog bolds its title and the walk keeps words."""
+        if Qt.mightBeRichText(text):
+            text = QTextDocumentFragment.fromHtml(text).toPlainText()
+        return " ".join(text.split())
 
     def take_unexpected(self) -> list[str]:
         """Return the windows closed since the last time it was asked."""
@@ -515,7 +543,8 @@ class Walk:
         self._answers = Answers(step=lambda: self._current)
         self._modals = Modals()
         self._exceptions: list[str] = []
-        self._last_exception = ""
+        #: How many of ``_exceptions`` a guard has already reported.
+        self._reported = 0
         self._warnings: list[str] = []
         self._pictures: list[str] = []
         self._failed: list[str] = []
@@ -626,8 +655,7 @@ class Walk:
 
     def _on_exception(self, kind: type[BaseException], exc: BaseException, tb: Any) -> None:
         """A slot raised: PySide6 hands it here and carries on, so the walk records it."""
-        self._last_exception = f"{kind.__name__}: {exc}"
-        self._exceptions.append(self._last_exception)
+        self._exceptions.append(f"{kind.__name__}: {exc}")
         self._exceptions.extend(
             line.strip() for line in traceback.format_exception(kind, exc, tb)[-3:]
         )
@@ -651,12 +679,20 @@ class Walk:
             window.reject()
         window.close()
 
+    def _unexpected(self) -> list[str]:
+        """Take what no step expected: a call, a window opened, an exception in a slot."""
+        new_exceptions = self._exceptions[self._reported :]
+        self._reported = len(self._exceptions)
+        return [
+            *self._answers.take_unexpected(),
+            *(f"a window opened: {name}" for name in self._modals.take_unexpected()),
+            *(f"an exception in a slot: {line}" for line in new_exceptions),
+        ]
+
     def _check_guards(self) -> None:
         """Fail the step on what no step expected: a call, a window, a slot's exception."""
         found = [
-            *self._answers.take_unexpected(),
-            *(f"a window opened: {name}" for name in self._modals.take_unexpected()),
-            *(f"an exception in a slot: {line}" for line in self._exceptions),
+            *self._unexpected(),
             *(f"never asked: {line}" for line in self._answers.unasked()),
         ]
         if found:
@@ -697,9 +733,13 @@ class Walk:
             except RuntimeError:
                 pass  # a widget that went away: the condition does not hold yet
             if time.monotonic() > deadline:
-                # A slot that raised is why the window never came: say so, not only the wait.
-                broken = f" (a slot raised: {self._last_exception})" if self._exceptions else ""
-                raise _Failed(f"{what} did not happen within {deadline_s:g} s{broken}")
+                # What no step expected is why the wait never ends, and a slot that raised says
+                # it too: the message carries them, not only the wait.
+                found = "; ".join(self._unexpected())
+                raise _Failed(
+                    f"{what} did not happen within {deadline_s:g} s"
+                    + (f" ({found})" if found else "")
+                )
             time.sleep(0.01)
 
     def _child(self, kind: type[QObject], name: str) -> Any:
@@ -1075,7 +1115,10 @@ class Walk:
             raise _Failed(f"failed {list(summary.failed)}, stopped {list(summary.stopped)}")
         row = table.row_for(order[2])
         if row is None or row.ocr is not StageState.NONE:
-            raise _Failed(f"{Path(order[2]).name} was read although the run stopped before it")
+            raise _Failed(
+                f"{Path(order[2]).name} was read although the run stopped before it "
+                f"(its row says {row.ocr if row is not None else 'no row'})"
+            )
 
     def _step_stop_now(self) -> None:
         """Stop a run at once, and check that the file it cut short left nothing behind."""

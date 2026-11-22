@@ -397,6 +397,26 @@ def test_selected_source_ids_is_empty_without_a_selection(qtbot) -> None:
 
 
 @pytest.mark.gui
+def test_showing_the_queue_again_keeps_the_selection(qtbot) -> None:
+    """
+    Given  three queued files of which the first and the third are selected
+    When   the queue is shown again, now without the second file and with a new fourth one
+    Then   the first and the third are still the selected ones, and the new file is not
+    """
+    table = _table(qtbot, _row("/tmp/a.png", "a.png"), _row("/tmp/b.png", "b.png"))
+    table.set_queue([_row(f"/tmp/{n}.png", f"{n}.png") for n in "abc"])
+    table.selectRow(0)
+    table.selectionModel().select(
+        table.model().index(2, 0),
+        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+    )
+
+    table.set_queue([_row(f"/tmp/{n}.png", f"{n}.png") for n in "acd"])
+
+    assert table.selected_source_ids() == ["/tmp/a.png", "/tmp/c.png"]
+
+
+@pytest.mark.gui
 def test_source_id_for_row_names_the_queued_file(qtbot) -> None:
     """
     Given  a queued row

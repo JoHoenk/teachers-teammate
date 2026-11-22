@@ -224,7 +224,11 @@ class ResultsTable(QTableWidget):
     # ── The store's answer ────────────────────────────────────────────────
 
     def set_queue(self, rows: Sequence[QueueRow]) -> None:
-        """Show *rows*: one row per file, as the store says it is."""
+        """Show *rows*: one row per file, as the store says it is.
+
+        The files that were selected stay selected: a refresh is not the teacher's choice.
+        """
+        selected = set(self.selected_source_ids())
         self.setRowCount(0)
         self._row_by_source.clear()
         self._rows = {row.source_id: row for row in rows}
@@ -248,6 +252,7 @@ class ResultsTable(QTableWidget):
             self._add_preview_button(index, row.source_id)
             self._draw_row(row.source_id)
         self.resizeColumnToContents(self._COL_FILE)
+        self._select_rows([self._row_by_source[sid] for sid in selected if sid in self._rows])
 
     def update_row(self, row: QueueRow) -> None:
         """Replace what the store says about one file, keeping what the run did with it."""
@@ -689,6 +694,10 @@ class ResultsTable(QTableWidget):
             for row in range(self.rowCount())
             if (item := self.item(row, self._COL_CHECKED)) is not None and item.text()
         ]
+        self._select_rows(rows)
+
+    def _select_rows(self, rows: list[int]) -> None:
+        """Select exactly *rows*; nothing happens for an empty list."""
         if not rows:
             return
         model = self.model()

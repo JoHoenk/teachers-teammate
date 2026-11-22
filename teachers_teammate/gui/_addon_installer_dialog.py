@@ -26,6 +26,7 @@ from ..domain.local_models import (
     PRIVACY_ADDON_ID,
     READER_SIZE_LABEL,
 )
+from ..exceptions import ModelDownloadCancelledError
 from ..texts.settings import WHERE_ADDONS
 from . import _user_text as txt
 from ._constants import _SPACY_MODEL_CHOICES
@@ -492,6 +493,8 @@ class _OllamaPullThread(LongJobThread):
         self._service.ollama.pull_ollama_model(
             self._url, self._model_name, self._report, self.stop_event
         )
+        if self.stopped:  # the stream just ends when the pull is stopped
+            raise ModelDownloadCancelledError(ABORTED)
         return self._model_name
 
     def _report(self, status: str, done: float, total: float) -> None:

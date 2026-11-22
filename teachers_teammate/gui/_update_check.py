@@ -81,4 +81,4 @@ def check_for_update(
         if error is None and isinstance(result, tuple) and len(result) == 2:
             on_available(result[0], result[1])
 
-    run_in_background(fetch_newer_release, deliver, owner=owner)
+    run_in_background(fetch_newer_release, deliver, owner=owner, network=True)

@@ -56,7 +56,7 @@ class ModelFetcher:
     """
 
     def __init__(self, owner: QObject | None = None) -> None:
-        self._task = LatestTask(owner)
+        self._task = LatestTask(owner, network=True)
 
     def start(
         self,

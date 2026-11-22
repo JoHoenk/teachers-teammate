@@ -1326,6 +1326,7 @@ def test_a_pull_thread_outlives_the_manager_that_started_it(qtbot, monkeypatch) 
         assert manager._thread is None
         assert thread in _long_job._LIVE
     finally:
+        thread.wait(5000)  # the hold may only go once the native thread has ended
         _long_job._LIVE.intersection_update(held_before)
 
 

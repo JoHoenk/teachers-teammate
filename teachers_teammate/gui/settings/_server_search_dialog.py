@@ -29,7 +29,7 @@ from ...application.composition import AppServices
 from ...domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
 from ...texts import dialogs as dlg
 from .. import _dialogs
-from .._background import run_streaming
+from .._background import LatestTask
 from .._server_card import ServerCard
 
 TITLE = "Find the AI server"
@@ -85,6 +85,8 @@ class ServerSearchDialog(QDialog):
         self._service = app_service
         self._searching = False
         self._stop_event = threading.Event()
+        # Only the newest search counts; closing the dialog drops what one still reports.
+        self._task = LatestTask(self, network=True)
         self._scope = DiscoveryScope.THIS_COMPUTER
         self._network_searched = False
 
@@ -144,7 +146,9 @@ class ServerSearchDialog(QDialog):
     def _start(self, scope: DiscoveryScope) -> None:
         self._scope = scope
         self._searching = True
-        self._stop_event = threading.Event()
+        self._stop_event.set()  # an earlier search, if one still runs, ends
+        stop_event = threading.Event()
+        self._stop_event = stop_event
         self.progress.setVisible(scope is DiscoveryScope.NETWORK)
         self.progress.setRange(0, 0)
         self.status.setText(
@@ -156,17 +160,16 @@ class ServerSearchDialog(QDialog):
         def search(emit: Callable[[object], None]) -> list[DiscoveredServer]:
             return self._service.ollama.discover_ollama_servers(
                 scope,
-                stop_event=self._stop_event,
+                stop_event=stop_event,
                 on_found=lambda server: emit(("server", server)),
                 on_progress=lambda asked, total: emit(("progress", asked, total)),
             )
 
-        # *self* outlives the search: a dialog closed meanwhile drops what it still reports.
-        run_streaming(search, self._on_item, self._on_done, owner=self)
+        self._task.submit_streaming(search, self._on_item, self._on_done)
 
     def _on_item(self, payload: object) -> None:
         """Show one thing the search reports: a server it found, or how far it got."""
-        if not self._searching or not isinstance(payload, tuple):
+        if not isinstance(payload, tuple):
             return
         kind, *rest = payload
         if kind == "server":
@@ -208,9 +211,7 @@ class ServerSearchDialog(QDialog):
             self.list.setCurrentRow(0)
 
     def _on_done(self, result: object, error: BaseException | None) -> None:
-        """Show what the search ended with, unless the dialog has moved on."""
-        if not self._searching:
-            return
+        """Show what the search ended with."""
         self._searching = False
         if error is None and isinstance(result, list):
             for server in result:
@@ -259,6 +260,7 @@ class ServerSearchDialog(QDialog):
 
     def done(self, result: int) -> None:  # Qt override
         """Stop a running search and drop what it still reports."""
+        self._task.cancel()
         self._searching = False
         self._stop_event.set()
         super().done(result)

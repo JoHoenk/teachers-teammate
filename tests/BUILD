@@ -947,6 +947,16 @@ py_test(
     deps = _COMMON_DEPS,
 )
 
+py_test(
+    name = "test_thread_kinds",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_thread_kinds.py"],
+    args = ["unit/test_thread_kinds.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
 # The layer's lazy imports only go down: the count of `# noqa: PLC0415` is the ratchet.
 py_test(
     name = "test_lazy_import_budget",
@@ -2954,6 +2964,7 @@ test_suite(
         ":test_text_chunks",
         ":test_text_loss",
         ":test_texts_types",
+        ":test_thread_kinds",
         ":test_user_text_centralised",
         ":test_wheel",
         ":test_windows_installer_floor",

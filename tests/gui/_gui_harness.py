@@ -258,6 +258,8 @@ class FakePullThread(LongJobThread):
 
 def fake_pull_threads(monkeypatch: Any) -> list[FakePullThread]:
     """Replace the Ollama pull thread with :class:`FakePullThread`; return the ones started."""
+    for earlier in FakePullThread.instances:
+        earlier.wait(5000)  # letting go of one whose native thread still runs aborts Qt
     FakePullThread.instances = []
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", FakePullThread)
     return FakePullThread.instances

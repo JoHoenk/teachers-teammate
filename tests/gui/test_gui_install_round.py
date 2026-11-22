@@ -715,7 +715,9 @@ def test_without_a_manager_the_round_pulls_by_itself(qtbot, fake_threads) -> Non
             {"spacy_models": ["en_core_web_sm"]},
             id="spacy",
         ),
-        pytest.param(_addon_installer_dialog, "_ReaderDownloadThread", {"reader": True}, id="reader"),
+        pytest.param(
+            _addon_installer_dialog, "_ReaderDownloadThread", {"reader": True}, id="reader"
+        ),
         pytest.param(
             _addon_installer_dialog,
             "_ReaderDownloadThread",

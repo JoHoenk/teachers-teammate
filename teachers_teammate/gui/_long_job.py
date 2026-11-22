@@ -34,8 +34,10 @@ class LongJobThread(QThread):
     """A job that runs off the GUI thread and reports while it runs.
 
     A subclass implements :meth:`work` and watches :attr:`stop_event` where it waits, so
-    :meth:`stop` ends it at the next chunk.  Whatever :meth:`work` returns is
-    :attr:`result` and travels with ``finished_ok``.
+    :meth:`stop` ends it at the next chunk; :meth:`work` then raises
+    :class:`~teachers_teammate.exceptions.ModelDownloadCancelledError` to say it ended
+    unfinished.  A job that finished anyway reports success.  Whatever :meth:`work` returns
+    is :attr:`result` and travels with ``finished_ok``.
     """
 
     #: One line for the window's log.
@@ -61,7 +63,10 @@ class LongJobThread(QThread):
     # ── what a subclass provides ─────────────────────────────────────────────────
 
     def work(self) -> Any:
-        """Do the job; return what ``finished_ok`` should carry."""
+        """Do the job; return what ``finished_ok`` should carry.
+
+        Raise ``ModelDownloadCancelledError`` when :attr:`stop_event` ended it unfinished.
+        """
         raise NotImplementedError
 
     def error_text(self, exc: BaseException) -> str:
@@ -78,10 +83,7 @@ class LongJobThread(QThread):
         except Exception as exc:  # noqa: BLE001  # any failure reaches the window as a sentence
             self.finished_err.emit(self.error_text(exc))
         else:
-            if self.stopped:
-                self.finished_err.emit(ABORTED)
-            else:
-                self.finished_ok.emit(self.result)
+            self.finished_ok.emit(self.result)
 
     def start(self) -> None:
         """Start the job, which is then held until it has ended."""

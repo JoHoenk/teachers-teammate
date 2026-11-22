@@ -537,8 +537,7 @@ class AnonymizerConfigWidget(QWidget):
                 self._on_spacy_fetch_error(str(error))
                 self._on_spacy_models_fetched([])
                 return
-            assert isinstance(models, list)
-            self._on_spacy_models_fetched(models)
+            self._on_spacy_models_fetched(list(models) if isinstance(models, list) else [])
 
         self._spacy_task.submit(fetched, arrived)
 

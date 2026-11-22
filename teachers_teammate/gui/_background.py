@@ -14,6 +14,11 @@ a result for an owner that has been closed in the meantime is dropped silently.
   all earlier ones stale, so a slow, outdated answer can never overwrite a newer
   one.
 * :func:`wait_for_background_tasks` — called when the application closes.
+
+Tasks that wait on a remote server (model lists, the update check, a server search) pass
+``network=True`` and run on a pool of their own: a task cannot be interrupted, so a stale
+fetch keeps its thread until it ends, and it must not hold up the local tasks (hardware,
+export, the GPU read) while it does.
 """
 
 from __future__ import annotations
@@ -21,12 +26,15 @@ from __future__ import annotations
 import atexit
 from collections.abc import Callable
 import functools
+import time
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 #: Upper bound of simultaneous background tasks.  The tasks are I/O bound
 #: (subprocesses, HTTP), so a small fixed number is plenty.
 _MAX_THREADS = 4
+#: Upper bound of simultaneous tasks that wait on a remote server.
+_MAX_NETWORK_THREADS = 4
 #: How long :func:`wait_for_background_tasks` waits by default.
 _DEFAULT_WAIT_MS = 3000
 
@@ -36,10 +44,13 @@ _active: set[QObject] = set()
 
 
 @functools.cache
-def _get_pool() -> QThreadPool:
-    """Return the process-wide pool, created on first use (from the GUI thread)."""
+def _get_pool(network: bool) -> QThreadPool:
+    """Return the process-wide pool, created on first use (from the GUI thread).
+
+    The ``network`` pool is for tasks that wait on a remote server; the other one for the rest.
+    """
     pool = QThreadPool()
-    pool.setMaxThreadCount(_MAX_THREADS)
+    pool.setMaxThreadCount(_MAX_NETWORK_THREADS if network else _MAX_THREADS)
     return pool
 
 
@@ -151,6 +162,7 @@ def run_in_background(
     on_done: Callable[[object, BaseException | None], None],
     *,
     owner: QObject | None = None,
+    network: bool = False,
 ) -> None:
     """Run *fn* in a pool thread and call ``on_done(result, error)`` on the GUI thread.
 
@@ -159,10 +171,11 @@ def run_in_background(
         on_done: Receives ``(result, None)`` or ``(None, exception)``.
         owner: Optional widget the result belongs to.  When it has been destroyed
             by the time the task finishes, *on_done* is not called.
+        network: Run on the pool of the tasks that wait on a remote server.
     """
     delivery = _Delivery(on_done, owner)
     _active.add(delivery)
-    _get_pool().start(_Task(fn, delivery))
+    _get_pool(network).start(_Task(fn, delivery))
 
 
 def run_streaming(
@@ -171,6 +184,7 @@ def run_streaming(
     on_done: Callable[[object, BaseException | None], None],
     *,
     owner: QObject | None = None,
+    network: bool = False,
 ) -> None:
     """Run *fn* in a pool thread, handing every item it reports to the GUI thread.
 
@@ -183,17 +197,22 @@ def run_streaming(
         on_done: Receives ``(result, None)`` or ``(None, exception)``.
         owner: Optional widget the results belong to.  When it has been destroyed
             by the time an item or the end arrives, nothing is called.
+        network: Run on the pool of the tasks that wait on a remote server.
     """
     stream = _Stream(on_item, on_done, owner)
     _active.add(stream)
-    _get_pool().start(_StreamTask(fn, stream))
+    _get_pool(network).start(_StreamTask(fn, stream))
 
 
 class LatestTask:
-    """Run background tasks where only the most recently started one counts."""
+    """Run background tasks where only the most recently started one counts.
 
-    def __init__(self, owner: QObject | None = None) -> None:
+    ``network=True`` puts them on the pool of the tasks that wait on a remote server.
+    """
+
+    def __init__(self, owner: QObject | None = None, *, network: bool = False) -> None:
         self._owner = owner
+        self._network = network
         self._sequence = 0
 
     def submit(
@@ -213,7 +232,7 @@ class LatestTask:
             if ticket == self._sequence:
                 on_done(result, error)
 
-        run_in_background(fn, deliver, owner=self._owner)
+        run_in_background(fn, deliver, owner=self._owner, network=self._network)
         return ticket
 
     def submit_streaming(
@@ -234,7 +253,7 @@ class LatestTask:
             if ticket == self._sequence:
                 on_done(result, error)
 
-        run_streaming(fn, deliver_item, deliver, owner=self._owner)
+        run_streaming(fn, deliver_item, deliver, owner=self._owner, network=self._network)
         return ticket
 
     def cancel(self) -> None:
@@ -244,7 +263,10 @@ class LatestTask:
 
 def wait_for_background_tasks(timeout_ms: int = _DEFAULT_WAIT_MS) -> bool:
     """Wait up to *timeout_ms* for running tasks; return whether all finished."""
-    return _get_pool().waitForDone(timeout_ms)
+    deadline = time.monotonic() + timeout_ms / 1000
+    local_done = _get_pool(False).waitForDone(timeout_ms)
+    left_ms = max(0, int((deadline - time.monotonic()) * 1000))
+    return _get_pool(True).waitForDone(left_ms) and local_done
 
 
 atexit.register(wait_for_background_tasks, 2000)

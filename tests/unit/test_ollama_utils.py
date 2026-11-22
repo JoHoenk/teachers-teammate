@@ -25,6 +25,7 @@ from teachers_teammate.infrastructure.ollama_utils import (
     OllamaClient,
     _consume_iterator_with_first_token_timeout,
 )
+from teachers_teammate.messages import MessageKey
 
 
 _REAL_OWN_HOST_NAMES = ollama_utils.own_host_names  # tests below monkeypatch the module name
@@ -427,13 +428,15 @@ def test_chat_raises_ocr_error_on_empty_stream(monkeypatch) -> None:
     """
     Given  ollama.Client.chat() streams only whitespace/empty content chunks
     When   OllamaClient.chat() is called
-    Then   OCRError('model returned an empty response') is raised
+    Then   OCRError with the empty-answer key is raised
     """
     mock_ollama = _make_chat_mock_ollama(["", "   ", ""])
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
-    with pytest.raises(OCRError, match="empty response"):
+    with pytest.raises(OCRError) as raised:
         OllamaClient("http://127.0.0.1:11434").chat("llama3", "hi")
+
+    assert raised.value.args[0].key is MessageKey.EMPTY_ANSWER
 
 
 def test_chat_raises_ocr_error_when_first_token_times_out(monkeypatch) -> None:
@@ -441,8 +444,8 @@ def test_chat_raises_ocr_error_when_first_token_times_out(monkeypatch) -> None:
     Given  ollama.Client.chat() returns a stream whose first chunk never arrives, and the model
            is in memory (so the wait is not a load and the timeout is not paused)
     When   OllamaClient.chat() is called with a short timeout
-    Then   OCRTimeoutError (an OCRError) mentioning the first-token timeout is raised, so a
-           caller can tell a model that did not start from one that failed
+    Then   OCRTimeoutError (an OCRError) with the first-token key is raised, so a caller can
+           tell a model that did not start from one that failed
     """
     import time  # noqa: PLC0415
 
@@ -458,9 +461,10 @@ def test_chat_raises_ocr_error_when_first_token_times_out(monkeypatch) -> None:
     mock_ollama.ResponseError = Exception
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
-    with pytest.raises(OCRTimeoutError, match="No output within") as raised:
+    with pytest.raises(OCRTimeoutError) as raised:
         OllamaClient("http://127.0.0.1:11434").chat("llama3", "hi", timeout=0.05)
     assert isinstance(raised.value, OCRError)
+    assert raised.value.args[0].key is MessageKey.NO_FIRST_TOKEN
 
 
 def test_an_answer_that_never_ends_is_abandoned_at_the_total_timeout() -> None:
@@ -483,8 +487,10 @@ def test_an_answer_that_never_ends_is_abandoned_at_the_total_timeout() -> None:
             closed.append(True)
 
     started = time.monotonic()
-    with pytest.raises(OCRDeadlineError, match="still being written"):
+    with pytest.raises(OCRDeadlineError) as raised:
         _consume_iterator_with_first_token_timeout(_forever(), 1.0, total_timeout=0.2)
+
+    assert raised.value.args[0].key is MessageKey.ANSWER_ABANDONED
 
     assert time.monotonic() - started < 1.0
     deadline = time.monotonic() + 2.0
@@ -726,8 +732,10 @@ def test_chat_reports_a_refused_connection_on_the_first_read_as_unreachable(monk
     )
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
-    with pytest.raises(OllamaUnreachableError, match="cannot connect to Ollama"):
+    with pytest.raises(OllamaUnreachableError) as raised:
         OllamaClient("http://127.0.0.1:11434").chat("llama3", "hi")
+
+    assert raised.value.args[0].key is MessageKey.UNREACHABLE
 
 
 def test_chat_reports_a_connection_lost_mid_stream_as_a_plain_ocr_error(monkeypatch) -> None:
@@ -800,7 +808,7 @@ def test_consume_iterator_raises_when_first_item_times_out() -> None:
     """
     Given  an iterator whose first item is delayed beyond the timeout
     When   _consume_iterator_with_first_token_timeout() is called
-    Then   OCRError mentioning the timeout is raised
+    Then   OCRError with the first-token key is raised
     """
     import time  # noqa: PLC0415
 
@@ -808,8 +816,10 @@ def test_consume_iterator_raises_when_first_item_times_out() -> None:
         time.sleep(5)
         yield 1
 
-    with pytest.raises(OCRError, match="No output within"):
+    with pytest.raises(OCRError) as raised:
         _consume_iterator_with_first_token_timeout(_slow(), 0.05)
+
+    assert raised.value.args[0].key is MessageKey.NO_FIRST_TOKEN
 
 
 def test_a_wait_pauses_the_first_token_timeout() -> None:
@@ -846,10 +856,12 @@ def test_the_timeout_counts_again_once_the_wait_is_over() -> None:
 
     answers = [True, False]
 
-    with pytest.raises(OCRError, match="No output within"):
+    with pytest.raises(OCRError) as raised:
         _consume_iterator_with_first_token_timeout(
             _never(), 0.05, waiting=lambda _elapsed: answers.pop(0) if answers else False
         )
+
+    assert raised.value.args[0].key is MessageKey.NO_FIRST_TOKEN
 
 
 def test_the_first_token_hook_fires_once_when_the_answer_begins() -> None:
@@ -1454,8 +1466,10 @@ def test_chat_refuses_an_empty_cut_off_answer(monkeypatch) -> None:
     mock_ollama = _make_chat_mock_with_done_reason([], "length")
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
-    with pytest.raises(OCRError, match="empty response"):
+    with pytest.raises(OCRError) as raised:
         OllamaClient("http://127.0.0.1:11434").chat("m", "hi", allow_truncated=True)
+
+    assert raised.value.args[0].key is MessageKey.EMPTY_ANSWER_CUT_OFF
 
 
 def test_chat_refuses_a_request_that_cannot_fit_the_context_window(monkeypatch) -> None:
@@ -1528,13 +1542,15 @@ def test_chat_still_reports_an_empty_answer_that_ended_normally(monkeypatch) -> 
     """
     Given  a stream with no text that ended with done_reason="stop"
     When   OllamaClient.chat() is called
-    Then   OCRError("model returned an empty response") is raised
+    Then   OCRError with the empty-answer key is raised
     """
     mock_ollama = _make_chat_mock_with_done_reason([""], "stop")
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
-    with pytest.raises(OCRError, match="empty response"):
+    with pytest.raises(OCRError) as raised:
         OllamaClient("http://127.0.0.1:11434").chat("m", "hi")
+
+    assert raised.value.args[0].key is MessageKey.EMPTY_ANSWER
 
 
 def test_chat_with_stats_tells_an_unreachable_server_from_a_failed_request(monkeypatch) -> None:

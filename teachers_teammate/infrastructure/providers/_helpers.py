@@ -15,7 +15,7 @@ import urllib.error
 
 from ...domain.model_listing import ModelListing
 from ...exceptions import ProviderNotAvailableError
-from ...texts.addons import package_not_installed
+from ...messages import package_not_installed
 
 
 def api_key_check(env_key: str) -> Callable[..., tuple[bool, str]]:

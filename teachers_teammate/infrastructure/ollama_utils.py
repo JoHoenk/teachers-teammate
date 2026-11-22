@@ -31,28 +31,31 @@ from ..domain.ollama_address import (
 from ..domain.ollama_discovery import WaitDetail, WaitKind, is_private_host
 from ..exceptions import OllamaUnreachableError, RunStoppedError, stop_requested
 from ..interfaces import Reporter
-from ..texts.addons import model_pull_failed
-from ..texts.servers import (
-    CHECK_NO_MODELS,
-    EMPTY_ANSWER,
-    EMPTY_ANSWER_CUT_OFF,
+from ..messages import (
     answer_abandoned,
     cannot_connect,
     cannot_reach,
+    connection_timed_out,
+    contact_failed,
+    empty_answer,
+    empty_answer_cut_off,
+    http_error,
+    message_of,
+    model_not_found,
+    model_pull_failed,
+    no_first_token,
+    no_models_installed,
+    unreachable,
+)
+from ..texts.servers import (
+    CHECK_NO_MODELS,
     check_cannot_connect,
     check_connected,
     check_model_available,
     check_model_missing,
     check_timed_out,
     check_unexpected,
-    connection_timed_out,
-    contact_failed,
-    http_error,
-    model_not_found,
     model_not_loaded,
-    no_first_token,
-    no_models_installed,
-    unreachable,
     vision_not_supported,
 )
 from .reporting import StdoutReporter
@@ -207,11 +210,13 @@ def _mapped_stream[T](stream: Iterator[T], base_url: str) -> Iterator[T]:
             started = True
             yield item
     except ollama.ResponseError as exc:
-        raise OCRError(http_error(exc), status_code=getattr(exc, "status_code", None)) from exc
+        raise OCRError(
+            http_error(message_of(exc)), status_code=getattr(exc, "status_code", None)
+        ) from exc
     except (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError) as exc:
         if started:
             raise OCRError(str(exc)) from exc
-        raise OllamaUnreachableError(unreachable(base_url, exc)) from exc
+        raise OllamaUnreachableError(unreachable(base_url, message_of(exc))) from exc
     finally:
         # The reader thread closes the outer generator to stop the server generating; without
         # this the inner HTTP response would stay open until garbage collection.
@@ -427,7 +432,7 @@ def _consume_iterator_with_first_token_timeout[T](
             # must be able to tell an unreachable server from a model that failed.
             if isinstance(item, OCRError):
                 raise item
-            raise OCRError(str(item)) from item
+            raise OCRError(message_of(item)) from item
         results.append(item)
         try:
             item = _next_item(
@@ -790,7 +795,7 @@ class OllamaClient:
             resp = self._client().show(tag)
         except Exception as exc:  # the Ollama client may raise anything; classified below
             if _is_transport_error(exc):
-                raise OllamaUnreachableError(cannot_reach(self.base_url, exc)) from exc
+                raise OllamaUnreachableError(cannot_reach(self.base_url, message_of(exc))) from exc
             return None  # the server answered but cannot describe the model
 
         try:
@@ -834,7 +839,7 @@ class OllamaClient:
                 raise OllamaUnreachableError(cannot_connect(self.base_url)) from exc
             if "timeout" in exc_str:
                 raise OllamaUnreachableError(connection_timed_out(self.base_url)) from exc
-            raise OllamaUnreachableError(contact_failed(self.base_url, exc)) from exc
+            raise OllamaUnreachableError(contact_failed(self.base_url, message_of(exc))) from exc
 
         if not available:
             raise OllamaUnreachableError(no_models_installed(self.base_url))
@@ -918,7 +923,7 @@ class OllamaClient:
                 # returning "" would silently drop the page from the document.
                 from ..exceptions import OCRError  # noqa: PLC0415
 
-                raise OCRError(EMPTY_ANSWER_CUT_OFF)
+                raise OCRError(empty_answer_cut_off())
         return content
 
     def chat_with_stats(  # noqa: PLR0913  # one keyword shape, shared with chat()
@@ -986,7 +991,7 @@ class OllamaClient:
                 # leaked reasoning regardless.
                 stream = _open_chat_stream(client, request, None)
         except Exception as exc:
-            raise OllamaUnreachableError(unreachable(self.base_url, exc)) from exc
+            raise OllamaUnreachableError(unreachable(self.base_url, message_of(exc))) from exc
 
         waited = False
         reported: WaitDetail | None = None
@@ -1049,7 +1054,7 @@ class OllamaClient:
         # A reasoning model can spend the whole window on thinking it does not return: no text,
         # but a stop at the limit.  That is a cut-off answer, not an empty one -- say so.
         if not content.strip() and not stats.truncated:
-            raise OCRError(EMPTY_ANSWER)
+            raise OCRError(empty_answer())
         logger.debug(
             "ollama chat %s: done_reason=%r prompt_eval_count=%d eval_count=%d",
             model,
@@ -1088,4 +1093,4 @@ class OllamaClient:
                         resp.status or "", float(resp.completed or 0), float(resp.total or 0)
                     )
         except Exception as exc:
-            raise OCRError(model_pull_failed(exc)) from exc
+            raise OCRError(model_pull_failed(message_of(exc))) from exc

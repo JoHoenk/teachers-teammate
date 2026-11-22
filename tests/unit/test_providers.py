@@ -19,6 +19,7 @@ from teachers_teammate.domain.data_location import DataRegion
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.domain.stages import Stage
 from teachers_teammate.infrastructure.addon_manager import addon_requirements
+from teachers_teammate.messages import MessageKey
 
 import pytest
 
@@ -278,8 +279,10 @@ def test_uninstalled_provider_create_raises_runtime_error(
 
     with patch.dict(sys.modules, {package_name: None}):
         mod = _load(provider_name)
-        with pytest.raises(RuntimeError, match="is not installed"):
+        with pytest.raises(RuntimeError) as raised:
             mod.create("some-model")
+
+    assert raised.value.args[0].key is MessageKey.PACKAGE_NOT_INSTALLED
 
 
 # ── list_models() / create() — mistral (global + EU) ──────────────────────
@@ -785,5 +788,7 @@ def test_uninstalled_openai_ollama_provider_create_raises_runtime_error(
 
     with patch.dict(sys.modules, {package_name: None}):
         mod = _load(provider_name)
-        with pytest.raises(RuntimeError, match="is not installed"):
+        with pytest.raises(RuntimeError) as raised:
             mod.create("some-model", base_url="http://127.0.0.1:11434")
+
+    assert raised.value.args[0].key is MessageKey.PACKAGE_NOT_INSTALLED

@@ -53,7 +53,7 @@ from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts.privacy import advice_text, level_text, stage_tooltips
 from ..texts.settings import WHERE_GENERAL
-from . import _dialogs
+from . import _dialogs, _handles
 from ._app_bootstrap import create_app, finish_process
 from ._background import LatestTask, run_in_background, wait_for_background_tasks
 from ._chart_widget import ChartWidget
@@ -68,6 +68,7 @@ from ._preprocess_preview import PreprocessPreview
 from ._privacy_settings import DISPLAY_ANONYMIZED_DEFAULT, FlowAcknowledgements
 from ._privacy_view_controller import PrivacyViewController
 from ._pull_manager import PullManager
+from ._qsettings import app_settings
 from ._readiness_controller import ReadinessController, ReadinessHooks
 from ._readiness_line import ReadinessLine
 from ._results_table import ResultsTable
@@ -272,9 +273,11 @@ class MainWindow(QMainWindow):
         self._config_panel = ConfigPanel()
         self._config_panel.set_service(self._app_service)
         self._results_table = ResultsTable()
+        self._results_table.setObjectName(_handles.RESULTS_TABLE)
         self._log = LogWidget()
         # The tabs are filled once the controllers exist: the Check page is one of them.
         self._tabs = QTabWidget()
+        self._tabs.setObjectName(_handles.MAIN_TABS)
         self._tabs.setDocumentMode(True)
         _tab_bar_font = self._tabs.tabBar().font()
         _tab_bar_font.setPointSize(14)
@@ -523,9 +526,6 @@ class MainWindow(QMainWindow):
 
     # ── Settings persistence ──────────────────────────────────────────────
 
-    _QSETTINGS_ORG = "TeachersTeammate"
-    _QSETTINGS_APP = "TeachersTeammate"
-
     def _load_toml_if_present(self) -> None:
         """Read the settings file, or ask the first-start questions when there is none."""
         self._settings_file.load_if_present()
@@ -756,12 +756,12 @@ class MainWindow(QMainWindow):
             on_ready()
 
     def _settings_store(self) -> QSettings:
-        """Return a QSettings for the window's GUI preferences (not pipeline settings)."""
-        return QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
+        """Return the store of the window's GUI preferences (not pipeline settings)."""
+        return app_settings()
 
     def _acknowledgements(self) -> FlowAcknowledgements:
         """Return the store of "don't ask again" answers (read and written through QSettings)."""
-        return FlowAcknowledgements(lambda: QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP))
+        return FlowAcknowledgements(app_settings)
 
     def _confirm_data_flow_then(self, config: Config, on_ready: Callable[[], None]) -> None:
         """Ask once before a run that sends content away from this computer."""

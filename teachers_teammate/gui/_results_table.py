@@ -37,7 +37,7 @@ from ..domain.stages import Stage
 from ..texts import dialogs as dlg
 from ..texts import review as txt
 from ..texts.run import stopped_message
-from . import _dialogs
+from . import _dialogs, _handles
 from ._constants import (
     _COLOUR_CACHED,
     _COLOUR_CORRECTION_BAR,
@@ -548,6 +548,8 @@ class ResultsTable(QTableWidget):
 
     def _add_preview_button(self, row: int, source_id: str) -> None:
         btn = QPushButton("Open")
+        btn.setObjectName(_handles.OPEN_DOCUMENT)
+        btn.setProperty(_handles.SOURCE_ID_PROPERTY, source_id)
         f = btn.font()
         f.setPointSize(11)
         btn.setFont(f)

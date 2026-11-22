@@ -26,7 +26,7 @@ from ..domain.stages import Stage
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts import review as txt
-from . import _dialogs
+from . import _dialogs, _handles
 from ._background import run_in_background
 from ._config_panel import ConfigPanel
 from ._error_text import spacy_problem
@@ -117,6 +117,7 @@ class CheckController(QObject):
         self._pending_layout: CheckLayout | None = None
         self._layout_debounce = _debounce_timer(window, LAYOUT_DEBOUNCE_MS, self.flush_layout)
         self._page = CheckPage()
+        self._page.setObjectName(_handles.CHECK_PAGE)
         self._page.set_point_size(text_point_size(settings_store))
         self._page.set_layout(
             CheckLayout(

@@ -11,6 +11,7 @@ from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import DEFAULTS, OcrConfig
 from teachers_teammate.domain.benchmark import compare_pair
+from teachers_teammate.gui import _handles
 from teachers_teammate.gui.benchmark.composition import build_benchmark_window
 from teachers_teammate.infrastructure.benchmark.run_store import StoredRun
 
@@ -349,3 +350,16 @@ def test_closing_from_the_main_window_stops_a_run_without_asking(window, monkeyp
     win.close()
 
     assert worker.stop_event.is_set()
+
+
+@pytest.mark.gui
+def test_the_walkthrough_finds_the_window_by_its_object_name(window) -> None:
+    """
+    Given  the Benchmark window, which the main window does not own
+    When   the app walkthrough looks for it among the top-level widgets
+    Then   it carries the object name ``gui/_handles.py`` gives it
+    """
+    win, _service = window
+
+    assert win.objectName() == _handles.BENCHMARK_WINDOW
+    assert win.parent() is None

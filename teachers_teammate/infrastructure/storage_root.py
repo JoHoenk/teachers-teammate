@@ -46,6 +46,7 @@ import os
 from pathlib import Path
 import shutil
 
+from ..config import override_root
 from ..exceptions import ConfigFileNotFoundError, StorageResolutionError
 
 # StorageResolutionError is defined in exceptions.py; re-exported here for
@@ -106,12 +107,6 @@ def _get_platform_cache_dir() -> Path:
     return cache_dir
 
 
-def _override_root() -> Path | None:
-    """Return the ``TEACHERS_TEAMMATE_TMPDIR`` folder, or ``None`` when it is not set."""
-    override = os.environ.get("TEACHERS_TEAMMATE_TMPDIR", "").strip()
-    return Path(override) if override else None
-
-
 def _platform_dir(kind: str) -> Path:
     """Return the per-user OS folder of *kind* (``"cache"``, ``"config"`` or ``"data"``).
 
@@ -132,12 +127,12 @@ def _legacy_cache_root() -> Path | None:
 
     ``None`` under the override: there the old and the new place are the same folder.
     """
-    return None if _override_root() else _platform_dir("cache")
+    return None if override_root() else _platform_dir("cache")
 
 
 def _user_root(kind: str) -> Path:
     """Return the per-user folder of *kind*, or the storage root when it cannot be used."""
-    override = _override_root()
+    override = override_root()
     if override is not None:
         return override
     path = _platform_dir(kind)

@@ -20,15 +20,13 @@ import logging
 import os
 from types import ModuleType
 
-from PySide6.QtCore import QSettings
+from ._qsettings import app_settings
 
 LOG = logging.getLogger(__name__)
 
 #: The service name the keys are filed under in the secret store.
 KEYRING_SERVICE = "TeachersTeammate"
 
-_QSETTINGS_ORG = "TeachersTeammate"
-_QSETTINGS_APP = "TeachersTeammate"
 _FILE_GROUP = "credentials"
 
 #: The keys that were already in the environment when :meth:`CredentialStore.load_into_environment`
@@ -121,7 +119,7 @@ class CredentialStore:
             else:
                 self._remove_file_value(env_key)
                 return KeyLocation.KEYCHAIN
-        QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).setValue(f"{_FILE_GROUP}/{env_key}", value)
+        app_settings().setValue(f"{_FILE_GROUP}/{env_key}", value)
         return KeyLocation.SETTINGS_FILE
 
     def remove(self, env_key: str) -> None:
@@ -174,9 +172,9 @@ class CredentialStore:
 
     @staticmethod
     def _file_value(env_key: str) -> str:
-        value = QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).value(f"{_FILE_GROUP}/{env_key}", "")
+        value = app_settings().value(f"{_FILE_GROUP}/{env_key}", "")
         return value if isinstance(value, str) else ""
 
     @staticmethod
     def _remove_file_value(env_key: str) -> None:
-        QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).remove(f"{_FILE_GROUP}/{env_key}")
+        app_settings().remove(f"{_FILE_GROUP}/{env_key}")

@@ -54,6 +54,7 @@ from ...domain.teacher_work import (
 from ...texts import check as check_text
 from ...texts import review as txt
 from .._export_menu import ExportKind
+from .._handles import READ_VIEW
 from ._masking import Masking
 from ._run_strip import PRIMARY_STYLE, NextStepStrip, RunState, RunStrip
 from ._scan_view import ScanPane
@@ -302,6 +303,7 @@ class CheckBody(QWidget):
 
         self._stack = QStackedWidget()
         self.read_view = ReadView()
+        self.read_view.setObjectName(READ_VIEW)
         self.marked_view = MarkedView()
         self.final_view = FinalView()
         for view in (self.read_view, self.marked_view, self.final_view):

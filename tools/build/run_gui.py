@@ -55,12 +55,13 @@ from teachers_teammate.infrastructure.addon_manager import (
     prepare_packages_dir,
 )
 
-# The helper modes below (smoke test, forget keys, spaCy model download) are not a start of the
-# app: one of them runs while the app, or an install it started, is using the folder, so they
-# leave the clean-up to a normal start.
+# The helper modes below (smoke test, a script handed over, forget keys, spaCy model download)
+# are not a start of the app: one of them runs while the app, or an install it started, is using
+# the folder, so they leave the clean-up to a normal start.
 _HELPER_MODES = (
     "--_smoke_test",
     "--_addon_smoke_test",
+    "--_run_script",
     "--_forget_keys",
     "--_set_update_check",
     "--_spacy_download_mode",
@@ -93,6 +94,24 @@ if "--_addon_smoke_test" in sys.argv:
     from teachers_teammate.frozen_modes import run_addon_smoke_test
 
     raise SystemExit(run_addon_smoke_test(_SmokePath(sys.argv[_idx + 1])))
+
+# ── script dispatch ──────────────────────────────────────────────────────────
+# `--_run_script <script.py> <file.json> [args…]` runs a script the caller hands over, in this
+# process: the app walkthrough is one (frozen_modes.run_script).  The script writes the result
+# file, so a --windowed build reports there instead of on a console it does not have.
+if "--_run_script" in sys.argv:
+    _idx = sys.argv.index("--_run_script")
+    _rest = sys.argv[_idx + 1 :]
+    if len(_rest) < 2:
+        raise SystemExit(2)
+
+    from pathlib import Path as _ScriptPath
+
+    from teachers_teammate.frozen_modes import run_script
+
+    raise SystemExit(
+        run_script(_ScriptPath(_rest[0]), _ScriptPath(_rest[1]), _rest[2:]),
+    )
 
 # ── forget-keys dispatch ─────────────────────────────────────────────────────
 # The uninstaller runs `--_forget_keys` before it removes the program files: the API

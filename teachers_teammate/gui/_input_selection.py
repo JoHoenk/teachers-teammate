@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QWidget
 
 from ..texts import dialogs as dlg
 from ..texts import review as txt
-from . import _dialogs
+from . import _dialogs, _handles
 from ._path_row import PathRow
 
 
@@ -42,6 +42,8 @@ class InputSelection(QObject):
         self.folder_button = self.row.add_button(
             txt.DOCUMENTS_FOLDER_BUTTON, txt.DOCUMENTS_FOLDER_TOOLTIP, self.choose_folder
         )
+        self.folder_button.setObjectName(_handles.INPUT_FOLDER_BUTTON)
+        self.row.field().setObjectName(_handles.INPUT_PATH)
         self.files_button = self.row.add_button(
             txt.DOCUMENTS_FILES_BUTTON, txt.DOCUMENTS_FILES_TOOLTIP, self.choose_files
         )

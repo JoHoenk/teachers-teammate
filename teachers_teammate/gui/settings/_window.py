@@ -23,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from PySide6.QtCore import QModelIndex, QSettings, QSignalBlocker, Qt, Signal
+from PySide6.QtCore import QModelIndex, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QPainter, QShowEvent
 from PySide6.QtWidgets import (
     QDialog,
@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 from ...config import OcrConfig
 from ...texts import dialogs as dlg
 from .. import _dialogs
+from .._qsettings import app_settings
 from .._window_geometry import fit_to_screen, restore_geometry
 from ._addons_page import AddonsPage
 from ._ai_models_page import AiModelsPage
@@ -67,8 +68,6 @@ ADDONS_NOTE = "Downloads and installs start right away and are not undone by Can
 #: QSettings keys (GUI state, not pipeline settings).
 GEOMETRY_KEY = "gui/settings_geometry"
 LAST_PAGE_KEY = "gui/settings_page"
-_QSETTINGS_ORG = "TeachersTeammate"
-_QSETTINGS_APP = "TeachersTeammate"
 
 #: Room around and between the topics, and a rounded highlight in the system's own colours.
 SIDEBAR_STYLE = (
@@ -113,7 +112,7 @@ class _SidebarDelegate(QStyledItemDelegate):
 
 def last_page() -> SettingsPage:
     """Return the page the Settings window showed last (AI models the first time)."""
-    stored = str(QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).value(LAST_PAGE_KEY, "") or "")
+    stored = str(app_settings().value(LAST_PAGE_KEY, "") or "")
     try:
         return SettingsPage(stored)
     except ValueError:
@@ -212,7 +211,7 @@ class SettingsWindow(QDialog):
         root.addLayout(footer)
 
     def _restore_geometry(self) -> None:
-        geometry = QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).value(GEOMETRY_KEY)
+        geometry = app_settings().value(GEOMETRY_KEY)
         if not restore_geometry(self, geometry):
             self.resize(960, 680)
         # A saved size can be from a larger screen, and a page's minimum can be larger than a
@@ -478,7 +477,7 @@ class SettingsWindow(QDialog):
             built.shutdown()
         if result != QDialog.DialogCode.Accepted:
             discard_key_drafts(self._key_drafts, self._context.app_service)
-        qs = QSettings(_QSETTINGS_ORG, _QSETTINGS_APP)
+        qs = app_settings()
         qs.setValue(GEOMETRY_KEY, self.saveGeometry())
         qs.setValue(LAST_PAGE_KEY, self.current_page().value)
         super().done(result)

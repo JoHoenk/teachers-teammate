@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QPushButton, QStyle, QWidget
 from ..application.composition import AppServices
 from ..application.export import DocxExport, NothingToExport, WouldOverwriteInput
 from ..texts import dialogs as dlg
-from . import _dialogs
+from . import _dialogs, _handles
 from ._background import run_in_background
 from ._config_panel import ConfigPanel
 from ._error_text import spacy_problem
@@ -73,6 +73,7 @@ class ExportController(QObject):
         style = self._window.style()
         assert style is not None
         button = QPushButton("Export")
+        button.setObjectName(_handles.EXPORT_BUTTON)
         button.setIcon(
             QIcon.fromTheme(
                 "document-export",

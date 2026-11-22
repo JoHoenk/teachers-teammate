@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QVBoxLayout, QWidget
 
 from ....application.composition import AppServices
+from ....domain.data_location import ENGINE_PPOCR
 from ....domain.local_models import READER_SIZE_LABEL
 from ....texts.settings import TAB_READING_MODELS
 from ... import _user_text as txt
@@ -41,7 +42,7 @@ class ReadingModelsTab(ScrolledTab):
 
         intro = QLabel(
             "The built-in reader reads pages on this computer, without a server. "
-            f"{txt.OCR_ENGINE_HINTS['ppocr']} Its model files, and the page models of the "
+            f"{txt.OCR_ENGINE_HINTS[ENGINE_PPOCR]} Its model files, and the page models of the "
             "automatic image preparation, come from PaddlePaddle (Apache-2.0)."
         )
         intro.setWordWrap(True)

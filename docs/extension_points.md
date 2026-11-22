@@ -15,15 +15,26 @@ file. What a stage produced with a remark is an outcome, not an exception. See
 
 ## New LLM provider
 
-A new file `<name>.py` in `infrastructure/providers/`, nothing else (`llm_factory.py` discovers
-it). It exposes `create(model, **kwargs) -> BaseChatModel` and a `PROVIDER_INFO`:
+A new file `<name>.py` in `infrastructure/providers/` and its two default models in
+`_model_defaults.py` (`config.py` reads them without importing a provider module);
+`tests/unit/test_providers.py` checks both. `llm_factory.py` finds the file, and Bazel and the
+bundle spec take the folder as it is. The module exposes `create(model, **kwargs) -> BaseChatModel`
+and `PROVIDER = ProviderInfo(...)` (`domain/providers.py`) — the one place its facts live; the
+model pickers, Add-ons, the privacy wording and the installer read them from there.
 
-- `display_name`; `self_hosted: True` only for a server the user runs themselves — **anything
-  else is shown (and confirmed) as an online service**.
-- `data_region`: `"eu"`, `"non_eu"` or `"unknown"` (missing = unknown). `vendor_country` is the
-  tooltip only. If the region depends on settings (custom base URL), add a module function
+- `name`: the module name; `display_name`: what a teacher reads.
+- `self_hosted=True` only for a server the user runs themselves — **anything else is shown
+  (and confirmed) as an online service**.
+- `package`: the pip package it needs (`AddonPackage(module, pip, version_spec)`); the Add-ons page
+  and the run preflight take it from there. `package_optional=True` for one the app can talk to
+  directly (Ollama). Leave it `None` for a provider that ships in the base install.
+- `data_region`: `eu`, `non_eu` or `unknown` (the default). `vendor_country` is the tooltip only.
+  If the region depends on settings (custom base URL), add a module function
   `data_region(**settings) -> str`; `llm_factory.get_provider_data_region()` prefers it.
 - `key_url` (optional): the vendor page where a key is created; Settings links to it.
+- `strict_json_schema=True` only where the review schema works in the provider's strict mode.
+- Import the package only inside `create()` (`import_guard`): the Add-ons installer loads the
+  module before the add-on folder is on `sys.path`.
 
 ## Anonymization (who runs spaCy)
 

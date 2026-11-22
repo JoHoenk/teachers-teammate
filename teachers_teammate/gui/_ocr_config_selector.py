@@ -39,7 +39,12 @@ from PySide6.QtWidgets import (
 
 from ..application.composition import AppServices
 from ..config import DEFAULTS, OcrConfig
-from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, DataLocation
+from ..domain.data_location import (
+    ENGINE_OLLAMA,
+    ENGINE_PPOCR,
+    PROVIDER_OLLAMA,
+    DataLocation,
+)
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import OCR_TEMPERATURE
 from ..domain.pdf_text_layer import (
@@ -228,7 +233,9 @@ class OcrModelPicker(QWidget):
     def on_packages_changed(self) -> None:
         """An add-on or model was installed: check the engine's package and the list again."""
         if self.engine() == ENGINE_OLLAMA:
-            self._app_service.providers.invalidate_model_cache("ollama", base_url=self._ollama_url)
+            self._app_service.providers.invalidate_model_cache(
+                PROVIDER_OLLAMA, base_url=self._ollama_url
+            )
         self.refresh()
 
     def set_hardware_profile(self, setting: str) -> None:

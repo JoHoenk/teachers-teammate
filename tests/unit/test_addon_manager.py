@@ -15,7 +15,6 @@ from teachers_teammate.infrastructure import addon_manager
 from teachers_teammate.domain.local_models import PRIVACY_ADDON_ID
 from teachers_teammate.exceptions import AddonInstallError, InstallFailure
 from teachers_teammate.infrastructure.addon_manager import (
-    ADDON_LLM_OPENAI,
     _packages_dir_readable,
     can_install_addons,
     clear_stale_modules,
@@ -27,6 +26,9 @@ from teachers_teammate.infrastructure.addon_manager import (
     remove_retired_addons,
 )
 from teachers_teammate.infrastructure.spacy_models import spacy_model_url
+
+#: The add-on of the OpenAI provider package: an install that needs the network.
+ADDON_LLM_OPENAI = "llm_openai"
 
 
 # ── get_packages_dir ──────────────────────────────────────────────────────────

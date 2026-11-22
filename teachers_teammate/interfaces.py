@@ -32,6 +32,7 @@ from .domain.formatted_text import FormattedDocument, TextFormat
 from .domain.ollama_discovery import WaitDetail
 from .domain.proofreading.result import CorrectionOutcome
 from .domain.proofreading.review import CorrectionReview
+from .domain.providers import ProviderInfo
 from .domain.run_summary import FileOutcome, KeepAwakeState
 
 if TYPE_CHECKING:
@@ -50,20 +51,20 @@ class LLMProviderModule(Protocol):
 
     Required members
     ----------------
-    ``PROVIDER_INFO``
-        Metadata dict (``needs_api_key``, ``env_key``, ``needs_base_url``, …).
+    ``PROVIDER``
+        What the provider is and needs (:class:`~teachers_teammate.domain.providers.ProviderInfo`).
     ``create(model, **kwargs) -> BaseChatModel``
         Build and return the provider-specific LLM client.
 
-    Optional members (guarded by ``hasattr`` / ``PROVIDER_INFO`` capability flags)
-    -------------------------------------------------------------------------------
+    Optional members (guarded by ``hasattr`` / ``PROVIDER`` capability flags)
+    ---------------------------------------------------------------------------
     ``list_models(**kwargs) -> list[str]``
         Return available model names (live or static).
     ``check_connection(**kwargs) -> tuple[bool, str]``
         Return ``(ok, human-readable message)`` for a lightweight health check.
     """
 
-    PROVIDER_INFO: dict
+    PROVIDER: ProviderInfo
 
     def create(self, model: str, **kwargs: object) -> BaseChatModel: ...
 

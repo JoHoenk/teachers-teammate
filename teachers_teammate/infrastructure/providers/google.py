@@ -25,7 +25,9 @@ import urllib.request
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
+from teachers_teammate.domain.data_location import DataRegion
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.infrastructure.providers._helpers import (
     api_key_check,
     checked_listing,
@@ -36,26 +38,27 @@ _MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 _LIST_TIMEOUT_S = 10.0
 _MAX_PAGES = 5  # 1000 models a page: far more than Google offers; bounds a misbehaving answer
 
-PROVIDER_INFO: dict = {
-    "display_name": "Google (Gemini)",
-    "data_region": "non_eu",
-    "vendor_country": "USA",
-    "needs_api_key": True,  # key is read from $GOOGLE_API_KEY by LangChain
+PROVIDER = ProviderInfo(
+    name="google",
+    display_name="Google (Gemini)",
+    data_region=DataRegion.NON_EU,
+    vendor_country="USA",
+    needs_api_key=True,  # key is read from $GOOGLE_API_KEY by LangChain
     # The vendor's page where a key is created; the Settings window links to it.
-    "key_url": "https://aistudio.google.com/apikey",
-    "env_key": "GOOGLE_API_KEY",
-    "needs_base_url": False,
-    "can_list_models": True,
-    "package": {"module": "langchain_google_genai", "pip": "langchain-google-genai"},
-    "default_model": "gemini-2.0-flash",
-    "models": [
+    key_url="https://aistudio.google.com/apikey",
+    env_key="GOOGLE_API_KEY",
+    can_list_models=True,
+    package=AddonPackage(
+        module="langchain_google_genai", pip="langchain-google-genai", version_spec=">=2.0"
+    ),
+    models=(
         "gemini-2.5-pro",
         "gemini-2.5-flash",
         "gemini-2.0-flash",
         "gemini-1.5-pro",
         "gemini-1.5-flash",
-    ],
-}
+    ),
+)
 
 
 def _fetch_gemini_names() -> list[str]:
@@ -66,7 +69,7 @@ def _fetch_gemini_names() -> list[str]:
     ``google-ai-generativelanguage``, now ``google-genai``), so none of them can be relied on.
     The key travels in a header, never in the URL.
     """
-    api_key = os.environ.get(PROVIDER_INFO["env_key"], "").strip()
+    api_key = os.environ.get(PROVIDER.env_key, "").strip()
     names: set[str] = set()
     page_token = ""
     for _ in range(_MAX_PAGES):
@@ -93,8 +96,8 @@ def list_models_checked(**_kwargs: object) -> ModelListing:
     """Return Gemini model names from the Google API and whether the list is live."""
     return checked_listing(
         _fetch_gemini_names,
-        PROVIDER_INFO["models"],
-        env_key=PROVIDER_INFO["env_key"],
+        PROVIDER.models,
+        env_key=PROVIDER.env_key,
         service="Google",
     )
 
@@ -119,4 +122,4 @@ def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseCh
     return ChatGoogleGenerativeAI(model=model, temperature=temperature)
 
 
-check_connection = api_key_check(PROVIDER_INFO["env_key"])
+check_connection = api_key_check(PROVIDER.env_key)

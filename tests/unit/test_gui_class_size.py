@@ -26,7 +26,7 @@ SCANNED = "teachers_teammate/gui"
 
 #: The classes still over the limit, at the size they have today.
 OVERSIZED: dict[str, int] = {
-    "teachers_teammate/gui/_main_window.py::MainWindow": 1063,
+    "teachers_teammate/gui/_main_window.py::MainWindow": 1062,
 }
 
 #: The classes still over the attribute limit, at the number they assign today (none).

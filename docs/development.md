@@ -298,8 +298,8 @@ recommended) its tag to the matching `RECOMMENDED` entries. Consistency tests in
 right category and that every best pick runs at full speed on its profile — new entries must
 keep them green.
 
-The static defaults (`DEFAULTS["ocr_model"]` / `correction_model` / `evaluate_model`,
-the per-task provider defaults, and the Ollama provider's `default_model`) all come from
+The static defaults (`DEFAULTS["ocr_model"]` / `correction_model` / `evaluate_model` and
+the per-task provider defaults in `_model_defaults.py`) all come from
 `DEFAULT_OCR_MODEL` / `DEFAULT_WRITING_MODEL` in the catalog module. They are independent
 of the hardware profile — the per-profile `RECOMMENDED` lists only drive the GUI
 recommendations — so a default may not fit a small computer.
@@ -799,9 +799,10 @@ Proofreading and content review share one widget, `AiServiceSection`
 (`gui/settings/_ai_service_section.py`); an `AiServiceSpec` only names the settings keys of
 the step.  What it relies on:
 
-- **Each provider module declares its package** in `PROVIDER_INFO["package"]`
-  (`{"module": "langchain_mistralai", "pip": "langchain-mistralai"}`); Ollama's connector is
-  `package_optional` because the app talks to Ollama directly.  `ProviderService`
+- **Each provider module declares its package** in `PROVIDER.package`
+  (`AddonPackage(module="langchain_mistralai", pip="langchain-mistralai")`); Ollama's connector
+  is `package_optional` because the app talks to Ollama directly.  The Add-ons tables in
+  `addon_manager.py` are built from these declarations.  `ProviderService`
   (`application/providers.py`) answers `missing_provider_package()` and
   `list_provider_packages()` (providers sharing a package appear once), so the pages,
   Add-ons and the run preflight need no list of their own.
@@ -817,10 +818,10 @@ the step.  What it relies on:
 - **Choosing another provider asks that provider.** The change handler shows the built-in
   names and starts a fetch tagged with the provider; an answer for any other provider is
   dropped.  A model name from the previous provider is kept only if the new one offers it.
-- **Every provider declares where it processes data** in `PROVIDER_INFO["data_region"]`:
-  `"eu"`, `"non_eu"` or `"unknown"`.  A missing key counts as `"unknown"`, which is shown
+- **Every provider declares where it processes data** in `PROVIDER.data_region`:
+  `eu`, `non_eu` or `unknown`.  An undeclared region counts as `unknown`, which is shown
   like "outside the EU" — a school can only rely on what a vendor actually declares, so
-  "not declared" must never read as "EU".  `PROVIDER_INFO["vendor_country"]` is optional
+  "not declared" must never read as "EU".  `PROVIDER.vendor_country` is optional
   and only fills the tooltip.  A provider whose region depends on the settings (a custom
   base URL, a regional endpoint such as `api.eu.mistral.ai`) adds a module function
   `data_region(**settings) -> str`; `llm_factory.get_provider_data_region()` prefers it

@@ -18,6 +18,7 @@ import threading
 import time
 
 from ...config import Config
+from ...domain.data_location import ENGINE_OLLAMA
 from ...exceptions import RunStoppedError
 from ..ollama_utils import OllamaClient
 from ..onnx.store import ModelStore
@@ -64,7 +65,7 @@ def run_ocr(
     try:
         ollama_client = (
             OllamaClient(config.ollama_url, cancel_event=stop_event)
-            if config.ocr.engine == "ollama"
+            if config.ocr.engine == ENGINE_OLLAMA
             else None
         )
         ocr = builder.build_ocr(ollama_client, stop_event)

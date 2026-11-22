@@ -5,6 +5,7 @@ from __future__ import annotations
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 import pytest
 
+from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.infrastructure.llm_factory import (
     build_llm,
     get_provider_data_region,
@@ -14,10 +15,6 @@ from teachers_teammate.infrastructure.llm_factory import (
     list_providers,
     provider_package,
     provider_package_required,
-)
-
-_REQUIRED_INFO_KEYS = frozenset(
-    {"needs_api_key", "needs_base_url", "can_list_models", "default_model", "models"}
 )
 
 
@@ -52,31 +49,32 @@ def test_list_providers_returns_sorted_list() -> None:
     assert providers == sorted(providers)
 
 
-def test_all_providers_have_required_info_keys() -> None:
+def test_all_providers_are_discovered_by_get_provider_info() -> None:
     """
     Given  all discovered provider names
     When   get_provider_info() is called for each
-    Then   every info dict contains the five required metadata keys
+    Then   each one answers with the ProviderInfo its module declares
     """
     for name in list_providers():
         info = get_provider_info(name)
-        missing = _REQUIRED_INFO_KEYS - info.keys()
-        assert not missing, f"Provider '{name}' missing keys: {missing}"
+        assert isinstance(info, ProviderInfo), f"{name}: no ProviderInfo"
+        assert info.name == name
 
 
 def test_get_provider_info_returns_correct_types() -> None:
     """
     Given  all discovered provider names
     When   get_provider_info() is called for each
-    Then   each metadata value has the expected Python type (bool / str / list)
+    Then   the switches are bool and the model list is a tuple of str
     """
     for name in list_providers():
         info = get_provider_info(name)
-        assert isinstance(info["needs_api_key"], bool), f"{name}: needs_api_key not bool"
-        assert isinstance(info["needs_base_url"], bool), f"{name}: needs_base_url not bool"
-        assert isinstance(info["can_list_models"], bool), f"{name}: can_list_models not bool"
-        assert isinstance(info["default_model"], str), f"{name}: default_model not str"
-        assert isinstance(info["models"], list), f"{name}: models not list"
+        assert info is not None
+        assert isinstance(info.needs_api_key, bool), f"{name}: needs_api_key not bool"
+        assert isinstance(info.needs_base_url, bool), f"{name}: needs_base_url not bool"
+        assert isinstance(info.can_list_models, bool), f"{name}: can_list_models not bool"
+        assert isinstance(info.models, tuple), f"{name}: models not tuple"
+        assert all(isinstance(model, str) for model in info.models), f"{name}: models not str"
 
 
 def test_build_llm_calls_provider_create(mocker) -> None:
@@ -115,14 +113,14 @@ def test_list_provider_models_returns_empty_list_on_exception(mocker) -> None:
 
 def test_list_provider_models_returns_static_list_when_no_list_models(mocker) -> None:
     """
-    Given  a mock provider module that has PROVIDER_INFO but no list_models attribute
+    Given  a mock provider module that has PROVIDER but no list_models attribute
     When   list_provider_models() is called
-    Then   the static models list from PROVIDER_INFO is returned
+    Then   the static models list from PROVIDER is returned
     """
-    mock_mod = mocker.Mock(spec=["PROVIDER_INFO"])
-    mock_mod.PROVIDER_INFO = {
-        "models": ["model-a", "model-b"],
-    }
+    mock_mod = mocker.Mock(spec=["PROVIDER"])
+    mock_mod.PROVIDER = ProviderInfo(
+        name="acme", display_name="Acme", models=("model-a", "model-b")
+    )
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory.importlib.import_module",
         return_value=mock_mod,
@@ -159,7 +157,7 @@ def test_build_llm_catches_system_exit_from_provider(mocker) -> None:
     Then   a RuntimeError is raised instead of SystemExit propagating to the caller
     """
     mock_provider = mocker.Mock()
-    mock_provider.PROVIDER_INFO = {"needs_base_url": False}
+    mock_provider.PROVIDER = ProviderInfo(name="acme", display_name="Acme")
     mock_provider.create.side_effect = SystemExit(1)
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
@@ -171,13 +169,13 @@ def test_build_llm_catches_system_exit_from_provider(mocker) -> None:
 
 def test_build_llm_passes_base_url_when_provider_needs_it(mocker) -> None:
     """
-    Given  a provider whose PROVIDER_INFO has needs_base_url=True
+    Given  a provider whose PROVIDER has needs_base_url=True
     When   build_llm() is called with base_url='http://custom:11434'
     Then   create() is called with that base_url keyword argument
     """
     fake = FakeListChatModel(responses=["ok"])
     mock_provider = mocker.Mock()
-    mock_provider.PROVIDER_INFO = {"needs_base_url": True}
+    mock_provider.PROVIDER = ProviderInfo(name="acme", display_name="Acme", needs_base_url=True)
     mock_provider.create.return_value = fake
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
@@ -191,25 +189,25 @@ def test_build_llm_passes_base_url_when_provider_needs_it(mocker) -> None:
     )
 
 
-def test_get_provider_info_returns_empty_dict_for_nonexistent_provider() -> None:
+def test_get_provider_info_returns_none_for_nonexistent_provider() -> None:
     """
     Given  a provider name that has no corresponding module in the providers package
     When   get_provider_info() is called
-    Then   an empty dict is returned (ImportError is handled internally)
+    Then   None is returned (ImportError is handled internally)
     """
     result = get_provider_info("completely_nonexistent_provider_xyz")
-    assert result == {}
+    assert result is None
 
 
 def test_build_llm_forwards_temperature_to_provider_create(mocker) -> None:
     """
-    Given  a provider module with PROVIDER_INFO needs_base_url=False
+    Given  a provider module with PROVIDER needs_base_url=False
     When   build_llm() is called with temperature=0.3
     Then   create() receives temperature=0.3
     """
     fake = FakeListChatModel(responses=["ok"])
     mock_provider = mocker.Mock()
-    mock_provider.PROVIDER_INFO = {"needs_base_url": False}
+    mock_provider.PROVIDER = ProviderInfo(name="acme", display_name="Acme")
     mock_provider.create.return_value = fake
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
@@ -222,13 +220,13 @@ def test_build_llm_forwards_temperature_to_provider_create(mocker) -> None:
 
 def test_build_llm_forwards_temperature_with_base_url(mocker) -> None:
     """
-    Given  a provider module with PROVIDER_INFO needs_base_url=True
+    Given  a provider module with PROVIDER needs_base_url=True
     When   build_llm() is called with base_url and temperature=0.1
     Then   create() receives both base_url and temperature=0.1
     """
     fake = FakeListChatModel(responses=["ok"])
     mock_provider = mocker.Mock()
-    mock_provider.PROVIDER_INFO = {"needs_base_url": True}
+    mock_provider.PROVIDER = ProviderInfo(name="acme", display_name="Acme", needs_base_url=True)
     mock_provider.create.return_value = fake
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
@@ -247,8 +245,8 @@ def test_checked_listing_of_a_provider_that_cannot_be_asked_is_builtin(mocker) -
     When   list_provider_models_checked() is called
     Then   its static list is returned and marked built-in (by design, not a failure)
     """
-    mock_mod = mocker.Mock(spec=["PROVIDER_INFO"])
-    mock_mod.PROVIDER_INFO = {"models": ["m-1"], "can_list_models": False}
+    mock_mod = mocker.Mock(spec=["PROVIDER"])
+    mock_mod.PROVIDER = ProviderInfo(name="acme", display_name="Acme", models=("m-1",))
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory.importlib.import_module",
         return_value=mock_mod,
@@ -265,8 +263,8 @@ def test_checked_listing_of_a_provider_that_can_be_asked_is_live(mocker) -> None
     When   list_provider_models_checked() is called
     Then   the answer is marked live
     """
-    mock_mod = mocker.Mock(spec=["PROVIDER_INFO", "list_models"])
-    mock_mod.PROVIDER_INFO = {"models": [], "can_list_models": True}
+    mock_mod = mocker.Mock(spec=["PROVIDER", "list_models"])
+    mock_mod.PROVIDER = ProviderInfo(name="acme", display_name="Acme", can_list_models=True)
     mock_mod.list_models.return_value = ["a:latest"]
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory.importlib.import_module",
@@ -304,6 +302,7 @@ def test_checked_listing_reports_a_provider_that_raises_as_failed(mocker) -> Non
     Then   a failed, empty listing comes back instead of the exception
     """
     mock_mod = mocker.Mock()
+    mock_mod.PROVIDER = ProviderInfo(name="acme", display_name="Acme")
     mock_mod.list_models_checked.side_effect = RuntimeError("boom")
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory.importlib.import_module",
@@ -324,7 +323,7 @@ def test_checked_listing_of_a_provider_that_raises_keeps_its_builtin_models(mock
            still has names to offer
     """
     mock_mod = mocker.Mock()
-    mock_mod.PROVIDER_INFO = {"models": ["m-1", "m-2"]}
+    mock_mod.PROVIDER = ProviderInfo(name="acme", display_name="Acme", models=("m-1", "m-2"))
     mock_mod.list_models_checked.side_effect = RuntimeError("boom")
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory.importlib.import_module",
@@ -395,12 +394,11 @@ def test_an_unknown_provider_has_no_declared_region() -> None:
 
 def test_a_provider_without_the_key_counts_as_unknown(mocker) -> None:
     """
-    Given  a provider module whose PROVIDER_INFO omits data_region
+    Given  a provider module that declares no PROVIDER
     When   its data region is asked for
     Then   it is "unknown"
     """
-    module = mocker.Mock(spec=["PROVIDER_INFO"])
-    module.PROVIDER_INFO = {"display_name": "Old"}
+    module = mocker.Mock(spec=["create"])
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory._import_provider_module",
         return_value=module,
@@ -414,8 +412,8 @@ def test_a_provider_function_decides_the_region_from_the_settings(mocker) -> Non
     When   the settings select a European endpoint
     Then   the function's answer is used, and it is passed the settings
     """
-    module = mocker.Mock(spec=["PROVIDER_INFO", "data_region"])
-    module.PROVIDER_INFO = {"data_region": "unknown"}
+    module = mocker.Mock(spec=["PROVIDER", "data_region"])
+    module.PROVIDER = ProviderInfo(name="acme", display_name="Acme")
     module.data_region = lambda **settings: "eu" if settings.get("eu") else "non_eu"
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory._import_provider_module",
@@ -432,7 +430,7 @@ def test_a_region_function_that_raises_counts_as_unknown(mocker) -> None:
     When   its data region is asked for
     Then   it is "unknown" instead of an error reaching the user
     """
-    module = mocker.Mock(spec=["PROVIDER_INFO", "data_region"])
+    module = mocker.Mock(spec=["PROVIDER", "data_region"])
 
     def broken(**_settings: object) -> str:
         raise RuntimeError("boom")
@@ -451,8 +449,8 @@ def test_an_unrecognised_region_string_counts_as_unknown(mocker) -> None:
     When   its data region is asked for
     Then   it is "unknown" rather than a claim of privacy
     """
-    module = mocker.Mock(spec=["PROVIDER_INFO"])
-    module.PROVIDER_INFO = {"data_region": "europe-ish"}
+    module = mocker.Mock(spec=["PROVIDER"])
+    module.PROVIDER = mocker.Mock(data_region="europe-ish")
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory._import_provider_module",
         return_value=module,
@@ -463,9 +461,11 @@ def test_an_unrecognised_region_string_counts_as_unknown(mocker) -> None:
 def test_the_vendor_country_is_available_for_the_tooltip() -> None:
     """
     Given  providers that declare where the vendor is at home
-    When   their PROVIDER_INFO is read
+    When   their PROVIDER is read
     Then   the country is there for the tooltip (and absent where it is not declared)
     """
-    assert get_provider_info("mistral_eu").get("vendor_country") == "France"
-    assert get_provider_info("openai").get("vendor_country") == "USA"
-    assert not get_provider_info("ollama").get("vendor_country")
+    mistral_eu, openai = get_provider_info("mistral_eu"), get_provider_info("openai")
+    assert mistral_eu is not None and mistral_eu.vendor_country == "France"
+    assert openai is not None and openai.vendor_country == "USA"
+    ollama = get_provider_info("ollama")
+    assert ollama is not None and not ollama.vendor_country

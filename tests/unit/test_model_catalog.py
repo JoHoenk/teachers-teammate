@@ -52,7 +52,6 @@ from teachers_teammate.domain.model_catalog import (
 )
 from teachers_teammate.domain.performance_estimate import SpeedBand, SpeedSource
 from teachers_teammate.domain.stages import Stage
-from teachers_teammate.infrastructure.providers.ollama import PROVIDER_INFO
 
 
 # ── short names ──────────────────────────────────────────────────────────────
@@ -542,7 +541,6 @@ def test_default_writing_models_equal_the_default_writing_model() -> None:
     assert DEFAULTS["evaluate_model"] == expected
     assert _DEFAULT_MODELS[Stage.CORRECTION]["ollama"] == expected
     assert _DEFAULT_MODELS[Stage.EVALUATION]["ollama"] == expected
-    assert PROVIDER_INFO["default_model"] == expected
 
 
 def test_hardware_detection_dataclass_defaults() -> None:

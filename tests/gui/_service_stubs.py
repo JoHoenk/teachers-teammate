@@ -46,6 +46,7 @@ from teachers_teammate.domain.model_catalog import (
 )
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.performance_estimate import ProbeResult, TimeRange
+from teachers_teammate.domain.providers import ProviderInfo, display_name_of
 
 
 def services_of(stub: object) -> AppServices:
@@ -189,15 +190,56 @@ class LocalDataFlowStub:
         _ = (language, config)
         return self.anonymizer_ready
 
-    def get_provider_info(self, provider: str) -> dict:
+    def list_providers(self) -> list[str]:
+        """Name no providers; the fakes that show providers override this."""
+        return []
+
+    def get_provider_info(self, provider: str) -> ProviderInfo:
         """Provider metadata; the fakes that are asked about providers override this."""
-        _ = provider
-        return {}
+        return ProviderInfo(name=provider, display_name=provider)
+
+    def display_name(self, provider: str) -> str:
+        """Mirror the real service: the name a teacher reads, or the provider id."""
+        return display_name_of(provider, self.get_provider_info(provider))
+
+    def env_key(self, provider: str) -> str:
+        """Mirror the real service: the variable the provider reads its key from."""
+        info = self.get_provider_info(provider)
+        return info.env_key if info is not None else ""
+
+    def provider_needs_key(self, provider: str) -> bool:
+        """Mirror the real service: whether the provider cannot answer without a key."""
+        info = self.get_provider_info(provider)
+        return info is not None and info.needs_api_key
+
+    def key_page(self, env_key: str) -> str:
+        """Mirror the real service: the first provider's key page for *env_key*."""
+        for provider in self.list_providers():
+            info = self.get_provider_info(provider)
+            if info is not None and info.env_key == env_key and info.key_url:
+                return info.key_url
+        return ""
+
+    def package_services(self, pip: str) -> list[str]:
+        """Mirror the real service: the names of the providers that declare the package *pip*."""
+        return [
+            self.display_name(provider)
+            for provider in self.list_providers()
+            if (info := self.get_provider_info(provider)) is not None
+            and info.package is not None
+            and info.package.pip == pip
+        ]
+
+    def package_is_connector(self, provider: str) -> bool:
+        """Mirror the real service: whether the provider's package is an optional connector."""
+        info = self.get_provider_info(provider)
+        return info is not None and info.package is not None and info.package_optional
 
     def provider_key_missing(self, provider: str) -> bool:
         """Mirror the real service: a key is missing when the provider needs one and none is set."""
-        info = self.get_provider_info(provider)
-        return bool(info.get("needs_api_key")) and not os.environ.get(str(info.get("env_key", "")))
+        if not self.provider_needs_key(provider):
+            return False
+        return not os.environ.get(self.env_key(provider))
 
     # ── speed test and time estimates (the panel on the AI models page) ───────
     def choices(self, settings: Mapping[str, object]) -> SpeedChoices:

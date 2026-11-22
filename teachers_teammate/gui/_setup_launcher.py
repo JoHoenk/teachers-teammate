@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QWidget
 
 from ..application.composition import AppServices
 from ..config import DEFAULTS
+from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import HardwareDetection
 from ..texts.settings import WHERE_ADDONS
 from ._background import LatestTask
@@ -175,17 +176,17 @@ class SetupLauncher(QObject):
         )
         apply: dict[str, str] = {}
         if (
-            settings.get("ocr_engine") == "ollama"
+            settings.get("ocr_engine") == ENGINE_OLLAMA
             and settings.get("ocr_model") == DEFAULTS["ocr_model"]
         ):
             apply["ocr_model"] = best["ocr_model"]
         if (
-            settings.get("correction_provider") == "ollama"
+            settings.get("correction_provider") == PROVIDER_OLLAMA
             and settings.get("correction_model") == DEFAULTS["correction_model"]
         ):
             apply["correction_model"] = best["correction_model"]
         if (
-            settings.get("evaluate_provider") == "ollama"
+            settings.get("evaluate_provider") == PROVIDER_OLLAMA
             and settings.get("evaluate_model") == DEFAULTS["evaluate_model"]
         ):
             apply["evaluate_model"] = best["evaluate_model"]

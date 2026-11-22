@@ -222,7 +222,7 @@ class MainWindow(QMainWindow):
     def _load_credentials_from_settings(self) -> None:
         """Inject stored provider API keys into os.environ (env var takes priority)."""
         env_keys = {
-            str(self._app_service.providers.get_provider_info(provider).get("env_key", ""))
+            self._app_service.providers.env_key(provider)
             for provider in self._app_service.providers.list_providers()
         }
         CredentialStore().load_into_environment(sorted(key for key in env_keys if key))
@@ -981,8 +981,7 @@ class MainWindow(QMainWindow):
 
     def _provider_display_name(self, provider: str) -> str:
         """Return the name the teacher knows *provider* by."""
-        info = self._app_service.providers.get_provider_info(provider)
-        return str(info.get("display_name") or provider.title())
+        return self._app_service.providers.display_name(provider)
 
     def changeEvent(self, event: QEvent) -> None:
         """Look again when the window becomes active: something may have been installed.

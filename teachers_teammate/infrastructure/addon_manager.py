@@ -46,7 +46,9 @@ import threading
 import time
 
 from ..domain.local_models import PRIVACY_ADDON_ID
+from ..domain.providers import AddonPackage
 from ..exceptions import AddonInstallError, AddonUpdateError, InstallFailure
+from .llm_factory import get_provider_info, list_providers
 from .spacy_models import spacy_model_url
 from .subprocess_utils import no_console_window_kwargs
 
@@ -56,14 +58,11 @@ _logger = logging.getLogger(__name__)
 #: corrupt each other.
 _PIP_LOCK = threading.Lock()
 
-# LangChain provider addons — one constant per installable package.
+#: The add-on every LangChain provider builds on, which no provider module declares.
 ADDON_LLM_CORE = "llm_core"
-ADDON_LLM_OLLAMA = "llm_ollama"
-ADDON_LLM_OPENAI = "llm_openai"
-ADDON_LLM_ANTHROPIC = "llm_anthropic"
-ADDON_LLM_GOOGLE = "llm_google"
-ADDON_LLM_MISTRAL = "llm_mistral"
-ADDON_LLM_COHERE = "llm_cohere"
+
+#: An add-on of a provider package is ``llm_<provider>``, the provider that first needs it.
+_LLM_ADDON_PREFIX = "llm_"
 
 #: Where the build puts the constraints file, relative to the folder the bundle's files sit in.
 ADDON_CONSTRAINTS_RELATIVE = Path("teachers_teammate") / "_build" / "addon_constraints.txt"
@@ -91,28 +90,41 @@ _PIP_NO_CACHE = "--no-cache-dir"
 #: --upgrade pip" — advice a teacher must not follow, and one that cannot work in the bundle.
 _PIP_NO_VERSION_CHECK = "--disable-pip-version-check"
 
+
+def _llm_addons() -> dict[str, AddonPackage]:
+    """Return ``{add-on id: package}`` for every provider package, one entry per package.
+
+    Read from the providers themselves: a new provider module brings its add-on with it, and
+    the ones that share a package (Mistral and Mistral (EU)) are installed once, under the
+    first of them.
+    """
+    addons: dict[str, AddonPackage] = {}
+    seen: set[str] = set()
+    for provider in list_providers():
+        info = get_provider_info(provider)
+        if info is None or info.package is None or info.package.pip in seen:
+            continue
+        seen.add(info.package.pip)
+        addons[f"{_LLM_ADDON_PREFIX}{info.name}"] = info.package
+    return addons
+
+
+# Runs at import, before the add-on folder is on ``sys.path``: a provider module must not
+# import its package at the top level, which is found only after that folder is injected.
+_LLM_ADDONS: dict[str, AddonPackage] = _llm_addons()
+
 _ADDON_PACKAGES: dict[str, list[str]] = {
     PRIVACY_ADDON_ID: ["spacy>=3.7"],
     # LangChain packages — not bundled by PyInstaller; installed at runtime via Add-ons.
     ADDON_LLM_CORE: ["langchain-core>=1.4.7"],
-    ADDON_LLM_OLLAMA: ["langchain-ollama>=0.2"],
-    ADDON_LLM_OPENAI: ["langchain-openai>=0.2"],
-    ADDON_LLM_ANTHROPIC: ["langchain-anthropic>=0.1"],
-    ADDON_LLM_GOOGLE: ["langchain-google-genai>=2.0"],
-    ADDON_LLM_MISTRAL: ["langchain-mistralai>=1.1"],
-    ADDON_LLM_COHERE: ["langchain-cohere>=0.1"],
+    **{addon: [package.requirement] for addon, package in _LLM_ADDONS.items()},
 }
 
 # Top-level module name used to check importability for each addon.
 _ADDON_CHECK_MODULE: dict[str, str] = {
     PRIVACY_ADDON_ID: "spacy",
     ADDON_LLM_CORE: "langchain_core",
-    ADDON_LLM_OLLAMA: "langchain_ollama",
-    ADDON_LLM_OPENAI: "langchain_openai",
-    ADDON_LLM_ANTHROPIC: "langchain_anthropic",
-    ADDON_LLM_GOOGLE: "langchain_google_genai",
-    ADDON_LLM_MISTRAL: "langchain_mistralai",
-    ADDON_LLM_COHERE: "langchain_cohere",
+    **{addon: package.module for addon, package in _LLM_ADDONS.items()},
 }
 
 # sys.modules key prefixes to evict after a successful install so that
@@ -120,12 +132,7 @@ _ADDON_CHECK_MODULE: dict[str, str] = {
 _ADDON_STALE_PREFIXES: dict[str, list[str]] = {
     PRIVACY_ADDON_ID: ["spacy"],
     ADDON_LLM_CORE: ["langchain_core"],
-    ADDON_LLM_OLLAMA: ["langchain_ollama"],
-    ADDON_LLM_OPENAI: ["langchain_openai"],
-    ADDON_LLM_ANTHROPIC: ["langchain_anthropic"],
-    ADDON_LLM_GOOGLE: ["langchain_google_genai"],
-    ADDON_LLM_MISTRAL: ["langchain_mistralai"],
-    ADDON_LLM_COHERE: ["langchain_cohere"],
+    **{addon: [package.module] for addon, package in _LLM_ADDONS.items()},
 }
 
 

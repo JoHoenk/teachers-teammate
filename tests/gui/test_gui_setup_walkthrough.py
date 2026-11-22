@@ -837,10 +837,7 @@ def test_s5_a_failed_pull_drops_the_queue_and_leaves_the_window_usable(
 
 def key_environment(providers: ProviderService) -> dict[str, str]:
     """Return the environment variables the providers read their keys from."""
-    keys = {
-        str(providers.get_provider_info(provider).get("env_key", ""))
-        for provider in providers.list_providers()
-    }
+    keys = {providers.env_key(provider) for provider in providers.list_providers()}
     return {key: os.environ[key] for key in keys if key and key in os.environ}
 
 

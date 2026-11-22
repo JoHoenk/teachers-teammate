@@ -14,6 +14,12 @@ from types import ModuleType
 import urllib.error
 from unittest.mock import MagicMock, patch
 
+from teachers_teammate._model_defaults import _DEFAULT_MODELS
+from teachers_teammate.domain.data_location import DataRegion
+from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
+from teachers_teammate.domain.stages import Stage
+from teachers_teammate.infrastructure.addon_manager import addon_requirements
+
 import pytest
 
 _PROVIDERS_DIR = (
@@ -21,53 +27,85 @@ _PROVIDERS_DIR = (
 )
 _PROVIDER_NAMES = sorted(p.stem for p in _PROVIDERS_DIR.glob("*.py") if not p.stem.startswith("_"))
 
-_REQUIRED_KEYS = frozenset(
-    {"needs_api_key", "needs_base_url", "can_list_models", "default_model", "models"}
-)
-
 
 def _load(name: str) -> ModuleType:
     return importlib.import_module(f"teachers_teammate.infrastructure.providers.{name}")
 
 
 @pytest.mark.parametrize("name", _PROVIDER_NAMES)
-def test_provider_info_is_dict(name: str) -> None:
+def test_provider_declares_a_provider_info(name: str) -> None:
     """
     Given  a provider module identified by name
-    When   its PROVIDER_INFO attribute is inspected
-    Then   it is a dict
+    When   its PROVIDER attribute is inspected
+    Then   it is the ProviderInfo every reader of a provider fact goes through
     """
-    mod = _load(name)
-    assert isinstance(mod.PROVIDER_INFO, dict)
+    assert isinstance(_load(name).PROVIDER, ProviderInfo)
 
 
 @pytest.mark.parametrize("name", _PROVIDER_NAMES)
-def test_provider_info_has_required_keys(name: str) -> None:
+def test_provider_info_names_the_module_and_the_teacher_sees(name: str) -> None:
     """
     Given  a provider module identified by name
-    When   its PROVIDER_INFO dict is checked
-    Then   all five required metadata keys are present
+    When   its PROVIDER is read
+    Then   its name is the module name and it has a display name to show
     """
-    info = _load(name).PROVIDER_INFO
-    missing = _REQUIRED_KEYS - info.keys()
-    assert not missing, f"Provider '{name}' missing keys: {missing}"
+    info = _load(name).PROVIDER
+    assert info.name == name
+    assert info.display_name
 
 
 @pytest.mark.parametrize("name", _PROVIDER_NAMES)
 def test_provider_info_value_types(name: str) -> None:
     """
     Given  a provider module identified by name
-    When   the types of PROVIDER_INFO values are checked
-    Then   needs_api_key/needs_base_url/can_list_models are bool, default_model is a
-           non-empty str, and models is a list
+    When   the types of the PROVIDER fields are checked
+    Then   the switches are bool, the region a DataRegion and the model list a tuple
     """
-    info = _load(name).PROVIDER_INFO
-    assert isinstance(info["needs_api_key"], bool)
-    assert isinstance(info["needs_base_url"], bool)
-    assert isinstance(info["can_list_models"], bool)
-    assert isinstance(info["default_model"], str)
-    assert len(info["default_model"]) > 0, f"Provider '{name}' has empty default_model"
-    assert isinstance(info["models"], list)
+    info = _load(name).PROVIDER
+    assert isinstance(info.needs_api_key, bool)
+    assert isinstance(info.needs_base_url, bool)
+    assert isinstance(info.can_list_models, bool)
+    assert isinstance(info.self_hosted, bool)
+    assert isinstance(info.data_region, DataRegion)
+    assert isinstance(info.vendor_country, str)
+    assert all(isinstance(model, str) for model in info.models)
+
+
+# ── a provider is one file ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("name", _PROVIDER_NAMES)
+def test_the_app_installs_the_package_the_provider_declares(name: str) -> None:
+    """
+    Given  a provider module
+    When   the add-on requirements are read
+    Then   the package the provider declares is one the app installs, so a provider module
+           brings its add-on with it and no table repeats it
+    """
+    package = _load(name).PROVIDER.package
+    if package is None:
+        return
+    installed = {
+        requirement
+        for requirements in addon_requirements().values()
+        for requirement in requirements
+    }
+    assert package.requirement in installed
+
+
+@pytest.mark.parametrize("name", _PROVIDER_NAMES)
+def test_every_provider_has_a_default_model_for_both_tasks(name: str) -> None:
+    """
+    Given  a provider module
+    When   the default models of the pipeline tasks are read
+    Then   it has one for each task, so a model picker never falls back to another service's
+    """
+    missing = [
+        stage
+        for stage in (Stage.CORRECTION, Stage.EVALUATION)
+        if name not in _DEFAULT_MODELS[stage]
+    ]
+    assert not missing, f"Provider '{name}' has no default model for {missing}"
 
 
 @pytest.mark.parametrize("name", _PROVIDER_NAMES)
@@ -145,7 +183,7 @@ def test_openai_list_models_falls_back_to_static_list_when_api_unavailable() -> 
     """
     Given  the OpenAI API is unavailable (import works but client.models.list raises)
     When   openai.list_models() is called
-    Then   the static fallback model list from PROVIDER_INFO is returned
+    Then   the static fallback model list from PROVIDER is returned
     """
     import sys  # noqa: PLC0415
 
@@ -158,9 +196,9 @@ def test_openai_list_models_falls_back_to_static_list_when_api_unavailable() -> 
         mod = _load("openai")
         result = mod.list_models()
 
-    from teachers_teammate.infrastructure.providers.openai import PROVIDER_INFO  # noqa: PLC0415
+    from teachers_teammate.infrastructure.providers.openai import PROVIDER  # noqa: PLC0415
 
-    assert result == list(PROVIDER_INFO["models"])
+    assert result == list(PROVIDER.models)
 
 
 # ── create() — installed providers (langchain_openai, langchain_ollama) ───
@@ -307,7 +345,7 @@ def test_mistral_list_models_without_key_returns_static_list_without_network(
     with patch(_URLOPEN) as urlopen:
         result = _load(name).list_models()
 
-    assert result == list(_load(name).PROVIDER_INFO["models"])
+    assert result == list(_load(name).PROVIDER.models)
     urlopen.assert_not_called()
 
 
@@ -320,7 +358,7 @@ def test_mistral_list_models_falls_back_to_static_on_failure(
     Given  an API key, and the models request fails, returns invalid JSON, an unexpected
            shape or lists no models
     When   list_models() is called
-    Then   the static fallback list from PROVIDER_INFO is returned
+    Then   the static fallback list from PROVIDER is returned
     """
     monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
     kwargs: dict = {}
@@ -337,7 +375,7 @@ def test_mistral_list_models_falls_back_to_static_on_failure(
     with patch(_URLOPEN, **kwargs):
         result = _load(name).list_models()
 
-    assert result == list(_load(name).PROVIDER_INFO["models"])
+    assert result == list(_load(name).PROVIDER.models)
 
 
 @pytest.mark.parametrize("name", [n for n, _ in _MISTRAL_PROVIDERS])
@@ -400,7 +438,7 @@ def test_mistral_listing_after_a_failure_says_why_and_is_not_live(
 
     assert listing.source == "failed"
     assert listing.problem == expected_problem
-    assert listing.models == list(_load(name).PROVIDER_INFO["models"])
+    assert listing.models == list(_load(name).PROVIDER.models)
 
 
 @pytest.mark.parametrize("name", ["openai", "google"])
@@ -413,13 +451,13 @@ def test_listing_of_keyed_providers_without_key_is_failed_without_network(
     Then   the built-in list is returned as a failed listing and the SDK is never asked
     """
     mod = _load(name)
-    monkeypatch.delenv(mod.PROVIDER_INFO["env_key"], raising=False)
+    monkeypatch.delenv(mod.PROVIDER.env_key, raising=False)
 
     listing = mod.list_models_checked()
 
     assert listing.source == "failed"
     assert "key is set" in listing.problem
-    assert listing.models == list(mod.PROVIDER_INFO["models"])
+    assert listing.models == list(mod.PROVIDER.models)
 
 
 @pytest.mark.parametrize(
@@ -491,15 +529,16 @@ def test_problem_from_exception_names_a_missing_connection() -> None:
 def test_provider_declares_the_package_it_needs(name: str) -> None:
     """
     Given  a provider module
-    When   its PROVIDER_INFO is read
+    When   its PROVIDER is read
     Then   it names the importable module and the pip package it needs, so the dialogs and
            the run check need no list of their own
     """
-    package = _load(name).PROVIDER_INFO.get("package")
+    package = _load(name).PROVIDER.package
 
-    assert isinstance(package, dict)
-    assert package["module"].startswith("langchain_")
-    assert package["pip"].startswith("langchain-")
+    assert isinstance(package, AddonPackage)
+    assert package.module.startswith("langchain_")
+    assert package.pip.startswith("langchain-")
+    assert package.requirement == f"{package.pip}{package.version_spec}"
 
 
 @pytest.mark.parametrize(("name", "base_url"), _MISTRAL_PROVIDERS)
@@ -529,18 +568,18 @@ def test_mistral_create_passes_explicit_endpoint_and_seed(
 def test_mistral_providers_share_key_and_differ_in_display_name() -> None:
     """
     Given  the global and the EU Mistral providers
-    When   their PROVIDER_INFO is compared
+    When   their PROVIDER is compared
     Then   they use the same API key variable and models, are both online services, and the
            EU one is named so the region is visible wherever the app says where data goes
     """
-    glob, eu = _load("mistral").PROVIDER_INFO, _load("mistral_eu").PROVIDER_INFO
+    glob, eu = _load("mistral").PROVIDER, _load("mistral_eu").PROVIDER
 
-    assert glob["env_key"] == eu["env_key"] == "MISTRAL_API_KEY"
-    assert glob["models"] == eu["models"]
-    assert not glob.get("self_hosted")
-    assert not eu.get("self_hosted")
-    assert "EU" in eu["display_name"]
-    assert "EU" not in glob["display_name"]
+    assert glob.env_key == eu.env_key == "MISTRAL_API_KEY"
+    assert glob.models == eu.models
+    assert not glob.self_hosted
+    assert not eu.self_hosted
+    assert "EU" in eu.display_name
+    assert "EU" not in glob.display_name
 
 
 # ── list_models() — google ────────────────────────────────────────────────
@@ -639,7 +678,7 @@ def test_google_listing_after_a_failure_says_why_and_falls_back_to_the_static_li
         plain = mod.list_models()
 
     assert (listing.source, listing.problem) == ("failed", expected_problem)
-    assert listing.models == plain == list(mod.PROVIDER_INFO["models"])
+    assert listing.models == plain == list(mod.PROVIDER.models)
 
 
 # ── list_models() — openai success path ──────────────────────────────────

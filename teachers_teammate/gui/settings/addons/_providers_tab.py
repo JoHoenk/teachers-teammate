@@ -14,18 +14,10 @@ from PySide6.QtWidgets import QCheckBox, QGroupBox, QVBoxLayout, QWidget
 
 from ....application.composition import AppServices
 from ....texts.settings import license_tooltip
+from ... import _user_text as txt
 from ..._install_round import PACKAGE_PREFIX
 from ..._model_guidance import PROVIDER_PREFIX
 from ._common import ScrolledTab, apply_installed, tick_enabled
-
-_PROVIDER_LABELS: dict[str, str] = {
-    "openai": "OpenAI  (langchain-openai)",
-    "anthropic": "Anthropic  (langchain-anthropic)",
-    "google": "Google Gemini  (langchain-google-genai)",
-    "mistral": "Mistral and Mistral (EU)  (langchain-mistralai)",
-    "cohere": "Cohere  (langchain-cohere)",
-    "ollama": "Ollama LangChain connector  (langchain-ollama)",
-}
 
 
 class ProvidersTab(ScrolledTab):
@@ -42,8 +34,9 @@ class ProvidersTab(ScrolledTab):
         group = QGroupBox("Online AI services")
         group_layout = QVBoxLayout(group)
         for prov, (_, pip_pkg) in self._packages.items():
-            lbl = _PROVIDER_LABELS.get(prov) or f"{self._provider_name(prov)}  ({pip_pkg})"
-            cb = QCheckBox(lbl)
+            services = self._svc.providers.package_services(pip_pkg)
+            connector = self._svc.providers.package_is_connector(prov)
+            cb = QCheckBox(txt.provider_package_label(services, pip_pkg, connector=connector))
             cb.setToolTip(license_tooltip(self._svc.addons.addon_license(pip_pkg)))
             self.checkboxes[f"{PROVIDER_PREFIX}{prov}"] = cb
             group_layout.addWidget(cb)
@@ -57,8 +50,8 @@ class ProvidersTab(ScrolledTab):
         under the first of them, so a request for the other one is mapped onto it.
         """
         if provider not in self._packages:
-            package = self._svc.providers.get_provider_info(provider).get("package")
-            pip = package.get("pip") if isinstance(package, dict) else None
+            info = self._svc.providers.get_provider_info(provider)
+            pip = info.package.pip if info is not None and info.package is not None else None
             for name, (_module, listed_pip) in self._packages.items():
                 if pip is not None and listed_pip == pip:
                     provider = name
@@ -105,4 +98,4 @@ class ProvidersTab(ScrolledTab):
 
     def _provider_name(self, provider: str) -> str:
         """Return the display name of *provider* (its own name when it has none)."""
-        return str(self._svc.providers.get_provider_info(provider).get("display_name", provider))
+        return self._svc.providers.display_name(provider)

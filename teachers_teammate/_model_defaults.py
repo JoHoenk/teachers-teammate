@@ -9,6 +9,7 @@ name.  There is no OCR task: text recognition runs only on engines the user cont
 
 from __future__ import annotations
 
+from .domain.data_location import PROVIDER_OLLAMA
 from .domain.model_catalog import DEFAULT_WRITING_MODEL
 from .domain.stages import Stage
 
@@ -19,7 +20,7 @@ _OLLAMA_GENERAL_DEFAULT = DEFAULT_WRITING_MODEL
 #: and is replaced by its current small model.
 _DEFAULT_MODELS: dict[Stage, dict[str, str]] = {
     Stage.CORRECTION: {
-        "ollama": _OLLAMA_GENERAL_DEFAULT,
+        PROVIDER_OLLAMA: _OLLAMA_GENERAL_DEFAULT,
         "openai": "gpt-4o-mini",
         "anthropic": "claude-haiku-4-5",
         "google": "gemini-2.0-flash",
@@ -28,7 +29,7 @@ _DEFAULT_MODELS: dict[Stage, dict[str, str]] = {
         "cohere": "command-r-plus",
     },
     Stage.EVALUATION: {
-        "ollama": _OLLAMA_GENERAL_DEFAULT,
+        PROVIDER_OLLAMA: _OLLAMA_GENERAL_DEFAULT,
         "openai": "gpt-4o-mini",
         "anthropic": "claude-haiku-4-5",
         "google": "gemini-2.0-flash",

@@ -10,6 +10,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QCheckBox
 import pytest
 
+from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._install_round import PACKAGE_PREFIX, PAGE_MODELS_ITEM, READER_ITEM
 from teachers_teammate.gui._model_guidance import SPACY_PREFIX
@@ -33,10 +34,21 @@ class _ProviderPackagesService(RecommendationServiceStub):
             "openai": ("langchain_openai", "langchain-openai"),
         }
 
-    def get_provider_info(self, provider: str) -> dict:
+    def list_providers(self) -> list[str]:
+        return ["mistral", "mistral_eu", "openai"]
+
+    def get_provider_info(self, provider: str) -> ProviderInfo:
         # ``mistral_eu`` shares mistral's package, which the list offers once, under mistral.
-        package = {"pip": "langchain-mistralai"} if provider == "mistral_eu" else None
-        return {"display_name": provider.replace("_", " ").title(), "package": package}
+        package = (
+            AddonPackage(module="langchain_mistralai", pip="langchain-mistralai")
+            if provider in ("mistral", "mistral_eu")
+            else AddonPackage(module="langchain_openai", pip="langchain-openai")
+        )
+        return ProviderInfo(
+            name=provider,
+            display_name=provider.replace("_", " ").title(),
+            package=package,
+        )
 
 
 def _providers_tab(qtbot) -> ProvidersTab:
@@ -55,6 +67,31 @@ def _ticked(tab: ProvidersTab | NameDetectionTab | ReadingModelsTab) -> list[str
 def _is_ticked(box: QCheckBox) -> bool:
     """Return whether *box* is ticked and could be ticked (installed ones cannot)."""
     return box.isChecked() and box.isEnabled()
+
+
+def test_a_package_box_names_every_service_that_needs_it(qtbot) -> None:
+    """
+    Given  a package that two providers share and one that a single provider needs
+    When   the Online AI services tab is built
+    Then   each box names the services that need the package, then the pip name
+    """
+    tab = _providers_tab(qtbot)
+
+    assert tab.checkboxes["provider:mistral"].text() == (
+        "Mistral and Mistral Eu — langchain-mistralai"
+    )
+    assert tab.checkboxes["provider:openai"].text() == "Openai — langchain-openai"
+
+
+def test_an_optional_connector_is_labelled_as_one() -> None:
+    """
+    Given  the package of a service the app can talk to without it
+    When   its box label is built
+    Then   it says it is a connector, so it is not read as a requirement of an online service
+    """
+    label = txt.provider_package_label(["Ollama"], "langchain-ollama", connector=True)
+
+    assert label == "Ollama LangChain connector — langchain-ollama"
 
 
 def test_the_providers_tab_lists_every_package_once(qtbot) -> None:

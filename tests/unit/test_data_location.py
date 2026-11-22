@@ -32,19 +32,28 @@ from teachers_teammate.domain.data_location import (
     is_ollama_cloud_model,
     online_ocr_reason,
 )
+from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.domain.stages import Stage
 from tests.conftest import make_config
 
 _PROVIDERS = {
-    "ollama": {"display_name": "Ollama", "self_hosted": True},
-    "openai": {"display_name": "OpenAI (ChatGPT)", "data_region": "non_eu"},
-    "mistral_eu": {"display_name": "Mistral (EU)", "data_region": "eu", "vendor_country": "France"},
-    "novendor": {"display_name": "Novendor"},
+    "ollama": ProviderInfo(name="ollama", display_name="Ollama", self_hosted=True),
+    "openai": ProviderInfo(
+        name="openai", display_name="OpenAI (ChatGPT)", data_region=DataRegion.NON_EU
+    ),
+    "mistral_eu": ProviderInfo(
+        name="mistral_eu",
+        display_name="Mistral (EU)",
+        data_region=DataRegion.EU,
+        vendor_country="France",
+    ),
+    "novendor": ProviderInfo(name="novendor", display_name="Novendor"),
 }
 
 
-def _info(provider: str) -> dict:
-    return _PROVIDERS.get(provider, {})
+def _info(provider: str) -> ProviderInfo | None:
+    """Answer with what each provider declares, or ``None`` for a name nobody declares."""
+    return _PROVIDERS.get(provider)
 
 
 # ── Ollama cloud detection ─────────────────────────────────────────────────
@@ -352,12 +361,12 @@ def test_ocr_location_for_each_engine() -> None:
 
 def test_llm_location_unknown_provider_is_online() -> None:
     """
-    Given  a provider that does not declare self_hosted in its PROVIDER_INFO
+    Given  a provider that does not declare self_hosted in its PROVIDER
     When   llm_location() classifies it
-    Then   it is an online service named after the provider (the safe default)
+    Then   it is an online service named by the provider's id (the safe default)
     """
-    loc = llm_location("newvendor", "m", "http://127.0.0.1:11434", lambda _p: {})
-    assert loc == StageLocation(DataLocation.ONLINE, "Newvendor", region=DataRegion.UNKNOWN)
+    loc = llm_location("newvendor", "m", "http://127.0.0.1:11434", lambda _p: None)
+    assert loc == StageLocation(DataLocation.ONLINE, "newvendor", region=DataRegion.UNKNOWN)
 
 
 def test_llm_location_self_hosted_provider_follows_the_server() -> None:
@@ -380,8 +389,13 @@ def test_llm_location_online_provider_keeps_its_own_name_whatever_the_ollama_set
     Then   it is named after the provider, not after "Ollama cloud", with the provider's region
     """
 
-    def info(_provider: str) -> dict[str, str]:
-        return {"display_name": "OpenAI", "data_region": "non_eu", "vendor_country": "USA"}
+    def info(_provider: str) -> ProviderInfo:
+        return ProviderInfo(
+            name="openai",
+            display_name="OpenAI",
+            data_region=DataRegion.NON_EU,
+            vendor_country="USA",
+        )
 
     by_host = llm_location("openai", "gpt-5", "https://ollama.com", info)
     by_tag = llm_location("openai", "gpt-oss:120b-cloud", "http://127.0.0.1:11434", info)
@@ -597,7 +611,7 @@ def test_stage_location_details_name_the_vendor_country() -> None:
     assert location.details == "Online service (Mistral (EU)) · EU\nVendor based in France"
 
 
-def test_llm_location_reads_the_region_from_provider_info() -> None:
+def test_llm_location_reads_the_region_from_the_provider() -> None:
     """
     Given  a provider that declares its data region and vendor country
     When   llm_location() classifies it
@@ -616,7 +630,7 @@ def test_llm_location_prefers_a_region_that_depends_on_settings() -> None:
     """
     Given  a provider whose region depends on its settings and a provider_region callable
     When   llm_location() classifies it
-    Then   the callable's answer wins over PROVIDER_INFO
+    Then   the callable's answer wins over what the provider declares
     """
     location = llm_location(
         "openai", "m", "", _info, provider_region=lambda _p: DataRegion.EU.value
@@ -641,16 +655,15 @@ def test_ollama_cloud_keeps_its_name_and_gets_the_declared_region() -> None:
     Then   the label keeps saying "Ollama cloud" and the region is filled in
     """
     providers = {
-        "ollama": {
-            "display_name": "Ollama",
-            "self_hosted": True,
-            "data_region": "non_eu",
-            "vendor_country": "USA",
-        }
+        "ollama": ProviderInfo(
+            name="ollama",
+            display_name="Ollama",
+            self_hosted=True,
+            data_region=DataRegion.NON_EU,
+            vendor_country="USA",
+        )
     }
-    location = llm_location(
-        "ollama", "gpt-oss:120b-cloud", "http://localhost:11434", lambda p: providers.get(p, {})
-    )
+    location = llm_location("ollama", "gpt-oss:120b-cloud", "http://localhost:11434", providers.get)
     assert location.location is DataLocation.ONLINE
     assert location.service == "Ollama cloud"
     assert location.region is DataRegion.NON_EU
@@ -839,7 +852,7 @@ def test_describe_data_flow_uses_the_region_callback(tmp_path: Path) -> None:
     """
     Given  a provider_region callable that reports an EU region
     When   describe_data_flow() classifies online proofreading
-    Then   the region comes from the callable, not from PROVIDER_INFO
+    Then   the region comes from the callable, not from what the provider declares
     """
     cfg = make_config(
         tmp_path, correction_enabled=True, correction_provider="openai", correction_model="m"

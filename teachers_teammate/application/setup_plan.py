@@ -24,6 +24,7 @@ from typing import Any
 from ..config import DEFAULTS, INSTALLER_SETTING_KEYS, load_config_file
 from ..domain.data_location import (
     ENGINE_PPOCR,
+    PROVIDER_OLLAMA,
     RETIRED_OCR_ENGINES,
     STAGE_ANONYMIZATION,
 )
@@ -372,7 +373,7 @@ def _reading_plan(
         return {}, [row], ""
     tag, rating, installed = _propose(_current(current, "ocr_model"), "ocr", facts, rate, best)
     row = PlannedStep(
-        stage=Stage.OCR, provider="ollama", model=tag, rating=rating, installed=installed
+        stage=Stage.OCR, provider=PROVIDER_OLLAMA, model=tag, rating=rating, installed=installed
     )
     return {"ocr_model": tag}, [row], tag
 
@@ -391,27 +392,37 @@ def _proofreading_plan(
         tag = answers.local_model
         row = PlannedStep(
             stage=Stage.CORRECTION,
-            provider="ollama",
+            provider=PROVIDER_OLLAMA,
             model=tag,
             rating=rate(tag, "general"),
             installed=_installed(tag, facts),
         )
-        return {"correction_provider": "ollama", "correction_model": tag}, [row], "ollama", tag
+        return (
+            {"correction_provider": PROVIDER_OLLAMA, "correction_model": tag},
+            [row],
+            PROVIDER_OLLAMA,
+            tag,
+        )
     if place is ProofreadingPlace.LOCAL:
         candidate = (
             _current(current, "correction_model")
-            if _current(current, "correction_provider") == "ollama"
+            if _current(current, "correction_provider") == PROVIDER_OLLAMA
             else ""
         )
         tag, rating, installed = _propose(candidate, "general", facts, rate, best)
         row = PlannedStep(
             stage=Stage.CORRECTION,
-            provider="ollama",
+            provider=PROVIDER_OLLAMA,
             model=tag,
             rating=rating,
             installed=installed,
         )
-        return {"correction_provider": "ollama", "correction_model": tag}, [row], "ollama", tag
+        return (
+            {"correction_provider": PROVIDER_OLLAMA, "correction_model": tag},
+            [row],
+            PROVIDER_OLLAMA,
+            tag,
+        )
     if place is ProofreadingPlace.ONLINE:
         provider, model = answers.online_choice
         row = PlannedStep(stage=Stage.CORRECTION, provider=provider, model=model)
@@ -688,7 +699,7 @@ class SetupService:
             card_gb=hardware.card_gb,
             ollama_running=running,
             installed_tags=(
-                frozenset(self._providers.list_provider_models("ollama", base_url=url))
+                frozenset(self._providers.list_provider_models(PROVIDER_OLLAMA, base_url=url))
                 if running
                 else frozenset()
             ),

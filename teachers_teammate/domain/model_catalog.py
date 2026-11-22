@@ -25,6 +25,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
 from .correction_prompts import correct_system, prompt_identity
+from .data_location import PROVIDER_OLLAMA
 from .proofreading.result import ExchangeKind, StepName, stored_exchange_id
 
 if TYPE_CHECKING:
@@ -773,7 +774,7 @@ def _temperature(tag: str, provider: str, default: float) -> float:
     Only the table of Ollama tags applies to Ollama: another provider's model of the same name is
     a different service with its own defaults.
     """
-    if provider != "ollama":
+    if provider != PROVIDER_OLLAMA:
         return default
     recommended = recommended_temperature(tag)
     return default if recommended is None else recommended
@@ -781,7 +782,7 @@ def _temperature(tag: str, provider: str, default: float) -> float:
 
 def _step_one_temperature(tag: str, provider: str) -> float:
     """Return the temperature step ① is sent at: measured for a local model, else the default."""
-    if provider != "ollama":
+    if provider != PROVIDER_OLLAMA:
         return DEFAULT_CORRECTION_TEMPERATURE
     measured = step_one_temperature(tag)
     return STEP_ONE_DEFAULT_TEMPERATURE if measured is None else measured
@@ -789,12 +790,12 @@ def _step_one_temperature(tag: str, provider: str) -> float:
 
 def _step_one_prompt(tag: str, provider: str) -> str:
     """Return the step-① prompt variant of a local model, ``""`` for the standard prompt."""
-    if provider != "ollama":
+    if provider != PROVIDER_OLLAMA:
         return ""
     return _measured_value(STEP_ONE_PROMPTS, tag) or ""
 
 
-def request_profile(tag: str, provider: str = "ollama") -> RequestProfile:
+def request_profile(tag: str, provider: str = PROVIDER_OLLAMA) -> RequestProfile:
     """Return how the app asks *tag* to proofread: the exchange, its steps and their settings.
 
     The one place the app, the instructions dialog, the cache key and the evaluation tools ask,
@@ -803,9 +804,9 @@ def request_profile(tag: str, provider: str = "ollama") -> RequestProfile:
     measured temperature (:data:`STEP_ONE_TEMPERATURES`), steps ② and ③ at the maker's
     (:data:`MAKER_TEMPERATURES`), because no measurement has compared theirs yet.
     """
-    spec = find_spec(tag) if provider == "ollama" else None
+    spec = find_spec(tag) if provider == PROVIDER_OLLAMA else None
     base = DEFAULT_REQUEST_PROFILE if spec is None else spec.request_profile
-    level = think_level(tag) if provider == "ollama" else None
+    level = think_level(tag) if provider == PROVIDER_OLLAMA else None
     maker = _temperature(tag, provider, DEFAULT_CORRECTION_TEMPERATURE)
     return replace(
         base,
@@ -819,7 +820,7 @@ def request_profile(tag: str, provider: str = "ollama") -> RequestProfile:
     )
 
 
-def review_temperature(tag: str, provider: str = "ollama") -> float:
+def review_temperature(tag: str, provider: str = PROVIDER_OLLAMA) -> float:
     """Return the temperature the content review is sent at for *tag*."""
     return _temperature(tag, provider, DEFAULT_REVIEW_TEMPERATURE)
 

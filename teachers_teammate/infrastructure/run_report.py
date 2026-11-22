@@ -10,7 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..config import Config
-from ..domain.data_location import ENGINE_PPOCR, OCR_ENGINE_NAMES
+from ..domain.data_location import (
+    ENGINE_OLLAMA,
+    ENGINE_PPOCR,
+    OCR_ENGINE_NAMES,
+    PROVIDER_OLLAMA,
+)
 from ..domain.local_models import READER_MODEL_NAME
 from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..interfaces import Reporter
@@ -42,14 +47,14 @@ def banner(
             )
         else:
             reporter.status(f"  OCR engine    : {cfg.ocr.engine}")
-        if cfg.ocr.engine == "ollama":
+        if cfg.ocr.engine == ENGINE_OLLAMA:
             reporter.status(f"  OCR model     : {cfg.ocr.model}")
     reporter.status(f"  Preprocess    : {cfg.ocr.preprocess_method}")
     reporter.status(f"  Language      : {cfg.language}")
     if (
-        (cfg.recognition_enabled and cfg.ocr.engine == "ollama")
-        or (cfg.correction_enabled and cfg.correction_provider == "ollama")
-        or (cfg.evaluation_enabled and cfg.evaluate_provider == "ollama")
+        (cfg.recognition_enabled and cfg.ocr.engine == ENGINE_OLLAMA)
+        or (cfg.correction_enabled and cfg.correction_provider == PROVIDER_OLLAMA)
+        or (cfg.evaluation_enabled and cfg.evaluate_provider == PROVIDER_OLLAMA)
     ):
         reporter.status(f"  Ollama URL    : {cfg.ollama_url}")
     reporter.status(f"  Input         : {cfg.input_dir.resolve()}")

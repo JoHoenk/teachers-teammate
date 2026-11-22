@@ -36,6 +36,7 @@ from ..domain.context_budget import (
 )
 from ..domain.data_location import (
     ENGINE_PPOCR,
+    PROVIDER_OLLAMA,
     DataLocation,
     llm_stage_location,
     online_ocr_reason,
@@ -163,6 +164,18 @@ def _default_build_ocr_postprocessor() -> OcrOutputPostprocessor:
     return OcrOutputPostprocessor()
 
 
+def _is_self_hosted(provider: str) -> bool:
+    """Return whether *provider* runs on a server the teacher names, not at a vendor."""
+    info = get_provider_info(provider)
+    return info is not None and info.self_hosted
+
+
+def _strict_json_schema(provider: str) -> bool:
+    """Return whether *provider* answers the review schema only in its strict mode."""
+    info = get_provider_info(provider)
+    return info is not None and info.strict_json_schema
+
+
 def _chunked(corrector: Corrector, language: str) -> Corrector:
     """Wrap *corrector* so a text longer than one request is proofread in pieces.
 
@@ -189,8 +202,8 @@ def resolve_run_windows(config: Config, hardware: HardwareDetection | None) -> R
         config.proofreading_context,
         proofreading_model=config.effective_correction_model,
         evaluation_model=config.effective_evaluate_model,
-        proofreading_local=config.correction_provider == "ollama",
-        evaluation_local=config.evaluate_provider == "ollama",
+        proofreading_local=config.correction_provider == PROVIDER_OLLAMA,
+        evaluation_local=config.evaluate_provider == PROVIDER_OLLAMA,
         evaluation_runs=config.evaluation_enabled,
         card_gb=hardware.card_gb if hardware is not None else None,
     )
@@ -204,13 +217,13 @@ def window_of_model(config: Config, windows: RunWindows, tag: str) -> int:
     sizes = [BASE_NUM_CTX]
     if (
         config.correction_enabled
-        and config.correction_provider == "ollama"
+        and config.correction_provider == PROVIDER_OLLAMA
         and config.effective_correction_model == tag
     ):
         sizes.append(windows.proofreading)
     if (
         config.evaluation_enabled
-        and config.evaluate_provider == "ollama"
+        and config.evaluate_provider == PROVIDER_OLLAMA
         and config.effective_evaluate_model == tag
     ):
         sizes.append(windows.evaluation)
@@ -466,7 +479,7 @@ class StageBuilder:
         tries = correction_policy.cut_off_tries(
             online=self._correction_is_online(), temperature=profile.temperature
         )
-        if cfg.correction_provider == "ollama":
+        if cfg.correction_provider == PROVIDER_OLLAMA:
             client = ollama_client or self._build_ollama_client()
             port: ModelPort = OllamaPort(
                 client,
@@ -482,7 +495,7 @@ class StageBuilder:
                     base_url=cfg.ollama_url,
                     temperature=cfg.correction_temperature,
                 ),
-                strict=cfg.correction_provider == "openai",
+                strict=_strict_json_schema(cfg.correction_provider),
             )
         return _chunked(
             factory.build_corrector(
@@ -535,7 +548,7 @@ class StageBuilder:
         cfg = self.config
         server = ollama_server(cfg.ollama_url)
         where = llm_stage_location(
-            self_hosted=bool(get_provider_info(cfg.correction_provider).get("self_hosted")),
+            self_hosted=_is_self_hosted(cfg.correction_provider),
             model=cfg.effective_correction_model,
             url_is_local=server.is_this_computer,
             host=server.host,
@@ -578,7 +591,7 @@ class StageBuilder:
         if correction is None:
             self.reporter.warn("WARNING: Evaluation requires correction; disabling evaluation.")
             return None
-        if cfg.evaluate_provider == "ollama":
+        if cfg.evaluate_provider == PROVIDER_OLLAMA:
             client = ollama_client or self._build_ollama_client()
             return factory.build_native_ollama_evaluator(
                 model=cfg.effective_evaluate_model,

@@ -7,6 +7,7 @@ import html
 
 import pytest
 
+from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.data_location import DataLocation, StageLocation
@@ -24,13 +25,8 @@ class _DummyAppService(RecommendationServiceStub):
     def list_ocr_engines(self) -> list[str]:
         return ["ollama", "ppocr"]
 
-    def get_provider_info(self, provider: str) -> dict:
-        return {
-            "models": [f"{provider}-model"],
-            "default_model": f"{provider}-model",
-            "needs_api_key": False,
-            "env_key": "",
-        }
+    def get_provider_info(self, provider: str) -> ProviderInfo:
+        return ProviderInfo(name=provider, display_name=provider, models=(f"{provider}-model",))
 
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         _ = base_url

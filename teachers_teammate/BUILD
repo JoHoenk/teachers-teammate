@@ -44,6 +44,7 @@ _DOMAIN_SRCS = [
     "domain/proofreading/sentences.py",
     "domain/proofreading/text_loss.py",
     "domain/proofreading/word_diff.py",
+    "domain/providers.py",
     "domain/run_summary.py",
     "domain/setting_values.py",
     "domain/settings_notice.py",
@@ -134,16 +135,6 @@ _INFRASTRUCTURE_SRCS = [
     "infrastructure/proofreading/port.py",
     "infrastructure/proofreading/runner.py",
     "infrastructure/proofreading/schemas.py",
-    "infrastructure/providers/__init__.py",
-    "infrastructure/providers/_helpers.py",
-    "infrastructure/providers/anthropic.py",
-    "infrastructure/providers/cohere.py",
-    "infrastructure/providers/google.py",
-    "infrastructure/providers/_mistral_common.py",
-    "infrastructure/providers/mistral.py",
-    "infrastructure/providers/mistral_eu.py",
-    "infrastructure/providers/ollama.py",
-    "infrastructure/providers/openai.py",
     "infrastructure/run_stats.py",
     "infrastructure/spacy_models.py",
     "infrastructure/speed_store.py",
@@ -160,7 +151,7 @@ _INFRASTRUCTURE_SRCS = [
     "infrastructure/workflow/file_processor.py",
     "infrastructure/workflow/ocr_service.py",
     "infrastructure/workflow/preprocess_service.py",
-]
+] + glob(["infrastructure/providers/*.py"])
 
 # application/: the service the adapters call; imports infrastructure/, domain/, core.
 _APPLICATION_SRCS = [

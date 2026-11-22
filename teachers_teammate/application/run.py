@@ -18,7 +18,7 @@ import threading
 
 from ..config import Config
 from ..domain.context_budget import RunWindows, memory_at_context_gb
-from ..domain.data_location import ENGINE_PPOCR
+from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, PROVIDER_OLLAMA
 from ..domain.local_models import PAGE_MODELS_SKIPPED_NOTICE, READER_NOT_DOWNLOADED
 from ..domain.model_catalog import (
     RUN_MEMORY_MARGIN_GB,
@@ -594,22 +594,22 @@ class RunService:
     def _ollama_needed(config: Config) -> bool:
         """Return whether any enabled stage of *config* talks to Ollama."""
         return (
-            (config.recognition_enabled and config.ocr.engine == "ollama")
-            or (config.correction_enabled and config.correction_provider == "ollama")
-            or (config.evaluation_enabled and config.evaluate_provider == "ollama")
+            (config.recognition_enabled and config.ocr.engine == ENGINE_OLLAMA)
+            or (config.correction_enabled and config.correction_provider == PROVIDER_OLLAMA)
+            or (config.evaluation_enabled and config.evaluate_provider == PROVIDER_OLLAMA)
         )
 
     @staticmethod
     def _configured_ollama_models(config: Config) -> list[str]:
         """Return the deduplicated Ollama models the enabled stages of *config* use."""
         models: list[str] = []
-        if config.recognition_enabled and config.ocr.engine == "ollama" and config.ocr.model:
+        if config.recognition_enabled and config.ocr.engine == ENGINE_OLLAMA and config.ocr.model:
             models.append(config.ocr.model)
-        if config.correction_enabled and config.correction_provider == "ollama":
+        if config.correction_enabled and config.correction_provider == PROVIDER_OLLAMA:
             model = config.effective_correction_model or ""
             if model and model not in models:
                 models.append(model)
-        if config.evaluation_enabled and config.evaluate_provider == "ollama":
+        if config.evaluation_enabled and config.evaluate_provider == PROVIDER_OLLAMA:
             model = config.effective_evaluate_model or ""
             if model and model not in models:
                 models.append(model)
@@ -623,11 +623,11 @@ class RunService:
         request (none within the model-cache TTL), so an unreachable server costs a
         single timeout instead of one per question asked of it.
         """
-        cached = self._providers.get_cached_models("ollama", base_url=url)
+        cached = self._providers.get_cached_models(PROVIDER_OLLAMA, base_url=url)
         if cached is not None:
             return list(cached), ""
         installed, unreachable = self._ollama.listed_models(url)
-        self._providers.remember_listing("ollama", ModelListing(installed), base_url=url)
+        self._providers.remember_listing(PROVIDER_OLLAMA, ModelListing(installed), base_url=url)
         return installed, unreachable
 
     def _ollama_issue(self, url: str, message: str) -> RequirementIssue:
@@ -794,7 +794,7 @@ class RunService:
             if stage == Stage.CORRECTION
             else (config.effective_evaluate_model or "")
         )
-        name = str(self._providers.get_provider_info(provider).get("display_name", provider))
+        name = self._providers.display_name(provider)
         missing_package = self._providers.missing_provider_package(provider)
         if missing_package and self._addon_waits_for_restart(missing_package):
             return [self._addon_restart_issue(f"{name} support")]
@@ -814,7 +814,7 @@ class RunService:
                     f"No API key for {name} is set.", IssueKind.KEY_MISSING, provider=provider
                 )
             ]
-        if provider != "ollama":
+        if provider != PROVIDER_OLLAMA:
             return []
         from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
 

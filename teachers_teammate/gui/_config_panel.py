@@ -40,6 +40,7 @@ from ..config import DEFAULTS, Config
 from ..domain.correction_policy import LEVELS
 from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import (
+    ENGINE_OLLAMA,
     STAGE_ANONYMIZATION,
     DataFlow,
 )
@@ -661,7 +662,7 @@ class ConfigPanel(QScrollArea):
         """
         ocr = steps.stage(Stage.OCR)
         # Only Ollama has a model; the built-in reader is named by the engine itself.
-        ocr_model = config.ocr.model if config.ocr.engine == "ollama" else ""
+        ocr_model = config.ocr.model if config.ocr.engine == ENGINE_OLLAMA else ""
         self._ocr_uses.set_line(
             uses_line(ocr, ocr_model, enabled=config.recognition_enabled) if ocr else "",
             uses_tooltip(ocr) if ocr else "",

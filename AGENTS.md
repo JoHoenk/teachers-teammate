@@ -65,7 +65,7 @@ or `docs/development.md`.
 
 **Privacy and what runs where**
 - Text recognition never uses an online engine (`LOCAL_OCR_ENGINES`). An LLM provider is shown
-  and confirmed as an online service unless `PROVIDER_INFO["self_hosted"]` is `True`.
+  and confirmed as an online service unless `PROVIDER.self_hosted` is `True`.
 - The privacy settings are not part of the proofreading and review fingerprints; what a run
   sent is stored with its result (`SentRecord`).
 
@@ -127,7 +127,8 @@ or `docs/development.md`.
 [docs/extension_points.md](docs/extension_points.md) has one section per task (new pipeline
 stage, LLM provider, OCR engine, local model file, input file type, run requirement, GUI
 setting, proofreading exchange, evaluation corpus, …). Read the section before you touch
-that area. A new LLM provider is a new file in `infrastructure/providers/` and nothing else.
+that area. A new LLM provider is a new file in `infrastructure/providers/` plus its two
+default models in `_model_defaults.py`.
 
 ## Commits and pull requests
 

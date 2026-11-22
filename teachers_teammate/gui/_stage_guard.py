@@ -118,9 +118,7 @@ class StageGuard(QObject):
         fix = fix_for(
             stage,
             issues[0],
-            lambda provider: str(
-                service.providers.get_provider_info(provider).get("display_name", provider)
-            ),
+            service.providers.display_name,
             language=hooks.language(),
         )
         dialog = DependencyGuardDialog(title, issues, fix.actions, hooks.dialog_parent)

@@ -7,28 +7,26 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
+from teachers_teammate.domain.data_location import DataRegion
 from teachers_teammate.domain.ollama_discovery import DEFAULT_SERVER_URL
+from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.exceptions import ProviderNotAvailableError
 
 # Metadata consumed by the GUI (and any other caller of llm_factory.get_provider_info).
 # ``models`` is intentionally empty: Ollama's model list is fetched live via the API.
-PROVIDER_INFO: dict = {
-    "display_name": "Ollama",
+PROVIDER = ProviderInfo(
+    name="ollama",
+    display_name="Ollama",
     # Runs on the server at base_url (usually this computer), not at a vendor.
-    "self_hosted": True,
+    self_hosted=True,
     # Cloud models run at Ollama, which does not declare where; local ones never leave.
-    "data_region": "unknown",
-    "needs_api_key": False,
-    "env_key": "",
-    "needs_base_url": True,
-    "can_list_models": True,
-    "package": {"module": "langchain_ollama", "pip": "langchain-ollama"},
+    data_region=DataRegion.UNKNOWN,
+    needs_base_url=True,
+    can_list_models=True,
     # The app talks to Ollama directly; the LangChain connector is an optional extra.
-    "package_optional": True,
-    "default_model": DEFAULT_WRITING_MODEL,
-    "models": [],
-}
+    package=AddonPackage(module="langchain_ollama", pip="langchain-ollama", version_spec=">=0.2"),
+    package_optional=True,
+)
 
 
 def list_models(*, base_url: str = DEFAULT_SERVER_URL, **_kwargs: object) -> list[str]:

@@ -18,33 +18,33 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
+from teachers_teammate.domain.data_location import DataRegion
+from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.infrastructure.providers._helpers import api_key_check, import_guard
 
-PROVIDER_INFO: dict = {
-    "display_name": "Cohere",
-    "data_region": "non_eu",
-    "vendor_country": "Canada",
-    "needs_api_key": True,
+PROVIDER = ProviderInfo(
+    name="cohere",
+    display_name="Cohere",
+    data_region=DataRegion.NON_EU,
+    vendor_country="Canada",
+    needs_api_key=True,
     # The vendor's page where a key is created; the Settings window links to it.
-    "key_url": "https://dashboard.cohere.com/api-keys",
-    "env_key": "COHERE_API_KEY",
-    "needs_base_url": False,
-    "can_list_models": False,
-    "package": {"module": "langchain_cohere", "pip": "langchain-cohere"},
-    "default_model": "command-r-plus",
-    "models": [
+    key_url="https://dashboard.cohere.com/api-keys",
+    env_key="COHERE_API_KEY",
+    package=AddonPackage(module="langchain_cohere", pip="langchain-cohere", version_spec=">=0.1"),
+    models=(
         "command-r-plus",
         "command-r",
         "command",
         "command-light",
         "command-nightly",
-    ],
-}
+    ),
+)
 
 
 def list_models(**_kwargs: object) -> list[str]:
     """Return the static Cohere model list."""
-    return list(PROVIDER_INFO["models"])
+    return list(PROVIDER.models)
 
 
 def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseChatModel:
@@ -62,4 +62,4 @@ def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseCh
     return ChatCohere(model=model, temperature=temperature)
 
 
-check_connection = api_key_check(PROVIDER_INFO["env_key"])
+check_connection = api_key_check(PROVIDER.env_key)

@@ -108,34 +108,29 @@ class ApiKeyDrafts(QObject):
         """Return ``{env_key: title}``: providers that share one key (Mistral, Mistral EU) share a title."""
         names: dict[str, list[str]] = {}
         for provider in self._app_service.providers.list_providers():
-            info = self._app_service.providers.get_provider_info(provider)
-            env_key: str = info.get("env_key", "")
+            env_key = self._app_service.providers.env_key(provider)
             if env_key:
-                names.setdefault(env_key, []).append(str(info.get("display_name", provider)))
+                names.setdefault(env_key, []).append(
+                    self._app_service.providers.display_name(provider)
+                )
         return {env_key: " · ".join(titles) for env_key, titles in names.items()}
 
     def env_key_of(self, provider: str) -> str:
         """Return the environment variable *provider* reads its key from (``""`` = needs none)."""
-        info = self._app_service.providers.get_provider_info(provider)
-        if not info.get("needs_api_key"):
-            return ""
-        return str(info.get("env_key", ""))
+        service = self._app_service.providers
+        return service.env_key(provider) if service.provider_needs_key(provider) else ""
 
     def providers_of(self, env_key: str) -> list[str]:
         """Return the providers that read their key from *env_key* (Mistral and Mistral EU share)."""
         return [
             provider
             for provider in self._app_service.providers.list_providers()
-            if self._app_service.providers.get_provider_info(provider).get("env_key") == env_key
+            if self._app_service.providers.env_key(provider) == env_key
         ]
 
     def key_url_of(self, env_key: str) -> str:
         """Return the page where a key for *env_key* is created (``""`` when no provider says)."""
-        for provider in self._app_service.providers.list_providers():
-            info = self._app_service.providers.get_provider_info(provider)
-            if info.get("env_key") == env_key and info.get("key_url"):
-                return str(info["key_url"])
-        return ""
+        return self._app_service.providers.key_page(env_key)
 
     # ── values ────────────────────────────────────────────────────────────────
 

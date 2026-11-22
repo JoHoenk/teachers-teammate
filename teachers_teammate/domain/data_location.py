@@ -28,6 +28,11 @@ class OcrEngine(StrEnum):
 ENGINE_OLLAMA = OcrEngine.OLLAMA
 ENGINE_PPOCR = OcrEngine.PPOCR
 
+#: The provider id of the server an engine and a proofreading step can share: `providers/ollama.py`.
+#: Code that asks the same question about the provider ("runs on a server the teacher names")
+#: reads ``ProviderInfo.self_hosted`` instead.
+PROVIDER_OLLAMA = "ollama"
+
 #: The name shown for each engine.
 OCR_ENGINE_NAMES: dict[str, str] = {
     ENGINE_OLLAMA: "Ollama",

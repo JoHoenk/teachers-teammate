@@ -42,6 +42,7 @@ from pathlib import Path
 import threading
 
 from ..config import Config, OcrConfig
+from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import output_folder_refusal
@@ -255,7 +256,7 @@ class OCRPipeline:
             keep_awake=self._keep_awake,
             battery_warning=self._battery_warning,
         )
-        if cfg.recognition_enabled and cfg.ocr.engine == "ollama":
+        if cfg.recognition_enabled and cfg.ocr.engine == ENGINE_OLLAMA:
             try:
                 self._component_factory.check_ocr_model(
                     url=cfg.ollama_url, model=cfg.ocr.model, reporter=reporter
@@ -419,9 +420,9 @@ class OCRPipeline:
         run_stats = RunStatsCollector(cfg.ollama_url, SampleStore().add)
         ollama_client = (
             OllamaClient(cfg.ollama_url, cancel_event=self._stop_event, stats_sink=run_stats.record)
-            if (cfg.recognition_enabled and cfg.ocr.engine == "ollama")
-            or (cfg.correction_enabled and cfg.correction_provider == "ollama")
-            or (cfg.evaluation_enabled and cfg.evaluate_provider == "ollama")
+            if (cfg.recognition_enabled and cfg.ocr.engine == ENGINE_OLLAMA)
+            or (cfg.correction_enabled and cfg.correction_provider == PROVIDER_OLLAMA)
+            or (cfg.evaluation_enabled and cfg.evaluate_provider == PROVIDER_OLLAMA)
             else None
         )
         if ollama_client is not None:

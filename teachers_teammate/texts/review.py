@@ -122,6 +122,14 @@ def left_out_warning_one(words: int) -> str:
     return f"The AI left out a passage ({words} words); it is kept as you wrote it."
 
 
+#: What a run says about a stored proofreading whose words are no longer at the offsets it points
+#: at: the corrected text stays, its explanations do not.  Only that run says it — a later window
+#: drops the review again without a sentence, because nothing of the earlier run is left to say it.
+REVIEW_DOES_NOT_FIT = (
+    "The stored proofreading no longer matches the text; its explanations were left out."
+)
+
+
 def personal_info_still_hidden(tokens: Sequence[str]) -> str:
     """Return the warning about stand-ins for personal data that are still in the text."""
     shown = ", ".join(tokens[:3])

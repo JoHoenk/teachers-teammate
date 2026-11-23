@@ -18,6 +18,9 @@ items of the Check tab, a ticked item, the model's word in the Word file, and a 
 to drop because it no longer fits its text.  The bundle walk never does: the stand-in server is
 test code (:class:`~tests.fakes.fake_ollama.ProofreadingAnswers`) and stays outside this file.
 
+A few steps belong to one system and run only there (``PLATFORM_STEPS``); docs/testing.md →
+"On each system" says which ones and what they check.
+
 The result is one JSON file, written when a step fails too, because a windowed build on Windows
 has no console.  The exit code is 0 only when every step passed.
 
@@ -102,7 +105,7 @@ from teachers_teammate.infrastructure.proofreading.schemas import Category
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts import main_window as win
-from teachers_teammate.texts._types import Answer
+from teachers_teammate.texts._types import Answer, StandardButton
 
 # ── what the walk waits for ──────────────────────────────────────────────────
 #: A step that opens a window or waits for a redraw.
@@ -140,6 +143,12 @@ TXT_TEXT = "Notizen für Montag"
 #: What the walk types into the transcription in the Check tab.
 TYPED = " Walkthrough"
 TYPED_WORD = TYPED.strip()
+#: Where the export of the Windows step writes, and the file it holds open while it does.
+LOCKED_FOLDER = "Gesperrt"
+#: A results folder as long as a long path needs: over 260 characters, where Windows needs its
+#: long-path support.  One name stays short enough for any file system's limit on a name.
+LONG_PATH = 300
+LONG_PATH_NAME = "Ein langer Ordnername der Ausgabe"
 
 # ── the proofreading ─────────────────────────────────────────────────────────
 #: What the model writes in place of the last word of every text, and what it answers when the app
@@ -176,16 +185,39 @@ PROOFREADING_STEPS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def walk_steps(*, proofreading: bool) -> tuple[tuple[str, str], ...]:
-    """Return the steps a walk runs: its own, and the proofreading ones when it proofreads."""
-    plan = list(STEPS)
+#: The steps that need a system of their own: ``(name, after, method, platforms)``.  Each runs
+#: right after the first step of *after* that this walk runs, and only where ``sys.platform`` is
+#: one of *platforms*, so a bundle walk picks them up without CI wiring of its own.
+PLATFORM_STEPS: tuple[tuple[str, tuple[str, ...], str, tuple[str, ...]], ...] = (
+    ("export-held-open", ("export",), "_step_export_held_open", ("win32",)),
+    # Right after the first run, before the teacher works on anything: the results folder holds
+    # the stored results, so a folder of its own is one the run fills from the start.
+    # Linux has no 260-character limit and its folder is only long; the run into it is the same
+    # work, which is how a Bazel walk exercises this step rather than a bundle build.
+    ("long-output-path", ("run",), "_step_long_output_path", ("linux", "win32")),
+    ("case-spelling", ("restart",), "_step_case_spelling", ("darwin", "win32")),
+)
+
+
+def _insert_after(
+    steps: list[tuple[str, str]], after: Sequence[str], step: tuple[str, str]
+) -> None:
+    """Insert *step* into *steps* after the first of *after* that *steps* holds."""
+    anchor = next(name for name in after if any(step_name == name for step_name, _m in steps))
+    steps.insert(next(i for i, (name, _m) in enumerate(steps) if name == anchor) + 1, step)
+
+
+def walk_steps(*, proofreading: bool, platform: str = sys.platform) -> tuple[tuple[str, str], ...]:
+    """Return the steps a walk runs here: its own, the platform's, and the proofreading ones."""
+    steps = list(STEPS)
+    for name, after, method, platforms in PLATFORM_STEPS:
+        if platform in platforms:
+            _insert_after(steps, after, (name, method))
     if not proofreading:
-        return tuple(plan)
+        return tuple(steps)
     for name, after, method in PROOFREADING_STEPS:
-        plan.insert(
-            next(i for i, (step, _m) in enumerate(plan) if step == after) + 1, (name, method)
-        )
-    return tuple(plan)
+        _insert_after(steps, (after,), (name, method))
+    return tuple(steps)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -382,6 +414,83 @@ def isolated() -> Iterator[Path]:
             else:
                 os.environ[name] = value
         shutil.rmtree(folder, onexc=lambda *_exc: None)
+
+
+# ── what only one system has ─────────────────────────────────────────────────
+
+
+@contextmanager
+def _held_open(path: Path) -> Iterator[None]:
+    """Hold *path* open so that nothing else may write it.
+
+    A word processor keeps the document it has open to itself, so a second writer gets a
+    permission error; this asks for no sharing at all, which is stricter than the read sharing
+    Word allows and is what the step needs.  Windows only: elsewhere a second writer is allowed,
+    which is why the step that uses this runs there and nowhere else.
+    """
+    import ctypes  # noqa: PLC0415  # Windows only: no such call elsewhere
+    from ctypes import wintypes  # noqa: PLC0415
+
+    # ``use_last_error`` keeps the error of this call apart: one the interpreter raises later
+    # would otherwise be what ``WinError()`` reports.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.restype = wintypes.HANDLE
+    create_file.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    handle = create_file(
+        str(path),
+        0x80000000 | 0x40000000,  # GENERIC_READ | GENERIC_WRITE: what a word processor asks
+        0,  # no sharing at all
+        None,
+        2,  # CREATE_ALWAYS: the file is the walk's, whether it exists or not
+        0x80,  # FILE_ATTRIBUTE_NORMAL
+        None,
+    )
+    if handle == wintypes.HANDLE(-1).value or handle is None:
+        raise _Failed(
+            f"could not hold {path.name} open: {ctypes.WinError(ctypes.get_last_error())}"
+        )
+    try:
+        yield
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _long_paths_enabled() -> bool:
+    """Whether this Windows has long paths switched on, which a deeper folder needs.
+
+    The app adds no long-path prefix of its own, so a path over 260 characters reaches the file
+    systems below it only where the machine's own switch is on — and a default Windows has it
+    off.  The step records what it found, so the result says what a passing walk rests on.
+    """
+    try:
+        import winreg  # noqa: PLC0415  # Windows only: no such module elsewhere
+    except ImportError:  # not Windows, where the step that asks does not run
+        return False
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem"
+        ) as key:
+            return bool(winreg.QueryValueEx(key, "LongPathsEnabled")[0])
+    except OSError:  # no such value: Windows' own default, which is off
+        return False
+
+
+def _deep_folder(base: Path) -> Path:
+    """Return a folder below *base* whose path is longer than :data:`LONG_PATH` characters."""
+    folder = base
+    while len(str(folder)) <= LONG_PATH:
+        folder = folder / LONG_PATH_NAME
+    return folder
 
 
 # ── the guards ───────────────────────────────────────────────────────────────
@@ -785,6 +894,7 @@ class Walk:
         #: What Qt itself said at warning level and above.
         self._qt_messages: list[str] = []
         #: What the reader made of the pages, by Word file: the walk compares it with a slack.
+        #: Also what a step had to read off the machine, like Windows' long-path switch.
         self._readings: dict[str, str] = {}
         self._pictures: list[str] = []
         self._failed: list[str] = []
@@ -1097,6 +1207,16 @@ class Walk:
         source = self._inputs() / name
         return output_path(source, self._inputs(), self._output(), DOCX_SUFFIX)
 
+    def _choose_folder(self, button: str, field: str, folder: Path, *, title: str = "") -> None:
+        """Choose *folder* with the picker behind *button*, and wait for *field* to show it."""
+        self._answers.expect("pick_folder", title=title, reply=folder)
+        self._button(button).click()
+        self._settle(
+            lambda: Path(self._field(field).text()) == folder,
+            f"{folder} to be shown in {field}",
+            UI_S,
+        )
+
     def _screenshot(self, name: str) -> None:
         """Save a picture of the window (or, inside a modal, of the modal)."""
         self._save_picture(self._window.grab() if self._window is not None else None, name)
@@ -1360,14 +1480,11 @@ class Walk:
     def _step_choose_folder(self) -> None:
         """Write the documents, then choose their folder the way a teacher does."""
         write_inputs(self._inputs())
-        self._answers.expect(
-            "pick_folder", title=dlg.select_input_folder().title, reply=self._inputs()
-        )
-        self._button(_handles.INPUT_FOLDER_BUTTON).click()
-        self._settle(
-            lambda: Path(self._field(_handles.INPUT_PATH).text()) == self._inputs(),
-            "the chosen folder to be shown",
-            UI_S,
+        self._choose_folder(
+            _handles.INPUT_FOLDER_BUTTON,
+            _handles.INPUT_PATH,
+            self._inputs(),
+            title=dlg.select_input_folder().title,
         )
         table = self._table()
         self._settle(lambda: len(table.queued_source_ids()) == 3, "the three rows", UI_S)
@@ -1575,15 +1692,9 @@ class Walk:
             raise _Failed(f"no warning about the dropped review of {PDF_NAME}: {said}")
         self._screenshot("dropped-review")
 
-    def _step_export(self) -> None:
-        """Export the open document as a Word file, the way a teacher saves one."""
-        self._tabs().setCurrentIndex(0)
-        image = self._source(PNG_NAME)
-        self._table().select_source(image)
-        target = self._root / EXPORT_FOLDER / (Path(PNG_NAME).stem + DOCX_SUFFIX)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        export = self._button(_handles.EXPORT_BUTTON)
-        menu = export.menu()
+    def _docx_export_action(self) -> QAction:
+        """Return the Word entry of the Export button's menu, or fail the step naming it."""
+        menu = self._button(_handles.EXPORT_BUTTON).menu()
         if menu is None:
             raise _Failed("the Export button has no menu")
         action = next(
@@ -1591,7 +1702,19 @@ class Walk:
         )
         if action is None:
             raise _Failed(f"the Export menu has no {ExportKind.DOCX.label!r} entry")
-        proposal = self._output() / (Path(PNG_NAME).stem + DOCX_SUFFIX)
+        return action
+
+    def _step_export(self) -> None:
+        """Export the open document as a Word file, the way a teacher saves one."""
+        self._tabs().setCurrentIndex(0)
+        image = self._source(PNG_NAME)
+        self._table().select_source(image)
+        target = self._root / EXPORT_FOLDER / (Path(PNG_NAME).stem + DOCX_SUFFIX)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # The app proposes the folder of the last run, which a step before this one may have
+        # left somewhere other than the results folder.
+        last_run = self._table().get_output_dir() or self._output()
+        proposal = last_run / (Path(PNG_NAME).stem + DOCX_SUFFIX)
         self._answers.expect(
             "save_file",
             title=dlg.save_export(
@@ -1600,13 +1723,101 @@ class Walk:
             start=proposal,
             reply=target,
         )
-        action.trigger()
+        self._docx_export_action().trigger()
         self._settle(lambda: target.is_file(), "the exported Word file", UI_S)
         self._assert_docx(target, (TYPED_WORD,))
         run_file = self._run_docx(PNG_NAME)
         if TYPED_WORD in docx_text(run_file):
             raise _Failed(f"the export changed the run's own {run_file.name}")
         self._screenshot("export")
+
+    def _step_export_held_open(self) -> None:
+        """Export a whole queue over a file Word holds open: one notice, and the rest written.
+
+        A word processor keeps the document it has open to itself, so the app cannot replace it.
+        What a teacher gets is one notice naming that file; the other documents are written, the
+        run does not end, and the file that could not be replaced is left as it was.
+        """
+        self._tabs().setCurrentIndex(0)
+        table = self._table()
+        table.selectAll()
+        folder = self._root / EXPORT_FOLDER / LOCKED_FOLDER
+        folder.mkdir(parents=True, exist_ok=True)
+        locked = folder / (Path(PNG_NAME).stem + DOCX_SUFFIX)
+        others = [folder / (Path(name).stem + DOCX_SUFFIX) for name in (PDF_NAME, TXT_NAME)]
+        self._answers.expect(
+            "pick_folder",
+            title=dlg.save_export_to_folder(ExportKind.DOCX.label).title,
+            reply=folder,
+        )
+        # The file is there already — Word has it open — so the teacher is asked to replace it.
+        self._answers.expect(
+            "choose",
+            title=dlg.replace_existing_files(1, locked.name).title,
+            mention=(locked.name,),
+            choice=StandardButton.YES,
+        )
+        self._answers.expect("notify", mention=(PNG_NAME,))
+        with _held_open(locked):
+            self._docx_export_action().trigger()
+            self._settle(
+                lambda: all(path.is_file() for path in others),
+                f"the Word files of {', '.join(path.name for path in others)}",
+                UI_S,
+            )
+            if len(docx_text(others[0])) == 0:
+                raise _Failed(f"the exported {others[0].name} is empty")
+        if locked.stat().st_size:
+            raise _Failed(f"the export wrote {locked.name} although Word had it open")
+        self._screenshot("export-held-open")
+
+    def _step_long_output_path(self) -> None:
+        """Run into a results folder whose path is over 260 characters: the Word file still lands.
+
+        A results folder holds the stored results, so this folder is a new one and the run fills
+        it from the start — which is why the step comes before the teacher works on anything.
+
+        Windows is where the limit is, and where the machine's own switch decides whether a path
+        this long reaches the file system at all: the app adds no prefix of its own, so the step
+        records what the switch says and fails here rather than report a run the machine made
+        possible.  Linux has no such limit and the folder is only long, which is why the step runs
+        there too: the same work catches a mistake in the step itself.
+        """
+        if sys.platform == "win32":
+            enabled = _long_paths_enabled()
+            self._readings["windows_long_paths"] = "on" if enabled else "off"
+            if not enabled:
+                raise _Failed(
+                    "this Windows has long paths off (LongPathsEnabled under "
+                    r"SYSTEM\CurrentControlSet\Control\FileSystem), so a folder this deep "
+                    "cannot say whether the app handles one"
+                )
+        folder = _deep_folder(self._output())
+        self._choose_folder(
+            _handles.OUTPUT_FOLDER_BUTTON,
+            _handles.OUTPUT_PATH,
+            folder,
+            title=dlg.select_output_folder().title,
+        )
+        try:
+            image = self._source(PNG_NAME)
+            self._table().select_source(image)
+            self._recorder.begin()
+            self._click_run()
+            summary = self._wait_run("the run into the long folder")
+            if summary.status is not RunStatus.DONE or self._names(summary.succeeded) != [PNG_NAME]:
+                raise _Failed(f"the run ended {summary.status}: {list(summary.succeeded)}")
+            written = output_path(self._inputs() / PNG_NAME, self._inputs(), folder, DOCX_SUFFIX)
+            self._assert_docx(written, self._run_words(PNG_WORDS), read=True)
+            self._screenshot("long-output-path")
+        finally:
+            # Whatever happened, the steps after this one run into the folder they expect.
+            self._choose_folder(
+                _handles.OUTPUT_FOLDER_BUTTON,
+                _handles.OUTPUT_PATH,
+                self._output(),
+                title=dlg.select_output_folder().title,
+            )
 
     def _step_run_again(self) -> None:
         """Run again: every result is stored, so nothing is read a second time."""
@@ -1740,6 +1951,57 @@ class Walk:
         ]
         if same != shown:
             raise _Failed(f"the saved settings name other documents: {same} against {shown}")
+
+    def _step_case_spelling(self) -> None:
+        """Reach the same documents through another spelling of their folder: one cache entry each.
+
+        A file system that ignores case hands out one file however its folder is spelled; the app
+        must see one document too, or a second run would read every page again and keep a second
+        answer beside the first.  Only such a file system makes this worth walking, which is why
+        the step runs on macOS and Windows.
+        """
+        original = self._inputs()
+        other = self._root / INPUT_FOLDER.upper()
+        store = state_store_for(self._config(), repository=StateRepository)
+        for name in (PNG_NAME, PDF_NAME, TXT_NAME):
+            if store.state_path_for_input(other / name) != store.state_path_for_input(
+                original / name
+            ):
+                raise _Failed(f"the two spellings of the folder give two cache entries for {name}")
+        self._choose_folder(
+            _handles.INPUT_FOLDER_BUTTON,
+            _handles.INPUT_PATH,
+            other,
+            title=dlg.select_input_folder().title,
+        )
+        try:
+            table = self._table()
+            self._settle(
+                lambda: len(table.queued_source_ids()) == 3,
+                "the queue of the other spelling",
+                UI_S,
+            )
+            for source_id in table.queued_source_ids():
+                if not table.has_text(source_id):
+                    raise _Failed(
+                        f"{Path(source_id).name} lost its text through the other spelling"
+                    )
+            table.selectAll()
+            self._recorder.begin()
+            self._click_run()
+            summary = self._wait_run("the run through the other spelling")
+            if summary.status is not RunStatus.DONE or len(summary.succeeded) != 3:
+                raise _Failed(f"the run ended {summary.status}: {list(summary.succeeded)}")
+            if self._recorder.stages:
+                raise _Failed(f"a step ran again: {self._recorder.stages}")
+        finally:
+            # Whatever happened, the steps after this one read the folder they expect.
+            self._choose_folder(
+                _handles.INPUT_FOLDER_BUTTON,
+                _handles.INPUT_PATH,
+                original,
+                title=dlg.select_input_folder().title,
+            )
 
     def _step_other_windows(self) -> None:
         """Open every other window and close it again; the settings must be unchanged."""

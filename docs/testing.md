@@ -226,6 +226,28 @@ names instead; the Qt xcb plugin needs `libxcb-cursor0` and the other `libxcb-*`
 `.github/workflows/build_package.yml` installs; the `.deb` depends on them and a bare checkout
 does not have them.
 
+### On each system
+
+Three steps are about one system's behaviour: `PLATFORM_STEPS` names the systems each one runs on
+and the step it follows, and `walk_steps(proofreading=…, platform=…)` inserts them.
+
+- `export-held-open` (Windows, after `export`): a Word file is held open with no sharing at all,
+  which is stricter than the read sharing Word allows, while the queue is exported over it — one
+  notice naming the source, the other two Word files written, the held file untouched.
+- `long-output-path` (Windows and Linux, after `run`): a results folder whose path is over 260
+  characters, and the run's Word file still lands in it. Linux has no such limit, so the folder is
+  only long there: the same work, on the walk the Linux tests run. On Windows the step records
+  `LongPathsEnabled` under `readings` and fails when that switch is off, because the app adds no
+  long-path prefix of its own and the machine would be what makes the run work.
+- `case-spelling` (macOS and Windows, after `restart`): the same three documents reached through
+  the folder's name in capitals — one cache entry per document (`state_path_for_input`), the texts
+  the store already holds, and a second run that recognizes nothing. `document_stem` keys a
+  document by the spelling the volume stores, which is what `Path.resolve` gives on Windows and
+  what `F_GETPATH` gives on macOS.
+
+Only a file system that ignores case makes the last one worth walking. The Windows and macOS steps
+run on a bundle of that system, in the builds CI makes.
+
 ### In CI
 
 Every bundle build runs the walkthrough on the build machine — on `xvfb-run` on Linux, in the
@@ -234,11 +256,17 @@ the `.deb` in the ubuntu:24.04, ubuntu:26.04 and debian:13 containers, the `.app
 26, the setup on Windows Server 2022 and 2025. This is the only place a platform's own plugin,
 fonts and window server meet the app.
 
+Each container walks twice when the bundle carries the Wayland platform plugin: once on
+`xvfb`'s X server and once under `weston --backend=headless`, and the second result must say
+`platform: wayland`, because Qt falls back to another plugin without a word. A bundle without
+that plugin logs that the Wayland walk is skipped.
+
 Each job uploads `e2e.json` and the screenshots even when the step failed
 (`<prefix>-<platform>-e2e` for a build machine, `<prefix>-<platform>-installed-e2e-<image or os>`
-for an install): the file says which step broke and what the guards caught. Every one of those
-steps has a time limit, and the script's own watchdog — armed before the app services are built —
-ends a hung app with a result before that limit is reached.
+for an install, where a container uploads its Wayland walk as `e2e-wayland.json` beside the xcb
+one and the compositor's `weston.log` beside both): the file says which step broke and what the
+guards caught. Every one of those steps has a time limit, and the script's own watchdog — armed
+before the app services are built — ends a hung app with a result before that limit is reached.
 
 The build job walks after it has uploaded the packages: a failed walk never costs a platform its
 installers, and nothing the app writes while it runs can land in one of them.
@@ -247,9 +275,10 @@ installers, and nothing the app writes while it runs can land in one of them.
 
 One method on `Walk`, one row in `STEPS` (`tests/e2e/walkthrough.py`) — or in `PROOFREADING_STEPS`
 with the step it follows, for one that needs a model behind it: those run only when the walk is
-given a `ProofreadingSetup`. The step clicks what a teacher clicks through `_handles`, and declares
-the dialogs it expects with `self._answers.expect` before it triggers them — any other dialog fails
-the step. A menu or a window the step opens itself goes through `_in_modal`. Waits are conditions
+given a `ProofreadingSetup`; or in `PLATFORM_STEPS` with the step it follows and the systems it
+belongs to. The step clicks what a teacher clicks through `_handles`, and declares the dialogs it
+expects with `self._answers.expect` before it triggers them — any other dialog fails the step. A
+menu or a window the step opens itself goes through `_in_modal`. Waits are conditions
 with a deadline (`_settle`), never sleeps; a run is waited for with `_wait_run`. New settings go
 into `write_settings`; new input files into `write_inputs`.
 

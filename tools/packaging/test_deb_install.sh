@@ -104,6 +104,61 @@ docker run --rm \
     fi
     cat /smoke/e2e.json
 
+    # ── Wayland: the same walk on the platform a modern desktop runs ──
+    # Qt picks its platform plugin from QT_QPA_PLATFORM, and the bundle claims Wayland when it
+    # carries that plugin. The Weston headless backend is a compositor with no screen, the way
+    # xvfb is an X server with none; its log and the result go beside the other walk results.
+    plugins=/opt/teachers-teammate/_internal/PySide6/Qt/plugins/platforms
+    wayland_plugin=$(find "${plugins}" -name "libqwayland*.so" -print -quit)
+    if [ -z "${wayland_plugin}" ]; then
+        echo "the bundle carries no Wayland platform plugin: the Wayland walk is skipped" >&2
+    else
+        # Before weston: it installs the libraries the Wayland plugin needs, which would hide
+        # one that the Depends line of the package lacks. The check the xcb plugin gets above.
+        if LD_LIBRARY_PATH=/opt/teachers-teammate/_internal \
+            ldd "${wayland_plugin}" | grep "not found"; then
+            echo "the Wayland platform plugin is missing libraries" >&2
+            exit 1
+        fi
+        apt-get install -y -qq --no-install-recommends weston
+        export XDG_RUNTIME_DIR=/tmp/xdg-wayland
+        mkdir -p "${XDG_RUNTIME_DIR}"
+        chmod 700 "${XDG_RUNTIME_DIR}"
+        weston --backend=headless-backend.so --renderer=pixman \
+            --socket=wayland-teachers --idle-time=0 > /smoke/weston.log 2>&1 &
+        weston_pid=$!
+        ready=0
+        for _ in $(seq 1 50); do
+            if [ -S "${XDG_RUNTIME_DIR}/wayland-teachers" ]; then
+                ready=1
+                break
+            fi
+            sleep 0.2
+        done
+        if [ "${ready}" -eq 0 ]; then
+            cat /smoke/weston.log >&2
+            echo "weston did not start" >&2
+            exit 1
+        fi
+        if ! WAYLAND_DISPLAY=wayland-teachers QT_QPA_PLATFORM=wayland \
+            teachers-teammate --_run_script /walkthrough.py /smoke/e2e-wayland.json \
+            --screenshots /smoke/e2e-wayland-shots; then
+            cat /smoke/e2e-wayland.json || true
+            # The log of the compositor says what the window of the app met there. It is
+            # uploaded anyway; printing it puts it beside the failure in the job.
+            cat /smoke/weston.log || true
+            exit 1
+        fi
+        cat /smoke/e2e-wayland.json
+        # The window must have been on Wayland, and not fallen back to another plugin.
+        python3 -c "
+import json, sys
+result = json.load(open(\"/smoke/e2e-wayland.json\"))
+sys.exit(0 if result[\"platform\"] == \"wayland\" else \"ran on \" + result[\"platform\"])
+"
+        kill "${weston_pid}" || true
+    fi
+
     # ── L2: remove and purge leave nothing behind ──
     apt-get remove -y -qq teachers-teammate
     test ! -e /opt/teachers-teammate

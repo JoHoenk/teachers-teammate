@@ -5451,6 +5451,7 @@ _WALKTHROUGH_WIDGETS = (
     _handles.INPUT_FOLDER_BUTTON,
     _handles.INPUT_PATH,
     _handles.OUTPUT_PATH,
+    _handles.OUTPUT_FOLDER_BUTTON,
     _handles.CHECK_PAGE,
     _handles.READ_VIEW,
     _handles.FINAL_VIEW,

@@ -20,7 +20,7 @@ from ...domain.output_files import (
 )
 from ...domain.performance_estimate import SpeedStep
 from ...domain.proofreading.result import CorrectionOutcome
-from ...domain.proofreading.review import CorrectionReview, fits
+from ...domain.proofreading.review import CorrectionReview, fits, fitted_review
 from ...domain.stages import ProgressStage, Stage
 from ...domain.teacher_work import (
     CurrentTexts,
@@ -66,7 +66,7 @@ from ...messages import (
     preview_save_failed,
 )
 from ...texts import report as report_text
-from ...texts.review import personal_info_still_hidden
+from ...texts.review import REVIEW_DOES_NOT_FIT, personal_info_still_hidden
 from ...texts.run import RESULTS_CACHED, docx_failed, output_not_saved, text_files_failed
 from ..ocr_formats import plain_text_of
 from ..reporting import StdoutReporter
@@ -290,6 +290,25 @@ class _Sent:
 
     text: str
     mask: AnonymizationMap
+
+
+def _served_review(
+    ctx: CacheContext, texts: CurrentTexts, file: Path
+) -> tuple[CorrectionReview | None, list[str]]:
+    """Return the stored review and the warnings its serving adds.
+
+    A review whose words are no longer at the offsets it points at is dropped, by the same rule
+    every reader of a stored document applies: the corrected text stays, the explanations do not,
+    and the stored review is left as it was written — this run does not write it.
+    """
+    stored = CorrectionReview.from_dict(ctx.state.correction_review)
+    review = fitted_review(stored, plain_text_of(texts.transcription, texts.transcription_format))
+    if stored is not None and review is None:
+        _logger.warning(
+            "Dropped the review of %s: it does not match the text it was made for", file.name
+        )
+        return None, [REVIEW_DOES_NOT_FIT]
+    return review, []
 
 
 class FileProcessor:
@@ -691,13 +710,13 @@ class FileProcessor:
         """Proofread the current transcription, or return the stored answer.
 
         The teacher's transcription is what is sent: it is what the student wrote, as they read
-        it.  A stored answer is served as it is — the teacher's corrections of it are applied by
-        the caller, which reads the current texts again.
+        it.  A stored answer is served as it is, and the teacher's corrections of it are applied
+        by the caller, which reads the current texts again.
         """
         if self._correction is None:
             return None, ctx, []
         if ctx.state.correction_done and ctx.state.correction_text:
-            return self._stored_correction(ctx)
+            return self._stored_correction(file, texts, ctx)
 
         # Before the anonymization: it is a full spaCy pass that a stop should not wait for.
         if self._stopping():
@@ -718,16 +737,16 @@ class FileProcessor:
         return self._keep_correction(file, texts, ctx, outcome, sent)
 
     def _stored_correction(
-        self, ctx: CacheContext
+        self, file: Path, texts: CurrentTexts, ctx: CacheContext
     ) -> tuple[CorrectionReview | None, CacheContext, list[str]]:
         """Return the answer of an earlier run, with the note that says where it comes from."""
         if ctx.proofreading_kept:
             self._reporter.status(report_text.KEPT_PROOFREADING)
         else:
             self._reporter.status(report_text.CACHED_CORRECTION)
-        review = CorrectionReview.from_dict(ctx.state.correction_review)
+        review, dropped = _served_review(ctx, texts, file)
         warnings = [ctx.state.correction_warning] if ctx.state.correction_warning else []
-        return review, ctx, warnings
+        return review, ctx, [*warnings, *dropped]
 
     def _stop_correction(self, preview_img: str, texts: CurrentTexts) -> _Stopped:
         """Return the stop that ends a file at the proofreading."""

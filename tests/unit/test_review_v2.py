@@ -14,6 +14,7 @@ from teachers_teammate.domain.proofreading.review import (
     align,
     edit_note,
     explained_sentences,
+    fitted_review,
     fits,
     merge_reviews,
     note_sentence,
@@ -513,6 +514,19 @@ def test_a_review_that_does_not_fit_is_reported() -> None:
 
     assert fits(review, "Eins zwei") is True
     assert fits(review, "Zwei eins") is False
+
+
+def test_a_review_that_fits_is_served_and_one_that_does_not_is_dropped() -> None:
+    """
+    Given  a review of a text
+    When   it is served for that text and for another one
+    Then   the review comes back for its own text and nothing comes back for the other
+    """
+    review = _review()
+
+    assert fitted_review(review, SOURCE) is review
+    assert fitted_review(review, "Ein ganz anderer Satz.") is None
+    assert fitted_review(None, SOURCE) is None
 
 
 def test_an_insertion_fits_anywhere_inside_the_text() -> None:

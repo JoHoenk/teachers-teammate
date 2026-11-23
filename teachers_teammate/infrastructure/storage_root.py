@@ -45,6 +45,7 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import sys
 import threading
 
 import platformdirs
@@ -96,7 +97,51 @@ def document_stem(path: Path) -> str:
     resolved path is part of every name derived from it — the state file and the stored images
     alike.  Without it the second ``Anna.pdf`` would overwrite the first one's pages.
     """
-    return f"{path.stem}_{compute_cache_key(str(path.resolve()))}"
+    return f"{path.stem}_{compute_cache_key(_identity(path))}"
+
+
+#: How long a path may be, for the system call that asks the volume for its spelling.
+_MAX_PATH = 1024
+
+
+def _identity(path: Path) -> str:
+    """Return what a document's cache key is made from: its path as the volume spells it.
+
+    A file system that ignores case hands out one file however its folder is spelled, so two
+    spellings have to give one key, or the second run would read every page again and keep a
+    second answer beside the first.
+    """
+    return _spelled_as_stored(str(path.resolve()))
+
+
+def _spelled_as_stored(resolved: str) -> str:
+    """Return *resolved* spelled the way the volume stores it, where that differs from the given.
+
+    ``Path.resolve`` gives the spelling stored on disk on Windows, but on macOS it only follows
+    links and keeps the case it was given.  ``F_GETPATH`` asks the volume for the one spelling of
+    the file it holds, and a file the teacher picked in the dialog already carries that spelling,
+    so the keys the app has stored do not change.  Where the volume cannot answer, the path stays
+    as it was resolved.
+    """
+    if sys.platform != "darwin":
+        return resolved
+    import fcntl  # noqa: PLC0415  # macOS only: other systems answer nothing here
+
+    # macOS's own command: the fcntl other systems have does not define it, and pylint reads
+    # theirs.
+    command = fcntl.F_GETPATH  # pylint: disable=no-member
+    try:
+        handle = os.open(resolved, os.O_RDONLY)
+    except OSError:
+        return resolved
+    try:
+        buffer = fcntl.fcntl(handle, command, b"\0" * _MAX_PATH)
+    except OSError:
+        return resolved
+    finally:
+        os.close(handle)
+    spelling = buffer.split(b"\0", 1)[0].decode(sys.getfilesystemencoding(), "surrogateescape")
+    return spelling or resolved
 
 
 def _get_platform_cache_dir() -> Path:
@@ -240,7 +285,7 @@ def resolve_artifact_dir(output_dir: Path) -> Path:
     Returns:
         ``<storage_root>/artifacts/<key>`` as a :class:`~pathlib.Path`.
     """
-    return artifacts_root() / compute_cache_key(str(output_dir.resolve()))
+    return artifacts_root() / compute_cache_key(_identity(output_dir))
 
 
 def resolve_storage_root() -> StorageRoot:

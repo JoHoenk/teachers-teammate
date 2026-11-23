@@ -103,7 +103,7 @@ def test_the_walk_passes_on_the_real_models(tmp_path: Path) -> None:
 
     assert result["failed"] == [], printed
     assert [step["name"] for step in result["steps"]] == [
-        name for name, _method in walkthrough.STEPS
+        name for name, _method in walkthrough.walk_steps(proofreading=False)
     ]
     assert all(step["ok"] for step in result["steps"]), [
         step for step in result["steps"] if not step["ok"]
@@ -391,3 +391,115 @@ def test_saved_config_names_the_same_documents_as_the_window(
     for row, (_source, ocr, has_text) in zip(saved, shown, strict=True):
         assert row.ocr == ocr
         assert row.has_text == has_text
+
+
+# ── The steps each system adds ───────────────────────────────────────────────
+
+#: The walk's own steps, in order, for the expectations below.
+_OWN = [
+    "start",
+    "choose-folder",
+    "run",
+    "open",
+    "correct",
+    "export",
+    "run-again",
+    "stop-after-file",
+    "stop-now",
+    "finish",
+    "restart",
+    "other-windows",
+    "shut-down",
+]
+
+
+def _names(plan: tuple[tuple[str, str], ...]) -> list[str]:
+    """Return the step names of *plan*."""
+    return [name for name, _method in plan]
+
+
+def test_a_linux_walk_runs_the_results_folder_past_the_limit_only() -> None:
+    """
+    Given  the steps of the walk
+    When   the step list is built for a Linux machine
+    Then   the long results folder follows the first run — the run into it is the same work there
+           — and the system's other two steps, which need Windows or macOS, do not run
+    """
+    expected = [*_OWN[:3], "long-output-path", *_OWN[3:]]
+
+    assert _names(walkthrough.walk_steps(proofreading=False, platform="linux")) == expected
+
+
+def test_a_windows_walk_runs_its_export_steps_and_its_two_spellings() -> None:
+    """
+    Given  the steps of the walk
+    When   the step list is built for Windows
+    Then   the long output path follows the first run, the held-open export follows the export,
+           and the folder reached through two spellings follows the restart
+    """
+    expected = [
+        *_OWN[:3],
+        "long-output-path",
+        *_OWN[3:6],
+        "export-held-open",
+        *_OWN[6:10],
+        "restart",
+        "case-spelling",
+        *_OWN[11:],
+    ]
+
+    assert _names(walkthrough.walk_steps(proofreading=False, platform="win32")) == expected
+
+
+def test_a_macos_walk_runs_the_two_spellings_only() -> None:
+    """
+    Given  the steps of the walk
+    When   the step list is built for macOS
+    Then   only the folder reached through two spellings is added, after the restart
+    """
+    expected = [*_OWN[:11], "case-spelling", *_OWN[11:]]
+
+    assert _names(walkthrough.walk_steps(proofreading=False, platform="darwin")) == expected
+
+
+def test_the_proofreading_steps_and_the_systems_own_both_run() -> None:
+    """
+    Given  a walk that proofreads, on a Windows machine
+    When   the step list is built
+    Then   the proofreading steps follow the steps they belong to, and so do the system's own
+    """
+    expected = [
+        "start",
+        "choose-folder",
+        "run",
+        "long-output-path",
+        "open",
+        "proofreading-items",
+        "correct",
+        "proofreading-checked",
+        "export",
+        "export-held-open",
+        "run-again",
+        "stop-after-file",
+        "stop-now",
+        "finish",
+        "restart",
+        "review-dropped",
+        "case-spelling",
+        "other-windows",
+        "shut-down",
+    ]
+
+    assert _names(walkthrough.walk_steps(proofreading=True, platform="win32")) == expected
+
+
+def test_the_long_results_folder_is_past_the_windows_limit(tmp_path: Path) -> None:
+    """
+    Given  a results folder
+    When   the walk makes it long enough for the Windows step
+    Then   the path is past 260 characters, and every name in it is one a file system takes
+    """
+    folder = walkthrough._deep_folder(tmp_path)
+
+    assert len(str(folder)) > 260
+    assert all(len(part) < 200 for part in folder.relative_to(tmp_path).parts)

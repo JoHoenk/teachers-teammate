@@ -21,7 +21,7 @@ from ..domain.freshness import (
     correction_kept_over_settings,
     first_stale_stage_for_hashes,
 )
-from ..domain.proofreading.review import CorrectionReview, fits
+from ..domain.proofreading.review import CorrectionReview, fitted_review
 from ..domain.stages import Stage
 from ..domain.teacher_work import TeacherWork, current_texts, work_status
 from ..infrastructure.state_repository import DocumentState, machine_texts, reset_fields
@@ -76,12 +76,10 @@ def _fitted(
     words than the ones it changed, and a half-right review is worse than none: the text still
     diffs against the corrected one, so the changes stay visible as changes without a reason.
     """
-    if review is None:
-        return None
-    if fits(review, TextFormatter.plain_text(transcription, text_format)):
-        return review
-    _warn_dropped(source_id, name, review)
-    return None
+    fitted = fitted_review(review, TextFormatter.plain_text(transcription, text_format))
+    if review is not None and fitted is None:
+        _warn_dropped(source_id, name, review)
+    return fitted
 
 
 @lru_cache(maxsize=256)

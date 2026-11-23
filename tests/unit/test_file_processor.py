@@ -13,10 +13,10 @@ from unittest.mock import MagicMock, call
 import pytest
 
 from teachers_teammate.domain.formatted_text import TextFormat
-from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.proofreading.edits import EditPart, edits
 from teachers_teammate.domain.evaluation import EvaluationOutcome
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
-from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
+from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote, edit_note
 from teachers_teammate.domain.performance_estimate import SpeedStep
 from teachers_teammate.domain.teacher_work import text_identity
 from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
@@ -43,6 +43,7 @@ from teachers_teammate.infrastructure.workflow.file_processor import (
     FileProcessorDeps,
 )
 from teachers_teammate.interfaces import Corrector
+from teachers_teammate.texts.review import REVIEW_DOES_NOT_FIT
 from teachers_teammate.infrastructure.proofreading.port import PortAnswer, StepRequest
 from tests.fakes.fake_port import FakePort, answer
 
@@ -931,6 +932,50 @@ def test_cached_correction_replays_its_stored_warning(tmp_path: Path) -> None:
 
     corrector.correct.assert_not_called()
     assert result.correction_warning == "no explanations"
+
+
+def test_a_cached_review_that_no_longer_fits_is_dropped_and_left_stored(tmp_path: Path) -> None:
+    """
+    Given  a stored proofreading whose review quotes a word the transcription no longer holds
+    When   process() serves that answer from the cache
+    Then   the corrected text is written, the explanations are dropped with a warning, and
+           nothing is written over the stored review
+    """
+    made_from = "Der braune Hund bellt laut."
+    review = CorrectionReview(
+        edits=(
+            edit_note(
+                edits(made_from, "Der bunte Hund bellt laut.")[0],
+                category="word_choice",
+                explanation="Farbe.",
+            ),
+        )
+    )
+    state = dataclasses.replace(
+        _make_state(
+            ocr_done=True,
+            raw_text="Der bunte Hund bellt laut.",  # the transcription it was made from is gone
+            correction_done=True,
+            correction_text="Der bunte Hund bellt laut.",
+        ),
+        correction_review=review.to_dict(),
+    )
+    doc_creator = MagicMock()
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(cache_ctx=_make_ctx(state)),
+        corrector=MagicMock(),
+        doc_creator=doc_creator,
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    assert result.correction_text == "Der bunte Hund bellt laut."
+    assert result.correction_review is None
+    assert REVIEW_DOES_NOT_FIT in result.correction_warning
+    assert doc_creator.create.call_args.kwargs["review"] is None
+    cache_svc.record_correction.assert_not_called()
 
 
 def test_personal_data_left_hidden_is_stored_with_the_correction(tmp_path: Path) -> None:

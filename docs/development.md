@@ -253,7 +253,7 @@ a CSV of what it found (`bazel run //tools/user_text:inventory -- --out user_tex
 
 **Out of scope, and must stay where it is:** the LLM prompts in
 `domain/correction_prompts.py` (versioned and hashed into the protocol fingerprint and the
-cache key — moving text changes cache keys), the developer log (`logging`, `diagnostics.log`), developer
+cache key — moving text changes cache keys), the developer log (`logging`, `logs/`), developer
 exceptions that never reach a teacher, `tools/`, tests and docs. The Word output's en/de
 label tables follow the *document* language, not the UI language, and stay in
 `docx_builder.py` / `docx_comments.py`.
@@ -1704,7 +1704,8 @@ changed constant and an `AUTO_VERSION` bump.
 **Page models.**  `DOC_ORI` (PP-LCNet_x1_0_doc_ori) and `UVDOC` are `LocalModel`s in
 `domain/local_models.py` (group `PAGE_MODELS`, 39 MB, Apache-2.0, PaddlePaddle).  The installed app
 carries them (see *Local model files*); otherwise they are downloaded only on request: **Download…** on Scan quality, the **Page models** box on Add-ons → Reading models
-(`page_models:all`, between the reader and the Ollama pulls in `InstallRound`), or
+(`PAGE_MODELS_ITEM` of `domain/install_item.py`, between the reader and the Ollama pulls in
+`InstallRound`), or
 `--download-page-models`.  Missing page models are **not** an `IssueKind`: a run never waits for
 them; the CLI prints one notice line (`texts/addons.py:PAGE_MODELS_SKIPPED_NOTICE`).  `UVDoc`
 answers an image at
@@ -1753,8 +1754,8 @@ SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
   read.  A bundled model counts as installed: nothing is downloaded and nothing is written next
   to the program files.  The smoke test's `models` check (frozen only) proves the files are
   complete, and the Add-ons rows say *included* rather than *downloaded*
-  (`AddonService.get_installation_status()` reports `bundled:reader:ppocr` /
-  `bundled:page_models:all`).
+  (`AddonService.get_installation_status()` reports `READER_ITEM.bundled` /
+  `PAGE_MODELS_ITEM.bundled`).
 - **A download happens only when the teacher asks**, and only for what the app does not carry:
   the reader's Download button, Add-ons → Reading models, the Setup Assistant's *Set up*, or
   `--download-reader`.  Never at start-up, never silently, and nothing about the user is sent
@@ -2140,14 +2141,15 @@ into `show_page(page, focus, preselect)`; `OpenDownloads` callbacks therefore re
 
 **API keys** are one `ApiKeyDrafts` (`gui/settings/_credentials.py`) owned by the window and passed
 to pages as `SettingsContext.key_drafts`; the key row under the AI service and the list on *Online
-services* are both views of it (`ApiKeyRow`).  A key goes into `os.environ` as soon as it is
-committed — on `editingFinished` and 800 ms after the last keystroke — because providers read
-the key from there when they list their models, and that list is the check that the key works.
+services* are both views of it (`ApiKeyRow`).  A key is held by the app as soon as it is
+committed — on `editingFinished` and 800 ms after the last keystroke — because providers ask
+`ApiKeys` for it when they list their models, and that list is the check that the key works.
 It goes into the keychain/settings file only on OK (`apply()`, which also reports keys the
 keychain refused); every other way out of `done()` (Cancel, Esc, close, Restore › All settings)
-calls `discard()`, which puts the environment back, after the pages' `shutdown()` stopped any
-commit timer.  Whether a key was set outside the app is recorded once at start-up
-(`_credential_store.set_outside_app`), never read from the keychain.
+calls `discard()`, which puts back what the app held, after the pages' `shutdown()` stopped any
+commit timer.  `ApiKeys` (`application/api_keys.py`) is the only place a key is kept: the
+environment is only read, so a key the teacher exported before the app started counts and the app
+writes none (`_credential_store.load`).
 
 **One model, an override, and the privacy line.**  The AI models page has one proofreading/review
 block.  There is no setting for "different review model": the box starts ticked when the
@@ -2214,13 +2216,13 @@ for its models again instead of using the cached list ("Check again", a returnin
 The engine probes (`AddonService.is_module_importable`, `ReaderService.reader_installed`) are
 shared with the connection check, so a package or the reader's models installed from Add-ons are
 seen without a restart (`IssueKind.READER_MODEL_MISSING`, fix: the **Reading models** tab of
-Add-ons with `reader:ppocr` ticked).  A new requirement is therefore: an
+Add-ons with `READER_ITEM` ticked).  A new requirement is therefore: an
 `IssueKind`, its check, and **one row in `gui/_fix_targets.py:fix_for`** -- the line for the
 readiness line and the buttons (`FixAction`: a Settings page + focus + preselect, or a
 `command` such as `retry` / `choose_folder`).  `DependencyGuardDialog(title, issues, actions)`
 (the requirement guard when a step is ticked, and the dialog that stops Run) and the readiness
-line take their buttons from that one table.  Preselect entries in Add-ons are model tags,
-`provider:<id>` and `spacy:<model>`.
+line take their buttons from that one table.  A `FixAction`'s preselect entries are
+`InstallItem`s (`domain/install_item.py`): one kind plus one name, never a string key.
 
 **Readiness line** (`gui/_readiness_line.py`).  `readiness(...)` is a pure function: the first
 matching row wins (blocker, Results problem, no documents, no files, nothing selected,
@@ -2670,14 +2672,15 @@ These two stores have deliberately opposite shapes:
 | Cardinality | one entry per `(output_dir, path)`, **overwritten** | **many** entries per document, **append-only** |
 | Keyed by | file *path* (+ output dir) | document *content hash* (global) |
 | Config awareness | stores only a *hash* to detect staleness | stores the full `OcrConfig` to label runs |
-| Expiry | **none** — grows unbounded, never garbage-collected | keep-last-N cap + manual deletion |
+| Expiry | `results_keep_days` at start (default: keep everything) + manual deletion | keep-last-N cap + manual deletion |
 
-> **Note:** the pipeline cache currently has **no automatic expiry**. Re-running
-> the same file overwrites its single entry in place, so it does not grow per
-> run, but nothing is ever evicted (e.g. deleting a source document leaves its
-> state behind). Only intermediate images (`*_step*.jpg`, `*_page*.png`) are
-> cleaned, and a preview image is removed when its state is invalidated by a
-> config change.
+> **Note:** the pipeline cache is bounded on **Settings → Privacy**. The retention
+> `results_keep_days` (default `0`, keep everything) drops the state of documents untouched for
+> that many days at the next start, with their previews; the CLI never expires anything. *Delete
+> stored results…* empties the cache by hand and can take the teacher's work with it. Re-running
+> the same file overwrites its single entry in place, so it does not grow per run. Intermediate
+> images (`*_step*.jpg`, `*_page*.png`) are cleaned, and a preview image is removed when its state
+> is invalidated by a config change.
 
 ### Benchmark run retention
 
@@ -2926,7 +2929,7 @@ stores and every reader reads.
 | `infrastructure/proofreading/port.py` | `ModelPort` (Bridge): `OllamaPort`, `LangChainPort` |
 | `infrastructure/proofreading/runner.py` | `StepRunner`: cut-off tries, one repair, window check, timeout |
 | `infrastructure/proofreading/schemas.py` | the answer schemas of steps ② and ③ with their parsers |
-| `infrastructure/proofreading/exchanges/` | `Exchange` protocol, `EXCHANGES` registry, `TExchange` |
+| `infrastructure/proofreading/exchanges/` | `Exchange` protocol, `EXCHANGES` registry, `TextFirstExchange` |
 | `infrastructure/proofreading/chunking.py` | `ChunkingCorrector`: a text longer than one request is proofread in pieces and the results joined; `Corrector.pieces()` counts them |
 
 **The three steps.** ① *Correct* sends the shielded text and gets plain text back; its answer
@@ -2986,7 +2989,7 @@ are put back exactly where they were. Block boundaries are always the source's. 
 sources skip the shield.
 
 **Corrections only.**  *Corrections only (faster)* sends step ① alone, whatever the model's
-profile says: `ProofreadContext.corrections_only` makes `TExchange.proofread` return after ① with
+profile says: `ProofreadContext.corrections_only` makes `TextFirstExchange.proofread` return after ① with
 `review=None`, and `max_text_chars` then reports ①'s limit, because a corrections-only text goes
 out in fewer pieces.  The flag is `Config.correction_output == "text"`; there is no separate key
 and no automatic fallback — a run that cannot answer ② or ③ keeps the corrected text and warns.
@@ -3293,32 +3296,35 @@ months, and a window that followed the card of the machine would make two runs i
 
 ### Logging
 
-Every module that emits diagnostic output creates a module-level logger:
+Every module that writes a diagnostic creates a module-level logger
+(`_logger = logging.getLogger(__name__)`).
 
-```python
-import logging
-_logger = logging.getLogger(__name__)
-```
+`infrastructure/logging_setup.py:start_logging(data_root)` is the one place a line goes,
+installed once per entry point through `application/composition.py:start_logging()`: the root
+logger at warning, a rotating file `<data root>/logs/teachers-teammate.log` (1 MiB × 3), and the
+same line on stderr in a process that has a console. A data folder that cannot be written leaves
+stderr only; the app starts all the same. Help → Open Log Folder opens that folder.
 
-The two entry points configure the root logger once:
+A line may hold a file name, a stage name and the message of a failure the code expects — never
+a document's text, a prompt, a model's answer or an access key. An unexpected error logs its kind
+and its frames, not its message, which can quote the text it choked on
+(`tests/unit/test_log_lines_carry_no_text.py` fails on a forbidden name in a line and on
+`.exception`). A
+sentence a teacher reads is not a log line: that is the `Reporter`'s, from `texts/`.
 
-- **CLI** (`cli.py:run_cli`): `logging.basicConfig(level=WARNING, stream=sys.stderr, …)`
-- **GUI** (`gui/_main_window.py:main_gui`): same `basicConfig` call; the GUI
-  worker additionally redirects `sys.stderr` to a Qt signal so `WARNING` and
-  `ERROR` messages from any module reach the in-app log panel automatically.
+`_logger.warning(…)` is non-fatal and the work goes on; `_logger.debug(…)` is a detail nobody
+acts on. The GUI worker redirects `sys.stderr` to a Qt signal, so a line reaches the in-app log
+panel as well.
 
-The convention is:
-- `_logger.warning(…)` — non-fatal, processing continues (e.g. DPI metadata
-  could not be restored, a cleanup file could not be deleted).
-- `_logger.error(…)` — file could not be processed but the batch continues.
-- `print(f"ERROR: …")` — reserved for CLI user-facing status lines where the
-  message is part of the normal output contract (not a log event).
+A handler that swallows a failure — its body only `pass`, `continue` or a constant `return` —
+writes a line or carries a comment saying why nothing happens
+(`tests/unit/test_silent_handlers.py`).
 
 ### Diagnosing a slow start or a window that freezes
 
 `infrastructure/diagnostics.py`; off unless asked for. Start the app with `--diagnose` (for the
 installed Windows app: a shortcut whose target ends in ` --diagnose`, or
-`set TEACHERS_TEAMMATE_DIAGNOSE=1` in a terminal) and `diagnostics.log` appears in the data
+`set TEACHERS_TEAMMATE_DIAGNOSE=1` in a terminal) and `logs/diagnostics.log` appears in the data
 folder (`resolve_data_root()`; on Windows `%LOCALAPPDATA%\teachers_teammate`). It holds
 
 - one line per phase of the start, with the seconds since the process began (imports and the
@@ -3407,7 +3413,9 @@ only part of a package, so putting the folder last is wrong too).  Two things pr
   interpreter; no cache because pip's cache is shared with other Python programs and never
   cleaned.  An add-on whose requirements conflict with the bundle fails with pip's own message.
   A language model is installed without `--upgrade` (it must leave what is there alone).  Source
-  runs and wheel installs get none of it (`addon_constraints_path()` is `None`).
+  runs and wheel installs get none of it (`addon_constraints_path()` is `None`).  pip checks TLS
+  and the pins, not hashes: `--require-hashes` needs a hashed set per platform, and the lock is
+  compiled on Linux only.
 - **Outdated folders.** After an app update the folder may hold copies from the old bundle.
   `outdated_shared_packages(pkg_dir, constraints)` compares the folder names
   (`<name>-<version>.dist-info`) with the constraints at every start; when something differs
@@ -3439,7 +3447,8 @@ only part of a package, so putting the folder last is wrong too).  Two things pr
   against the bundled versions (they are not in the test lock on purpose).  The same check runs
   weekly on all three build runners without a built app (`--python … --constraints
   addon_constraints.txt`, `.github/workflows/addon_resolution.yml`), so a new release of an
-  add-on's package shows up as a red run, not on release day.
+  add-on's package shows up as a red run, not on release day.  The locked run also fails when
+  its report names a package neither file pins.
 
 ### The add-on lock and the license list
 
@@ -3447,13 +3456,17 @@ The constraints file says what an add-on may **not** change.  What it *gets* is 
 
 - **`addon_lock.txt`.** `requirements_addons_lock.txt` is the pip-compile lock of the `llm` and
   `privacy` extras (`bazel run //:requirements_addons.update`, the same tooling as the test
-  lock).  `tools/build/addon_lock.py` (run by `build_standalone.py`, bundled by the spec) turns
-  it into the flat `teachers_teammate/_build/addon_lock.txt` — the lock minus the packages
+  lock).  `tools/build/addon_lock.py` turns it into the flat `teachers_teammate/_build/addon_lock.txt` — the lock minus the packages
   `addon_constraints.txt` already pins, because two constraints files that disagree make pip
   refuse the install.  `pip_policy_arguments()` passes it as a second `-c`, so a teacher who
   clicks *Install* gets the versions this release was tested with instead of whatever is newest
-  that day.  The smoke test (`addon lock`, frozen only) proves the file is in the bundle and pins
-  every package `addon_manager.addon_package_names()` lists.
+  that day.  `tools/build/platform_lock.py` (run by `build_standalone.py`, bundled by the spec,
+  and by the weekly resolution check) adds the pins that each add-on's own dry run on this
+  platform needs and the lock lacks — a dependency only Windows or macOS needs
+  (`tools/build/addon_pins.py`) — so nothing installs unpinned there either; a dry run that
+  fails fails the build.  The smoke test
+  (`addon lock`, frozen only) proves the file is in the bundle and pins every package
+  `addon_manager.addon_package_names()` lists.
 - **`third_party_licenses/inventory.csv`.** One list for everything the app ships or installs —
   the bundle's packages, the add-ons', the models, the build tools.  `tools/licenses/inventory.py`
   writes it: it reads the app's own lists (`[project] dependencies`,

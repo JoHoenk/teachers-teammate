@@ -30,7 +30,6 @@ No pixel automation: ``qtbot`` drives the same widgets a teacher clicks.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-import os
 from pathlib import Path
 import socket
 from typing import Any
@@ -41,8 +40,7 @@ import pytest
 
 from teachers_teammate.application import providers as providers_module
 from teachers_teammate.application.anonymization import AnonymizationService
-from teachers_teammate.application.composition import build_app_services
-from teachers_teammate.application.providers import ProviderService
+from teachers_teammate.application.composition import AppServices, build_app_services
 from teachers_teammate.application.setup_plan import (
     DownloadKind,
     HandIn,
@@ -836,10 +834,11 @@ def test_s5_a_failed_pull_drops_the_queue_and_leaves_the_window_usable(
 # ── S8: changing one's mind ───────────────────────────────────────────────────
 
 
-def key_environment(providers: ProviderService) -> dict[str, str]:
-    """Return the environment variables the providers read their keys from."""
-    keys = {providers.env_key(provider) for provider in providers.list_providers()}
-    return {key: os.environ[key] for key in keys if key and key in os.environ}
+def held_keys(services: AppServices) -> dict[str, str | None]:
+    """Return what the app holds for each key the providers read, by environment variable."""
+    providers = services.providers
+    env_keys = {providers.env_key(provider) for provider in providers.list_providers()}
+    return {env_key: services.keys.held(env_key) for env_key in env_keys if env_key}
 
 
 def test_s8_cancel_on_the_summary_changes_nothing(walkthrough) -> None:
@@ -850,7 +849,7 @@ def test_s8_cancel_on_the_summary_changes_nothing(walkthrough) -> None:
     """
     walk = walkthrough()
     before = walk.config_path.read_text(encoding="utf-8")
-    environment = key_environment(walk.services.providers)
+    keys = held_keys(walk.services)
 
     def script(driver: Driver) -> None:
         driver.next()  # Welcome → Your classes
@@ -870,7 +869,7 @@ def test_s8_cancel_on_the_summary_changes_nothing(walkthrough) -> None:
     assert walk.config_path.read_text(encoding="utf-8") == before
     assert walk.fake.pulled == []
     assert walk.downloads.page_models == 0
-    assert key_environment(walk.services.providers) == environment
+    assert held_keys(walk.services) == keys
 
 
 def test_s8_cancel_on_a_first_start_leaves_a_working_setup(walkthrough, monkeypatch) -> None:

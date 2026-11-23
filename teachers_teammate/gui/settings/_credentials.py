@@ -3,19 +3,18 @@
 Keys are not part of the pipeline settings.  :class:`~.._credential_store.CredentialStore`
 keeps them in the system's secret store (Keychain, Credential Manager, Secret Service) when
 there is one, otherwise in the app's settings file in plain text, and the note on the group
-says which.  Saved keys are put into the process environment at start-up, where a key set
-before the app started takes priority (see ``MainWindow._load_credentials_from_settings``).
+says which.  Saved keys are handed to the app at start-up, where a key set before the app
+started takes priority (see ``MainWindow._load_credentials_from_settings``).
 
 While the Settings window is open, a key is edited as an :class:`ApiKeyDrafts` entry that every
-page shares.  A key goes into the environment as soon as it is committed -- the providers read
-it from there when they list their models, so the list can load and check it before OK -- into
-the store only on OK, and every other way out of the window puts the environment back.
+page shares.  A key takes effect as soon as it is committed -- the providers ask the app for it
+when they list their models, so the list can load and check it before OK -- it goes into the
+store only on OK, and every other way out of the window puts it back.
 """
 
 from __future__ import annotations
 
 import html
-import os
 from urllib.parse import urlparse
 
 from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
@@ -36,7 +35,7 @@ from ...application.composition import AppServices
 from ...texts import credentials as keys_text
 from ...texts import dialogs as dlg
 from .. import _dialogs, _html
-from .._credential_store import CredentialStore, KeyLocation, set_outside_app
+from .._credential_store import CredentialStore, KeyLocation
 
 #: How long after the last keystroke a typed key counts as entered.
 COMMIT_DELAY_MS = 800
@@ -45,9 +44,10 @@ COMMIT_DELAY_MS = 800
 class ApiKeyDrafts(QObject):
     """The API keys as edited in the open Settings window, shared by every page.
 
-    A key goes into ``os.environ`` as soon as it is committed (the providers read it from
-    there when they list their models), into the store only on OK (:meth:`apply`), and every
-    other way out of the window puts the environment back (:meth:`discard`).
+    A key takes effect as soon as it is committed (the providers ask the app for it when they
+    list their models), it goes into the store only on OK (:meth:`apply`), and every other way
+    out of the window puts what the app held back (:meth:`discard`).  The environment is never
+    written: only a key the teacher exported is read from there.
     """
 
     #: The key of this environment variable changed (only on a real change).
@@ -63,12 +63,10 @@ class ApiKeyDrafts(QObject):
         super().__init__(parent)
         self._app_service = app_service
         self._store = store or CredentialStore()
-        #: What the key was when the window first touched it: the value that was shown, and
-        #: what ``os.environ`` held (``None`` = not set), which :meth:`discard` puts back.
+        #: What the key was when the window first touched it, and what the app held for it then
+        #: (``None`` = nothing, so the environment's counts again), which :meth:`discard` puts back.
         self._initial: dict[str, str] = {}
-        self._env_before: dict[str, str | None] = {}
-        #: Keys read from the store because the environment had none (one read per key).
-        self._stored: dict[str, str] = {}
+        self._held_before: dict[str, str | None] = {}
         self._location: KeyLocation | None = None
 
     # ── what the services need ────────────────────────────────────────────────
@@ -104,24 +102,16 @@ class ApiKeyDrafts(QObject):
     # ── values ────────────────────────────────────────────────────────────────
 
     def value(self, env_key: str) -> str:
-        """Return the key as it is now: the environment, else the store, else ``""``.
+        """Return the key as it is now: what the app holds, else the environment's.
 
-        The store is read only for a key the environment has none of, and only once: a
-        keychain read can ask the user to unlock it.  A key this window touched is whatever
-        the environment says.
+        The store is read once, at start-up: a keychain read can ask the user to unlock it, so
+        it never happens while this window is open.
         """
-        if not env_key:
-            return ""
-        current = os.environ.get(env_key, "")
-        if current or env_key in self._env_before:
-            return current
-        if env_key not in self._stored:
-            self._stored[env_key] = self._store.get(env_key)
-        return self._stored[env_key]
+        return self._app_service.keys.key(env_key) if env_key else ""
 
     def set_outside_app(self, env_key: str) -> bool:
-        """Return whether the key was already in the environment when the app started."""
-        return set_outside_app(env_key)
+        """Return whether the key was set outside the app, i.e. exported before it started."""
+        return self._app_service.keys.set_outside_app(env_key)
 
     def location(self) -> KeyLocation:
         """Return where a saved key would be kept (asked once per window)."""
@@ -130,24 +120,17 @@ class ApiKeyDrafts(QObject):
         return self._location
 
     def set(self, env_key: str, value: str) -> None:
-        """Use *value* for *env_key* from now on; an empty value removes the key.
+        """Use *value* for *env_key* from now on; an empty value means "no key for now".
 
-        Setting the value the key already has does nothing: no snapshot, no signal, so the
-        two views of a key cannot echo each other.  Both sides are compared stripped, so a key
-        that only came from the environment is not "changed" by the whitespace around it.  A
-        key that only the store has is not in the environment yet, so setting it is a change
-        (it goes into the environment) -- though not one :meth:`apply` stores again.
+        Setting the value the key already has does nothing: no snapshot, no signal, so the two
+        views of a key cannot echo each other.  Both sides are compared stripped, so a key that
+        only came from the environment is not "changed" by the whitespace around it.
         """
         value = value.strip()
-        shown = self.value(env_key)
-        in_environment = bool(os.environ.get(env_key))
-        if value == shown.strip() and (in_environment or not value):
+        if value == self.value(env_key).strip():
             return
         self._snapshot(env_key)
-        if value:
-            os.environ[env_key] = value
-        else:
-            os.environ.pop(env_key, None)
+        self._app_service.keys.remember(env_key, value)
         self.changed.emit(env_key)
 
     def remove(self, env_key: str) -> None:
@@ -155,10 +138,11 @@ class ApiKeyDrafts(QObject):
         self.set(env_key, "")
 
     def _snapshot(self, env_key: str) -> None:
+        """Keep what the key was before the window first changed it, so it can be put back."""
         if env_key in self._initial:
             return
         self._initial[env_key] = self.value(env_key).strip()
-        self._env_before[env_key] = os.environ.get(env_key)
+        self._held_before[env_key] = self._app_service.keys.held(env_key)
 
     # ── leaving the window ────────────────────────────────────────────────────
 
@@ -172,7 +156,7 @@ class ApiKeyDrafts(QObject):
         """
         in_file: list[str] = []
         for env_key, initial in self._initial.items():
-            final = os.environ.get(env_key, "")
+            final = self.value(env_key)
             if final == initial:
                 continue
             if final:
@@ -185,24 +169,20 @@ class ApiKeyDrafts(QObject):
             else:
                 self._store.remove(env_key)
         self._initial.clear()
-        self._env_before.clear()
-        self._stored.clear()
+        self._held_before.clear()
         return in_file
 
     def discard(self) -> list[str]:
-        """Put ``os.environ`` back the way it was for every key the window changed.
+        """Put back what the app held before, for every key the window changed.
 
         Emits nothing: the window is closing.  Returns the keys that were put back, so the
         caller can drop what was learned with the discarded keys (cached model lists).
         """
-        restored = list(self._env_before)
-        for env_key, before in self._env_before.items():
-            if before is None:
-                os.environ.pop(env_key, None)
-            else:
-                os.environ[env_key] = before
+        restored = list(self._held_before)
+        for env_key, before in self._held_before.items():
+            self._app_service.keys.remember(env_key, before)
         self._initial.clear()
-        self._env_before.clear()
+        self._held_before.clear()
         return restored
 
 
@@ -222,7 +202,7 @@ def store_key_drafts(drafts: ApiKeyDrafts, parent: QWidget | None = None) -> Non
 
 
 def discard_key_drafts(drafts: ApiKeyDrafts, app_service: AppServices) -> None:
-    """Put the environment back and forget the model lists fetched with the discarded keys.
+    """Put the keys back and forget the model lists fetched with the discarded keys.
 
     A list fetched with a key that is no longer in use says nothing about the next one, so it
     must not be shown to the next window.

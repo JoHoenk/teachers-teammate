@@ -163,7 +163,8 @@ class ModelStore:
             try:
                 if (folder / file.name).stat().st_size != file.size:
                     return False
-            except OSError:
+            except OSError as exc:
+                _logger.debug("Cannot stat %s, the model counts as incomplete: %s", file.name, exc)
                 return False
         return True
 
@@ -243,7 +244,8 @@ class ModelStore:
     def _file_ok(self, path: Path, file: ModelFile) -> bool:
         try:
             return path.is_file() and path.stat().st_size == file.size
-        except OSError:
+        except OSError as exc:
+            _logger.debug("Cannot stat %s, treating it as not downloaded: %s", path, exc)
             return False
 
     def _fetch(

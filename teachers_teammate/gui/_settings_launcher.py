@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QDialog, QWidget
 
 from ..application.composition import AppServices
 from ..config import OcrConfig
+from ..domain.install_item import InstallItem
 from ._check_controller import CheckController
 from ._config_panel import ConfigPanel
 from ._privacy_settings import FlowAcknowledgements
@@ -93,7 +94,7 @@ class SettingsLauncher(QObject):
         page: SettingsPage,
         *,
         focus: str = "",
-        preselect: Sequence[str] = (),
+        preselect: Sequence[InstallItem] = (),
         parent: QWidget | None = None,
     ) -> None:
         """Open the Settings window on *page* (focused on *focus*) and apply it on OK.

@@ -7,12 +7,15 @@ helpers without a QApplication.
 from __future__ import annotations
 
 import locale
+import logging
 import os
 import subprocess
 import sys
 
 from ..domain.language import language_from_locale
 from .subprocess_utils import child_env
+
+_logger = logging.getLogger(__name__)
 
 
 def system_locale_code() -> str:
@@ -52,6 +55,7 @@ def _macos_locale() -> str:
             env=child_env(),
         )
     except OSError, subprocess.SubprocessError:
+        _logger.debug("macOS does not answer with its locale")
         return ""
     return result.stdout.strip() if result.returncode == 0 else ""
 

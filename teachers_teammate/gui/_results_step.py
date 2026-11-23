@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 import dataclasses
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import (
@@ -27,6 +27,15 @@ from ..texts import dialogs as dlg
 from ..texts import main_window as txt
 from . import _dialogs, _handles
 from ._path_row import PathRow
+
+
+class _TextKeys(NamedTuple):
+    """The two text files a run can write: as written and anonymized."""
+
+    as_written: bool
+    """A text file as the teacher wrote it."""
+    anonymized: bool
+    """A text file with the names hidden."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -132,13 +141,13 @@ class ResultsStep(QObject):
 
     def values(self) -> ResultsValues:
         """Return what the widgets show, under the keys of the settings dict."""
-        as_written, anonymized = self._text_keys()
+        keys = self._text_keys()
         return ResultsValues(
             output=self._output_dir.text().strip(),
             docx_enabled=self._docx_enabled.isChecked(),
             docx_format=self._docx_format.currentText(),
-            text_enabled=as_written,
-            text_anonymized_enabled=anonymized,
+            text_enabled=keys.as_written,
+            text_anonymized_enabled=keys.anonymized,
         )
 
     def apply(self, values: ResultsValues) -> None:
@@ -194,14 +203,14 @@ class ResultsStep(QObject):
         self._update_state()
         self._hooks.changed()
 
-    def _text_keys(self) -> tuple[bool, bool]:
-        """Return the two text-file keys the row stands for: (as written, anonymized)."""
+    def _text_keys(self) -> _TextKeys:
+        """Return the two text-file keys the row stands for."""
         if not self._text_enabled.isChecked():
-            return False, False
+            return _TextKeys(False, False)
         mode = self._text_mode.currentText()
-        return mode in (txt.TEXT_MODE_AS_WRITTEN, txt.TEXT_MODE_BOTH), mode in (
-            txt.TEXT_MODE_ANONYMIZED,
-            txt.TEXT_MODE_BOTH,
+        return _TextKeys(
+            as_written=mode in (txt.TEXT_MODE_AS_WRITTEN, txt.TEXT_MODE_BOTH),
+            anonymized=mode in (txt.TEXT_MODE_ANONYMIZED, txt.TEXT_MODE_BOTH),
         )
 
 

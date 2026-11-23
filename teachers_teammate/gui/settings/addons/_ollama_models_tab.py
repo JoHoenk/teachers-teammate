@@ -13,8 +13,8 @@ it (:meth:`OllamaModelsTab.mark_pulls`).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from collections.abc import Sequence
+from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ....application.composition import AppServices
+from ....domain.install_item import InstallItem, InstallKind
 from ....domain.model_catalog import (
     HardwareProfile,
     HardwareProfileSetting,
@@ -72,6 +73,7 @@ from ....texts.models import (
 from ... import _dialogs
 from .._computer_box import ProfileLine
 from ._common import is_model_tag
+from ._detection import DetectedAddons
 
 # Tree group rows: group key → (label, catalog category or None for user models).
 _OLLAMA_GROUPS: dict[str, tuple[str, ModelCategory | None]] = {
@@ -216,13 +218,13 @@ class OllamaModelsTab(QWidget):
             and bool(item.flags() & Qt.ItemFlag.ItemIsEnabled)
         ]
 
-    def preselect(self, entries: Sequence[str]) -> None:
+    def preselect(self, entries: Sequence[InstallItem]) -> None:
         """Remember the model tags a deep link (a fix button) asks to tick.
 
         They are ticked once the installation check has answered: the check re-rates every row
         and adds the models the server offers but the tree does not list yet.
         """
-        self._preselect.extend(entry for entry in entries if is_model_tag(entry))
+        self._preselect.extend(entry.name for entry in entries if is_model_tag(entry))
 
     def tick_preselect(self) -> None:
         """Tick the requested tags, now that the check knows what is installed."""
@@ -235,9 +237,9 @@ class OllamaModelsTab(QWidget):
             self._update_model_suitability()
         self._preselect = []
 
-    def mark_installed(self, results: Mapping[str, object]) -> None:
+    def mark_installed(self, detected: DetectedAddons) -> None:
         """Mark the rows that are downloaded and rate the rows for the active computer."""
-        self._installed_by_category = self._apply_model_detection_results(results)
+        self._installed_by_category = self._apply_model_detection_results(detected)
         self._update_model_suitability()
         self._installed_ready = True
         self._maybe_apply_initial_ticks()
@@ -623,14 +625,12 @@ class OllamaModelsTab(QWidget):
 
     # ── following the installation check and the pulls ───────────────────────────
 
-    def _apply_model_detection_results(
-        self, results: Mapping[str, object]
-    ) -> dict[ModelCategory, bool]:
+    def _apply_model_detection_results(self, detected: DetectedAddons) -> dict[ModelCategory, bool]:
         """Mark model rows downloaded/disabled; return per-category download flags."""
         installed_by_category: dict[ModelCategory, bool] = {"ocr": False, "general": False}
         for tag, item in self._iter_model_items():
-            installed = bool(results.get(f"ollama:{tag}", False))
-            size_bytes = cast(int, results.get(f"size:{tag}", 0))
+            installed = detected.installed.get(InstallItem(InstallKind.OLLAMA, tag), False)
+            size_bytes = detected.model_sizes.get(tag, 0)
             if installed:
                 # Downloaded rows are marked in the Size column: "✓ 4.7 GB".  Unticked and
                 # disabled, like the package boxes: a tick always means "will be installed".

@@ -9,6 +9,12 @@ import pytest
 
 from teachers_teammate.application import providers as providers_module
 from teachers_teammate.application.composition import build_app_services
+from teachers_teammate.domain.install_item import (
+    PAGE_MODELS_ITEM,
+    READER_ITEM,
+    InstallItem,
+    InstallKind,
+)
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from tests.conftest import fake_bundle, fake_reader_store
@@ -27,15 +33,15 @@ def test_get_installation_status_reports_the_built_in_reader(tmp_path: Path) -> 
     """
     Given  one service with the reader's model files and one without
     When   get_installation_status() is called
-    Then   'reader:ppocr' is True for the first and False for the second
+    Then   the reader's item is True for the first and False for the second
     """
     with_models = build_app_services(model_store=fake_reader_store(tmp_path / "a")).addons
     without = build_app_services(
         model_store=fake_reader_store(tmp_path / "b", installed=False)
     ).addons
 
-    assert with_models.get_installation_status()["reader:ppocr"] is True
-    assert without.get_installation_status()["reader:ppocr"] is False
+    assert with_models.get_installation_status()[READER_ITEM] is True
+    assert without.get_installation_status()[READER_ITEM] is False
 
 
 @pytest.mark.unit
@@ -57,11 +63,11 @@ def test_get_installation_status_says_which_models_the_app_carries_itself(
 
     status = carried.get_installation_status()
 
-    assert status["bundled:reader:ppocr"] is True
-    assert status["bundled:page_models:all"] is True
-    assert status["reader:ppocr"] is True
-    assert status["page_models:all"] is True
-    assert plain.get_installation_status()["bundled:reader:ppocr"] is False
+    assert status[READER_ITEM.bundled] is True
+    assert status[PAGE_MODELS_ITEM.bundled] is True
+    assert status[READER_ITEM] is True
+    assert status[PAGE_MODELS_ITEM] is True
+    assert plain.get_installation_status()[READER_ITEM.bundled] is False
 
 
 @pytest.mark.unit
@@ -83,8 +89,8 @@ def test_get_installation_status_includes_langchain_packages(monkeypatch) -> Non
         langchain_packages={"core": "langchain_core", "openai": "langchain_openai"},
     )
 
-    assert status["langchain:core"] is True
-    assert status["langchain:openai"] is False
+    assert status[InstallItem(InstallKind.LANGCHAIN, "core")] is True
+    assert status[InstallItem(InstallKind.LANGCHAIN, "openai")] is False
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -103,8 +109,8 @@ def test_installation_status_compares_normalised_tags(monkeypatch) -> None:
         ollama_models=["llama3.2", "other:1b"], ollama_url="http://127.0.0.1:11434"
     )
 
-    assert status["ollama:llama3.2"] is True
-    assert status["ollama:other:1b"] is False
+    assert status[InstallItem(InstallKind.OLLAMA, "llama3.2")] is True
+    assert status[InstallItem(InstallKind.OLLAMA, "other:1b")] is False
 
 
 @pytest.mark.unit

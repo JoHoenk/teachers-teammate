@@ -35,6 +35,7 @@ from teachers_teammate.application.ollama_server import OllamaServerService
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.application.run import RunPreflight, RunService
+from teachers_teammate.application.stored_results import StoredSummary
 from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.benchmark import PairComparison, compare_pair
 from teachers_teammate.domain.model_catalog import (
@@ -55,6 +56,7 @@ from teachers_teammate.gui._background import LatestTask
 from teachers_teammate.gui._long_job import LongJobThread
 from teachers_teammate.gui._privacy_settings import FlowAcknowledgements
 from teachers_teammate.gui._main_window import MainWindow
+from teachers_teammate.gui._run_start import RunStartController
 from teachers_teammate.gui._readiness_controller import ReadinessController
 from teachers_teammate.gui import _preprocess_preview, _update_check
 from teachers_teammate.gui.settings import SettingsContext, SettingsResult
@@ -229,6 +231,26 @@ class FakeGuiService(LocalDataFlowStub):
 
     def compare(self, a: Any, b: Any) -> PairComparison:
         return compare_pair(getattr(a, "raw_text", ""), getattr(b, "raw_text", ""))
+
+    # ── the results kept for earlier runs (Settings → Privacy) ───────────────
+    stored_summary = StoredSummary(documents=0, bytes_taken=0)
+
+    def summary(self) -> StoredSummary:
+        """Answer how much is stored."""
+        return self.stored_summary
+
+    def delete(self, *, include_work: bool = False) -> None:
+        """Forget how much is stored, and remember what was asked to be deleted."""
+        self.deleted_with_work.append(include_work)
+        self.stored_summary = StoredSummary(documents=0, bytes_taken=0)
+
+    deleted_with_work: ClassVar[list[bool]] = []
+
+    def busy(self) -> bool:
+        """Answer whether a run is going (a test sets it)."""
+        return self.run_going
+
+    run_going: ClassVar[bool] = False
 
 
 class FakePullThread(LongJobThread):
@@ -523,7 +545,9 @@ def no_privacy_prompt(monkeypatch) -> None:
     of the question itself restore the real method through the ``confirm_box`` fixture.
     """
     monkeypatch.setattr(
-        MainWindow, "_confirm_data_flow_then", lambda self, _config, on_ready: on_ready()
+        RunStartController,
+        "_confirm_data_flow_then",
+        lambda self, _config, on_ready: on_ready(),
     )
 
 

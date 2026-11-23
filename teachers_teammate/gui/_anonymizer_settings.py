@@ -24,10 +24,8 @@ def build(settings: Mapping[str, Any]) -> AnonymizerConfig:
     )
 
 
-def store(settings: MutableMapping[str, Any], config: object) -> None:
-    """Write *config* back into *settings*; anything else is ignored."""
-    if not isinstance(config, AnonymizerConfig):
-        return
+def store(settings: MutableMapping[str, Any], config: AnonymizerConfig) -> None:
+    """Write *config* back into *settings*."""
     settings["anonymizer_primary_model"] = config.primary_model
     settings["anonymizer_secondary_model"] = config.secondary_model
     # Unchanged defaults stay symbolic (None) so later changes to them reach this user;

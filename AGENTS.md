@@ -34,8 +34,9 @@ infrastructure/  — concrete implementations (OCR engines, LLM providers, DOCX 
 infrastructure/workflow/ — FileProcessor (per-file stage orchestrator), run_files() coordinator
 application/     — the services, one per topic: RunService (the run) in `run.py`, plus
                    providers, reader, recommendations, speeds, anonymization, addons, data_flow,
-                   setup, export, DocumentQueries (reads) and DocumentCommands (writes), reached
-                   as `.run` / `.documents` / `.commands`; the only entry for GUI and CLI
+                   setup, export, stored results (what earlier runs kept), DocumentQueries
+                   (reads) and DocumentCommands (writes), reached as `.run` / `.stored` /
+                   `.documents` / `.commands`; the only entry for GUI and CLI
 gui/ / cli.py    — adapters; no discovery or availability logic
                    (gui/settings/ = the Settings window, one page per topic)
 ```
@@ -93,6 +94,12 @@ or `docs/development.md`.
 - A new setting goes on exactly one page of `gui/settings/` (or in `ConfigPanel` if it is a
   per-batch choice), never two.
 - Anything a teacher cannot rebuild lives in the config or data root, never the cache.
+- A diagnostic goes to `logging` (it lands in `<data root>/logs/teachers-teammate.log`, Help →
+  Open Log Folder); a sentence a teacher reads goes to the Reporter or to `texts/`. Nothing
+  prints. A log line never holds a document's text, a prompt or a key
+  (`tests/unit/test_log_lines_carry_no_text.py`).
+- An `except` that only passes, continues or returns a constant says in a comment why nothing
+  happens, or writes a line (`tests/unit/test_silent_handlers.py`).
 
 **Results and caches**
 - `raw_text` / `correction_text` are plain or Markdown (`raw_text_format`): use

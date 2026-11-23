@@ -159,6 +159,7 @@ def ollama_host_url(value: str) -> str:
         host = parsed.hostname or ""
         port = parsed.port or OLLAMA_PORT
     except ValueError:
+        # Not a URL: the variable names no server to try.
         return ""
     if host in ("", "0.0.0.0", "::"):
         host = "127.0.0.1"
@@ -178,6 +179,7 @@ def default_gateway(route_table: str) -> str:
         try:
             octets = bytes.fromhex(fields[2])
         except ValueError:
+            # Not a hexadecimal address, so this line is no default route.
             continue
         if len(octets) == 4:
             return str(ipaddress.IPv4Address(octets[::-1]))
@@ -196,6 +198,7 @@ def nameservers(resolv_conf: str) -> tuple[str, ...]:
             try:
                 found.append(str(ipaddress.ip_address(parts[1])))
             except ValueError:
+                # Not an address, so the entry names no name server to ask.
                 continue
     return tuple(found)
 
@@ -231,6 +234,7 @@ def classify_host(
         if ipaddress.ip_address(name).is_loopback:
             return ServerKind.THIS_COMPUTER
     except ValueError:
+        # A name rather than an address: the names below decide.
         pass
     if name in windows_hosts:
         return ServerKind.WINDOWS_HOST
@@ -300,6 +304,7 @@ def scan_targets(address: str, prefix: int = SCAN_PREFIX) -> list[str]:
     try:
         own = ipaddress.ip_address(address)
     except ValueError:
+        # Not an address, so there is no network to scan.
         return []
     if own.version != 4 or own.is_loopback or own.is_link_local:
         return []

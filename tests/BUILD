@@ -54,6 +54,7 @@ filegroup(
         "unit/test_addons_service.py",
         "unit/test_anonymization_service.py",
         "unit/test_anonymizer.py",
+        "unit/test_api_keys.py",
         "unit/test_benchmark_domain.py",
         "unit/test_benchmark_run_store.py",
         "unit/test_benchmark_runner.py",
@@ -576,10 +577,10 @@ py_test(
 )
 
 py_test(
-    name = "test_exchange_t",
+    name = "test_exchange_text_first",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_exchange_t.py"],
-    args = ["unit/test_exchange_t.py"],
+    srcs = _COMMON_SRCS + ["unit/test_exchange_text_first.py"],
+    args = ["unit/test_exchange_text_first.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
@@ -757,6 +758,16 @@ py_test(
     deps = _COMMON_DEPS + _APPLICATION_LIB,
 )
 
+# The keys of the online services: what the app holds, and what the environment has.
+py_test(
+    name = "test_api_keys",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_api_keys.py"],
+    args = ["unit/test_api_keys.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
+)
+
 # This computer's hardware, the model catalog, the classifications and the ratings.
 py_test(
     name = "test_recommendation_service",
@@ -853,6 +864,15 @@ py_test(
     args = ["unit/test_storage_policy.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+py_test(
+    name = "test_stored_results",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_stored_results.py"],
+    args = ["unit/test_stored_results.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -1054,6 +1074,37 @@ py_test(
     data = ["//teachers_teammate:all_sources"],
     main = "run_test.py",
     deps = _COMMON_DEPS,
+)
+
+# The log file leaves the app: a line names a file and a stage, never a document's text.
+py_test(
+    name = "test_log_lines_carry_no_text",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_log_lines_carry_no_text.py"],
+    args = ["unit/test_log_lines_carry_no_text.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+# An `except` that only passes says nothing to whoever reads the log.
+py_test(
+    name = "test_silent_handlers",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_silent_handlers.py"],
+    args = ["unit/test_silent_handlers.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_logging_setup",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_logging_setup.py"],
+    args = ["unit/test_logging_setup.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 # A stage word and the Ollama address are spelled in one module each.
@@ -1318,6 +1369,32 @@ py_test(
     # ``application.setup_plan`` also holds ``SetupService``, which asks the reader service and
     # so the pipeline (the docx builder included).
     deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
+)
+
+py_test(
+    name = "test_addon_pins",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_addon_pins.py"],
+    args = ["unit/test_addon_pins.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+)
+
+py_test(
+    name = "test_addon_requirements",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_addon_requirements.py"],
+    args = ["unit/test_addon_requirements.py"],
+    data = [
+        "//:pyproject.toml",
+        "//:requirements_addons_lock.txt",
+    ],
+    env = {
+        "ADDON_LOCK": "$(rlocationpath //:requirements_addons_lock.txt)",
+        "PYPROJECT": "$(rlocationpath //:pyproject.toml)",
+    },
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -2789,6 +2866,15 @@ py_test(
 )
 
 py_test(
+    name = "test_install_item",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_install_item.py"],
+    args = ["unit/test_install_item.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
+)
+
+py_test(
     name = "test_local_models",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_local_models.py"],
@@ -2965,10 +3051,13 @@ test_suite(
         ":test_addon_constraints",
         ":test_addon_lock",
         ":test_addon_manager",
+        ":test_addon_pins",
+        ":test_addon_requirements",
         ":test_addons_service",
         ":test_anonymization_mask",
         ":test_anonymization_service",
         ":test_anonymizer",
+        ":test_api_keys",
         ":test_benchmark_domain",
         ":test_benchmark_run_store",
         ":test_benchmark_runner",
@@ -3029,7 +3118,7 @@ test_suite(
         ":test_evaluation_verify_model_catalog",
         ":test_exchange_corrector",
         ":test_exchange_schemas",
-        ":test_exchange_t",
+        ":test_exchange_text_first",
         ":test_export_service",
         ":test_fake_ollama",
         ":test_fetch_models",
@@ -3049,6 +3138,8 @@ test_suite(
         ":test_llm_factory",
         ":test_llm_invoke",
         ":test_local_models",
+        ":test_log_lines_carry_no_text",
+        ":test_logging_setup",
         ":test_make_constraints",
         ":test_make_version_resource",
         ":test_markdown_shield",
@@ -3101,6 +3192,7 @@ test_suite(
         ":test_service_construction",
         ":test_setup_plan",
         ":test_setup_service",
+        ":test_silent_handlers",
         ":test_spacy_models",
         ":test_speed_estimates",
         ":test_speed_store",
@@ -3108,6 +3200,7 @@ test_suite(
         ":test_state_repository",
         ":test_step_runner",
         ":test_storage_policy",
+        ":test_stored_results",
         ":test_subprocess_env",
         ":test_target_groups",
         ":test_teacher_work",

@@ -138,7 +138,12 @@ pip install teachers_teammate-<version>-py3-none-any.whl
 
 # With the add-ons
 pip install "teachers_teammate-<version>-py3-none-any.whl[llm,privacy]"
+```
 
+The extras name version *ranges*: pip chooses the newest that fits.  The add-ons the app installs
+itself from Settings → Add-ons are pinned to the versions this release was tested with.
+
+```bash
 # Process a folder and write DOCX reports
 teachers-teammate -i scans/ -o output/ --docx
 

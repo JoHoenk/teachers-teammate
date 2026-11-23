@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from ..application.composition import AppServices
 from ..config import OcrConfig
+from ..interfaces import PreparedPreview
 from ..texts import dialogs as dlg
 from ..texts.models import PREVIEW_ZOOM_HINT, preview_title
 from . import _dialogs
@@ -100,18 +101,15 @@ class PreprocessPreview(QObject):
 
         tmp_dir = self._services.reader.resolve_preview_tmp_dir()
 
-        def prepare() -> tuple[Path, Path, list[str]]:
+        def prepare() -> PreparedPreview:
             return self._services.reader.preprocess_preview(source_path, ocr_config, tmp_dir)
 
         def arrived(result: object, error: BaseException | None) -> None:
-            if error is None:
-                orig, proc, steps = cast("tuple[Path, Path, list[str]]", result)
-            else:
-                orig, proc, steps = None, None, None
+            preview = cast("PreparedPreview", result) if error is None else None
             self._on_done(
-                orig,
-                proc,
-                steps,
+                preview.original if preview else None,
+                preview.preprocessed if preview else None,
+                preview.steps if preview else None,
                 "" if error is None else str(error),
                 ocr_config,
                 tmp_dir,

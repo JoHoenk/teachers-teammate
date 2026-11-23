@@ -18,6 +18,7 @@ It is only used to warn about too little free space before a large download.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -29,6 +30,8 @@ from .subprocess_utils import child_env
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+_logger = logging.getLogger(__name__)
 
 #: The folder Ollama keeps its models in when its own settings say nothing.
 _DEFAULT_MODELS_DIR = Path(".ollama") / "models"
@@ -59,7 +62,8 @@ def _wsl_windows_app_paths() -> list[Path]:
     users = Path("/mnt/c/Users")
     try:
         names = [entry for entry in users.iterdir() if entry.is_dir()]
-    except OSError:
+    except OSError as exc:
+        _logger.debug("Cannot list the Windows user folders in %s: %s", users, exc)
         return []
     return [name / "AppData" / "Local" / "Programs" / "Ollama" / "ollama app.exe" for name in names]
 
@@ -164,6 +168,6 @@ def free_disk_gb(path: Path) -> float | None:
         try:
             usage = shutil.disk_usage(candidate)
         except OSError:
-            continue
+            continue  # the folder may not be there yet: the parent is measured instead
         return usage.free / 1_000_000_000
     return None

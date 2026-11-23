@@ -127,13 +127,15 @@ class BenchmarkApplicationService:
             on_progress(f"Running OCR · {ocr.engine} · {ocr.model}")
         before = self._loaded_tags(ollama_url, ocr)
         try:
-            result = self._runner(
-                config,
-                source,
-                component_factory=self._component_factory,
-                stop_event=stop_event,
-                model_store=self.services.model_store,
-            )
+            # The run writes into the folders the stored results are deleted from.
+            with self.services.run.running():
+                result = self._runner(
+                    config,
+                    source,
+                    component_factory=self._component_factory,
+                    stop_event=stop_event,
+                    model_store=self.services.model_store,
+                )
         finally:
             # A benchmark that ends or is stopped must not leave its model in memory: the next
             # run would then measure a model that is already loaded.

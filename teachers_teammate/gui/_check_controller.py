@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,8 @@ from ._view_settings import (
 from .check import CheckLayout, CheckPage, CopyKind, CopyState, RunState
 from .settings import SettingsPage
 from .settings._page import FOCUS_OCR, FOCUS_PROOFREADING
+
+_logger = logging.getLogger(__name__)
 
 #: How much of a document's name the Check tab label shows before it is shortened.
 TAB_NAME_CHARS = 28
@@ -457,7 +460,8 @@ class CheckController(QObject):
             return
         try:
             config = self._panel.to_config()
-        except ValueError:
+        except ValueError as exc:
+            _logger.warning("Cannot store the edit of %s: %s", source.name, exc)
             return
         source_id = str(source.resolve())
         text_format = self._table.text_format_for_source(source_id)
@@ -532,7 +536,8 @@ class CheckController(QObject):
         self._page.flush_pending_edit()  # a typed edit must be in the text that is copied
         try:
             config = self._panel.to_config()
-        except ValueError:
+        except ValueError as exc:
+            _logger.warning("Cannot copy the text of %s: %s", Path(self._open).name, exc)
             return
         service = self._services
         # The text comes from the stored document, so a copy carries what the Check tab shows.

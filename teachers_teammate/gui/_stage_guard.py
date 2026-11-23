@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QCheckBox, QWidget
 
 from ..application.composition import AppServices
 from ..config import Config
+from ..domain.install_item import InstallItem
 from ..domain.requirements import RequirementIssue
 from ..domain.stages import Stage
 from ..texts import main_window as win
@@ -51,7 +52,7 @@ class GuardHooks:
     #: The document language, which the wording of a fix depends on.
     language: Callable[[], str]
     #: Open a Settings page: the page, the focus value on it, entries to preselect.
-    open_settings: Callable[[SettingsPage, str, list[str]], None]
+    open_settings: Callable[[SettingsPage, str, list[InstallItem]], None]
     #: Where the dialog opens over: the widget that asked for the check.
     dialog_parent: QWidget
 

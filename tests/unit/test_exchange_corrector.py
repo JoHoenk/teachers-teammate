@@ -14,7 +14,7 @@ from teachers_teammate.infrastructure.proofreading.corrector import (
     ProofreadingSettings,
     build_exchange_corrector,
 )
-from teachers_teammate.infrastructure.proofreading.exchanges import TExchange
+from teachers_teammate.infrastructure.proofreading.exchanges import TextFirstExchange
 from tests.fakes.fake_port import FakePort, answer, transport
 
 SOURCE = "Ich habe ein grosse Hund. Er ist nett. Wir gehen zu Schule."
@@ -34,7 +34,7 @@ def _notes(*notes: tuple[int, str, str]) -> str:
 
 def _corrector(*script) -> ExchangeCorrector:
     return ExchangeCorrector(
-        TExchange(FakePort(*script)), settings=ProofreadingSettings(level="B1")
+        TextFirstExchange(FakePort(*script)), settings=ProofreadingSettings(level="B1")
     )
 
 
@@ -129,7 +129,7 @@ def test_corrections_only_sends_step_one_alone() -> None:
 
     port = FakePort(answer(CORRECTED), window=ContextBudget(8192))
     corrector = ExchangeCorrector(
-        TExchange(port), settings=ProofreadingSettings(corrections_only=True)
+        TextFirstExchange(port), settings=ProofreadingSettings(corrections_only=True)
     )
 
     outcome = corrector.correct(SOURCE, "German")
@@ -181,7 +181,7 @@ def test_a_stop_during_the_explanations_reaches_the_caller() -> None:
                 raise RunStoppedError
             return super().ask_structured(req)
 
-    corrector = ExchangeCorrector(TExchange(_StoppingPort(answer(CORRECTED))))
+    corrector = ExchangeCorrector(TextFirstExchange(_StoppingPort(answer(CORRECTED))))
 
     with pytest.raises(RunStoppedError):
         corrector.correct(SOURCE, "German")

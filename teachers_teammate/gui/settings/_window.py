@@ -11,8 +11,8 @@ The window owns the wiring between pages, so the pages never know about each oth
 - **Packages changed:** a finished install on Add-ons makes every built page look again, and
   is passed on to the main window.
 - **API keys:** one :class:`~._credentials.ApiKeyDrafts` for the whole window, shared by every
-  page that shows a key.  A key is used right away, stored on OK, and put back out of the
-  environment by any other way out of the window.
+  page that shows a key.  A key is used right away, stored on OK, and put back by any other
+  way out of the window.
 - **Recognition method → image preparation:** choosing another method on AI models applies
   that method's default image preparation on Scan quality (as the old dialog did), also when
   Scan quality was not opened yet.
@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import OcrConfig
+from ...domain.install_item import InstallItem
 from ...domain.model_catalog import profile_setting
 from ...texts import dialogs as dlg
 from ...texts import settings as st
@@ -137,7 +138,7 @@ class SettingsWindow(QDialog):
         *,
         page: SettingsPage = SettingsPage.AI_MODELS,
         focus: str = "",
-        preselect: Sequence[str] = (),
+        preselect: Sequence[InstallItem] = (),
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(st.WINDOW_TITLE)
@@ -271,7 +272,9 @@ class SettingsWindow(QDialog):
         """Return the page shown now."""
         return _ORDER[self._stack.currentIndex()]
 
-    def show_page(self, page: SettingsPage, focus: str = "", preselect: Sequence[str] = ()) -> None:
+    def show_page(
+        self, page: SettingsPage, focus: str = "", preselect: Sequence[InstallItem] = ()
+    ) -> None:
         """Show *page* (building it the first time), focused on *focus*."""
         built = self._ensure_page(page)
         self._sidebar.blockSignals(True)
@@ -333,7 +336,7 @@ class SettingsWindow(QDialog):
 
     def _on_navigate(self, page: object, focus: str, preselect: list) -> None:
         if isinstance(page, SettingsPage):
-            self.show_page(page, focus, [str(entry) for entry in preselect])
+            self.show_page(page, focus, list(preselect))
 
     # ── shared state ──────────────────────────────────────────────────────────
 
@@ -465,7 +468,7 @@ class SettingsWindow(QDialog):
     def done(self, result: int) -> None:
         """Refuse while an install runs; otherwise stop every page's background work.
 
-        Any way out but OK puts the API keys typed here back out of the environment.  The pages
+        Any way out but OK hands the keys back as they were when the window opened.  The pages
         stop first, so a key waiting for its pause cannot be written after it.
         """
         reason = self._close_blocker()

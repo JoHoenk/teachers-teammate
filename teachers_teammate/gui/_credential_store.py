@@ -8,8 +8,9 @@ settings file (``QSettings``, plain text) as before; :meth:`CredentialStore.loca
 which of the two is in use, so the Settings window never claims more than is true.
 
 A key found in the settings file is moved into the secret store the first time the store is
-available (:meth:`CredentialStore.load_into_environment`), and the plain copy is deleted.
-A key set in the environment before the app started always wins and is never written.
+available (:meth:`CredentialStore.load`), and the plain copy is deleted.  The keys are loaded
+into :class:`~..application.api_keys.ApiKeys`, never into the environment: a key set in the
+environment before the app started always wins, and the app writes none.
 
 Under ``TEACHERS_TEAMMATE_TMPDIR`` (a test, the smoke test, the app walkthrough) there is no
 secret store: the folder holds everything of the run, and the teacher's own keys stay out of it.
@@ -20,9 +21,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 from enum import StrEnum
 import logging
-import os
 from types import ModuleType
 
+from ..application.api_keys import ApiKeys
 from ..config import override_root
 from ._qsettings import app_settings
 
@@ -32,19 +33,6 @@ LOG = logging.getLogger(__name__)
 KEYRING_SERVICE = "TeachersTeammate"
 
 _FILE_GROUP = "credentials"
-
-#: The keys that were already in the environment when :meth:`CredentialStore.load_into_environment`
-#: ran at start-up, i.e. set outside the app.  Only that call can tell them from keys the app put
-#: there itself, and the environment is process-wide, so the answer is kept here.  Asking the
-#: keychain instead could pop up an unlock prompt.
-_SET_OUTSIDE_APP: set[str] = set()
-#: The keys ``load_into_environment`` put into the environment itself.
-_LOADED_BY_APP: set[str] = set()
-
-
-def set_outside_app(env_key: str) -> bool:
-    """Return whether *env_key* was set in the environment before the app started."""
-    return env_key in _SET_OUTSIDE_APP
 
 
 class KeyLocation(StrEnum):
@@ -145,22 +133,19 @@ class CredentialStore:
 
     # ── all keys ──────────────────────────────────────────────────────────────
 
-    def load_into_environment(self, env_keys: Iterable[str]) -> None:
-        """Put the stored keys into ``os.environ`` (a key already set there wins).
+    def load(self, keys: ApiKeys, env_keys: Iterable[str]) -> None:
+        """Hand the stored keys to *keys*, where the app reads them (a key in the environment wins).
 
         Moves keys still kept in the settings file into the secret store when there is one.
         *env_keys* are the names the providers use; a secret store cannot be listed.
         """
         for env_key in env_keys:
             self._migrate(env_key)
-            if os.environ.get(env_key):
-                if env_key not in _LOADED_BY_APP:
-                    _SET_OUTSIDE_APP.add(env_key)
+            if keys.set_outside_app(env_key):
                 continue
             value = self.get(env_key)
             if value:
-                os.environ[env_key] = value
-                _LOADED_BY_APP.add(env_key)
+                keys.remember(env_key, value)
 
     def _migrate(self, env_key: str) -> None:
         keyring = _keyring()

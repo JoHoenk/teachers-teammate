@@ -29,6 +29,13 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 SPEC = Path(__file__).resolve().parent / "teachers-teammate.spec"
 ASSETS = ROOT / "teachers_teammate" / "assets"
 
+# The build environment installs the project, but a developer running this from a plain checkout
+# has not: the repo root makes ``tools.build`` importable either way.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.build import platform_lock  # noqa: E402
+
 
 def _ensure_assets() -> None:
     """Generate installer assets (ICO, welcome BMP) via make_ico.py on Windows."""
@@ -105,12 +112,18 @@ def _write_addon_constraints() -> None:
 
 
 def _write_addon_lock() -> None:
-    """Write the add-on versions this release was tested with (the spec adds it)."""
-    subprocess.run(
-        [sys.executable, str(Path(__file__).resolve().parent / "addon_lock.py")],
-        check=True,
-        cwd=ROOT,
-    )
+    """Write the add-on versions this release was tested with, with this platform's pins.
+
+    A build that cannot resolve the add-ons fails: a lock without the platform's pins would ship
+    them unpinned.
+    """
+    try:
+        count, extra = platform_lock.write_platform_lock()
+    except platform_lock.ResolveError as exc:
+        raise SystemExit(f"cannot resolve the add-ons for the lock: {exc}") from exc
+    if extra:
+        print(f"    {len(extra)} of them are this platform's own: {' '.join(extra)}")
+    print(f"    wrote {count} add-on pins")
 
 
 def _fetch_models() -> None:

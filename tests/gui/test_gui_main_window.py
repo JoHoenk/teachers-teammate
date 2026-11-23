@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
+from teachers_teammate.domain.install_item import InstallItem, InstallKind
 from teachers_teammate.domain.stages import Stage
 import threading
 from typing import Any, ClassVar
@@ -45,6 +46,7 @@ from teachers_teammate.gui._background import wait_for_background_tasks
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
+from teachers_teammate.gui._run_start import RunStartController
 from teachers_teammate.gui._readiness_controller import ReadinessController
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._setup_launcher import SetupLauncher
@@ -106,7 +108,7 @@ def _answer_questions(monkeypatch, *, yes: bool) -> list[Question]:
     return asked
 
 
-_REAL_CONFIRM_DATA_FLOW = MainWindow._confirm_data_flow_then
+_REAL_CONFIRM_DATA_FLOW = RunStartController._confirm_data_flow_then
 
 
 def _wait_for(predicate, timeout_ms: int = 3000) -> None:
@@ -134,7 +136,7 @@ def test_main_window_run_shows_error_for_invalid_config(main_window, monkeypatch
     )
     shown = record_notices(monkeypatch)
 
-    main_window._on_run()
+    main_window._run_start.start()
 
     assert [notice.title for notice in shown] == ["Configuration error"]
     assert main_window._run_controller._worker is None
@@ -153,7 +155,7 @@ def test_main_window_run_shows_info_when_no_files(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     shown = record_notices(monkeypatch)
 
-    main_window._on_run()
+    main_window._run_start.start()
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
     assert [notice.title for notice in shown] == ["No files found"]
@@ -177,7 +179,7 @@ def test_main_window_run_starts_worker_and_updates_ui(
     )
     main_window._results_table.selectRow(0)
 
-    main_window._on_run()
+    main_window._run_start.start()
     qtbot.waitUntil(lambda: main_window._run_controller._worker is not None, timeout=3000)
 
     assert isinstance(main_window._run_controller._worker, DummyWorker)
@@ -203,7 +205,7 @@ def test_main_window_passes_its_service_to_the_worker(
     main_window._results_table.set_queue([queue_row("a.png")])
     main_window._results_table.selectRow(0)
 
-    main_window._on_run()
+    main_window._run_start.start()
     qtbot.waitUntil(lambda: main_window._run_controller._worker is not None, timeout=3000)
 
     assert main_window._run_controller._worker.app_service is main_window._app_service
@@ -223,7 +225,7 @@ def test_main_window_run_shows_info_when_no_selection(
     shown = record_notices(monkeypatch)
     main_window._results_table.set_queue([queue_row("a.png"), queue_row("b.txt")])
 
-    main_window._on_run()
+    main_window._run_start.start()
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
     assert [notice.title for notice in shown] == ["No files selected"]
@@ -840,7 +842,7 @@ def test_a_typed_edit_is_stored_before_a_stage_run_clears_the_cache(
         main_window._run_controller, "start", lambda *_a, **_k: order.append("start")
     )
 
-    main_window._run_stage(make_config(Path("/tmp")), [a], "correction")
+    main_window._run_start._run_stage(make_config(Path("/tmp")), [a], "correction")
     qtbot.waitUntil(lambda: order == ["flush", "invalidate", "start"], timeout=2000)
 
     assert order == ["flush", "invalidate", "start"]
@@ -1414,6 +1416,26 @@ def test_menu_bar_has_file_settings_tools_and_help(main_window) -> None:
     titles = [a.text() for a in main_window.menuBar().actions()]
 
     assert titles == ["File", "Settings", "Tools", "Help"]
+
+
+@pytest.mark.gui
+def test_help_opens_the_folder_the_log_is_written_to(main_window, monkeypatch, tmp_path) -> None:
+    """
+    Given  the main window and the folder this process logs into
+    When   Help → Open Log Folder is triggered
+    Then   the file manager is sent exactly that folder
+    """
+    folder = tmp_path / "data" / "logs"
+    opened: list[str] = []
+    monkeypatch.setattr(main_window_module, "log_folder", lambda: folder)
+    monkeypatch.setattr(
+        main_window_module.QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile())
+    )
+
+    main_window._menu_bar.log_folder_action.trigger()
+
+    assert opened == [str(folder)]
+    assert folder.is_dir()
 
 
 @pytest.mark.gui
@@ -2120,14 +2142,14 @@ def test_main_window_on_preprocess_preview_ignores_concurrent_click(
     assert len(shown) == 1
 
 
-# ── _on_stage_run_requested branches ─────────────────────────────────────────
+# ── start_stage branches ─────────────────────────────────────────
 
 
 @pytest.mark.gui
 def test_stage_run_warns_on_config_error(main_window, monkeypatch) -> None:
     """
     Given  the config panel cannot build a Config
-    When   _on_stage_run_requested is invoked
+    When   start_stage is invoked
     Then   a warning dialog is shown and no worker starts
     """
     from unittest.mock import patch  # noqa: PLC0415
@@ -2141,7 +2163,7 @@ def test_stage_run_warns_on_config_error(main_window, monkeypatch) -> None:
     monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
 
     shown = record_notices(monkeypatch)
-    main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
+    main_window._run_start.start_stage(["/tmp/a.png"], "ocr")
 
     assert [notice.title for notice in shown] == ["Configuration error"]
     assert started == []
@@ -2151,7 +2173,7 @@ def test_stage_run_warns_on_config_error(main_window, monkeypatch) -> None:
 def test_stage_run_force_runs_correction_when_checkbox_disabled(main_window, monkeypatch) -> None:
     """
     Given  correction is disabled in the config
-    When   _on_stage_run_requested is invoked for the correction stage (right-click)
+    When   start_stage is invoked for the correction stage (right-click)
     Then   the stage runs anyway with a config where correction_enabled is forced True
     """
     cfg = make_config(Path("/tmp"), correction_enabled=False)
@@ -2166,7 +2188,7 @@ def test_stage_run_force_runs_correction_when_checkbox_disabled(main_window, mon
     started: list = []
     monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
 
-    main_window._on_stage_run_requested(["/tmp/a.png"], "correction")
+    main_window._run_start.start_stage(["/tmp/a.png"], "correction")
     _wait_for(lambda: bool(started))
 
     assert captured and captured[0].correction_enabled is True
@@ -2177,7 +2199,7 @@ def test_stage_run_force_runs_correction_when_checkbox_disabled(main_window, mon
 def test_stage_run_force_runs_evaluation_when_checkbox_disabled(main_window, monkeypatch) -> None:
     """
     Given  evaluation is disabled in the config
-    When   _on_stage_run_requested is invoked for the evaluation stage (right-click)
+    When   start_stage is invoked for the evaluation stage (right-click)
     Then   the stage runs with evaluation_enabled and correction_enabled forced True
     """
     cfg = make_config(Path("/tmp"), evaluation_enabled=False, correction_enabled=False)
@@ -2192,7 +2214,7 @@ def test_stage_run_force_runs_evaluation_when_checkbox_disabled(main_window, mon
     started: list = []
     monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
 
-    main_window._on_stage_run_requested(["/tmp/a.png"], "evaluation")
+    main_window._run_start.start_stage(["/tmp/a.png"], "evaluation")
     _wait_for(lambda: bool(started))
 
     assert captured
@@ -2219,7 +2241,7 @@ def test_queued_files_of_an_empty_selection_is_no_file(main_window) -> None:
 def test_stage_run_informs_when_the_selection_is_not_in_the_queue(main_window, monkeypatch) -> None:
     """
     Given  selected rows that are no longer in the queue
-    When   _on_stage_run_requested is invoked for the OCR stage
+    When   start_stage is invoked for the OCR stage
     Then   a 'Selection mismatch' dialog is shown, nothing is invalidated and no worker starts
     """
     cfg = make_config(Path("/tmp"))
@@ -2234,7 +2256,7 @@ def test_stage_run_informs_when_the_selection_is_not_in_the_queue(main_window, m
     monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
 
     shown = record_notices(monkeypatch)
-    main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
+    main_window._run_start.start_stage(["/tmp/a.png"], "ocr")
     _wait_for(lambda: bool(shown))
 
     assert [notice.title for notice in shown] == ["Selection mismatch"]
@@ -2246,7 +2268,7 @@ def test_stage_run_informs_when_the_selection_is_not_in_the_queue(main_window, m
 def test_stage_run_warns_on_invalidation_failure(main_window, monkeypatch) -> None:
     """
     Given  invalidate_from_stage reports failures
-    When   _on_stage_run_requested is invoked
+    When   start_stage is invoked
     Then   a warning dialog is shown and no worker starts
     """
     from unittest.mock import patch  # noqa: PLC0415
@@ -2263,7 +2285,7 @@ def test_stage_run_warns_on_invalidation_failure(main_window, monkeypatch) -> No
     monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
 
     shown = record_notices(monkeypatch)
-    main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
+    main_window._run_start.start_stage(["/tmp/a.png"], "ocr")
     _wait_for(lambda: bool(shown))
 
     assert [notice.title for notice in shown] == ["Cache invalidation failed"]
@@ -2274,7 +2296,7 @@ def test_stage_run_warns_on_invalidation_failure(main_window, monkeypatch) -> No
 def test_stage_run_starts_worker_on_success(main_window, monkeypatch) -> None:
     """
     Given  invalidate_from_stage returns runnable source ids with no failures
-    When   _on_stage_run_requested is invoked
+    When   start_stage is invoked
     Then   the worker is started with those source ids
     """
     cfg = make_config(Path("/tmp"), correction_enabled=False)
@@ -2292,7 +2314,7 @@ def test_stage_run_starts_worker_on_success(main_window, monkeypatch) -> None:
         lambda config, ids, _files=None: started.append((config, ids)),
     )
 
-    main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
+    main_window._run_start.start_stage(["/tmp/a.png"], "ocr")
     _wait_for(lambda: bool(started))
 
     assert started == [(cfg, ["/tmp/a.png"])]
@@ -2306,7 +2328,7 @@ def test_main_window_loads_credentials_on_startup(qtbot, monkeypatch, credential
     """
     Given  a stored API key for a service (saved by an earlier session)
     When   MainWindow is created
-    Then   the key is injected into os.environ (when not already set)
+    Then   the app holds the key, and the environment is left alone
     """
     import os  # noqa: PLC0415
 
@@ -2318,8 +2340,8 @@ def test_main_window_loads_credentials_on_startup(qtbot, monkeypatch, credential
     win = MainWindow(app_service=real_service(), worker_factory=DummyWorker)
     qtbot.addWidget(win)
 
-    assert os.environ.get("OPENAI_API_KEY") == "test-value-from-settings"
-    os.environ.pop("OPENAI_API_KEY", None)
+    assert win._app_service.keys.held("OPENAI_API_KEY") == "test-value-from-settings"
+    assert "OPENAI_API_KEY" not in os.environ
 
 
 @pytest.mark.gui
@@ -2327,12 +2349,10 @@ def test_main_window_env_var_takes_priority_over_stored_credential(
     qtbot, monkeypatch, credential_file
 ) -> None:
     """
-    Given  an env var is already set AND QSettings has a different value for the same key
+    Given  an env var is already set AND the settings file has a different value for that key
     When   MainWindow is created
-    Then   the existing env var is NOT overwritten by the stored value
+    Then   the key of the environment is the one used, and the stored value is not held
     """
-    import os  # noqa: PLC0415
-
     credential_file["credentials/OPENAI_API_KEY"] = "stored-value"
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
@@ -2341,7 +2361,8 @@ def test_main_window_env_var_takes_priority_over_stored_credential(
     win = MainWindow(app_service=real_service(), worker_factory=DummyWorker)
     qtbot.addWidget(win)
 
-    assert os.environ["OPENAI_API_KEY"] == "env-value"
+    assert win._app_service.keys.key("OPENAI_API_KEY") == "env-value"
+    assert win._app_service.keys.held("OPENAI_API_KEY") is None
 
 
 # ── first-start model choice (AC12/AC13) ──────────────────────────────────
@@ -2732,14 +2753,17 @@ def test_missing_model_dialog_opens_addons_with_models_preselected(
     )
     scripted = install_scripted_settings_window(monkeypatch, accepted=False)
 
-    main_window._on_run()
+    main_window._run_start.start()
     qtbot.waitUntil(lambda: bool(scripted.instances), timeout=3000)
 
     assert len(scripted.instances) == 1
     window = scripted.instances[0]
     assert window.page is SettingsPage.ADDONS
     assert window.focus == FOCUS_LOCAL_MODELS
-    assert window.preselect == ["qwen3-vl:8b", "qwen3.5:9b"]
+    assert window.preselect == [
+        InstallItem(InstallKind.OLLAMA, "qwen3-vl:8b"),
+        InstallItem(InstallKind.OLLAMA, "qwen3.5:9b"),
+    ]
 
 
 @pytest.mark.gui
@@ -2752,14 +2776,16 @@ def test_the_panels_dependency_guard_opens_addons_with_its_focus(main_window, mo
     scripted = install_scripted_settings_window(monkeypatch, accepted=False)
 
     main_window._config_panel.open_settings_requested.emit(
-        SettingsPage.ADDONS, FOCUS_ONLINE_SERVICES, ["provider:mistral"]
+        SettingsPage.ADDONS,
+        FOCUS_ONLINE_SERVICES,
+        [InstallItem(InstallKind.PROVIDER, "mistral")],
     )
 
     assert len(scripted.instances) == 1
     window = scripted.instances[0]
     assert window.page is SettingsPage.ADDONS
     assert window.focus == FOCUS_ONLINE_SERVICES
-    assert window.preselect == ["provider:mistral"]
+    assert window.preselect == [InstallItem(InstallKind.PROVIDER, "mistral")]
 
 
 @pytest.mark.gui
@@ -2869,7 +2895,7 @@ def _capture_stage_run(main_window, monkeypatch, cfg, stage: str):
     )
     started: list = []
     monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
-    main_window._on_stage_run_requested(["/tmp/a.png"], stage)
+    main_window._run_start.start_stage(["/tmp/a.png"], stage)
     _wait_for(lambda: bool(started))
     return started[0][0]
 
@@ -2953,7 +2979,7 @@ def test_run_with_ollama_unreachable_shows_clear_message_and_does_not_start(
     shown: list[DependencyGuardDialog] = []
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: shown.append(self))
 
-    main_window._on_run()
+    main_window._run_start.start()
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
     dialog = shown[0]
@@ -2986,7 +3012,7 @@ def test_run_checks_requirements_off_the_gui_thread(
 
     monkeypatch.setattr(RunService, "check_run_preflight", _slow_preflight)
 
-    main_window._on_run()
+    main_window._run_start.start()
 
     assert main_window._run_controller._worker is None  # still checking
     assert main_window._run_btn.isEnabled() is False
@@ -3022,7 +3048,7 @@ def test_run_shows_unmet_stage_requirement_dialog(
         DependencyGuardDialog, "exec", lambda self: shown.append(self.windowTitle())
     )
 
-    main_window._on_run()
+    main_window._run_start.start()
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
     assert shown == ["The run can't start"]
@@ -3049,7 +3075,7 @@ def test_insufficient_memory_runs_anyway_only_when_the_user_says_so(
     main_window._results_table.set_queue([queue_row(str(tmp_path / "a.png"), "a.png")])
     main_window._results_table.selectRow(0)
 
-    main_window._on_run()
+    main_window._run_start.start()
     qtbot.waitUntil(lambda: main_window._run_controller._worker is not None, timeout=3000)
 
     assert asked[0].title == "Not enough free memory"
@@ -3080,7 +3106,7 @@ def test_cancelling_the_memory_warning_does_not_start_the_run(
     main_window._results_table.set_queue([queue_row(str(tmp_path / "a.png"), "a.png")])
     main_window._results_table.selectRow(0)
 
-    main_window._on_run()
+    main_window._run_start.start()
     qtbot.waitUntil(lambda: bool(asked), timeout=3000)
     assert main_window._run_controller._worker is None
     assert main_window._run_btn.isEnabled() is True
@@ -3115,7 +3141,7 @@ def confirm_box(monkeypatch):
     """Replace the data-flow question and the settings store; return the recorder."""
     _Confirmations.clicks, _Confirmations.remember, _Confirmations.texts = "Continue", False, []
     SharedMemorySettings.store = {}
-    monkeypatch.setattr(MainWindow, "_confirm_data_flow_then", _REAL_CONFIRM_DATA_FLOW)
+    monkeypatch.setattr(RunStartController, "_confirm_data_flow_then", _REAL_CONFIRM_DATA_FLOW)
 
     def choose(_parent: object, question: Question) -> Answer:
         _Confirmations.texts.append(question.body)
@@ -3152,7 +3178,7 @@ def test_run_refuses_online_ocr_with_an_explanation(
     shown: list[DependencyGuardDialog] = []
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: shown.append(self))
 
-    main_window._on_run()
+    main_window._run_start.start()
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
     assert "Runs on Ollama's servers." in issue_text(shown[0].issues[0])
@@ -3181,7 +3207,7 @@ def test_run_with_text_files_in_the_input_folder_is_refused(
     )
     shown = record_notices(monkeypatch)
 
-    main_window._on_run()
+    main_window._run_start.start()
 
     assert shown[0].title == "Choose another output folder"
     assert "next run would read them as new documents" in shown[0].body
@@ -3202,7 +3228,7 @@ def test_local_run_starts_without_a_privacy_question(
     """
     started: list[int] = []
 
-    main_window._confirm_data_flow_then(make_config(tmp_path), lambda: started.append(1))
+    main_window._run_start._confirm_data_flow_then(make_config(tmp_path), lambda: started.append(1))
 
     assert started == [1]
     assert confirm_box.texts == []
@@ -3221,7 +3247,7 @@ def test_online_run_asks_first_and_cancel_stops_it(
     confirm_box.clicks = "Cancel"
     started: list[int] = []
 
-    main_window._confirm_data_flow_then(
+    main_window._run_start._confirm_data_flow_then(
         _online_proofreading_config(tmp_path), lambda: started.append(1)
     )
 
@@ -3244,8 +3270,8 @@ def test_online_run_continues_and_is_asked_again_by_default(
     started: list[int] = []
     cfg = _online_proofreading_config(tmp_path)
 
-    main_window._confirm_data_flow_then(cfg, lambda: started.append(1))
-    main_window._confirm_data_flow_then(cfg, lambda: started.append(1))
+    main_window._run_start._confirm_data_flow_then(cfg, lambda: started.append(1))
+    main_window._run_start._confirm_data_flow_then(cfg, lambda: started.append(1))
 
     assert started == [1, 1]
     assert len(confirm_box.texts) == 2
@@ -3264,10 +3290,10 @@ def test_dont_ask_again_applies_only_to_the_same_data_flow(
     started: list[int] = []
     cfg = _online_proofreading_config(tmp_path)
 
-    main_window._confirm_data_flow_then(cfg, lambda: started.append(1))
+    main_window._run_start._confirm_data_flow_then(cfg, lambda: started.append(1))
     asked_before = len(confirm_box.texts)
-    main_window._confirm_data_flow_then(cfg, lambda: started.append(2))
-    main_window._confirm_data_flow_then(
+    main_window._run_start._confirm_data_flow_then(cfg, lambda: started.append(2))
+    main_window._run_start._confirm_data_flow_then(
         dataclasses.replace(cfg, evaluation_enabled=True, evaluate_provider="openai"),
         lambda: started.append(3),
     )
@@ -3295,8 +3321,8 @@ def test_taking_back_the_answer_in_privacy_settings_asks_again(
 
     confirm_box.remember = True
     cfg = _online_proofreading_config(tmp_path)
-    main_window._confirm_data_flow_then(cfg, lambda: None)
-    main_window._confirm_data_flow_then(cfg, lambda: None)
+    main_window._run_start._confirm_data_flow_then(cfg, lambda: None)
+    main_window._run_start._confirm_data_flow_then(cfg, lambda: None)
     assert len(confirm_box.texts) == 1
 
     opened_on: list[str] = []
@@ -3317,7 +3343,7 @@ def test_taking_back_the_answer_in_privacy_settings_asks_again(
     ) as service:
         service.return_value.list_installed_spacy_models.return_value = []
         main_window.open_settings(SettingsPage.PRIVACY, focus=FOCUS_SENDING)
-    main_window._confirm_data_flow_then(cfg, lambda: None)
+    main_window._run_start._confirm_data_flow_then(cfg, lambda: None)
 
     assert opened_on == ["Sending data away"]
     assert len(confirm_box.texts) == 2
@@ -3335,7 +3361,9 @@ def test_a_remembered_answer_is_kept_with_a_readable_summary(
     """
     confirm_box.remember = True
 
-    main_window._confirm_data_flow_then(_online_proofreading_config(tmp_path), lambda: None)
+    main_window._run_start._confirm_data_flow_then(
+        _online_proofreading_config(tmp_path), lambda: None
+    )
 
     [entry] = main_window._acknowledgements().remembered()
     assert entry.summary.startswith("Proofreading: Online service (OpenAI")
@@ -3487,7 +3515,7 @@ def test_stage_rerun_with_unmet_requirement_keeps_the_cached_results(
         DependencyGuardDialog, "exec", lambda self: shown.append(self.windowTitle())
     )
 
-    main_window._on_stage_run_requested(["/tmp/a.png"], "correction")
+    main_window._run_start.start_stage(["/tmp/a.png"], "correction")
     _wait_for(lambda: bool(shown))
 
     assert shown == ["The run can't start"]
@@ -3519,9 +3547,9 @@ def test_run_pressed_while_requirements_are_checked_starts_nothing_twice(
     monkeypatch.setattr(RunService, "check_run_preflight", _slow_preflight)
     busy = record_notices(monkeypatch)
 
-    main_window._on_run()
-    main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
-    main_window._on_run()
+    main_window._run_start.start()
+    main_window._run_start.start_stage(["/tmp/a.png"], "ocr")
+    main_window._run_start.start()
 
     assert [notice.title for notice in busy] == ["Please wait"]
     release.set()
@@ -3554,11 +3582,11 @@ def test_stage_rerun_is_refused_while_a_worker_runs(
     )
     busy = record_notices(monkeypatch)
 
-    main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
+    main_window._run_start.start_stage(["/tmp/a.png"], "ocr")
 
     assert [notice.title for notice in busy] == ["Please wait"]
     assert invalidated == []
-    assert main_window._preflight_running is False
+    assert main_window._run_start.preflight_running is False
 
 
 # ── Export menu ───────────────────────────────────────────────────────────
@@ -4951,7 +4979,7 @@ def test_the_run_start_question_keeps_the_changes_by_default(
         unanswered=(Path("/in/a.png"), Path("/in/b.png")),
     )
 
-    main_window._confirm_teacher_work_then(cfg, worked_on, lambda: started.append(True))
+    main_window._run_start._confirm_teacher_work_then(cfg, worked_on, lambda: started.append(True))
 
     assert asked[0].title == "You worked on some of these corrections"
     assert "a.png" in asked[0].body and "b.png" in asked[0].body
@@ -4984,7 +5012,7 @@ def test_the_run_start_question_proofreads_again_when_asked(
     )
     worked_on = WorkedOn(kept_stale=(Path("/in/a.png"),), unanswered=(Path("/in/a.png"),))
 
-    main_window._confirm_teacher_work_then(cfg, worked_on, lambda: started.append(True))
+    main_window._run_start._confirm_teacher_work_then(cfg, worked_on, lambda: started.append(True))
 
     assert dropped == [(["/in/a.png"], "correction")]
     assert started == [True]
@@ -5002,7 +5030,7 @@ def test_the_run_start_question_cancels_the_run(main_window, monkeypatch, tmp_pa
     _answer_with(monkeypatch, cancel=True)
     started: list[bool] = []
 
-    main_window._confirm_teacher_work_then(
+    main_window._run_start._confirm_teacher_work_then(
         cfg,
         WorkedOn(kept_stale=(Path("/in/a.png"),), unanswered=(Path("/in/a.png"),)),
         lambda: started.append(True),
@@ -5025,7 +5053,7 @@ def test_the_run_start_question_only_continues_when_nothing_is_stored(
     asked = _answer_with(monkeypatch)
     started: list[bool] = []
 
-    main_window._confirm_teacher_work_then(
+    main_window._run_start._confirm_teacher_work_then(
         cfg, WorkedOn(unbound=(Path("/in/a.png"),)), lambda: started.append(True)
     )
 
@@ -5046,7 +5074,7 @@ def test_no_question_when_the_teacher_worked_on_nothing(main_window, monkeypatch
     asked = _answer_with(monkeypatch)
     started: list[bool] = []
 
-    main_window._confirm_teacher_work_then(cfg, WorkedOn(), lambda: started.append(True))
+    main_window._run_start._confirm_teacher_work_then(cfg, WorkedOn(), lambda: started.append(True))
 
     assert asked == []
     assert started == [True]
@@ -5065,9 +5093,11 @@ def test_rerunning_the_proofreading_asks_before_it_drops_the_changes(
     asked: list[Question] = []
     ran: list[str] = []
     monkeypatch.setattr(_dialogs, "ask", lambda _parent, question: asked.append(question) or False)
-    monkeypatch.setattr(main_window, "_invalidate_and_run", lambda *_a: ran.append("run"))
+    monkeypatch.setattr(
+        main_window._run_start, "_invalidate_and_run", lambda *_a: ran.append("run")
+    )
 
-    main_window._confirm_rerun_then(
+    main_window._run_start._confirm_rerun_then(
         cfg,
         ["/in/a.png", "/in/b.png"],
         "correction",
@@ -5094,9 +5124,11 @@ def test_rerunning_the_proofreading_goes_ahead_when_confirmed(
     cfg = make_config(tmp_path)
     ran: list[str] = []
     monkeypatch.setattr(_dialogs, "ask", lambda *_a, **_k: True)
-    monkeypatch.setattr(main_window, "_invalidate_and_run", lambda *_a: ran.append("run"))
+    monkeypatch.setattr(
+        main_window._run_start, "_invalidate_and_run", lambda *_a: ran.append("run")
+    )
 
-    main_window._confirm_rerun_then(
+    main_window._run_start._confirm_rerun_then(
         cfg, ["/in/a.png"], "correction", WorkedOn(worked_on=(Path("/in/a.png"),)), None
     )
 
@@ -5116,9 +5148,11 @@ def test_rerunning_the_recognition_asks_before_it_replaces_the_transcription(
     asked: list[Question] = []
     ran: list[str] = []
     monkeypatch.setattr(_dialogs, "ask", lambda _parent, question: asked.append(question) or False)
-    monkeypatch.setattr(main_window, "_invalidate_and_run", lambda *_a: ran.append("run"))
+    monkeypatch.setattr(
+        main_window._run_start, "_invalidate_and_run", lambda *_a: ran.append("run")
+    )
 
-    main_window._confirm_rerun_then(
+    main_window._run_start._confirm_rerun_then(
         cfg, ["/in/a.png"], "ocr", WorkedOn(transcribed=(Path("/in/a.png"),)), None
     )
 
@@ -5141,9 +5175,11 @@ def test_rerunning_a_stage_the_teacher_did_not_touch_asks_nothing(
     asked: list[Question] = []
     ran: list[str] = []
     monkeypatch.setattr(_dialogs, "ask", lambda _parent, question: asked.append(question) or True)
-    monkeypatch.setattr(main_window, "_invalidate_and_run", lambda *_a: ran.append("run"))
+    monkeypatch.setattr(
+        main_window._run_start, "_invalidate_and_run", lambda *_a: ran.append("run")
+    )
 
-    main_window._confirm_rerun_then(cfg, ["/in/a.png"], "correction", WorkedOn(), None)
+    main_window._run_start._confirm_rerun_then(cfg, ["/in/a.png"], "correction", WorkedOn(), None)
 
     assert asked == []
     assert ran == ["run"]
@@ -5159,7 +5195,7 @@ def test_reading_again_clears_the_rows_before_the_run_starts(main_window, stored
     source_ids = stored("a.png", "b.png")
     cfg = main_window._config_panel.to_config()
 
-    main_window._invalidate_and_run(cfg, source_ids, Stage.OCR)
+    main_window._run_start._invalidate_and_run(cfg, source_ids, Stage.OCR)
 
     assert [main_window._results_table.row_for(sid).ocr for sid in source_ids] == [
         StageState.NONE,
@@ -5189,7 +5225,7 @@ def test_a_queue_refresh_between_run_and_start_does_not_lose_the_selection(
 
     main_window._refresh_queue_from_inputs()
     assert main_window._results_table.queued_source_ids() == source_ids
-    main_window._continue_run(main_window._config_panel.to_config())
+    main_window._run_start._continue_run(main_window._config_panel.to_config())
 
     assert started == [source_ids]
     assert shown == []
@@ -5219,7 +5255,7 @@ def test_the_run_start_question_does_not_start_when_the_proofreading_cannot_be_d
     )
     monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
 
-    main_window._confirm_teacher_work_then(
+    main_window._run_start._confirm_teacher_work_then(
         cfg,
         WorkedOn(kept_stale=(Path("/in/a.png"),), unanswered=(Path("/in/a.png"),)),
         lambda: started.append(True),
@@ -5254,7 +5290,7 @@ def test_the_run_start_question_names_a_document_by_its_resolved_path(
         ),
     )
 
-    main_window._confirm_teacher_work_then(
+    main_window._run_start._confirm_teacher_work_then(
         cfg,
         WorkedOn(kept_stale=(listed,), unanswered=(listed,)),
         lambda: None,
@@ -5284,11 +5320,11 @@ def test_the_corrections_of_no_stored_answer_are_dropped_once_the_teacher_went_o
     worked_on = WorkedOn(unbound=(Path("/in/a.png"),))
 
     _answer_with(monkeypatch, cancel=True)
-    main_window._confirm_teacher_work_then(cfg, worked_on, lambda: None)
+    main_window._run_start._confirm_teacher_work_then(cfg, worked_on, lambda: None)
     assert dropped == []
 
     _answer_with(monkeypatch)
-    main_window._confirm_teacher_work_then(cfg, worked_on, lambda: None)
+    main_window._run_start._confirm_teacher_work_then(cfg, worked_on, lambda: None)
     assert dropped == [[Path("/in/a.png")]]
 
 
@@ -5305,7 +5341,7 @@ def test_rerunning_the_recognition_also_asks_for_corrections_without_a_transcrip
     asked: list[Question] = []
     monkeypatch.setattr(_dialogs, "ask", lambda _parent, question: asked.append(question) or False)
 
-    main_window._confirm_rerun_then(
+    main_window._run_start._confirm_rerun_then(
         cfg, ["/in/a.png"], "ocr", WorkedOn(worked_on=(Path("/in/a.png"),)), None
     )
 
@@ -5327,9 +5363,13 @@ def test_a_rerun_does_not_go_ahead_when_what_was_worked_on_is_unknown(
     shown: list[object] = []
     ran: list[str] = []
     monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
-    monkeypatch.setattr(main_window, "_invalidate_and_run", lambda *_a: ran.append("run"))
+    monkeypatch.setattr(
+        main_window._run_start, "_invalidate_and_run", lambda *_a: ran.append("run")
+    )
 
-    main_window._confirm_rerun_then(cfg, ["/in/a.png"], "correction", None, OSError("disk"))
+    main_window._run_start._confirm_rerun_then(
+        cfg, ["/in/a.png"], "correction", None, OSError("disk")
+    )
 
     assert ran == []
     assert len(shown) == 1
@@ -5367,12 +5407,12 @@ def test_a_run_asks_about_the_teachers_work(main_window, monkeypatch, stored) ->
     main_window._results_table.selectRow(0)
     captured: dict = {}
     monkeypatch.setattr(
-        main_window,
+        main_window._run_start,
         "_check_requirements_then",
         lambda _config, _on_ready, **kwargs: captured.update(kwargs),
     )
 
-    main_window._on_run()
+    main_window._run_start.start()
 
     assert captured["ask_about_work"] is True
 

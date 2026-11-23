@@ -13,6 +13,7 @@ import threading
 
 from teachers_teammate.application.data_flow import llm_location
 from teachers_teammate.application.ollama_server import OllamaStatus
+from teachers_teammate.application.stored_results import StoredSummary
 from teachers_teammate.application.setup_plan import (
     LocalModelChoices,
     PrivacyCase,
@@ -24,6 +25,7 @@ from teachers_teammate.application.setup_plan import (
     build_setup_plan,
 )
 from teachers_teammate.domain.data_location import DataRegion, StageLocation
+from teachers_teammate.domain.install_item import InstallItem, InstallKind
 from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     HardwareProfile,
@@ -65,6 +67,17 @@ class InertLatestTask:
 
 class DummyAppService(RecommendationServiceStub):
     """Minimal app-service stub for settings dialog tests."""
+
+    def summary(self) -> StoredSummary:
+        """Answer that nothing is stored."""
+        return StoredSummary(documents=0, bytes_taken=0)
+
+    def delete(self, *, include_work: bool = False) -> None:
+        _ = include_work
+
+    def busy(self) -> bool:
+        """Answer that no run is going."""
+        return False
 
     def list_providers(self) -> list[str]:
         return ["ollama", "openai"]
@@ -345,8 +358,8 @@ class AddonsCapableService(DummyAppService):
     def list_provider_packages(self) -> dict[str, tuple[str, str]]:
         return {}
 
-    def get_installation_status(self, *, ollama_models=None, **_kwargs) -> dict[str, bool]:
-        return {f"ollama:{m}": False for m in (ollama_models or [])}
+    def get_installation_status(self, *, ollama_models=None, **_kwargs) -> dict[InstallItem, bool]:
+        return {InstallItem(InstallKind.OLLAMA, m): False for m in (ollama_models or [])}
 
     def list_ollama_model_sizes(self, url: str) -> dict[str, int]:
         _ = url
@@ -362,10 +375,10 @@ class ProviderAddonsService(ProviderAppService):
             "openai": ("langchain_openai", "langchain-openai"),
         }
 
-    def get_installation_status(self, *, ollama_models=None, **_kwargs) -> dict[str, bool]:
-        status = {f"ollama:{m}": False for m in (ollama_models or [])}
+    def get_installation_status(self, *, ollama_models=None, **_kwargs) -> dict[InstallItem, bool]:
+        status = {InstallItem(InstallKind.OLLAMA, m): False for m in (ollama_models or [])}
         for name in self.list_provider_packages():
-            status[f"provider:{name}"] = name not in self.missing
+            status[InstallItem(InstallKind.PROVIDER, name)] = name not in self.missing
         return status
 
     def list_ollama_model_sizes(self, url: str) -> dict[str, int]:

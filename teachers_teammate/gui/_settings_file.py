@@ -15,7 +15,8 @@ from PySide6.QtCore import QObject, QSettings, QTimer
 from PySide6.QtWidgets import QMainWindow, QSplitter
 
 from ..application.composition import AppServices
-from ..config import broken_settings_copy, load_config_file, save_settings_file
+from ..application.stored_results import RunInProgressError
+from ..config import DEFAULTS, broken_settings_copy, load_config_file, save_settings_file
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..texts import dialogs as dlg
 from ..texts import main_window as win
@@ -85,7 +86,7 @@ class SettingsFile(QObject):
                 if restored[0] >= 200 and restored[1] >= 400:
                     sizes = restored
             except ValueError, TypeError:
-                pass
+                pass  # a stored size that is no number keeps the default panes
         QTimer.singleShot(0, lambda s=sizes: self._splitter.setSizes(s))
 
     def load_if_present(self) -> None:
@@ -115,6 +116,8 @@ class SettingsFile(QObject):
                     if not p.is_absolute():
                         values[key] = str((base / p).resolve())
             self._panel.load_from_dict(values)
+            # Before the queue is shown: a row must never name a result this just deleted.
+            self._expire_stored_results()
             # Signals fired during bulk field restoration can run queue refresh
             # before all dependent settings (e.g. docx_enabled) are applied. Run one
             # final refresh after the full config is loaded so cached state is
@@ -125,6 +128,23 @@ class SettingsFile(QObject):
                 self.show_notice(notice)
         except Exception as exc:  # noqa: BLE001  # a file that does not load is kept, not written over
             self._keep_unreadable_file(config_path, exc)
+
+    def _expire_stored_results(self) -> None:
+        """Drop the stored results older than ``results_keep_days``; once, at start.
+
+        A run in progress is left alone, and so is everything when the retention is off (``0``).
+        A change of the setting takes effect at the next start, which is what the page says.
+        """
+        days = int(
+            self._panel.get_settings_dict().get("results_keep_days", DEFAULTS["results_keep_days"])
+        )
+        try:
+            removed = self._services.stored.expire(days)
+        except RunInProgressError:
+            self._log.append_text(win.LOG_STORED_RESULTS_KEPT)
+            return
+        if removed:
+            self._log.append_text(win.log_stored_results_expired(removed))
 
     def _keep_unreadable_file(self, path: Path, exc: BaseException) -> None:
         """Keep a settings file that cannot be read, say so, and hold the save back.

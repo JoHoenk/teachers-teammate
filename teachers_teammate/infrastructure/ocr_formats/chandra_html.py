@@ -74,7 +74,7 @@ def _list_start(element: etree._Element) -> int:
     try:
         return int(element.get("start", "1"))
     except ValueError:
-        return 1
+        return 1  # a start that is not a number: the list still numbers from 1
 
 
 class _Inline:

@@ -30,7 +30,7 @@ from ..domain.ollama_address import (
 )
 from ..domain.ollama_discovery import WaitDetail, WaitKind, is_private_host
 from ..exceptions import OllamaUnreachableError, RunStoppedError, stop_requested
-from ..interfaces import Reporter
+from ..interfaces import ConnectionCheck, Reporter
 from ..messages import (
     answer_abandoned,
     cannot_connect,
@@ -148,8 +148,8 @@ def own_host_names() -> frozenset[str]:
         hostname = socket.gethostname()
         names.update({hostname, socket.getfqdn()})
         names.update(socket.gethostbyname_ex(hostname)[2])
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.debug("Cannot resolve the host names of this computer: %s", exc)
     return frozenset(name.lower() for name in names if name)
 
 
@@ -278,7 +278,7 @@ def _next_item[T](
         try:
             return item_queue.get_nowait()
         except queue.Empty:
-            pass
+            pass  # an empty queue is the ordinary case: poll again
         if cancel_event.is_set():
             raise RunStoppedError
         step = _CANCEL_POLL_S
@@ -335,6 +335,26 @@ def _chat_messages(prompt: str, images: list[str] | None, system: str) -> list[d
     if images:
         message["images"] = images
     return [{"role": "system", "content": system}, message] if system else [message]
+
+
+def _chat_request(
+    model: str,
+    prompt: str,
+    *,
+    images: list[str] | None,
+    options: dict | None,
+    response_format: dict | str | None,
+    system: str,
+) -> dict:
+    """Return the body of one chat request, in the shape the Ollama client takes."""
+    request: dict = {
+        "model": model,
+        "messages": _chat_messages(prompt, images, system),
+        "options": options,
+    }
+    if response_format is not None:
+        request["format"] = response_format
+    return request
 
 
 def _open_chat_stream(client: Any, request: dict, think: bool | str | None) -> Iterator:
@@ -754,7 +774,7 @@ class OllamaClient:
                 return [], check_timed_out(self.base_url)
             return [], check_unexpected(exc)
 
-    def check_connection(self, model: str = "") -> tuple[bool, bool, str]:
+    def check_connection(self, model: str = "") -> ConnectionCheck:
         """Return ``(connected, model_ok, message)`` for the Ollama server.
 
         * ``connected=False`` — server is unreachable.
@@ -765,15 +785,15 @@ class OllamaClient:
         """
         models, error = self.list_models_or_error()
         if error:
-            return False, False, error
+            return ConnectionCheck(False, False, error)
 
         if not models:
-            return True, False, CHECK_NO_MODELS
+            return ConnectionCheck(True, False, CHECK_NO_MODELS)
         if not model:
-            return True, True, check_connected(len(models))
+            return ConnectionCheck(True, True, check_connected(len(models)))
         if models_include(model, models):
-            return True, True, check_model_available(model)
-        return True, False, check_model_missing(model, ", ".join(models))
+            return ConnectionCheck(True, True, check_model_available(model))
+        return ConnectionCheck(True, False, check_model_missing(model, ", ".join(models)))
 
     def model_capabilities(self, tag: str) -> frozenset[str] | None:
         """Return the capabilities of *tag* (e.g. ``{"completion", "vision"}``).
@@ -967,32 +987,39 @@ class OllamaClient:
         Raises:
             :exc:`~teachers_teammate.exceptions.OCRError`: on any failure.
         """
-        import ollama  # noqa: PLC0415
-
-        from ..exceptions import OCRError  # noqa: PLC0415
-
         if stop_requested(self._cancel_event):
             raise RunStoppedError
         self._last_stats = None
-        request: dict = {
-            "model": model,
-            "messages": _chat_messages(prompt, images, system),
-            "options": options,
-        }
-        if format is not None:
-            request["format"] = format
+        request = _chat_request(
+            model,
+            prompt,
+            images=images,
+            options=options,
+            response_format=format,
+            system=system,
+        )
+        chunks, waited = self._stream_chunks(
+            model, request, think=think, timeout=timeout, total_timeout=total_timeout
+        )
+        return self._answer_from_chunks(model, chunks, waited=waited)
 
-        try:
-            client = ollama.Client(host=self.base_url, timeout=timeout)
-            try:
-                stream = _open_chat_stream(client, request, think)
-            except TypeError:
-                # Older ollama clients lack the ``think`` kwarg. The output cleaner strips any
-                # leaked reasoning regardless.
-                stream = _open_chat_stream(client, request, None)
-        except Exception as exc:
-            raise OllamaUnreachableError(unreachable(self.base_url, message_of(exc))) from exc
+    def _stream_chunks(
+        self,
+        model: str,
+        request: dict,
+        *,
+        think: bool | str | None,
+        timeout: float,
+        total_timeout: float | None,
+    ) -> tuple[list[Any], bool]:
+        """Return the chunks of the answer, and whether the server was busy with another model.
 
+        A model that rejects ``think`` is asked again without it.  Any other error is raised:
+        a model that is not pulled or a server that is down does not answer twice as fast.
+        """
+        from ..exceptions import OCRError  # noqa: PLC0415
+
+        client, stream = self._open_answer(request, think, timeout=timeout)
         waited = False
         reported: WaitDetail | None = None
 
@@ -1016,30 +1043,58 @@ class OllamaClient:
             return True
 
         try:
-            chunks = _consume_iterator_with_first_token_timeout(
-                _mapped_stream(stream, self.base_url),
-                timeout,
-                total_timeout,
-                self._cancel_event,
-                on_abandon=lambda: _cut_connection(client),
-                waiting=_waiting,
-                on_first_token=self.first_token_sink,
-            )
+            chunks = self._consume(stream, client, timeout, total_timeout, _waiting)
         except OCRError as exc:
-            # A model that does not support ``think`` rejects it with a 400 that names it.  Any
-            # other error (a model that is not pulled, an outage) is not retried: retrying would
-            # only double the wait.
+            # A model that does not support ``think`` rejects it with a 400 that names it.
             if think is None or not _rejects_think(exc):
                 raise
-            chunks = _consume_iterator_with_first_token_timeout(
-                _mapped_stream(_open_chat_stream(client, request, None), self.base_url),
-                timeout,
-                total_timeout,
-                self._cancel_event,
-                on_abandon=lambda: _cut_connection(client),
-                waiting=_waiting,
-                on_first_token=self.first_token_sink,
-            )
+            client, stream = self._open_answer(request, None, timeout=timeout)
+            chunks = self._consume(stream, client, timeout, total_timeout, _waiting)
+        return chunks, waited
+
+    def _open_answer(
+        self, request: dict, think: bool | str | None, *, timeout: float
+    ) -> tuple[Any, Iterator]:
+        """Return the client and the stream of *request*; a client without ``think`` retries."""
+        import ollama  # noqa: PLC0415
+
+        try:
+            client = ollama.Client(host=self.base_url, timeout=timeout)
+            try:
+                stream = _open_chat_stream(client, request, think)
+            except TypeError:
+                # Older ollama clients lack the ``think`` kwarg. The output cleaner strips any
+                # leaked reasoning regardless.
+                stream = _open_chat_stream(client, request, None)
+        except Exception as exc:
+            raise OllamaUnreachableError(unreachable(self.base_url, message_of(exc))) from exc
+        return client, stream
+
+    def _consume(
+        self,
+        stream: Iterator,
+        client: Any,
+        timeout: float,
+        total_timeout: float | None,
+        waiting: Callable[[float], bool],
+    ) -> list[Any]:
+        """Read the answer to its end, returning the chunks in the order they arrived."""
+        return _consume_iterator_with_first_token_timeout(
+            _mapped_stream(stream, self.base_url),
+            timeout,
+            total_timeout,
+            self._cancel_event,
+            on_abandon=lambda: _cut_connection(client),
+            waiting=waiting,
+            on_first_token=self.first_token_sink,
+        )
+
+    def _answer_from_chunks(
+        self, model: str, chunks: list[Any], *, waited: bool
+    ) -> tuple[str, ChatStats]:
+        """Return the text of the answer and its statistics, and report the statistics."""
+        from ..exceptions import OCRError  # noqa: PLC0415
+
         parts = [(chunk.message.content or "") for chunk in chunks if chunk.message]
         content = "".join(parts)
         # The last chunk carries the summary of the whole answer; earlier ones leave these unset.
@@ -1047,9 +1102,9 @@ class OllamaClient:
         if waited:
             stats = replace(stats, waited=True)
         self._last_stats = stats
+        # Before the checks below: a request that is refused here still cost the time the
+        # server reported, and the sink decides for itself whether the numbers are usable.
         if self._stats_sink is not None:
-            # Before the checks below: a request that is refused here still cost the time the
-            # server reported, and the sink decides for itself whether the numbers are usable.
             self._stats_sink(model, stats)
         # A reasoning model can spend the whole window on thinking it does not return: no text,
         # but a stop at the limit.  That is a cut-off answer, not an empty one -- say so.

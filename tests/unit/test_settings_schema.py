@@ -44,6 +44,7 @@ _SAMPLES: dict[str, object] = {
     "recognition_enabled": False,
     "keep_awake": False,
     "check_for_updates": False,
+    "results_keep_days": 30,
     "pdf_render_dpi": 150,
     "pdf_text_layer": "never",
     "debug": True,

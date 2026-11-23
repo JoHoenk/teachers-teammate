@@ -128,7 +128,8 @@ model in `domain/formatted_text.py`, adapters use `application/formatting.py:Tex
 Add an `IssueKind` and its check to `check_stage_requirements` / `check_run_preflight`
 (`application/run.py`), and a row in `gui/_fix_targets.py:fix_for`: the readiness line, the
 requirement guard and the "run can't start" dialog all take their line and buttons from it.
-Preselect entries for Add-ons are model tags, `provider:<id>` and `spacy:<model>`.
+Preselect entries for Add-ons are `InstallItem`s (`domain/install_item.py`): a kind and a
+name, never a string key.
 
 ## Setup Assistant
 

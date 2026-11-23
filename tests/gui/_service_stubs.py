@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import dataclasses
-import os
 from pathlib import Path
 from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.stages import Stage
@@ -21,6 +20,7 @@ import tempfile
 import threading
 
 from teachers_teammate._model_defaults import default_model_for_task
+from teachers_teammate.application.api_keys import ApiKeys
 from teachers_teammate.application.composition import AppServices
 from teachers_teammate.application.context_choice import ContextChoice, context_choice
 from teachers_teammate.application.data_flow import text_goes_online
@@ -241,7 +241,33 @@ class LocalDataFlowStub:
         """Mirror the real service: a key is missing when the provider needs one and none is set."""
         if not self.provider_needs_key(provider):
             return False
-        return not os.environ.get(self.env_key(provider))
+        return not self.key(self.env_key(provider))
+
+    # api keys ────────────────────────────────────────────────────────────────
+    # The app's keys, which the Settings window edits and the providers are given.  A test
+    # that needs a key stored sets it through ``key``/``remember``, as the window does.
+    api_keys: ApiKeys | None = None
+
+    def key(self, env_key: str) -> str:
+        """Mirror the app: the key it holds for *env_key*, else the environment's."""
+        return self._api_keys().key(env_key)
+
+    def remember(self, env_key: str, value: str | None) -> None:
+        """Mirror the app: hold *value* for *env_key*, or hold nothing when it is ``None``."""
+        self._api_keys().remember(env_key, value)
+
+    def held(self, env_key: str) -> str | None:
+        """Mirror the app: what it holds for *env_key* (``None`` = nothing of its own)."""
+        return self._api_keys().held(env_key)
+
+    def set_outside_app(self, env_key: str) -> bool:
+        """Mirror the app: whether the key was exported before the app started."""
+        return self._api_keys().set_outside_app(env_key)
+
+    def _api_keys(self) -> ApiKeys:
+        if self.api_keys is None:
+            self.api_keys = ApiKeys()
+        return self.api_keys
 
     # ── speed test and time estimates (the panel on the AI models page) ───────
     def choices(self, settings: Mapping[str, object]) -> SpeedChoices:

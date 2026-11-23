@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import sys
 from typing import Any, cast
@@ -28,6 +29,8 @@ from ..texts.models import MODEL_LABEL
 from . import _html
 from ._constants import _SPACY_MODEL_CHOICES
 from ._long_job import ABORTED, LongJobThread
+
+_logger = logging.getLogger(__name__)
 
 
 def _model_for_system_language(service: AppServices) -> str:
@@ -174,6 +177,7 @@ class AddonInstallerDialog(QDialog):
 
             return True
         except ImportError:
+            _logger.debug("No bundled pip: the installer shows the pip command instead")
             return False
 
 
@@ -453,6 +457,7 @@ class SpacyModelDownloadDialog(QDialog):
 
                 return True
             except ImportError:
+                _logger.debug("No spaCy here: the window shows the download command instead")
                 return False
         return AddonInstallerDialog.is_available()
 

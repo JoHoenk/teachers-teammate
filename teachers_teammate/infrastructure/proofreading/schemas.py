@@ -12,12 +12,15 @@ dependency.  Only the infrastructure layer may import it; the domain stays pydan
 from __future__ import annotations
 
 from collections.abc import Sequence
+import logging
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from ...domain.proofreading.edits import NoteAnswer
 from ...domain.proofreading.review import CHANGE_CATEGORIES
+
+_logger = logging.getLogger(__name__)
 
 Category = Literal["grammar", "spelling", "punctuation", "word_choice", "word_order", "other"]
 """The categories an explanation may name; the same list the review stores."""
@@ -94,6 +97,10 @@ def parse_explain(raw: str) -> tuple[ExplainAnswer | None, str]:
     try:
         return ExplainAnswer.model_validate_json(raw), ""
     except ValidationError as error:
+        _logger.debug(
+            "The explain answer does not validate at %s, the model is asked again",
+            [part["loc"] for part in error.errors()],
+        )
         return None, str(error)
 
 
@@ -102,6 +109,10 @@ def parse_unclear(raw: str) -> tuple[UnclearAnswer | None, str]:
     try:
         return UnclearAnswer.model_validate_json(raw), ""
     except ValidationError as error:
+        _logger.debug(
+            "The unclear answer does not validate at %s, the model is asked again",
+            [part["loc"] for part in error.errors()],
+        )
         return None, str(error)
 
 

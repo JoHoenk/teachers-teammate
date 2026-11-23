@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from teachers_teammate.application.api_keys import ApiKeys
 from teachers_teammate.gui import _credential_store
 from teachers_teammate.gui._credential_store import (
     KEYRING_SERVICE,
@@ -109,18 +110,20 @@ def test_start_up_moves_plain_keys_into_the_keychain(
     Given  a key an earlier version left in the settings file, a keychain, and no such key in
            the environment
     When   the keys are loaded at start-up
-    Then   the key is in the environment, in the keychain, and no longer in the file
+    Then   the app holds the key, the keychain holds it, it is no longer in the file, and the
+           environment was left alone
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     credential_file[_FILE_KEY] = "sk-old"
+    keys = ApiKeys()
 
-    CredentialStore().load_into_environment(["OPENAI_API_KEY", "MISTRAL_API_KEY"])
+    CredentialStore().load(keys, ["OPENAI_API_KEY", "MISTRAL_API_KEY"])
 
-    assert os.environ["OPENAI_API_KEY"] == "sk-old"
+    assert keys.key("OPENAI_API_KEY") == "sk-old"
     assert keychain.passwords == {(KEYRING_SERVICE, "OPENAI_API_KEY"): "sk-old"}
     assert credential_file == {}
+    assert "OPENAI_API_KEY" not in os.environ
     assert "MISTRAL_API_KEY" not in os.environ
-    monkeypatch.delenv("OPENAI_API_KEY")
 
 
 @pytest.mark.gui
@@ -128,13 +131,17 @@ def test_a_key_in_the_environment_wins_over_the_stored_one(keychain, monkeypatch
     """
     Given  a key in the keychain and another one set in the environment before the app started
     When   the keys are loaded at start-up
-    Then   the environment keeps its own key
+    Then   the environment's key is the one in use, the app holds none of its own, and the
+           environment still has only the key it had
     """
     keychain.passwords[(KEYRING_SERVICE, "OPENAI_API_KEY")] = "sk-stored"
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    keys = ApiKeys()
 
-    CredentialStore().load_into_environment(["OPENAI_API_KEY"])
+    CredentialStore().load(keys, ["OPENAI_API_KEY"])
 
+    assert keys.key("OPENAI_API_KEY") == "sk-env"
+    assert keys.held("OPENAI_API_KEY") is None
     assert os.environ["OPENAI_API_KEY"] == "sk-env"
 
 
@@ -151,12 +158,12 @@ def test_a_failed_move_leaves_the_plain_copy_for_the_next_start(
     monkeypatch.setattr(_credential_store, "_keyring", lambda: locked)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     credential_file[_FILE_KEY] = "sk-old"
+    keys = ApiKeys()
 
-    CredentialStore().load_into_environment(["OPENAI_API_KEY"])
+    CredentialStore().load(keys, ["OPENAI_API_KEY"])
 
-    assert os.environ["OPENAI_API_KEY"] == "sk-old"
+    assert keys.key("OPENAI_API_KEY") == "sk-old"
     assert credential_file == {_FILE_KEY: "sk-old"}
-    monkeypatch.delenv("OPENAI_API_KEY")
 
 
 @pytest.mark.gui
@@ -242,9 +249,9 @@ def test_a_refused_replacement_is_not_shadowed_by_the_old_keychain_key(
 
     assert locked.passwords == {}
     assert CredentialStore().get("OPENAI_API_KEY") == "sk-new"
-    CredentialStore().load_into_environment(["OPENAI_API_KEY"])
-    assert os.environ["OPENAI_API_KEY"] == "sk-new"
-    monkeypatch.delenv("OPENAI_API_KEY")
+    keys = ApiKeys()
+    CredentialStore().load(keys, ["OPENAI_API_KEY"])
+    assert keys.key("OPENAI_API_KEY") == "sk-new"
 
 
 @pytest.mark.gui
@@ -261,33 +268,33 @@ def test_the_newer_plain_key_replaces_a_stale_keychain_key_when_it_is_moved(
     keychain.passwords[(KEYRING_SERVICE, "OPENAI_API_KEY")] = "sk-old"
     credential_file[_FILE_KEY] = "sk-new"
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    keys = ApiKeys()
 
-    CredentialStore().load_into_environment(["OPENAI_API_KEY"])
+    CredentialStore().load(keys, ["OPENAI_API_KEY"])
 
-    assert os.environ["OPENAI_API_KEY"] == "sk-new"
+    assert keys.key("OPENAI_API_KEY") == "sk-new"
     assert keychain.passwords == {(KEYRING_SERVICE, "OPENAI_API_KEY"): "sk-new"}
     assert credential_file == {}
-    monkeypatch.delenv("OPENAI_API_KEY")
 
 
 @pytest.mark.gui
-def test_keys_already_in_the_environment_are_known_as_set_outside_the_app(
-    monkeypatch, credential_file
-) -> None:
+def test_a_key_set_outside_the_app_is_known_as_such(monkeypatch, credential_file) -> None:
     """
-    Given  one key set in the environment before start-up and one only stored
-    When   the stored keys are loaded into the environment
-    Then   only the first counts as set outside the app (the second was put there by the app)
+    Given  one key exported before start-up and one only stored
+    When   the stored keys are loaded, twice (the app asks again later)
+    Then   only the exported one counts as set outside the app, and no key reaches the
+           environment
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-outside")
-    monkeypatch.setenv("MISTRAL_API_KEY", "")  # so the undo removes what the store puts there
-    monkeypatch.delenv("MISTRAL_API_KEY")
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     credential_file["credentials/MISTRAL_API_KEY"] = "m-stored"
     store = CredentialStore()
+    keys = ApiKeys()
 
-    store.load_into_environment(["OPENAI_API_KEY", "MISTRAL_API_KEY"])
-    store.load_into_environment(["OPENAI_API_KEY", "MISTRAL_API_KEY"])  # asked again later
+    store.load(keys, ["OPENAI_API_KEY", "MISTRAL_API_KEY"])
+    store.load(keys, ["OPENAI_API_KEY", "MISTRAL_API_KEY"])
 
-    assert _credential_store.set_outside_app("OPENAI_API_KEY")
-    assert not _credential_store.set_outside_app("MISTRAL_API_KEY")
-    assert os.environ["MISTRAL_API_KEY"] == "m-stored"
+    assert keys.set_outside_app("OPENAI_API_KEY")
+    assert not keys.set_outside_app("MISTRAL_API_KEY")
+    assert keys.key("MISTRAL_API_KEY") == "m-stored"
+    assert "MISTRAL_API_KEY" not in os.environ

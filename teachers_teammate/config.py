@@ -169,6 +169,9 @@ class Config:
     # Whether the app asks GitHub for a newer version when it starts.  The GUI reads it; no
     # pipeline step does, and it is in no fingerprint.
     check_for_updates: bool = DEFAULTS["check_for_updates"]
+    # How many days the results of earlier runs are kept; 0 = no expiry.  The window applies it
+    # once at start and no run reads it.
+    results_keep_days: int = DEFAULTS["results_keep_days"]
 
     # ── Anonymizer ───────────────────────────────────────────────────────────
     # None = derive the spaCy model from the document language ("Auto")
@@ -216,6 +219,7 @@ class Config:
             recognition_enabled=get("recognition_enabled"),
             keep_awake=get("keep_awake"),
             check_for_updates=get("check_for_updates"),
+            results_keep_days=get("results_keep_days"),
             correction_enabled=get("correction_enabled"),
             anonymization_enabled=get("anonymization_enabled"),
             correction_provider=get("correction_provider"),

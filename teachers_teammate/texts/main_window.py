@@ -268,6 +268,16 @@ def log_notice(body: str) -> str:
     return f"NOTICE: {body}\n"
 
 
+def log_stored_results_expired(count: int) -> str:
+    """Return the log line for the stored results the retention dropped."""
+    what = "1 document" if count == 1 else f"{count} documents"
+    return f"Deleted the stored results of {what} that were older than the retention\n"
+
+
+LOG_STORED_RESULTS_KEPT = "WARNING: A run is going, so the stored results were not expired\n"
+"""The log line for stored results the retention left alone."""
+
+
 def log_settings_saved(path: object) -> str:
     """Return the log line for the settings file written to *path*."""
     return f"Settings saved to {path}\n"

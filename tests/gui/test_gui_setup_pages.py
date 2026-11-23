@@ -21,6 +21,12 @@ from teachers_teammate.application.setup_plan import (
 )
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.data_location import DataRegion
+from teachers_teammate.domain.install_item import (
+    PAGE_MODELS_ITEM,
+    READER_ITEM,
+    InstallItem,
+    InstallKind,
+)
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
     DiskVerdict,
@@ -127,6 +133,19 @@ def _choose_online(assistant: SetupAssistant) -> None:
     proofreading = _page(assistant, SetupPageId.PROOFREADING)
     proofreading.initializePage()
     proofreading._online.setChecked(True)
+
+
+#: The pip package of the OpenAI service, which the setup plan installs.
+OPENAI_PACKAGE = InstallItem(InstallKind.PACKAGE, "langchain-openai")
+
+
+def _round_item(name: str) -> InstallItem:
+    """Return the install round's item for a download of the setup plan, named by its own name."""
+    if name == PAGE_MODELS_ITEM.name:
+        return PAGE_MODELS_ITEM
+    if name == READER_ITEM.name:
+        return READER_ITEM
+    return InstallItem(InstallKind.OLLAMA, name)
 
 
 # ── Your classes ──────────────────────────────────────────────────────────────
@@ -333,7 +352,7 @@ def test_install_now_installs_the_package_through_the_round(qtbot, monkeypatch) 
     )
     page = _page(assistant, SetupPageId.PROOFREADING)
     page.initializePage()
-    page._install_package(["provider:openai"], None)
+    page._install_package([InstallItem(InstallKind.PROVIDER, "openai")], None)
     assert started == [{"packages": ["langchain-openai"]}]
 
 
@@ -348,7 +367,9 @@ def test_install_now_does_nothing_when_the_package_is_there(qtbot, monkeypatch) 
     monkeypatch.setattr(
         assistant.install_round(), "start", lambda **kwargs: started.append(kwargs) or True
     )
-    _page(assistant, SetupPageId.PROOFREADING)._install_package(["provider:openai"], None)
+    _page(assistant, SetupPageId.PROOFREADING)._install_package(
+        [InstallItem(InstallKind.PROVIDER, "openai")], None
+    )
     assert started == []
 
 
@@ -1214,11 +1235,11 @@ def test_the_done_page_follows_the_install_round(qtbot, monkeypatch) -> None:
     done.initializePage()
     round_ = assistant.install_round()
 
-    round_.item_started.emit("package:langchain-openai")
+    round_.item_started.emit(OPENAI_PACKAGE)
     assert done._rows._state["langchain-openai"] == DONE_RUNNING
-    round_.item_done.emit("package:langchain-openai")
+    round_.item_done.emit(OPENAI_PACKAGE)
     assert done._rows._state["langchain-openai"] == DONE_DONE
-    round_.failed.emit("spacy:de_core_news_sm", "no network")
+    round_.failed.emit(InstallItem(InstallKind.SPACY, "de_core_news_sm"), "no network")
     assert done._rows._state["de_core_news_sm"] == DONE_FAILED.format(message="no network")
 
 
@@ -1275,9 +1296,9 @@ def test_a_failed_pull_does_not_fail_the_readers_download(qtbot) -> None:
             PlannedDownload(kind=DownloadKind.OLLAMA_MODEL, name="gemma4:12b", stage="correction"),
         ]
     )
-    rows.started("reader:ppocr")
+    rows.started(READER_ITEM)
     rows.pull_progress("Built-in reader", 1_000_000.0, 31_000_000.0)
-    rows.started("gemma4:12b")
+    rows.started(InstallItem(InstallKind.OLLAMA, "gemma4:12b"))
 
     rows.error("connection lost")
 
@@ -1303,7 +1324,7 @@ def test_the_page_models_row_shows_its_own_progress(qtbot) -> None:
             PlannedDownload(kind=DownloadKind.OLLAMA_MODEL, name="gemma4:12b", stage="correction"),
         ]
     )
-    rows.started("gemma4:12b")
+    rows.started(InstallItem(InstallKind.OLLAMA, "gemma4:12b"))
     ollama_line = rows._labels["gemma4:12b"].text()
 
     rows.pull_progress(PAGE_MODELS_PROGRESS_STATUS, 10_000_000.0, 40_000_000.0)
@@ -1430,11 +1451,11 @@ def test_the_done_page_follows_the_reader_download_in_megabytes(qtbot) -> None:
     reader = PlannedDownload(kind=DownloadKind.READER_MODEL, name="ppocr", stage="ocr")
     rows.set_downloads([reader])
 
-    rows.started("reader:ppocr")
+    rows.started(READER_ITEM)
     assert rows._state["ppocr"] == DONE_RUNNING
     rows.pull_progress("Built-in reader", 12_000_000.0, 31_000_000.0)
     assert rows._labels["ppocr"].text() == DONE_PROGRESS_MB.format(done=12, total=31)
-    rows.done("reader:ppocr")
+    rows.done(READER_ITEM)
 
     assert rows._labels["ppocr"].text() == DONE_DONE
 
@@ -1764,11 +1785,7 @@ def test_the_done_page_titles_follow_the_downloads(qtbot, monkeypatch) -> None:
     assert done.title() == "Setting up"
 
     for download in plan.downloads:
-        done._rows.done(
-            {"page_models": "page_models:all", "ppocr": "reader:ppocr"}.get(
-                download.name, download.name
-            )
-        )
+        done._rows.done(_round_item(download.name))
 
     assert done.title() == "All set"
 
@@ -1784,9 +1801,9 @@ def test_the_done_page_says_when_a_download_failed(qtbot, monkeypatch) -> None:
     plan = _show_plan(summary, assistant)
     done.initializePage()
     names = [download.name for download in plan.downloads]
-    done._rows.failed(names[0], "no network")
+    done._rows.failed(_round_item(names[0]), "no network")
     for name in names[1:]:
-        done._rows.done({"page_models": "page_models:all", "ppocr": "reader:ppocr"}.get(name, name))
+        done._rows.done(_round_item(name))
 
     assert "failed" in done.title()
 
@@ -1823,8 +1840,7 @@ def test_the_done_page_has_one_bar_for_all_downloads(qtbot, monkeypatch) -> None
     plan = _show_plan(summary, assistant)
     done.initializePage()
     assert len(plan.downloads) == 3
-    page_models = "page_models:all"
-    done._rows.done(page_models)
+    done._rows.done(PAGE_MODELS_ITEM)
     first_pull = next(d.name for d in plan.downloads if d.name.startswith("hf.co"))
     manager.started.emit(first_pull)
     manager.progress.emit("pulling sha256:0a", 4.0e9, 8.0e9)
@@ -1869,7 +1885,7 @@ def test_the_done_page_says_the_speed_test_waits_for_the_proofreading_model(
 
     for download in plan.downloads:
         if download.kind is DownloadKind.OLLAMA_MODEL:
-            done._rows.done(download.name)
+            done._rows.done(_round_item(download.name))
 
     assert not done._speed_waits.isVisibleTo(done)
 

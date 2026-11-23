@@ -214,7 +214,7 @@ def test_set_up_stores_the_keys_once(qtbot, keyring, no_keys, monkeypatch) -> No
     """
     Given  a key typed on the proofreading page
     When   Set up is pressed
-    Then   the key is in the keychain, and it stays there when the window closes
+    Then   the key is in the keychain and the app holds it, and it stays so when the window closes
     """
     service = SetupAppService()
     assistant = _assistant(qtbot, _context(service))
@@ -226,7 +226,7 @@ def test_set_up_stores_the_keys_once(qtbot, keyring, no_keys, monkeypatch) -> No
     assistant.done(QDialog.DialogCode.Accepted)
 
     assert keyring.passwords[("TeachersTeammate", "OPENAI_API_KEY")] == "sk-typed"
-    assert os.environ["OPENAI_API_KEY"] == "sk-typed"
+    assert service.held("OPENAI_API_KEY") == "sk-typed"
 
 
 def test_set_up_starts_the_downloads_by_kind(qtbot, keyring, no_keys, monkeypatch) -> None:

@@ -38,8 +38,10 @@ CONSTRUCTED = {
     "ProviderService",
     "ReaderService",
     "RunService",
+    "SampleStore",
     "SetupService",
     "SpeedEstimateService",
+    "StoredResults",
 }
 """The names that build a service, and so the names only the composition module may call."""
 

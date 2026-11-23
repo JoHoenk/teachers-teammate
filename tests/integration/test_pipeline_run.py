@@ -39,7 +39,7 @@ from teachers_teammate.infrastructure.stage_builder import StageBuilder
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import document_stem, resolve_artifact_dir
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
-from tests.conftest import make_config
+from tests.conftest import make_config, pipeline_dependencies
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -92,7 +92,15 @@ def test_pipeline_run_processes_image_and_persists_ocr_state(tmp_path: Path) -> 
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     source = cfg.input_dir / "page.png"
@@ -117,7 +125,15 @@ def test_pipeline_run_returns_0_when_no_input_files(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=MagicMock(),
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
 
@@ -144,7 +160,15 @@ def test_pipeline_run_returns_1_on_ocr_failure(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 1
 
@@ -173,7 +197,15 @@ def test_pipeline_run_processes_multiple_files(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
@@ -207,7 +239,11 @@ def test_pipeline_run_processes_selected_sources_only(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, [Path(selected_path)]).run().exit_code
+        rc = (
+            OCRPipeline(cfg, [Path(selected_path)], dependencies=pipeline_dependencies(tmp_path))
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
@@ -245,7 +281,13 @@ def test_pipeline_selected_sources_disambiguate_duplicate_basenames(tmp_path: Pa
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, [Path(str(right_page.resolve()))]).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg, [Path(str(right_page.resolve()))], dependencies=pipeline_dependencies(tmp_path)
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
@@ -276,7 +318,15 @@ def test_pipeline_run_returns_1_when_any_file_fails(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 1
 
@@ -341,6 +391,7 @@ def test_each_failing_stage_fails_its_own_file_and_the_run_goes_on(tmp_path: Pat
             cfg,
             FileDiscovery().collect_input_files(cfg),
             progress=ProgressCallbacks(on_file_done=outcomes.append),
+            dependencies=pipeline_dependencies(tmp_path),
         ).run()
 
     assert summary.failed == ("anonymize.png", "proofread.png", "read.png")
@@ -373,7 +424,15 @@ def test_pipeline_cache_reuses_ocr_when_input_hash_unchanged(tmp_path: Path) -> 
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=first_ocr,
     ):
-        first_rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        first_rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert first_rc == 0
 
@@ -383,7 +442,15 @@ def test_pipeline_cache_reuses_ocr_when_input_hash_unchanged(tmp_path: Path) -> 
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=second_ocr,
     ):
-        second_rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        second_rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert second_rc == 0
     second_ocr.process_image.assert_not_called()
@@ -411,7 +478,15 @@ def test_pipeline_persists_preview_artifact_for_none_preprocess(tmp_path: Path) 
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_ocr,
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
@@ -458,7 +533,7 @@ def test_pipeline_reports_progress_and_keeps_original_for_the_automatic_preparat
             OCRPipeline(
                 cfg,
                 FileDiscovery().collect_input_files(cfg),
-                dependencies=PipelineDependencies(reporter=reporter),
+                dependencies=pipeline_dependencies(tmp_path, reporter=reporter),
                 progress=ProgressCallbacks(
                     on_stage_started=lambda source_id, stage: stages.append(
                         (Path(source_id).name, stage)
@@ -512,7 +587,15 @@ def test_pipeline_reruns_ocr_when_preprocess_method_changes(tmp_path: Path) -> N
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=first_ocr,
     ):
-        first_rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        first_rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert first_rc == 0
 
@@ -523,7 +606,15 @@ def test_pipeline_reruns_ocr_when_preprocess_method_changes(tmp_path: Path) -> N
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=second_ocr,
     ):
-        second_rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        second_rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert second_rc == 0
     second_ocr.process_image.assert_called_once()
@@ -552,7 +643,15 @@ def test_pipeline_keeps_output_dir_docx_only(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     output_entries = sorted(path.name for path in cfg.output_dir.iterdir())
@@ -594,6 +693,7 @@ def test_pipeline_callbacks_are_invoked(tmp_path: Path) -> None:
                 on_ocr_done=lambda _source_id, name: ocr_done.append(name),
                 on_file_done=lambda outcome: file_done.append((outcome.name, outcome.status)),
             ),
+            dependencies=pipeline_dependencies(tmp_path),
         ).run()
 
     assert started == ["page.png"]
@@ -631,7 +731,12 @@ def test_pipeline_stops_when_stop_event_is_set_before_first_file(tmp_path: Path)
         return_value=mock_proc,
     ):
         rc = (
-            OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg), stop_event=stop)
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                stop_event=stop,
+                dependencies=pipeline_dependencies(tmp_path),
+            )
             .run()
             .exit_code
         )
@@ -687,7 +792,7 @@ def test_pipeline_stop_after_file_finishes_the_first_image_and_reports_the_rest(
             cfg,
             FileDiscovery().collect_input_files(cfg),
             stop_after_file_event=stop_after,
-            dependencies=PipelineDependencies(reporter=_Reporter()),
+            dependencies=pipeline_dependencies(tmp_path, reporter=_Reporter()),
         ).run()
 
     assert summary.succeeded == ("first.png",)
@@ -736,6 +841,7 @@ def test_pipeline_stop_now_during_ocr_keeps_nothing_half_done(tmp_path: Path) ->
             FileDiscovery().collect_input_files(cfg),
             stop_event=stop,
             progress=ProgressCallbacks(on_file_done=events.append),
+            dependencies=pipeline_dependencies(tmp_path),
         ).run()
 
     assert summary.stopped == ("page.png",)
@@ -750,7 +856,11 @@ def test_pipeline_stop_now_during_ocr_keeps_nothing_half_done(tmp_path: Path) ->
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        second = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run()
+        second = OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=pipeline_dependencies(tmp_path),
+        ).run()
 
     assert second.succeeded == ("page.png",)
 
@@ -790,7 +900,15 @@ def test_pipeline_run_with_correction_persists_correction_state(tmp_path: Path) 
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
         patch.object(StageBuilder, "build_corrector", return_value=mock_corrector),
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
@@ -827,7 +945,15 @@ def test_pipeline_run_with_docx_creates_docx_file(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_ocr,
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     docx_files = list(cfg.output_dir.glob("*.docx"))
@@ -861,7 +987,15 @@ def test_pipeline_run_returns_1_when_ollama_unreachable(tmp_path: Path) -> None:
         "check_model",
         side_effect=OllamaUnreachableError("Cannot connect to Ollama at http://127.0.0.1:11434"),
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 1
 
@@ -890,7 +1024,15 @@ def test_pipeline_run_returns_1_when_ocr_model_not_in_ollama(tmp_path: Path) -> 
         "check_model",
         side_effect=OllamaUnreachableError("Model 'my-model' not found in Ollama"),
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 1
 
@@ -924,7 +1066,15 @@ def test_pipeline_run_proceeds_when_ollama_model_found(tmp_path: Path) -> None:
             return_value=mock_ocr,
         ),
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
 
@@ -954,7 +1104,7 @@ def test_a_failing_model_check_ends_the_run_without_contacting_a_server(tmp_path
     summary = OCRPipeline(
         cfg,
         FileDiscovery().collect_input_files(cfg),
-        dependencies=PipelineDependencies(component_factory=factory),
+        dependencies=pipeline_dependencies(tmp_path, component_factory=factory),
     ).run()
 
     assert summary.exit_code == 1
@@ -984,7 +1134,15 @@ def test_pipeline_refuses_online_ocr_engine(tmp_path: Path, capsys) -> None:
     _place_image(cfg.input_dir)
 
     with patch("teachers_teammate.infrastructure.stage_builder.build_llm") as mock_build:
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 1
     mock_build.assert_not_called()
@@ -1005,7 +1163,16 @@ def test_pipeline_refuses_online_ocr_engine_even_for_text_files(tmp_path: Path) 
     )
     (cfg.input_dir / "note.txt").write_text("Hello world", encoding="utf-8")
 
-    assert OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code == 1
+    assert (
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=pipeline_dependencies(tmp_path),
+        )
+        .run()
+        .exit_code
+        == 1
+    )
 
 
 # ── run_preview_only ───────────────────────────────────────────────────────
@@ -1027,7 +1194,9 @@ def test_pipeline_run_preview_only_saves_preprocessed_images(tmp_path: Path) -> 
     )
     _place_image(cfg.input_dir, "scan.png")
 
-    summary = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run_preview_only()
+    summary = OCRPipeline(
+        cfg, FileDiscovery().collect_input_files(cfg), dependencies=pipeline_dependencies(tmp_path)
+    ).run_preview_only()
 
     assert summary.exit_code == 0
     preprocessed = list(resolve_artifact_dir(cfg.output_dir).glob("*_preprocessed.png"))
@@ -1041,7 +1210,9 @@ def test_pipeline_run_preview_only_returns_0_with_no_files(tmp_path: Path) -> No
     Then   the summary is empty and its exit code is 0 (nothing to do)
     """
     cfg = make_config(tmp_path, correction_enabled=False, docx_enabled=False)
-    summary = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run_preview_only()
+    summary = OCRPipeline(
+        cfg, FileDiscovery().collect_input_files(cfg), dependencies=pipeline_dependencies(tmp_path)
+    ).run_preview_only()
     assert summary.exit_code == 0
     assert summary.succeeded == () and summary.failed == ()
 
@@ -1064,7 +1235,10 @@ def test_pipeline_run_preview_only_stopped_by_event(tmp_path: Path) -> None:
     stop.set()
 
     summary = OCRPipeline(
-        cfg, FileDiscovery().collect_input_files(cfg), stop_event=stop
+        cfg,
+        FileDiscovery().collect_input_files(cfg),
+        stop_event=stop,
+        dependencies=pipeline_dependencies(tmp_path),
     ).run_preview_only()
 
     assert summary.exit_code == 0
@@ -1093,7 +1267,11 @@ def test_the_run_header_names_the_built_in_reader(tmp_path: Path, capsys) -> Non
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor", return_value=mock_proc
     ):
-        OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run()
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=pipeline_dependencies(tmp_path),
+        ).run()
 
     out = capsys.readouterr().out
     assert "OCR engine    : Built-in reader (PP-OCRv6 small)" in out
@@ -1122,7 +1300,12 @@ def test_the_runs_stop_event_reaches_the_built_in_reader(tmp_path: Path) -> None
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor", return_value=mock_proc
     ) as processor:
-        OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg), stop_event=stop).run()
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            stop_event=stop,
+            dependencies=pipeline_dependencies(tmp_path),
+        ).run()
 
     assert processor.call_args.kwargs["stop_event"] is stop
 
@@ -1152,7 +1335,11 @@ def test_setup_services_evaluation_with_no_correction_warns(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run()
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=pipeline_dependencies(tmp_path),
+        ).run()
     captured = capsys.readouterr()
     assert "WARNING" in captured.err or "evaluation" in (captured.out + captured.err).lower()
 
@@ -1190,7 +1377,11 @@ def test_cleanup_tmp_preserves_files_in_debug_mode(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run()
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=pipeline_dependencies(tmp_path),
+        ).run()
 
     assert step_file.exists()
 
@@ -1247,7 +1438,11 @@ def test_check_ollama_prints_warning_for_non_vision_model(
             return_value=mock_ocr,
         ),
     ):
-        OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run()
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=pipeline_dependencies(tmp_path),
+        ).run()
 
     captured = capsys.readouterr()
     assert "WARNING" in captured.err or "vision" in captured.err.lower()
@@ -1304,7 +1499,11 @@ def test_check_ollama_warns_when_model_not_loaded(
             return_value=mock_ocr,
         ),
     ):
-        OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run()
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=pipeline_dependencies(tmp_path),
+        ).run()
 
     captured = capsys.readouterr()
     assert "NOTE" in captured.err or "not currently loaded" in captured.err
@@ -1361,7 +1560,11 @@ def test_check_ollama_no_warning_when_model_already_running(
             return_value=mock_ocr,
         ),
     ):
-        OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run()
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=pipeline_dependencies(tmp_path),
+        ).run()
 
     captured = capsys.readouterr()
     assert "not currently loaded" not in captured.err
@@ -1413,7 +1616,10 @@ def test_pipeline_banner_printed_with_config_file_path(
         return_value=mock_proc,
     ):
         OCRPipeline(
-            cfg, FileDiscovery().collect_input_files(cfg), config_file=tmp_path / "ocr.toml"
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            config_file=tmp_path / "ocr.toml",
+            dependencies=pipeline_dependencies(tmp_path),
         ).run()
     captured = capsys.readouterr()
     assert "ocr.toml" in captured.out
@@ -1460,7 +1666,11 @@ def test_pipeline_run_preview_only_prints_failed_files(
         "teachers_teammate.infrastructure.pipeline.OCRPipeline._preview_file",
         side_effect=RuntimeError("broken image"),
     ):
-        OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run_preview_only()
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=pipeline_dependencies(tmp_path),
+        ).run_preview_only()
 
     captured = capsys.readouterr()
     assert "broken.png" in captured.err or "broken.png" in captured.out
@@ -1509,7 +1719,15 @@ def test_check_ollama_request_exception_is_silent(tmp_path: Path) -> None:
             return_value=mock_ocr,
         ),
     ):
-        result = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        result = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert result == 0  # pipeline still succeeded despite the warning being skipped
 
@@ -1565,7 +1783,15 @@ def test_pipeline_batch_mixed_types_all_processed(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
@@ -1601,7 +1827,15 @@ def test_pipeline_batch_failure_does_not_stop_remaining_files(tmp_path: Path) ->
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 1
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
@@ -1636,7 +1870,9 @@ def test_a_run_given_a_missing_file_skips_it_and_reads_nothing(tmp_path: Path) -
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        summary = OCRPipeline(cfg, [outside_path]).run()
+        summary = OCRPipeline(
+            cfg, [outside_path], dependencies=pipeline_dependencies(tmp_path)
+        ).run()
 
     assert summary.exit_code == 0
     assert summary.skipped == ("other.png",)
@@ -1672,7 +1908,9 @@ def test_a_run_given_two_of_three_files_processes_exactly_those_two(tmp_path: Pa
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        summary = OCRPipeline(cfg, [first, third]).run()
+        summary = OCRPipeline(
+            cfg, [first, third], dependencies=pipeline_dependencies(tmp_path)
+        ).run()
 
     assert summary.exit_code == 0
     assert summary.succeeded == ("a.png", "c.png")
@@ -1728,7 +1966,15 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
             return_value=first_evaluator,
         ),
     ):
-        first_rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        first_rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert first_rc == 0
 
@@ -1753,7 +1999,15 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
             return_value=second_evaluator,
         ),
     ):
-        second_rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        second_rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert second_rc == 0
     second_ocr.process_image.assert_not_called()
@@ -1805,7 +2059,15 @@ def test_pipeline_run_with_different_providers_per_stage_produces_full_state(
             return_value=mock_evaluator,
         ),
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
@@ -1852,7 +2114,15 @@ def test_pipeline_stores_layout_html_as_markdown(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
@@ -1891,7 +2161,15 @@ def test_pipeline_tells_corrector_the_text_is_markdown_and_formats_the_docx(
         patch.object(StageBuilder, "build_corrector", return_value=mock_corrector),
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     assert mock_corrector.correct.call_args.kwargs == {"text_format": "markdown"}
@@ -1926,7 +2204,15 @@ def test_pipeline_keeps_plain_reader_text_verbatim(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
@@ -1947,7 +2233,16 @@ def _run_scanned_pdf(cfg, *, pages: int = 3) -> None:
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_ocr,
     ):
-        assert OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code == 0
+        assert (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(cfg.output_dir.parent),
+            )
+            .run()
+            .exit_code
+            == 0
+        )
 
 
 def _state_of(cfg, name: str):
@@ -2001,7 +2296,16 @@ def test_a_second_run_keeps_the_pages_of_the_first(tmp_path: Path, sample_multip
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=second_ocr,
     ):
-        assert OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code == 0
+        assert (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+            == 0
+        )
 
     state = _state_of(cfg, "essay.pdf")
     assert state is not None

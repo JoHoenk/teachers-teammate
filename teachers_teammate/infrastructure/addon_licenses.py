@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import csv
 from functools import lru_cache
+import logging
 from pathlib import Path
 import sys
 
 #: Where the build puts the inventory, relative to the folder the bundle's files sit in.
 LICENSES_RELATIVE = Path("teachers_teammate") / "assets" / "third_party_inventory.csv"
+
+_logger = logging.getLogger(__name__)
 
 
 def _root() -> Path:
@@ -37,7 +40,8 @@ def _licenses() -> dict[str, str]:
                 for row in csv.DictReader(handle)
                 if row.get("Component") and row.get("License")
             }
-    except OSError, KeyError, csv.Error:
+    except (OSError, KeyError, csv.Error) as exc:
+        _logger.debug("Cannot read the license inventory, no licenses to show: %s", exc)
         return {}
 
 

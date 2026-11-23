@@ -15,28 +15,20 @@ from typing import Any, Protocol, cast
 
 from PySide6.QtCore import QObject, Signal
 
-from ..application.addons import PAGE_MODELS_STATUS_KEY, READER_STATUS_KEY
 from ..application.composition import AppServices, inject_addon_packages_dir
+from ..domain.install_item import (
+    PAGE_MODELS_ITEM,
+    READER_ITEM,
+    UPDATE_ADDONS_ITEM,
+    InstallItem,
+    InstallKind,
+)
 from ..texts import addons as txt
 from ._long_job import LongJobThread
-from ._model_guidance import SPACY_PREFIX
-
-#: How an item is named in :attr:`InstallRound.item_started` and ``item_done``.
-PACKAGE_PREFIX = "package:"
-#: The built-in reader's model files (``reader:ppocr``); also the Add-ons "preselect" entry.
-READER_PREFIX = "reader:"
-#: Equal to the status key of the application service, which the Add-ons page looks the row up by.
-READER_ITEM = READER_STATUS_KEY
-#: The page models of the automatic image preparation (``page_models:all``); also the Add-ons
-#: "preselect" entry.
-PAGE_MODELS_PREFIX = "page_models:"
-PAGE_MODELS_ITEM = PAGE_MODELS_STATUS_KEY
-#: The add-ons installed again after an app update (``update:addons``).
-UPDATE_ADDONS_ITEM = "update:addons"
 
 #: The phases :meth:`InstallRound.abort` can stop: the downloads.  pip and the spaCy model
 #: download run to their end once started.
-_ABORTABLE_PHASES = ("reader", "page_models", "pull")
+_ABORTABLE_PHASES = (InstallKind.READER, InstallKind.PAGE_MODELS, InstallKind.OLLAMA)
 
 
 class _PullManager(Protocol):
@@ -93,11 +85,11 @@ class InstallRound(QObject):
     """
 
     log_line = Signal(str)
-    item_started = Signal(str)  # "package:<pip>", "spacy:<model>", "reader:ppocr", ..., "<tag>"
-    item_done = Signal(str)
+    item_started = Signal(object)  # InstallItem: the step that just began
+    item_done = Signal(object)  # InstallItem: the step that finished
     pull_progress = Signal(str, float, float)  # status, bytes done, bytes total
     finished = Signal(bool)  # True when anything was installed or pulled
-    failed = Signal(str, str)  # item, message
+    failed = Signal(object, str)  # InstallItem, message
 
     def __init__(
         self,
@@ -113,8 +105,8 @@ class InstallRound(QObject):
         # dropped — set to ``None`` or replaced by the next step's thread — from the slot of
         # its own "done" signal, while it is still in its last lines.
         self._thread: LongJobThread | None = None
-        # "update", "pip", "spacy", "reader", "page_models" or "pull" — what the running thread does
-        self._phase = ""
+        # What the running thread does, and so what Abort could stop.
+        self._phase: InstallKind | None = None
         self._reader = False
         self._page_models = False
         self._update_addons = False
@@ -122,7 +114,7 @@ class InstallRound(QObject):
         self._spacy_models: list[str] = []
         self._ollama_models: list[str] = []
         self._ollama_url = ""
-        self._current = ""  # the item that is running now
+        self._current: InstallItem | None = None  # the item that is running now
         self._installed_any = False
         self._running = False
 
@@ -164,7 +156,7 @@ class InstallRound(QObject):
             return False
         self._running = True
         self._installed_any = False
-        self._current = ""
+        self._current = None
         if self._update_addons:
             self._start_update()
         else:
@@ -183,7 +175,14 @@ class InstallRound(QObject):
     def busy(self) -> bool:
         """True while pip, spaCy or a model download runs: their window must not close yet."""
         return (
-            self._phase in ("update", "pip", "spacy", "reader", "page_models")
+            self._phase
+            in (
+                InstallKind.UPDATE,
+                InstallKind.PACKAGE,
+                InstallKind.SPACY,
+                InstallKind.READER,
+                InstallKind.PAGE_MODELS,
+            )
             and self._thread is not None
             and self._thread.isRunning()
         )
@@ -210,7 +209,10 @@ class InstallRound(QObject):
         """Stop the downloads; a pip install or spaCy download cannot be stopped once it runs."""
         if not self.can_abort():
             return
-        if self._phase in ("reader", "page_models") and self._thread is not None:
+        if (
+            self._phase in (InstallKind.READER, InstallKind.PAGE_MODELS)
+            and self._thread is not None
+        ):
             self._thread.stop()
         elif self._pull_manager is not None:
             self._pull_manager.abort()
@@ -221,14 +223,14 @@ class InstallRound(QObject):
         """Stop following the pull manager; a running pull goes on in the main window."""
         self._disconnect_pull_manager()
 
-    def follow_running_pull(self) -> str:
-        """Follow a pull the main window already runs; return its model, or ""."""
+    def follow_running_pull(self) -> InstallItem | None:
+        """Follow a pull the main window already runs; return its item, or ``None``."""
         if self._pull_manager is None or not self._pull_manager.is_active:
-            return ""
+            return None
         if self._pull_connected:
-            return ""
+            return None
         self._connect_pull_manager()
-        self._current = self._pull_manager.current_model
+        self._current = InstallItem(InstallKind.OLLAMA, self._pull_manager.current_model)
         return self._current
 
     # ── the add-ons after an app update ──────────────────────────────────────────
@@ -237,7 +239,7 @@ class InstallRound(QObject):
         self.log_line.emit(txt.LOG_UPDATING)
         # The phase is set before the item is announced: the page reads it to decide whether
         # Abort can do anything.
-        self._phase = "update"
+        self._phase = InstallKind.UPDATE
         self._begin(UPDATE_ADDONS_ITEM)
         thread = _AddonUpdateThread(self._svc)
         thread.log_line.connect(self.log_line)
@@ -259,10 +261,10 @@ class InstallRound(QObject):
     def _start_pip(self) -> None:
         self.log_line.emit(txt.log_pip_install(self._packages))
         # pip reports one error for the whole command, so a failure names the first package.
-        self._current = f"{PACKAGE_PREFIX}{self._packages[0]}"
-        self._phase = "pip"
+        self._current = InstallItem(InstallKind.PACKAGE, self._packages[0])
+        self._phase = InstallKind.PACKAGE
         for package in self._packages:
-            self.item_started.emit(f"{PACKAGE_PREFIX}{package}")
+            self.item_started.emit(InstallItem(InstallKind.PACKAGE, package))
         thread = _PipInstallThread(self._svc, self._packages)
         thread.log_line.connect(self.log_line)
         thread.finished_ok.connect(self._on_pip_done)
@@ -274,7 +276,7 @@ class InstallRound(QObject):
     def _on_pip_done(self, packages: list[str]) -> None:
         self.log_line.emit(txt.LOG_PIP_DONE)
         for package in packages:
-            self.item_done.emit(f"{PACKAGE_PREFIX}{package}")
+            self.item_done.emit(InstallItem(InstallKind.PACKAGE, package))
         self._installed_any = True
         inject_addon_packages_dir()
         if self._spacy_models:
@@ -289,8 +291,8 @@ class InstallRound(QObject):
 
         model = self._spacy_models[0]
         self.log_line.emit(txt.log_spacy_start(model))
-        self._phase = "spacy"
-        self._begin(f"{SPACY_PREFIX}{model}")
+        self._phase = InstallKind.SPACY
+        self._begin(InstallItem(InstallKind.SPACY, model))
         thread = _ModelDownloadThread(self._svc, model, self._svc.addons.addon_packages_dir())
         thread.log_line.connect(self.log_line)
         thread.finished_ok.connect(self._on_spacy_done)
@@ -326,7 +328,7 @@ class InstallRound(QObject):
         from ._addon_installer_dialog import _ReaderDownloadThread  # noqa: PLC0415
 
         self.log_line.emit(txt.LOG_READER_START)
-        self._phase = "reader"
+        self._phase = InstallKind.READER
         self._begin(READER_ITEM)
         thread = _ReaderDownloadThread(self._svc)
         thread.progress.connect(self.pull_progress_from_reader)
@@ -356,7 +358,7 @@ class InstallRound(QObject):
         from ._addon_installer_dialog import _ReaderDownloadThread  # noqa: PLC0415
 
         self.log_line.emit(txt.LOG_PAGE_MODELS_START)
-        self._phase = "page_models"
+        self._phase = InstallKind.PAGE_MODELS
         self._begin(PAGE_MODELS_ITEM)
         thread = _ReaderDownloadThread(self._svc, "download_page_models")
         thread.progress.connect(self.page_models_progress)
@@ -388,8 +390,8 @@ class InstallRound(QObject):
             if queued_behind
             else f"Pulling Ollama model: {model}"
         )
-        self._phase = "pull"
-        self._begin(model)
+        self._phase = InstallKind.OLLAMA
+        self._begin(InstallItem(InstallKind.OLLAMA, model))
         if self._pull_manager is not None:
             # Delegate to the main-window-owned manager: it pulls the whole queue, also
             # after this round's window was closed.
@@ -411,7 +413,7 @@ class InstallRound(QObject):
         self.pull_progress.emit(status, done, total)
 
     def _on_pull_done(self, _model: str) -> None:
-        self._pull_arrived(self._current)
+        self._pull_arrived(InstallItem(InstallKind.OLLAMA, _model))
         self._ollama_models = self._ollama_models[1:]
         if self._ollama_models:
             self._start_pulls()
@@ -422,12 +424,12 @@ class InstallRound(QObject):
         # Only connected while a manager pull is active, so _pull_manager is set.
         if self._pull_manager is None:
             return
-        self._pull_arrived(model)
+        self._pull_arrived(InstallItem(InstallKind.OLLAMA, model))
         queued = self._pull_manager.queued
         if queued:
             # The manager goes on with the next model by itself.
             self.log_line.emit(txt.log_ollama_start(queued[0]))
-            self._begin(queued[0])
+            self._begin(InstallItem(InstallKind.OLLAMA, queued[0]))
             return
         self._disconnect_pull_manager()
         self._finish()
@@ -439,16 +441,16 @@ class InstallRound(QObject):
         self._disconnect_pull_manager()
         self._on_error(message)
 
-    def _pull_arrived(self, model: str) -> None:
+    def _pull_arrived(self, item: InstallItem) -> None:
         self.log_line.emit(txt.LOG_OLLAMA_DONE)
-        self.item_done.emit(model)
+        self.item_done.emit(item)
         self._installed_any = True
         # The installed-model list and the classifications are stale from now on.
         self._svc.recommendations.on_ollama_models_changed(self._ollama_url)
 
     # ── the end of the round ─────────────────────────────────────────────────────
 
-    def _begin(self, item: str) -> None:
+    def _begin(self, item: InstallItem) -> None:
         self._current = item
         self.item_started.emit(item)
 
@@ -459,7 +461,7 @@ class InstallRound(QObject):
 
     def _finish(self) -> None:
         self._running = False
-        self._current = ""
+        self._current = None
         self.finished.emit(self._installed_any)
 
     # ── pull manager subscription ────────────────────────────────────────────────

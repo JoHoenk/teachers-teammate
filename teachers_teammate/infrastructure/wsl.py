@@ -8,10 +8,13 @@ and nothing else: no subprocess and no call to ``wsl.exe``, which would start a 
 from __future__ import annotations
 
 import functools
+import logging
 import os
 from pathlib import Path
 
 from ..domain.ollama_discovery import windows_host_addresses as _windows_host_addresses
+
+_logger = logging.getLogger(__name__)
 
 _ROUTE_TABLE = Path("/proc/net/route")
 _RESOLV_CONF = Path("/etc/resolv.conf")
@@ -22,6 +25,7 @@ def _read(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
+        _logger.debug("Cannot read %s", path)
         return ""
 
 

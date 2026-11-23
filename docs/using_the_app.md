@@ -277,6 +277,26 @@ show a text to a colleague or the class. It is on by default. While it is on, th
 edited; click the note above the text to show the names and edit. Exported files are not affected.
 A name the proofreading spelled differently (*Meier* → *Maier*) is not hidden in the corrected text.
 
+### What the app writes down
+
+When something goes wrong, the app writes it into a log file on your computer, in the app's data
+folder under `logs`. **Help → Open Log Folder** opens that folder, so you can send the file to
+whoever helps you. It holds file names, the names of the steps and error messages — never the
+text of a document, and never an access key. Nothing is sent anywhere.
+
+### What the app keeps for earlier runs
+
+So that a document is read only once, the app keeps what it recognized and proofread for it,
+inside its own folder. That is not the same as the Word and text files a run writes: those stay
+when you delete the stored results, and so do the documents.
+
+**Settings → Privacy → Stored results** says how much is kept. **Delete stored results…** empties
+it, and the next run reads and proofreads the pages again (an online service is paid for again). The box **Also delete my corrections, marks and
+edited texts** takes your own work as well — it cannot be brought back. **Delete stored results
+older than** a number of days drops what was last processed more than that many days ago, at
+the next start;
+left off, nothing expires by itself.
+
 ---
 
 ## Exporting results
@@ -356,7 +376,7 @@ corrects a tilt. Clean scans pass unchanged. **Original page** sends pages as th
 | **This computer** | How powerful the computer is (the model suggestions follow it), the speed test, and the address of the Ollama server |
 | **Online services** | All access keys in one list. Keys are kept in your system's keychain where there is one |
 | **Scan quality** | **Automatic** or **Original page**, with **Preview…**; under **Expert settings** the PDF resolution and how a PDF's own text is used |
-| **Privacy** | The "don't ask again" answers, and how personal information is found and shown |
+| **Privacy** | The "don't ask again" answers, how personal information is found and shown, and what the app keeps for earlier runs |
 | **Add-ons** | Downloads: AI models for this computer, online AI services, name detection, the built-in reader and page models |
 
 **OK** saves, **Cancel** discards — except downloads on **Add-ons**, which start at once.

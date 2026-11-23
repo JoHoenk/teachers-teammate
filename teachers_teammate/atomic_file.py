@@ -56,6 +56,7 @@ def _keep_mode(target: Path, temp: Path) -> None:
     try:
         mode = stat.S_IMODE(target.stat().st_mode)
     except FileNotFoundError:
+        # A new file inherits nothing: it keeps the private mode mkstemp gave it.
         return
     temp.chmod(mode)
 

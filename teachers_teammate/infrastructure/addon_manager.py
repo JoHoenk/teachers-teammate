@@ -45,6 +45,7 @@ import sys
 import threading
 import time
 from types import MappingProxyType
+from typing import Any
 
 from ..domain.local_models import PRIVACY_ADDON_ID
 from ..domain.providers import AddonPackage
@@ -169,7 +170,8 @@ def _packages_dir_readable(pkg_dir: Path) -> bool:
                 with p.open("rb"):
                     pass
         return True
-    except PermissionError:
+    except PermissionError as exc:
+        _logger.warning("Cannot read the add-on packages in %s, not using them: %s", pkg_dir, exc)
         return False
 
 
@@ -216,7 +218,8 @@ def _distributions(pkg_dir: Path) -> list[tuple[str, str, Path]]:
     """
     try:
         stamp = pkg_dir.stat().st_mtime_ns
-    except OSError:
+    except OSError as exc:
+        _logger.debug("Cannot read the add-on packages folder %s: %s", pkg_dir, exc)
         return []
     remembered = _listed.get(pkg_dir)
     if remembered is not None and remembered[0] == stamp:
@@ -249,7 +252,8 @@ def _record_targets(pkg_dir: Path, dist_info: Path) -> list[Path] | None:
     """
     try:
         lines = (dist_info / "RECORD").read_text(encoding="utf-8").splitlines()
-    except OSError, ValueError:
+    except (OSError, ValueError) as exc:
+        _logger.debug("Cannot read the RECORD in %s: %s", dist_info, exc)
         return None
     root = pkg_dir.resolve()
     targets: list[Path] = []
@@ -803,14 +807,14 @@ def remove_leftover_folders(live: Path) -> None:
     try:
         children = list(root.iterdir())
     except OSError:
-        return
+        return  # no staging folder: nothing to tidy up
     cutoff = time.time() - _STAGING_MIN_AGE_S
     for child in children:
         try:
             if child.stat().st_mtime > cutoff:
                 continue
         except OSError:
-            continue
+            continue  # gone since it was listed: another process tidied it
         shutil.rmtree(child, ignore_errors=True)
     _remove_empty_folder(root)
 
@@ -854,7 +858,7 @@ def addons_restart_needed() -> bool:
     try:
         return any(pending_root(get_packages_dir()).iterdir())
     except OSError:
-        return False
+        return False  # no pending folder: nothing waits for the next start
 
 
 def pending_addon_packages() -> list[str]:
@@ -965,8 +969,12 @@ def inject_packages_dir() -> None:
     if sys.platform == "win32" and pkg_dir.exists() and hasattr(os, "add_dll_directory"):
         try:
             os.add_dll_directory(pkg_str)
-        except OSError:
-            pass
+        except OSError as exc:
+            _logger.warning(
+                "Cannot add %s to the DLL search path, native modules may not load: %s",
+                pkg_str,
+                exc,
+            )
     # Clear the PathFinder cache so importlib.metadata re-scans the addon dir.
     # Required after pip installs packages into the dir via subprocess — the
     # parent process caches None for any path that didn't exist at startup.
@@ -1065,7 +1073,7 @@ def _failure_reason(lines: list[str], fallback: InstallFailure) -> InstallFailur
 
 def _run_pip(cmd: list[str], progress_cb: Callable[[str], None]) -> tuple[int, list[str]]:
     """Run *cmd*, stream its output to *progress_cb*; return the exit code and the lines."""
-    kwargs: dict = {
+    kwargs: dict[str, Any] = {
         "stdout": subprocess.PIPE,
         "stderr": subprocess.STDOUT,
         "text": True,

@@ -9,9 +9,11 @@ the Check tab and the run itself agree.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
+from contextlib import contextmanager
 import dataclasses
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 import threading
 
@@ -37,7 +39,7 @@ from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..domain.stages import Stage
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.onnx.store import ModelStore
-from ..infrastructure.pipeline import OCRPipeline
+from ..infrastructure.pipeline import OCRPipeline, PipelineDependencies
 from ..infrastructure.power import KEEP_AWAKE_REASON, NullSleepBlocker, on_battery
 from ..infrastructure.speed_store import SampleStore
 from ..infrastructure.stage_builder import (
@@ -57,6 +59,8 @@ from .model_recommendations import ModelRecommendationService
 from .ports import HardwareProbe, OllamaServer
 from .providers import ProviderService
 from .reader import ReaderService
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -165,54 +169,90 @@ def windows_for(config: Config, *, recommendations: ModelRecommendationService) 
     )
 
 
+@dataclass(frozen=True)
+class RunParts:
+    """The parts of this process a run starts from: the files, the pipeline, the stores."""
+
+    discovery: FileDiscovery
+    pipeline_factory: Callable[..., OCRPipeline]
+    #: The stage factory a run starts from; the run swaps in the shared anonymizer.
+    component_factory: PipelineComponentFactory
+    #: Held around a run only (see run_selected): a fake in tests, the platform's own here.
+    sleep_blocker: SleepBlocker
+    model_store: ModelStore
+    #: The teacher's work: one store for the window's writes and every run's reads, so both see
+    #: the same folder.
+    work_store: TeacherWorkStore
+    #: The one sample store of this process: the speed estimates read what a run writes.
+    samples: SampleStore
+
+
+@dataclass(frozen=True)
+class RunServices:
+    """The services a run asks, one per topic."""
+
+    ollama: OllamaServer
+    #: The cheap question of this computer a run asks; the full probe stays with the
+    #: recommendations.
+    hardware: HardwareProbe
+    providers: ProviderService
+    reader: ReaderService
+    recommendations: ModelRecommendationService
+    anonymization: AnonymizationService
+    addons: AddonService
+    #: What the store says about a file: what a run would replace, and what needs no reading.
+    documents: DocumentQueries
+
+
 class RunService:
     """The run and everything it asks before it starts: files, requirements, windows, summary."""
 
-    def __init__(  # noqa: PLR0913
-        self,
-        *,
-        discovery: FileDiscovery,
-        pipeline_factory: Callable[..., OCRPipeline],
-        component_factory: PipelineComponentFactory,
-        sleep_blocker: SleepBlocker,
-        model_store: ModelStore,
-        work_store: TeacherWorkStore,
-        ollama: OllamaServer,
-        hardware: HardwareProbe,
-        providers: ProviderService,
-        reader: ReaderService,
-        recommendations: ModelRecommendationService,
-        anonymization: AnonymizationService,
-        addons: AddonService,
-        documents: DocumentQueries,
-        samples: SampleStore,
-    ) -> None:
-        self._discovery = discovery
-        self._pipeline_factory = pipeline_factory
-        # The stage factory a run starts from; the run swaps in the shared anonymizer.
-        self._component_factory = component_factory
-        # Held around a run only (see run_selected); a fake in tests, the platform's own here.
-        self._sleep_blocker = sleep_blocker
-        self._model_store = model_store
-        # The teacher's work: one store for the window's writes and every run's reads, so both
-        # see the same folder.
-        self._work_store = work_store
-        self._ollama = ollama
-        # The cheap question of this computer a run asks; the full probe stays with the
-        # recommendations.
-        self._hardware = hardware
-        self._providers = providers
-        self._reader = reader
-        self._recommendations = recommendations
-        self._anonymization = anonymization
-        self._addons = addons
-        # What the store says about a file: what a run would replace, and what needs no reading.
-        self._documents = documents
-        # The one sample store of this process: the speed estimates read what a run writes.
-        self._samples = samples
+    def __init__(self, *, parts: RunParts, services: RunServices) -> None:
+        self._discovery = parts.discovery
+        self._pipeline_factory = parts.pipeline_factory
+        self._component_factory = parts.component_factory
+        self._sleep_blocker = parts.sleep_blocker
+        self._model_store = parts.model_store
+        self._work_store = parts.work_store
+        self._samples = parts.samples
+        self._ollama = services.ollama
+        self._hardware = services.hardware
+        self._providers = services.providers
+        self._reader = services.reader
+        self._recommendations = services.recommendations
+        self._anonymization = services.anonymization
+        self._addons = services.addons
+        self._documents = services.documents
+        # How many runs this process is running right now: 0 unless one is inside its call.
+        self._runs_going = 0
+        self._runs_lock = threading.Lock()
         # Whether a PDF has a usable text layer, by (path, size, mtime, mode): the readiness
         # check asks again after every settings change, and opening a PDF is not free.
         self._pdf_text_cache: dict[tuple[str, int, int, str], bool] = {}
+
+    def busy(self) -> bool:
+        """Return whether a run is going in this process.
+
+        The stored results and the settings that delete them ask this: a run is writing the
+        files they would remove.  A Benchmark run counts too (:meth:`running`).
+        """
+        with self._runs_lock:
+            return self._runs_going > 0
+
+    @contextmanager
+    def running(self) -> Iterator[None]:
+        """Count the caller as a run for as long as the block lasts.
+
+        Whatever writes the stored results counts, not only :meth:`run_selected`: the Benchmark's
+        runs write into the same folders.
+        """
+        with self._runs_lock:
+            self._runs_going += 1
+        try:
+            yield
+        finally:
+            with self._runs_lock:
+                self._runs_going -= 1
 
     def run_selected(
         self,
@@ -235,39 +275,38 @@ class RunService:
         *stop_event* stops at once (the Ollama request being made is cancelled);
         *stop_after_file_event* lets the file being processed finish and starts no other.
         """
-        from ..infrastructure.pipeline import PipelineDependencies  # noqa: PLC0415
-
-        blocker = self._sleep_blocker if config.keep_awake else NullSleepBlocker()
-        with blocker.hold(KEEP_AWAKE_REASON) as held:
-            awake = KeepAwakeState(
-                enabled=config.keep_awake,
-                held=held,
-                available=blocker.available,
-                on_battery=on_battery(),
-            )
-            if progress is not None and progress.on_keep_awake is not None:
-                progress.on_keep_awake(awake)
-            pipeline = self._pipeline_factory(
-                config,
-                files,
-                stop_event=stop_event,
-                stop_after_file_event=stop_after_file_event,
-                config_file=config_file,
-                dependencies=PipelineDependencies(
-                    reporter=reporter,
-                    component_factory=self._run_component_factory(),
-                    hardware=self._recommendations.resolve_hardware_profile(
-                        config.hardware_profile, config.ollama_url
+        with self.running():
+            blocker = self._sleep_blocker if config.keep_awake else NullSleepBlocker()
+            with blocker.hold(KEEP_AWAKE_REASON) as held:
+                awake = KeepAwakeState(
+                    enabled=config.keep_awake,
+                    held=held,
+                    available=blocker.available,
+                    on_battery=on_battery(),
+                )
+                if progress is not None and progress.on_keep_awake is not None:
+                    progress.on_keep_awake(awake)
+                pipeline = self._pipeline_factory(
+                    config,
+                    files,
+                    stop_event=stop_event,
+                    stop_after_file_event=stop_after_file_event,
+                    config_file=config_file,
+                    dependencies=PipelineDependencies(
+                        reporter=reporter,
+                        component_factory=self._run_component_factory(),
+                        hardware=self._recommendations.resolve_hardware_profile(
+                            config.hardware_profile, config.ollama_url
+                        ),
+                        keep_awake=awake,
+                        battery_warning=battery_warning,
+                        model_store=self._model_store,
+                        work_store=self._work_store,
+                        samples=self._samples,
                     ),
-                    keep_awake=awake,
-                    battery_warning=battery_warning,
-                    model_store=self._model_store,
-                    work_store=self._work_store,
-                    samples=self._samples,
-                ),
-                progress=progress,
-            )
-            return pipeline.run()
+                    progress=progress,
+                )
+                return pipeline.run()
 
     def _run_component_factory(self) -> PipelineComponentFactory:
         """Return the stage factory of a run: its anonymizer shares this service's caches."""
@@ -277,7 +316,13 @@ class RunService:
 
     def run_preview_only(self, config: Config, files: Sequence[Path]) -> RunSummary:
         """Preprocess *files* and return what happened to each; nothing is read or proofread."""
-        return self._pipeline_factory(config, files).run_preview_only()
+        with self.running():
+            dependencies = PipelineDependencies(
+                samples=self._samples, model_store=self._model_store
+            )
+            return self._pipeline_factory(
+                config, files, dependencies=dependencies
+            ).run_preview_only()
 
     def collect_input_files(self, config: Config) -> list[Path]:
         """Return supported source files for the current config."""
@@ -413,6 +458,7 @@ class RunService:
         try:
             stat = file.stat()
         except OSError:
+            _logger.debug("Cannot stat %s: it is taken to carry a text layer", file.name)
             return True
         key = (str(file), stat.st_size, stat.st_mtime_ns, mode)
         cached = self._pdf_text_cache.get(key)
@@ -481,6 +527,7 @@ class RunService:
             try:
                 work = self._work_store.load(compute_file_hash_cached(file))
             except OSError:
+                _logger.debug("Cannot read %s: no stored transcription to find", file.name)
                 continue
             if work is not None and work.transcription is not None:
                 found.add(file)

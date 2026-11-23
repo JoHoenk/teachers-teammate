@@ -22,22 +22,20 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QPushButton, QTabWidget, QVBoxLayout, QWidget
 
 from ...config import DEFAULTS
+from ...domain.install_item import (
+    PAGE_MODELS_ITEM,
+    READER_ITEM,
+    UPDATE_ADDONS_ITEM,
+    InstallItem,
+    InstallKind,
+)
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...texts import addons as txt
 from ...texts import dialogs as dlg
 from ...texts import settings as st
 from ...texts.settings import TAB_READING_MODELS
 from .._background import LatestTask
-from .._install_round import (
-    PACKAGE_PREFIX,
-    PAGE_MODELS_ITEM,
-    PAGE_MODELS_PREFIX,
-    READER_ITEM,
-    READER_PREFIX,
-    UPDATE_ADDONS_ITEM,
-    InstallRound,
-)
-from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
+from .._install_round import InstallRound
 from ._page import (
     FOCUS_ADDON_UPDATE,
     FOCUS_LOCAL_MODELS,
@@ -49,6 +47,7 @@ from ._page import (
     SettingsPageBase,
 )
 from .addons import (
+    DetectedAddons,
     InstallStatusPane,
     NameDetectionTab,
     OllamaModelsTab,
@@ -194,13 +193,13 @@ class AddonsPage(SettingsPageBase):
         if ollama_models and not self.ollama_models.confirm_too_large(ollama_models):
             return
 
-        steps = [f"{PACKAGE_PREFIX}{name}" for name in pip_packages]
-        steps += [f"{SPACY_PREFIX}{model}" for model in spacy_models]
+        steps = [InstallItem(InstallKind.PACKAGE, name) for name in pip_packages]
+        steps += [InstallItem(InstallKind.SPACY, model) for model in spacy_models]
         if reader:
             steps.append(READER_ITEM)
         if page_models:
             steps.append(PAGE_MODELS_ITEM)
-        steps += ollama_models
+        steps += [InstallItem(InstallKind.OLLAMA, tag) for tag in ollama_models]
         self.status.begin_round(steps)
         started = self._round.start(
             packages=pip_packages,
@@ -247,7 +246,7 @@ class AddonsPage(SettingsPageBase):
 
     def _on_detect_finished(self, result: object, error: BaseException | None) -> None:
         self._detect_running = False
-        if error is not None or not isinstance(result, dict):
+        if error is not None or not isinstance(result, DetectedAddons):
             self.status.set_idle(
                 txt.addons_detect_failed(str(error) if error else ""), warning=True
             )
@@ -263,13 +262,13 @@ class AddonsPage(SettingsPageBase):
             self._detect_again = False
             self._start_detection()
 
-    def _on_detection_done(self, results: dict) -> None:
+    def _on_detection_done(self, detected: DetectedAddons) -> None:
         """Hand what is installed to every tab, then tick what a deep link asked for."""
         self.status.set_idle(txt.ADDONS_DETECTED)
-        self.reading_models.mark_installed(results)
-        self.providers.mark_installed(results)
-        self.name_detection.mark_installed(results)
-        self.ollama_models.mark_installed(results)
+        self.reading_models.mark_installed(detected.installed)
+        self.providers.mark_installed(detected.installed)
+        self.name_detection.mark_installed(detected.installed)
+        self.ollama_models.mark_installed(detected)
         self._installed_ready = True
         self._tick_pending()
 
@@ -291,22 +290,21 @@ class AddonsPage(SettingsPageBase):
             self.status.show_followed_pull(model)
         self.ollama_models.mark_pulls()
 
-    def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
+    def focus(self, focus: str, preselect: Sequence[InstallItem] = ()) -> None:
         """Show the tab named *focus*; tick *preselect*.
 
-        Entries are model tags, ``provider:<name>`` (an online service's package),
-        ``package:<name>`` (a package of its own, ``package:spacy``) and ``spacy:<model>``
-        (a name-detection model).  A model alone does not tick spaCy: only the fix that says
-        spaCy is missing does.
+        The entries are items of the add-ons vocabulary: an Ollama model, an AI service's
+        package, a package of its own (spaCy) or a name-detection model.  A model alone does not
+        tick spaCy: only the fix that says spaCy is missing does.
         """
         if focus == FOCUS_ADDON_UPDATE:
             self.update_banner.button.setFocus()
         tab = self._FOCUS_TABS.get(focus)
-        if any(tag.startswith(PROVIDER_PREFIX) for tag in preselect):
+        if any(item.kind is InstallKind.PROVIDER for item in preselect):
             tab = self.TAB_ONLINE_SERVICES
-        elif any(tag.startswith((READER_PREFIX, PAGE_MODELS_PREFIX)) for tag in preselect):
+        elif any(item.kind in (InstallKind.READER, InstallKind.PAGE_MODELS) for item in preselect):
             tab = self.TAB_READING_MODELS
-        elif tab is None and any(is_model_tag(tag) for tag in preselect):
+        elif tab is None and any(is_model_tag(item) for item in preselect):
             tab = self.TAB_LOCAL_MODELS
         if tab is not None:
             self._tabs.setCurrentIndex(tab)

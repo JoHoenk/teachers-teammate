@@ -34,6 +34,7 @@ class MenuHooks:
     open_benchmark: Callable[[], None]
     open_monitor: Callable[[], None]
     open_setup_assistant: Callable[[], None]
+    open_log_folder: Callable[[], None]
 
 
 class MenuBar(QObject):
@@ -60,6 +61,8 @@ class MenuBar(QObject):
         self.benchmark_action: QAction
         self.monitor_action: QAction
         self.setup_action: QAction
+        #: Help's entry to the log folder, which the window opens for the teacher.
+        self.log_folder_action: QAction
         bar = present(window.menuBar(), "menu bar")
         self._build_file_menu(bar)
         self._build_settings_menu(bar)
@@ -141,12 +144,17 @@ class MenuBar(QObject):
         tools_menu.addAction(self.setup_action)
 
     def _build_help_menu(self, bar: QMenuBar) -> None:
-        """Help: the guide, the licences of what ships with the app, and the version."""
+        """Help: the guide, the log, the licences of what ships with the app, and the version."""
         help_menu = present(bar.addMenu(menus.HELP), "Help menu")
         guide_act = QAction(menus.USER_GUIDE, self)
         guide_act.setObjectName(_handles.USER_GUIDE)
         guide_act.triggered.connect(lambda: HelpDialog(self._window).exec())
         help_menu.addAction(guide_act)
+        self.log_folder_action = QAction(menus.OPEN_LOG_FOLDER, self)
+        self.log_folder_action.setObjectName(_handles.OPEN_LOG_FOLDER)
+        self.log_folder_action.setToolTip(menus.OPEN_LOG_FOLDER_TIP)
+        self.log_folder_action.triggered.connect(self._hooks.open_log_folder)
+        help_menu.addAction(self.log_folder_action)
         help_menu.addSeparator()
         licenses_act = QAction(menus.LICENSES, self)
         licenses_act.setObjectName(_handles.LICENSES)

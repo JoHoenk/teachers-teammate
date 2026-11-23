@@ -35,6 +35,27 @@ class InvokeAnswer:
     """Why the request did not answer as asked; ``None`` when it did."""
 
 
+@dataclass(frozen=True)
+class ChatRequest:
+    """One chat request to a model: what it says, and the window it says it in."""
+
+    model: str
+    prompt: str
+    temperature: float
+    timeout: float
+    #: Sent as a system message; empty sends none.
+    system: str = ""
+    #: The context window this request asks Ollama for (resolved once per run).
+    num_ctx: int = PROOFREADING_NUM_CTX
+    #: Reasoning on, off, or at the level the server names.
+    think: bool | str = False
+    #: A JSON schema the answer is constrained to; ``None`` leaves it free.
+    format: dict | None = None  # pylint: disable=redefined-builtin  # the ollama API's name
+    #: How many tokens the answer may take; ``None`` — as many as the request, which is the
+    #: proofreading shape.  A content review passes a short fixed allowance.
+    answer_tokens: int | None = None
+
+
 def invoke_langchain_chain(
     llm: BaseChatModel,
     *,
@@ -59,35 +80,21 @@ def invoke_langchain_chain(
         return InvokeAnswer(fallback, failure(exc))
 
 
-def invoke_ollama_chat(  # noqa: PLR0913  # one keyword-only call shape shared by every Ollama caller
+def invoke_ollama_chat(
     client: OllamaClient,
+    request: ChatRequest,
     *,
-    model: str,
-    prompt: str,
-    timeout: float,
-    temperature: float,
-    think: bool | str = False,
     fallback: str,
     failure: Callable[[Exception], str],
-    system: str = "",
-    format: dict | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
-    num_ctx: int = PROOFREADING_NUM_CTX,
-    answer_tokens: int | None = None,
     truncated_warning: str = TRUNCATED_MESSAGE,
 ) -> InvokeAnswer:
     """Invoke a native Ollama chat completion.
 
     On any transport error, returns *fallback* with the warning *failure* words for the
-    exception.  *system* is sent as a system message; *format* passes a JSON schema to
-    Ollama, which then constrains the answer to it.  An answer the context window cut off returns
-    *fallback* with *truncated_warning*: its end is missing, so it must not replace the text it
-    was asked about.
-
-    Args:
-        num_ctx: The context window this request asks Ollama for (resolved once per run).
-        answer_tokens: How many tokens the answer may take; ``None`` — as many as the request,
-            which is the proofreading shape.  A content review passes a short fixed allowance.
-        truncated_warning: The warning of a request or answer that did not fit the window.
+    exception.  A request's ``format`` passes a JSON schema to Ollama, which then constrains the
+    answer to it.  An answer the context window cut off returns *fallback* with
+    *truncated_warning*: its end is missing, so it must not replace the text it was asked about.
+    *truncated_warning* words a request or answer that did not fit the window.
     """
     from ..exceptions import ResponseTruncatedError  # noqa: PLC0415
     from .ollama_utils import proofreading_options  # noqa: PLC0415
@@ -95,14 +102,14 @@ def invoke_ollama_chat(  # noqa: PLR0913  # one keyword-only call shape shared b
     try:
         return InvokeAnswer(
             client.chat(
-                model,
-                prompt,
-                options=proofreading_options(temperature, num_ctx),
-                think=think,
-                timeout=timeout,
-                format=format,
-                system=system,
-                answer_tokens=answer_tokens,
+                request.model,
+                request.prompt,
+                options=proofreading_options(request.temperature, request.num_ctx),
+                think=request.think,
+                timeout=request.timeout,
+                format=request.format,
+                system=request.system,
+                answer_tokens=request.answer_tokens,
             )
         )
     except ResponseTruncatedError:
@@ -228,41 +235,31 @@ def invoke_langchain_structured[T](
     return StructuredResult(parsed=cast("T", parsed), raw=_message_text(raw))
 
 
-def invoke_ollama_structured[T](  # noqa: PLR0913  # one keyword-only call shape, like chat()
+def invoke_ollama_structured[T](
     client: OllamaClient,
+    request: ChatRequest,
     *,
-    model: str,
-    prompt: str,
-    schema: dict,
-    timeout: float,
-    temperature: float,
-    think: bool | str = False,
     parse: Callable[[str], tuple[T | None, str]],
-    system: str = "",
-    num_ctx: int = PROOFREADING_NUM_CTX,
 ) -> StructuredResult[T]:
-    """Invoke a native Ollama chat constrained to *schema*.
+    """Invoke a native Ollama chat constrained to the schema of *request*.
 
     *parse* validates the answer text (``CorrectionAnswer.model_validate_json``) and returns
     ``(value, error)``, so the caller decides what a valid answer means.  An answer the context
     window cut off is reported as ``truncated``: it cannot be repaired, because the repair answer
     would be cut off as well.
-
-    Args:
-        num_ctx: The context window this request asks Ollama for (resolved once per run).
     """
     from ..exceptions import ResponseTruncatedError  # noqa: PLC0415
     from .ollama_utils import proofreading_options  # noqa: PLC0415
 
     try:
         text = client.chat(
-            model,
-            prompt,
-            options=proofreading_options(temperature, num_ctx),
-            think=think,
-            timeout=timeout,
-            format=schema,
-            system=system,
+            request.model,
+            request.prompt,
+            options=proofreading_options(request.temperature, request.num_ctx),
+            think=request.think,
+            timeout=request.timeout,
+            format=request.format,
+            system=request.system,
         )
     except ResponseTruncatedError:
         return StructuredResult(error=TRUNCATED_MESSAGE, failure="truncated")

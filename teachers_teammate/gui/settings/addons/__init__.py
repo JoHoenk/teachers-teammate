@@ -8,7 +8,7 @@ here: it comes from outside (:mod:`..._install_round`) and is only shown
 """
 
 from ._common import is_model_tag
-from ._detection import detect_installed
+from ._detection import DetectedAddons, detect_installed
 from ._install_status import InstallStatusPane
 from ._name_detection_tab import NameDetectionTab
 from ._ollama_models_tab import OllamaModelsTab
@@ -17,6 +17,7 @@ from ._reading_models_tab import ReadingModelsTab
 from ._update_banner import UpdateBanner
 
 __all__ = [
+    "DetectedAddons",
     "InstallStatusPane",
     "NameDetectionTab",
     "OllamaModelsTab",

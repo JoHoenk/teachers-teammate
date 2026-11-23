@@ -118,6 +118,10 @@ PDF_RENDER_DPI_RANGE = (72, 600)
 #: hang forever on a server that stopped answering.
 OCR_TIMEOUT_RANGE = (1, 86400)
 
+#: How long the results of earlier runs may stay, in days; ``0`` keeps them.  A year is the
+#: longest a teacher can sensibly ask for, and less than a day would keep nothing.
+RESULTS_KEEP_DAYS_RANGE = (0, 365)
+
 
 def _count_between(low: int, high: int) -> Callable[[object], int]:
     """Return a normaliser that accepts a whole number from *low* to *high* only.
@@ -300,6 +304,9 @@ SETTINGS: tuple[Setting, ...] = (
     # sends without being asked, so it can be switched off; a settings file without the key
     # keeps the check on.
     Setting("check_for_updates", True, SettingScope.APP, _flag),
+    # How long the results of earlier runs stay, in days; 0 = keep them.  The window applies it
+    # once at start, so turning it on never deletes anything mid-run.
+    Setting("results_keep_days", 0, SettingScope.APP, _count_between(*RESULTS_KEEP_DAYS_RANGE)),
     # ── Preprocessing (image preparation and PDF rendering) ───────────────────
     Setting("pdf_render_dpi", 300, SettingScope.RUN, _count_between(*PDF_RENDER_DPI_RANGE)),
     Setting("pdf_text_layer", "auto", SettingScope.RUN, _pdf_text_layer),

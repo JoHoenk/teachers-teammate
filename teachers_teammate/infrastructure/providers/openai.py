@@ -34,35 +34,44 @@ PROVIDER = ProviderInfo(
 _CHAT_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 
 
-def _fetch_chat_ids() -> list[str]:
+def _fetch_chat_ids(api_key: str) -> list[str]:
     # optional dep; lazy import to avoid startup ImportError when not installed
     from openai import OpenAI  # noqa: PLC0415
 
-    all_ids = [m.id for m in OpenAI().models.list()]
+    all_ids = [m.id for m in OpenAI(api_key=api_key).models.list()]
     return sorted(m for m in all_ids if any(m.startswith(p) for p in _CHAT_PREFIXES))
 
 
-def list_models_checked(**_kwargs: object) -> ModelListing:
+def list_models_checked(*, api_key: str | None = None, **_kwargs: object) -> ModelListing:
     """Return chat-capable model IDs from the OpenAI API and whether the list is live."""
     return checked_listing(
-        _fetch_chat_ids, PROVIDER.models, env_key=PROVIDER.env_key, service="OpenAI"
+        _fetch_chat_ids,
+        PROVIDER.models,
+        env_key=PROVIDER.env_key,
+        service="OpenAI",
+        api_key=api_key,
     )
 
 
-def list_models(**kwargs: object) -> list[str]:
+def list_models(*, api_key: str | None = None, **_kwargs: object) -> list[str]:
     """Return chat-capable model IDs, or the static list when OpenAI cannot be asked."""
-    return list_models_checked(**kwargs).models
+    return list_models_checked(api_key=api_key).models
 
 
-def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseChatModel:
+def create(
+    model: str,
+    *,
+    temperature: float = 0.7,
+    api_key: str | None = None,
+    **_kwargs: object,
+) -> BaseChatModel:
     """Return a ``ChatOpenAI`` instance for *model*.
 
-    The API key is read from the ``$OPENAI_API_KEY`` environment variable
-    by LangChain automatically.
+    The key comes in as *api_key*; with none, LangChain reads ``$OPENAI_API_KEY`` itself.
     """
     with import_guard("langchain-openai"):
         from langchain_openai import ChatOpenAI  # noqa: PLC0415
-    return ChatOpenAI(model=model, temperature=temperature)
+    return ChatOpenAI(model=model, temperature=temperature, api_key=api_key)
 
 
 check_connection = api_key_check(PROVIDER.env_key)

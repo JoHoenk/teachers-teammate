@@ -508,6 +508,34 @@ def read_again(names: Sequence[str]) -> Question:
     )
 
 
+def delete_stored_results(*, include_work: bool) -> Question:
+    """Ask before the stored results of earlier runs are deleted.
+
+    It names what stays, because "delete the stored results" sounds like it takes the Word
+    files and the teacher's own work with it.  *include_work* adds what that choice takes.
+    """
+    body = (
+        "The app will forget what it recognized and proofread for every document, so the next "
+        "run reads and proofreads the pages again, which an online service charges for again.\n\n"
+        "Your Word and text files in the output folder stay, and so do the documents "
+        "themselves."
+    )
+    if include_work:
+        body += (
+            "\n\nYour own corrections, marks and edited texts are deleted too. They cannot be "
+            "brought back."
+        )
+    return Question(
+        "Delete stored results",
+        body,
+        (
+            Choice("Delete", role=ChoiceRole.DESTRUCTIVE),
+            Choice("Keep", role=ChoiceRole.REJECT, default=True),
+        ),
+        kind=QuestionKind.WARNING,
+    )
+
+
 def close_during_run() -> Question:
     """Ask whether to stop the run and close; the default answer keeps the run going."""
     return Question(

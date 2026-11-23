@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.benchmark_service import BenchmarkApplicationService
-from ...application.composition import inject_addon_packages_dir
+from ...application.composition import inject_addon_packages_dir, start_logging
 from ...application.ollama_server import OllamaServerService
 from ...config import DEFAULTS
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
@@ -249,6 +249,7 @@ def _default_window_factory() -> BenchmarkWindow:
 
 def main_benchmark(*, window_factory=None) -> None:
     """Launch the benchmark GUI."""
+    start_logging()  # the log file of this process, and stderr when there is one
     inject_addon_packages_dir()  # idempotent; a wheel install's entry point starts here
     from .._main_window import _app_icon  # noqa: PLC0415  reuse the shared app icon
 

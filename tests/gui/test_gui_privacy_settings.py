@@ -16,6 +16,8 @@ from teachers_teammate.domain.data_location import (
 )
 from teachers_teammate.domain.anonymization import DEFAULT_PATTERNS, AnonymizerConfig
 from teachers_teammate.texts import review as txt
+from teachers_teammate.application.stored_results import RunInProgressError, StoredSummary
+from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui._privacy_settings import (
     DISPLAY_ANONYMIZED_KEY,
     SETTINGS_KEY,
@@ -30,6 +32,8 @@ from teachers_teammate.gui.settings._page import (
 )
 from teachers_teammate.gui.settings._privacy_page import PrivacyPage
 from teachers_teammate.texts.privacy import NOTHING_REMEMBERED
+from teachers_teammate.texts.privacy import STORED_GROUP, stored_size
+from teachers_teammate.texts._types import Answer
 
 from ._gui_harness import settings_context
 from teachers_teammate.texts.settings import WHERE_ADDONS
@@ -149,6 +153,23 @@ def test_forgetting_all_asks_again_for_everything(acks, settings) -> None:
 # ── the page ───────────────────────────────────────────────────────────────
 
 
+class _Stored:
+    """Stands in for the results kept for earlier runs: what the page reports and deletes."""
+
+    def __init__(self, documents: int = 2, size: int = 3_000_000) -> None:
+        self.summary_now = StoredSummary(documents=documents, bytes_taken=size)
+        self.deleted: list[bool] = []
+
+    def summary(self) -> StoredSummary:
+        """Answer how much is stored."""
+        return self.summary_now
+
+    def delete(self, *, include_work: bool = False) -> None:
+        """Forget everything, and remember what the page asked to be deleted."""
+        self.deleted.append(include_work)
+        self.summary_now = StoredSummary(documents=0, bytes_taken=0)
+
+
 def _make_page(
     qtbot,
     acks,
@@ -157,10 +178,17 @@ def _make_page(
     config: AnonymizerConfig | None = None,
     display_anonymized: bool = False,
     privacy_available: bool = True,
+    stored: _Stored | None = None,
+    busy: bool = False,
 ) -> PrivacyPage:
     """Build the page with no spaCy model discovery (as the anonymizer tests do)."""
+    kept = stored if stored is not None else _Stored()
     service = MagicMock()
     service.list_installed_spacy_models.return_value = []  # no spaCy discovery in this test
+    # The flat stub answers for every group of services, so the box reaches these here.
+    service.summary = kept.summary
+    service.delete = kept.delete
+    service.busy.return_value = busy
     context = settings_context(
         service,
         acknowledgements=acks,
@@ -173,6 +201,8 @@ def _make_page(
     if focus:
         page.focus(focus)
     page.show()
+    # The box measures what is stored off the GUI thread.
+    qtbot.waitUntil(lambda: page.stored_results().size_text() != "")
     return page
 
 
@@ -434,3 +464,148 @@ def test_display_anonymized_remembers_showing_the_names() -> None:
     set_display_anonymized(lambda: settings, False)
 
     assert display_anonymized(lambda: settings) is False
+
+
+# ── stored results: what the app keeps, deleting it, and how long it stays ───
+
+
+@pytest.mark.gui
+def test_the_page_says_how_much_is_stored(qtbot, acks) -> None:
+    """
+    Given  the app keeps two documents of three megabytes
+    When   the Privacy page is opened
+    Then   the box names what is stored in the page's own words, and offers to delete it
+    """
+    page = _make_page(qtbot, acks)
+    box = page.stored_results()
+
+    assert box.title() == STORED_GROUP
+    assert box.size_text() == stored_size(2, 3_000_000)
+    assert box.delete_button().isEnabled()
+
+
+@pytest.mark.gui
+def test_deleting_asks_first_and_says_what_stays(qtbot, acks) -> None:
+    """
+    Given  stored results
+    When   "Delete stored results…" is pressed and the teacher agrees
+    Then   the question names the Word files, the results are deleted without the work, and
+           the box says that nothing is stored any more
+    """
+    kept = _Stored()
+    page = _make_page(qtbot, acks, stored=kept)
+
+    with _dialogs.answering(lambda asked: Answer(asked.item.choices[0])) as asked:
+        page.stored_results().delete_button().click()
+
+    question = asked[0]
+    assert "Word" in question.item.body
+    assert "corrections" not in question.item.body
+    qtbot.waitUntil(lambda: page.stored_results().size_text() == stored_size(0, 0))
+    assert kept.deleted == [False]
+
+
+@pytest.mark.gui
+def test_the_work_choice_is_what_the_question_warns_about(qtbot, acks) -> None:
+    """
+    Given  the "also delete my corrections and marks" choice ticked
+    When   the stored results are deleted
+    Then   the question warns that they cannot be brought back, and the work goes too
+    """
+    kept = _Stored()
+    page = _make_page(qtbot, acks, stored=kept)
+    page.stored_results().include_work_checkbox().setChecked(True)
+
+    with _dialogs.answering(lambda asked: Answer(asked.item.choices[0])) as asked:
+        page.stored_results().delete_button().click()
+
+    question = asked[0]
+    assert "corrections" in question.item.body
+    qtbot.waitUntil(lambda: kept.deleted == [True])
+
+
+@pytest.mark.gui
+def test_a_refused_question_deletes_nothing(qtbot, acks) -> None:
+    """
+    Given  a teacher who keeps the results
+    When   the question is answered with the default
+    Then   nothing is deleted
+    """
+    kept = _Stored()
+    page = _make_page(qtbot, acks, stored=kept)
+
+    with _dialogs.answering(lambda asked: Answer(asked.item.choices[1])):
+        page.stored_results().delete_button().click()
+
+    assert kept.deleted == []
+    assert page.stored_results().delete_button().isEnabled()
+    assert page.stored_results().size_text() == stored_size(2, 3_000_000)
+
+
+@pytest.mark.gui
+def test_a_run_that_started_before_the_click_stops_the_deletion_with_a_notice(qtbot, acks) -> None:
+    """
+    Given  a run that started after the page was shown, so the deletion is refused
+    When   the teacher confirms the deletion
+    Then   the teacher is told to wait and the stored results are still there
+    """
+    kept = _Stored()
+
+    def refuse(*, include_work: bool = False) -> None:
+        raise RunInProgressError
+
+    kept.delete = refuse  # ty: ignore[invalid-assignment]
+    page = _make_page(qtbot, acks, stored=kept)
+
+    with _dialogs.answering(
+        lambda asked: Answer(asked.item.choices[0]) if asked.call == "choose" else None
+    ) as asked:
+        page.stored_results().delete_button().click()
+        qtbot.waitUntil(lambda: any(a.call == "notify" for a in asked))
+
+    assert page.stored_results().size_text() == stored_size(2, 3_000_000)
+
+
+@pytest.mark.gui
+def test_the_button_waits_while_a_run_is_going(qtbot, acks) -> None:
+    """
+    Given  a run that is writing the stored results right now
+    When   the Privacy page is opened
+    Then   the deletion is offered but not pressable
+    """
+    page = _make_page(qtbot, acks, busy=True)
+
+    assert not page.stored_results().delete_button().isEnabled()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(("shown", "expected"), [(0, 0), (30, 30), (365, 365)])
+def test_the_retention_round_trips_through_the_page(qtbot, acks, shown: int, expected: int) -> None:
+    """
+    Given  a retention of no days, thirty days or a year
+    When   the page shows it and hands its keys back
+    Then   the same number comes back, and no days means the results are kept
+    """
+    page = _make_page(qtbot, acks)
+
+    page.load({"results_keep_days": shown})
+
+    assert page.values()["results_keep_days"] == expected
+    assert page.stored_results().keep_checkbox().isChecked() is (shown > 0)
+    assert "results_keep_days" in page.owned_keys()
+
+
+@pytest.mark.gui
+def test_restore_defaults_keeps_the_results_again(qtbot, acks) -> None:
+    """
+    Given  a page showing a retention of thirty days
+    When   the defaults of the page are restored
+    Then   the retention is off, so nothing expires by itself
+    """
+    page = _make_page(qtbot, acks)
+    page.load({"results_keep_days": 30})
+
+    page.restore_defaults()
+
+    assert page.values()["results_keep_days"] == 0
+    assert not page.stored_results().keep_checkbox().isChecked()

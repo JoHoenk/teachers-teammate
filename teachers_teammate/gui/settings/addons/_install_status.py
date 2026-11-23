@@ -27,12 +27,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ....domain.install_item import SPACY_ITEM, UPDATE_ADDONS_ITEM, InstallItem, InstallKind
 from ....texts import addons as txt
 from ....texts import dialogs as dlg
 from ... import _html
-from ..._install_round import PACKAGE_PREFIX, UPDATE_ADDONS_ITEM, InstallRound
+from ..._install_round import InstallRound
 from ..._long_job import ABORTED
-from ..._model_guidance import SPACY_PREFIX
 
 #: The status line and the hint under it: small and grey, so the page's content stays first.
 _HINT_STYLE = "color: #888; font-size: 11px;"
@@ -93,7 +93,7 @@ class InstallStatusPane(QWidget):
     def __init__(
         self,
         round_: InstallRound,
-        labels: Sequence[Callable[[str], str | None]],
+        labels: Sequence[Callable[[InstallItem], str | None]],
         pending: Callable[[], Sequence[str]],
         parent: QWidget | None = None,
     ) -> None:
@@ -107,8 +107,8 @@ class InstallStatusPane(QWidget):
         self._idle_warning = False
         self._round_result = ""
         self._round_result_warning = False
-        self._round_steps: list[str] = []
-        self._status_item = ""
+        self._round_steps: list[InstallItem] = []
+        self._status_item: InstallItem | None = None
         self._status_parts: tuple[str, str, int, int] | None = None
         self._status_line = ""
         self._status_started = 0.0
@@ -219,7 +219,7 @@ class InstallStatusPane(QWidget):
         if pending:
             self._set_status(
                 txt.ADDONS_RESTART_NEEDED
-                if "spacy" in pending
+                if SPACY_ITEM.name in pending
                 else txt.ADDONS_RESTART_NEEDED_GENERIC,
                 warning=True,
             )
@@ -229,14 +229,14 @@ class InstallStatusPane(QWidget):
             return
         self._set_status(self._idle_status, warning=self._idle_warning)
 
-    def begin_round(self, steps: Sequence[str]) -> None:
+    def begin_round(self, steps: Sequence[InstallItem]) -> None:
         """Clear the last result, the log and the hint before a round starts."""
-        packages = [step for step in steps if step.startswith(PACKAGE_PREFIX)]
+        packages = [step for step in steps if step.kind is InstallKind.PACKAGE]
         # pip installs all its packages in one command: the round has one step for them.
         self._round_steps = [step for step in steps if step not in packages[1:]]
         self._round_result = ""
         self._round_result_warning = False
-        self._status_item = ""
+        self._status_item = None
         self._status_parts = None
         self._done_count = 0
         self._dl_log.clear()
@@ -251,10 +251,10 @@ class InstallStatusPane(QWidget):
         self._dl_abort_btn.hide()
         self.refresh()
 
-    def show_followed_pull(self, model: str) -> None:
+    def show_followed_pull(self, item: InstallItem) -> None:
         """Show the pull that was already running when the page opened."""
-        self._dl_log.appendPlainText(f"(pull of {model!r} already in progress…)")
-        self._show_step(model, 1)
+        self._dl_log.appendPlainText(f"(pull of {item.name!r} already in progress…)")
+        self._show_step(item, 1)
 
     def show_details(self, shown: bool) -> None:
         """Open or close the log; the button follows."""
@@ -278,7 +278,7 @@ class InstallStatusPane(QWidget):
             txt.addons_status_elapsed(self._status_line, time.monotonic() - self._status_started)
         )
 
-    def _show_step(self, item: str, total: int) -> None:
+    def _show_step(self, item: InstallItem, total: int) -> None:
         """Put *item* in the status line, with the bar and Abort that belong to it."""
         self._status_item = item
         self._status_parts = (
@@ -292,7 +292,7 @@ class InstallStatusPane(QWidget):
         abortable = self._round.can_abort()
         self._dl_abort_btn.setEnabled(abortable)
         self._dl_abort_btn.setVisible(abortable)
-        if item == UPDATE_ADDONS_ITEM or item.startswith((PACKAGE_PREFIX, SPACY_PREFIX)):
+        if item.kind in (InstallKind.UPDATE, InstallKind.PACKAGE, InstallKind.SPACY):
             # pip and the spaCy model download report no percentage: the bar moves on its own
             # and the elapsed time shows that something is happening.
             self._dl_progress.setRange(0, 0)
@@ -304,39 +304,40 @@ class InstallStatusPane(QWidget):
             self.step_shown.emit()
         self.refresh()
 
-    def _step_number(self, item: str) -> int:
+    def _step_number(self, item: InstallItem) -> int:
         """Return the position of *item* in the running round, counting from 1.
 
         pip installs all its packages in one command, so they are one step: any package
         has the number of the first.
         """
-        if item.startswith(PACKAGE_PREFIX):
+        if item.kind is InstallKind.PACKAGE:
             item = next(
-                (step for step in self._round_steps if step.startswith(PACKAGE_PREFIX)), item
+                (step for step in self._round_steps if step.kind is InstallKind.PACKAGE), item
             )
         try:
             return self._round_steps.index(item) + 1
         except ValueError:
+            # A step the round does not list counts as the first one.
             return 1
 
     @staticmethod
-    def _verb(item: str) -> str:
+    def _verb(item: InstallItem) -> str:
         """Return what the status line says the round is doing with *item*."""
-        if item == UPDATE_ADDONS_ITEM or item.startswith((PACKAGE_PREFIX, SPACY_PREFIX)):
+        if item.kind in (InstallKind.UPDATE, InstallKind.PACKAGE, InstallKind.SPACY):
             return txt.ADDONS_VERB_INSTALL
         return txt.ADDONS_VERB_DOWNLOAD
 
-    def _item_label(self, item: str) -> str:
+    def _item_label(self, item: InstallItem | None) -> str:
         """Return the name of *item* as the status line writes it."""
+        if item is None:
+            return ""
         if item == UPDATE_ADDONS_ITEM:
             return txt.ADDONS_ITEM_ADDONS
         for label_of in self._labels:
             label = label_of(item)
             if label is not None:
                 return label
-        if item.startswith(PACKAGE_PREFIX):
-            return item.removeprefix(PACKAGE_PREFIX)
-        return item
+        return item.name
 
     def _on_details_toggled(self, shown: bool) -> None:
         """Show the log and its Copy button, or hide them."""
@@ -352,13 +353,17 @@ class InstallStatusPane(QWidget):
 
     # ── following the install round ──────────────────────────────────────────────
 
-    def _on_round_item_started(self, item: str) -> None:
+    def _on_round_item_started(self, item: InstallItem) -> None:
         """Show the step in the status line, with the bar that belongs to it."""
-        if item.startswith(PACKAGE_PREFIX) and self._status_item.startswith(PACKAGE_PREFIX):
+        if (
+            item.kind is InstallKind.PACKAGE
+            and self._status_item is not None
+            and self._status_item.kind is InstallKind.PACKAGE
+        ):
             return  # pip installs all its packages in one command: one step, one line
         self._show_step(item, len(self._round_steps) or 1)
 
-    def _on_round_item_done(self, _item: str) -> None:
+    def _on_round_item_done(self, _item: InstallItem) -> None:
         self._done_count += 1
 
     def _on_round_pull_progress(self, status: str, completed: int, total: int) -> None:
@@ -374,7 +379,7 @@ class InstallStatusPane(QWidget):
         else:
             self._set_status(txt.addons_status_step(verb, item, number, count))
 
-    def _on_round_failed(self, item: str, message: str) -> None:
+    def _on_round_failed(self, item: InstallItem | None, message: str) -> None:
         self._elapsed_timer.stop()
         self._status_parts = None
         if message == ABORTED:
@@ -391,7 +396,7 @@ class InstallStatusPane(QWidget):
     def _on_round_finished(self, installed_any: bool) -> None:
         self._elapsed_timer.stop()
         self._status_parts = None
-        self._status_item = ""
+        self._status_item = None
         self._dl_progress.hide()
         self._dl_abort_btn.hide()
         self._hint.hide()

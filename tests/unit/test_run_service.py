@@ -255,7 +255,9 @@ def test_run_preview_only_delegates_to_pipeline_factory(tmp_path: Path) -> None:
 
     result = svc.run.run_preview_only(cfg, [])
 
-    factory.assert_called_once_with(cfg, [])
+    factory.assert_called_once()
+    assert factory.call_args.args == (cfg, [])
+    assert factory.call_args.kwargs["dependencies"].samples is svc.run._samples
     mock_pipeline.run_preview_only.assert_called_once()
     assert result == 0
 

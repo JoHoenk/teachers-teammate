@@ -13,17 +13,14 @@ from collections.abc import Mapping, Sequence
 from PySide6.QtWidgets import QGroupBox, QLabel, QVBoxLayout, QWidget
 
 from ....application.composition import AppServices
+from ....domain.install_item import SPACY_ITEM, InstallItem, InstallKind
 from ....domain.language import language_name
 from ....domain.name_models import SPACY_MODELS
 from ....texts import addons as txt
 from ....texts.settings import license_tooltip
 from ..._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
-from ..._install_round import PACKAGE_PREFIX
-from ..._model_guidance import SPACY_PREFIX
 from ._common import ScrolledTab, apply_installed, tick_enabled
 
-#: The key of spaCy's own box; also the pip package the round installs for it.
-SPACY_ITEM = "spacy"
 #: The language of each name-detection model, for the status line ("the German model").
 _SPACY_MODEL_LANGUAGES: dict[str, str] = {
     model: language_name(language) for language, model in SPACY_MODELS.items()
@@ -36,7 +33,7 @@ class NameDetectionTab(ScrolledTab):
     def __init__(self, app_service: AppServices, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._svc = app_service
-        self._pending: list[str] = []
+        self._pending: list[InstallItem] = []
 
         install_group = QGroupBox(txt.NAME_DETECTION_GROUP)
         install_layout = QVBoxLayout(install_group)
@@ -45,14 +42,14 @@ class NameDetectionTab(ScrolledTab):
         intro.setStyleSheet("color: #aaa; font-size: 9pt;")
         install_layout.addWidget(intro)
         cb_spacy = self.item_box(SPACY_ITEM, txt.SPACY_ITEM_LABEL)
-        cb_spacy.setToolTip(license_tooltip(self._svc.addons.addon_license(SPACY_ITEM)))
+        cb_spacy.setToolTip(license_tooltip(self._svc.addons.addon_license(SPACY_ITEM.name)))
         install_layout.addWidget(cb_spacy)
         self.body_layout.addWidget(install_group)
 
         model_group = QGroupBox(txt.NAME_DETECTION_MODELS_GROUP)
         model_layout = QVBoxLayout(model_group)
         for lbl, model_id in _SPACY_MODEL_DOWNLOAD_CHOICES:
-            cb = self.item_box(f"{SPACY_PREFIX}{model_id}", lbl)
+            cb = self.item_box(InstallItem(InstallKind.SPACY, model_id), lbl)
             cb.setToolTip(license_tooltip(self._svc.addons.addon_license(model_id)))
             model_layout.addWidget(cb)
         self.body_layout.addWidget(model_group)
@@ -61,45 +58,43 @@ class NameDetectionTab(ScrolledTab):
     def pip_packages(self) -> list[str]:
         """Return the pip packages whose box is ticked (spaCy, when it is)."""
         cb = self.checkboxes.get(SPACY_ITEM)
-        return [SPACY_ITEM] if cb and cb.isChecked() and cb.isEnabled() else []
+        return [SPACY_ITEM.name] if cb and cb.isChecked() and cb.isEnabled() else []
 
     def spacy_models(self) -> list[str]:
         """Return the name-detection models whose box is ticked, in the offered order."""
         models: list[str] = []
         for _, model_id in _SPACY_MODEL_DOWNLOAD_CHOICES:
-            cb = self.checkboxes.get(f"{SPACY_PREFIX}{model_id}")
+            cb = self.checkboxes.get(InstallItem(InstallKind.SPACY, model_id))
             if cb and cb.isChecked() and cb.isEnabled():
                 models.append(model_id)
         return models
 
-    def step_label(self, item: str) -> str | None:
+    def step_label(self, item: InstallItem) -> str | None:
         """Return how the status line names *item*, or ``None`` when this tab does not own it."""
-        if item == f"{PACKAGE_PREFIX}{SPACY_ITEM}":
+        if item == SPACY_ITEM:
             return txt.ADDONS_ITEM_SPACY
-        if item.startswith(SPACY_PREFIX):
-            language = _SPACY_MODEL_LANGUAGES.get(item.removeprefix(SPACY_PREFIX))
+        if item.kind is InstallKind.SPACY:
+            language = _SPACY_MODEL_LANGUAGES.get(item.name)
             return txt.addons_spacy_model(language) if language else txt.ADDONS_ITEM_MULTILINGUAL
         return None
 
-    def preselect(self, entries: Sequence[str]) -> None:
+    def preselect(self, entries: Sequence[InstallItem]) -> None:
         """Tick spaCy's box and the model boxes a deep link names.
 
         A model alone ticks only that model: a tick always means "will be installed", and a
         model does not need spaCy to be downloaded again.
         """
-        keys = [
-            entry.removeprefix(PACKAGE_PREFIX) if entry.startswith(PACKAGE_PREFIX) else entry
-            for entry in entries
-            if entry.startswith((PACKAGE_PREFIX, SPACY_PREFIX))
+        items = [
+            entry for entry in entries if entry.kind is InstallKind.SPACY or entry == SPACY_ITEM
         ]
-        self._pending.extend(keys)
-        tick_enabled(self.checkboxes, keys)
+        self._pending.extend(items)
+        tick_enabled(self.checkboxes, items)
 
     def tick_preselect(self) -> None:
         """Tick the requested boxes again, now that the check knows what is installed."""
         tick_enabled(self.checkboxes, self._pending)
         self._pending.clear()
 
-    def mark_installed(self, results: Mapping[str, object]) -> None:
+    def mark_installed(self, results: Mapping[InstallItem, bool]) -> None:
         """Show whether spaCy and which models are importable already, and disable those boxes."""
         apply_installed(self.checkboxes, self.labels, results)

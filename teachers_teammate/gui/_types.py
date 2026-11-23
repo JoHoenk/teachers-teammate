@@ -49,6 +49,7 @@ class SettingsDict(TypedDict, total=False):
     recognition_enabled: bool
     keep_awake: bool
     check_for_updates: bool
+    results_keep_days: int
     preprocess_method: str
     pdf_render_dpi: int
     pdf_text_layer: str

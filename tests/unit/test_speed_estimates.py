@@ -490,6 +490,7 @@ def test_a_stopped_test_stores_nothing(tmp_path: Path) -> None:
         ollama=cast(OllamaServer, _FakeServer(ServerFacts())),
         client_factory=_client_factory,
         store=store,
+        samples=SampleStore(tmp_path / "samples.json"),
         probe_factory=lambda *_a, **_k: cast(PerformanceProbe, _StoppingProbe()),
     )
     event = threading.Event()
@@ -1353,6 +1354,7 @@ def test_the_probe_is_told_whether_a_card_was_found(tmp_path: Path) -> None:
         ollama=cast(OllamaServer, _FakeServer(ServerFacts())),
         client_factory=_client_factory,
         store=store,
+        samples=SampleStore(tmp_path / "samples.json"),
         probe_factory=factory,
     )
 

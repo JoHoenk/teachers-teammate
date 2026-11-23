@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton
 import pytest
 
 from teachers_teammate.config import DEFAULTS
+from teachers_teammate.domain.install_item import InstallItem, InstallKind
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_WRITING_MODEL,
     HardwareProfileSetting,
@@ -22,6 +23,7 @@ from teachers_teammate.domain.model_catalog import (
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.gui import _anonymizer_config_widget, _dialogs
+from teachers_teammate.gui._credential_store import CredentialStore
 from teachers_teammate.gui._background import wait_for_background_tasks
 from teachers_teammate.texts import review as txt
 from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
@@ -37,6 +39,8 @@ from teachers_teammate.gui.settings._ai_service_section import (
     PROOFREADING,
     AiServiceSection,
     AiServiceSpec,
+    PackageOffer,
+    Suggestions,
     service_groups,
 )
 from teachers_teammate.gui.settings._credentials import ApiKeyDrafts, CredentialsGroup
@@ -89,9 +93,11 @@ def _section(
     section = AiServiceSection(
         spec,
         app_service=services_of(service),
-        hardware_profile=profile_setting(hardware_profile),
-        ollama_url=str(values.get("ollama_url", DEFAULTS["ollama_url"])),
-        open_downloads=open_downloads,
+        suggestions=Suggestions(
+            hardware_profile=profile_setting(hardware_profile),
+            ollama_url=str(values.get("ollama_url", DEFAULTS["ollama_url"])),
+        ),
+        offer=PackageOffer(open_downloads=open_downloads),
     )
     qtbot.addWidget(section)
     section.load(values)
@@ -392,7 +398,13 @@ def test_a_missing_package_sends_the_install_to_add_ons(qtbot, monkeypatch) -> N
 
     hint._button.click()
 
-    assert requests == [(SettingsPage.ADDONS, FOCUS_LOCAL_MODELS, ["provider:mistral"])]
+    assert requests == [
+        (
+            SettingsPage.ADDONS,
+            FOCUS_LOCAL_MODELS,
+            [InstallItem(InstallKind.PROVIDER, "mistral")],
+        )
+    ]
 
     svc.missing = {}  # the user installed it
     page.on_packages_changed()
@@ -1348,13 +1360,11 @@ def test_credentials_group_has_a_row_for_a_key_that_is_already_set(qtbot, monkey
 
 
 @pytest.mark.gui
-def test_applying_saves_the_key_to_environment_and_store(
-    qtbot, monkeypatch, credential_file
-) -> None:
+def test_applying_saves_the_key_to_the_store_only(qtbot, monkeypatch, credential_file) -> None:
     """
     Given  a credentials row for OPENAI_API_KEY with a new value entered
     When   the group is applied
-    Then   os.environ is updated with the key and the store holds it
+    Then   the store holds the key and the environment still has the one it had
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-old")
     group = CredentialsGroup(services_of(DummyAppService()))
@@ -1364,7 +1374,7 @@ def test_applying_saves_the_key_to_environment_and_store(
     _apply(group)
 
     assert credential_file == {"credentials/OPENAI_API_KEY": "sk-test-key"}
-    assert os.environ.get("OPENAI_API_KEY") == "sk-test-key"
+    assert os.environ.get("OPENAI_API_KEY") == "sk-old"
 
 
 @pytest.mark.gui
@@ -1373,7 +1383,7 @@ def test_applying_leaves_a_key_nobody_touched_alone(qtbot, monkeypatch, credenti
     Given  an API key that is only set in the environment for this session
     When   the group is applied without the field being edited
     Then   the key is not stored (it must not be written just because OK was pressed), and it
-           stays in the environment
+           stays the one the environment has
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-session-only")
     group = CredentialsGroup(services_of(DummyAppService()))
@@ -1391,12 +1401,14 @@ def test_applying_keeps_a_stored_key_that_was_not_edited(
 ) -> None:
     """
     Given  an API key stored by an earlier session (and not in the environment)
-    When   the group is applied without the field being edited
+    When   the app has loaded it and the group is applied without the field being edited
     Then   the row shows the stored key, and the stored key is neither rewritten nor removed
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     credential_file["credentials/OPENAI_API_KEY"] = "sk-stored"
-    group = CredentialsGroup(services_of(DummyAppService()))
+    services = services_of(DummyAppService())
+    CredentialStore().load(services.keys, ["OPENAI_API_KEY"])
+    group = CredentialsGroup(services)
     qtbot.addWidget(group)
     assert group.field("OPENAI_API_KEY").text() == "sk-stored"
 
@@ -1410,7 +1422,7 @@ def test_applying_an_emptied_key_removes_it(qtbot, monkeypatch, credential_file)
     """
     Given  an API key that is stored and set in the environment
     When   its field is emptied and the group is applied
-    Then   os.environ no longer contains the key and the store forgets it
+    Then   the app no longer has a key of its own for it and the store forgets it
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-old")
     credential_file["credentials/OPENAI_API_KEY"] = "sk-old"
@@ -1420,7 +1432,7 @@ def test_applying_an_emptied_key_removes_it(qtbot, monkeypatch, credential_file)
 
     _apply(group)
 
-    assert "OPENAI_API_KEY" not in os.environ
+    assert group.drafts.value("OPENAI_API_KEY") == ""
     assert credential_file == {}
 
 
@@ -2237,7 +2249,7 @@ def test_a_missing_provider_package_offers_the_install_in_add_ons(qtbot, monkeyp
     assert "full-featured release" not in hint.message()
 
     hint._button.click()
-    assert opened == [["provider:mistral"]]
+    assert opened == [[InstallItem(InstallKind.PROVIDER, "mistral")]]
 
     svc.missing = {}  # the user installed it
     section.on_packages_changed()
@@ -2485,10 +2497,10 @@ def test_download_best_choice_asks_for_add_ons_and_hints_follow_the_profile(qtbo
     Then   Add-ons was asked for the best model on top of the section (no modal round trip),
            and the section's hints now follow the 16 GB profile
     """
-    received: list[tuple[list[str], object]] = []
+    received: list[tuple[list[InstallItem], object]] = []
 
-    def open_downloads(tags: list[str], parent) -> None:
-        received.append((tags, parent))
+    def open_downloads(items: list[InstallItem], parent) -> None:
+        received.append((items, parent))
 
     section = _proofreading(
         qtbot,
@@ -2502,7 +2514,9 @@ def test_download_best_choice_asks_for_add_ons_and_hints_follow_the_profile(qtbo
 
     section._guidance._best_btn.click()
 
-    assert received == [([DEFAULT_WRITING_MODEL], section.window())]  # best writing model, 8 GB
+    assert received == [
+        ([InstallItem(InstallKind.OLLAMA, DEFAULT_WRITING_MODEL)], section.window())
+    ]  # best writing model, 8 GB
     section._hw_selector.set_setting(HardwareProfileSetting.CARD_16GB)
     assert section._hw_selector.setting() == "16gb"
     qtbot.waitUntil(lambda: section._guidance.active_profile() == "16gb", timeout=5000)
@@ -2601,8 +2615,7 @@ def test_keys_in_a_working_keychain_and_plain_file_setups_are_not_reported(
 @pytest.fixture(name="drafts")
 def _drafts(monkeypatch) -> ApiKeyDrafts:
     for name in ("OPENAI_API_KEY", "MISTRAL_API_KEY"):
-        # setenv first: delenv(raising=False) on an absent variable records nothing to undo,
-        # and the drafts write straight into os.environ.
+        # setenv first: delenv(raising=False) on an absent variable records nothing to undo.
         monkeypatch.setenv(name, "")
         monkeypatch.delenv(name)
     return ApiKeyDrafts(services_of(ProviderAppService()))
@@ -2615,8 +2628,8 @@ def test_drafts_use_a_key_right_away_and_store_only_what_changed(
     """
     Given  one key set only in the environment, and one typed in the window
     When   the drafts are applied
-    Then   the typed key is in the environment at once but in the store only after apply(), and
-           the untouched environment key is never stored
+    Then   the typed key is the app's at once but in the store only after apply(), and the
+           untouched environment key is never stored
     """
     monkeypatch.setenv("MISTRAL_API_KEY", "m-session")
     seen: list[str] = []
@@ -2624,7 +2637,8 @@ def test_drafts_use_a_key_right_away_and_store_only_what_changed(
 
     drafts.set("OPENAI_API_KEY", "  sk-typed ")
 
-    assert os.environ["OPENAI_API_KEY"] == "sk-typed"
+    assert drafts.value("OPENAI_API_KEY") == "sk-typed"
+    assert "OPENAI_API_KEY" not in os.environ
     assert credential_file == {}
     assert seen == ["OPENAI_API_KEY"]
 
@@ -2671,13 +2685,16 @@ def test_committing_an_environment_key_with_spaces_stores_nothing(
 
 
 @pytest.mark.gui
-def test_a_stored_key_the_environment_lacks_can_be_put_into_it(drafts, credential_file) -> None:
+def test_committing_a_loaded_key_stores_nothing_again(drafts, credential_file) -> None:
     """
-    Given  a key in the store that never reached the environment (the keychain was locked)
+    Given  a key the app loaded from the store, which the environment does not have
     When   the key shown in the field is committed, and the drafts are applied
-    Then   it is in the environment now, announced once, and not stored a second time
+    Then   it is announced once, and not stored a second time
     """
     credential_file["credentials/OPENAI_API_KEY"] = "sk-stored"
+    services = services_of(ProviderAppService())
+    CredentialStore().load(services.keys, ["OPENAI_API_KEY"])
+    drafts = ApiKeyDrafts(services)
     seen: list[str] = []
     drafts.changed.connect(seen.append)
     assert drafts.value("OPENAI_API_KEY") == "sk-stored"
@@ -2685,8 +2702,8 @@ def test_a_stored_key_the_environment_lacks_can_be_put_into_it(drafts, credentia
 
     drafts.set("OPENAI_API_KEY", "sk-stored")
 
-    assert os.environ["OPENAI_API_KEY"] == "sk-stored"
-    assert seen == ["OPENAI_API_KEY"]
+    assert drafts.value("OPENAI_API_KEY") == "sk-stored"
+    assert seen == []  # the value it already shows: nothing to announce, nothing to store
     assert drafts.apply() == []
     assert credential_file == {"credentials/OPENAI_API_KEY": "sk-stored"}
 
@@ -2696,7 +2713,7 @@ def test_discard_puts_back_a_present_and_an_absent_value(drafts, monkeypatch) ->
     """
     Given  one key that had a value and one that had none, both changed in the window
     When   the drafts are discarded
-    Then   the first has its old value again and the second is gone from the environment
+    Then   the first has its old value again and the second has none again
     """
     monkeypatch.setenv("MISTRAL_API_KEY", "m-old")
     drafts.set("MISTRAL_API_KEY", "m-new")
@@ -2704,7 +2721,8 @@ def test_discard_puts_back_a_present_and_an_absent_value(drafts, monkeypatch) ->
 
     drafts.discard()
 
-    assert os.environ["MISTRAL_API_KEY"] == "m-old"
+    assert drafts.value("MISTRAL_API_KEY") == "m-old"
+    assert drafts.value("OPENAI_API_KEY") == ""
     assert "OPENAI_API_KEY" not in os.environ
 
 
@@ -2715,19 +2733,20 @@ def test_a_key_only_the_environment_had_leaves_the_session_when_removed(
     """
     Given  a key set only in the environment (never stored)
     When   it is removed and the drafts are applied; and in another window removed and discarded
-    Then   it is gone from the environment after OK, and back after a discard
+    Then   the app has no key for the rest of the session after OK -- the environment is left as
+           it was -- and has it back after a discard
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
     drafts.remove("OPENAI_API_KEY")
     assert drafts.value("OPENAI_API_KEY") == ""
     drafts.apply()
-    assert "OPENAI_API_KEY" not in os.environ
+    assert drafts.value("OPENAI_API_KEY") == ""
+    assert os.environ["OPENAI_API_KEY"] == "sk-env"
 
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
     again = ApiKeyDrafts(services_of(ProviderAppService()))
     again.remove("OPENAI_API_KEY")
     again.discard()
-    assert os.environ["OPENAI_API_KEY"] == "sk-env"
+    assert again.value("OPENAI_API_KEY") == "sk-env"
 
 
 @pytest.mark.gui
@@ -2738,6 +2757,7 @@ def test_removing_a_stored_key_forgets_it(drafts, credential_file) -> None:
     Then   the store forgets it
     """
     credential_file["credentials/OPENAI_API_KEY"] = "sk-stored"
+    CredentialStore().load(drafts._app_service.keys, ["OPENAI_API_KEY"])
     assert drafts.value("OPENAI_API_KEY") == "sk-stored"
 
     drafts.remove("OPENAI_API_KEY")
@@ -2936,8 +2956,8 @@ def test_a_committed_key_is_used_right_away_and_checks_the_model_list(qtbot, no_
     """
     Given  Mistral (EU) chosen without a key
     When   a key is typed and the field is left
-    Then   the key is in the environment, the service is asked for its models, and the status
-           shows how many arrived
+    Then   the app holds the key, the service is asked for its models, and the status shows how
+           many arrived
     """
     svc = ProviderAppService()
     section = _proofreading(qtbot, svc, {"correction_provider": "mistral_eu"})
@@ -2945,7 +2965,8 @@ def test_a_committed_key_is_used_right_away_and_checks_the_model_list(qtbot, no_
 
     commit_key(section.key_row(), "  k-typed ")
 
-    assert os.environ["MISTRAL_API_KEY"] == "k-typed"
+    assert svc.key("MISTRAL_API_KEY") == "k-typed"
+    assert "MISTRAL_API_KEY" not in os.environ
     _wait_for_fetch(qtbot, section, svc, 1)
     assert "2 models" in section._status_lbl.text()
     assert "Mistral (EU)" in section._status_lbl.text()
@@ -2964,9 +2985,9 @@ def test_a_key_is_committed_after_a_pause_in_typing(qtbot, no_keys) -> None:
 
     row.field.setText("k-pasted")
     row.field.textEdited.emit("k-pasted")
-    assert "MISTRAL_API_KEY" not in os.environ
+    assert svc.key("MISTRAL_API_KEY") == ""
 
-    qtbot.waitUntil(lambda: os.environ.get("MISTRAL_API_KEY") == "k-pasted", timeout=3000)
+    qtbot.waitUntil(lambda: svc.key("MISTRAL_API_KEY") == "k-pasted", timeout=3000)
     _wait_for_fetch(qtbot, section, svc, 1)
 
 
@@ -3022,9 +3043,10 @@ def test_the_key_row_says_where_the_key_is_kept(qtbot, monkeypatch, no_keys) -> 
     safe = _proofreading(qtbot, ProviderAppService(), {"correction_provider": "mistral_eu"})
     assert "keychain" in safe.key_row().line.text()
 
-    _credential_store._SET_OUTSIDE_APP.add("MISTRAL_API_KEY")
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-outside")
     outside = _proofreading(qtbot, ProviderAppService(), {"correction_provider": "mistral_eu"})
     assert "Set outside the app" in outside.key_row().line.text()
+    monkeypatch.delenv("MISTRAL_API_KEY")
 
 
 @pytest.mark.gui
@@ -3421,7 +3443,13 @@ def test_without_name_detection_the_line_offers_the_install(qtbot, monkeypatch) 
     page.navigate_requested.connect(lambda *args: requests.append(args))
 
     page._privacy_button.click()
-    assert requests == [(SettingsPage.ADDONS, FOCUS_NAME_DETECTION, ["spacy:en_core_web_sm"])]
+    assert requests == [
+        (
+            SettingsPage.ADDONS,
+            FOCUS_NAME_DETECTION,
+            [InstallItem(InstallKind.SPACY, "en_core_web_sm")],
+        )
+    ]
 
     service.anonymizer_ready = True
     page.on_packages_changed()
@@ -3455,7 +3483,13 @@ def test_the_name_detection_line_preselects_the_model_of_the_document_language(
 
     page._privacy_button.click()
 
-    assert requests == [(SettingsPage.ADDONS, FOCUS_NAME_DETECTION, ["spacy:de_core_news_sm"])]
+    assert requests == [
+        (
+            SettingsPage.ADDONS,
+            FOCUS_NAME_DETECTION,
+            [InstallItem(InstallKind.SPACY, "de_core_news_sm")],
+        )
+    ]
 
 
 @pytest.mark.gui
@@ -3599,16 +3633,17 @@ def test_ok_keeps_a_key_pasted_a_moment_ago(qtbot, no_keys) -> None:
     """
     Given  the AI models page on Mistral (EU) with a key pasted into its row, not committed yet
     When   OK is pressed (apply(), then the shutdown that stops waiting commits)
-    Then   the key is in the environment for the drafts to save
+    Then   the key is the app's, for the drafts to save
     """
-    page = _models_page(qtbot, ProviderAppService(), {"correction_provider": "mistral_eu"})
+    svc = ProviderAppService()
+    page = _models_page(qtbot, svc, {"correction_provider": "mistral_eu"})
     _paste_key(page._shared.key_row(), "k-pasted")
-    assert "MISTRAL_API_KEY" not in os.environ
+    assert svc.key("MISTRAL_API_KEY") == ""
 
     page.apply()
     page.shutdown()
 
-    assert os.environ["MISTRAL_API_KEY"] == "k-pasted"
+    assert svc.key("MISTRAL_API_KEY") == "k-pasted"
 
 
 @pytest.mark.gui
@@ -3616,16 +3651,17 @@ def test_unticking_the_override_keeps_a_key_pasted_into_the_review(qtbot, no_key
     """
     Given  a review on its own online service, with a key pasted into its row
     When   "Use a different model for content review" is unticked before the key is committed
-    Then   the key is not dropped: it is in the environment
+    Then   the key is not dropped: the app holds it
     """
-    page = _models_page(qtbot, ProviderAppService(), {"correction_provider": "ollama"})
+    svc = ProviderAppService()
+    page = _models_page(qtbot, svc, {"correction_provider": "ollama"})
     page._override.setChecked(True)
     select_provider(page._review, "mistral_eu")
     _paste_key(page._review.key_row(), "k-review")
 
     page._override.setChecked(False)
 
-    assert os.environ["MISTRAL_API_KEY"] == "k-review"
+    assert svc.key("MISTRAL_API_KEY") == "k-review"
 
 
 @pytest.mark.gui

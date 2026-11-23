@@ -6,7 +6,8 @@ pip install langchain-google-genai
 
 Authentication
 --------------
-Set the ``GOOGLE_API_KEY`` environment variable to your Google AI Studio key:
+The key is passed in as ``api_key``; with none, LangChain reads the ``GOOGLE_API_KEY``
+environment variable, so exporting it works as well:
 
     export GOOGLE_API_KEY=<your-key>
 
@@ -17,7 +18,6 @@ account authentication — the LangChain wrapper handles both automatically.
 from __future__ import annotations
 
 import json
-import os
 from typing import TYPE_CHECKING
 import urllib.parse
 import urllib.request
@@ -61,7 +61,7 @@ PROVIDER = ProviderInfo(
 )
 
 
-def _fetch_gemini_names() -> list[str]:
+def _fetch_gemini_names(api_key: str) -> list[str]:
     """Ask Google for the Gemini models that can generate text (all pages, sorted).
 
     A plain HTTP request: the LangChain package has no "list models" call, and the SDK it
@@ -69,7 +69,6 @@ def _fetch_gemini_names() -> list[str]:
     ``google-ai-generativelanguage``, now ``google-genai``), so none of them can be relied on.
     The key travels in a header, never in the URL.
     """
-    api_key = os.environ.get(PROVIDER.env_key, "").strip()
     names: set[str] = set()
     page_token = ""
     for _ in range(_MAX_PAGES):
@@ -92,26 +91,32 @@ def _fetch_gemini_names() -> list[str]:
     return sorted(names)
 
 
-def list_models_checked(**_kwargs: object) -> ModelListing:
+def list_models_checked(*, api_key: str | None = None, **_kwargs: object) -> ModelListing:
     """Return Gemini model names from the Google API and whether the list is live."""
     return checked_listing(
         _fetch_gemini_names,
         PROVIDER.models,
         env_key=PROVIDER.env_key,
         service="Google",
+        api_key=api_key,
     )
 
 
-def list_models(**kwargs: object) -> list[str]:
+def list_models(*, api_key: str | None = None, **_kwargs: object) -> list[str]:
     """Return Gemini model names, or the static list when Google cannot be asked."""
-    return list_models_checked(**kwargs).models
+    return list_models_checked(api_key=api_key).models
 
 
-def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseChatModel:
+def create(
+    model: str,
+    *,
+    temperature: float = 0.7,
+    api_key: str | None = None,
+    **_kwargs: object,
+) -> BaseChatModel:
     """Return a ``ChatGoogleGenerativeAI`` instance for *model*.
 
-    The API key is read from the ``$GOOGLE_API_KEY`` environment variable
-    by LangChain automatically.
+    The key comes in as *api_key*; with none, LangChain reads ``$GOOGLE_API_KEY`` itself.
 
     Args:
         model:       Gemini model name (e.g. ``"gemini-2.0-flash"``).
@@ -119,7 +124,7 @@ def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseCh
     """
     with import_guard("langchain-google-genai"):
         from langchain_google_genai import ChatGoogleGenerativeAI  # noqa: PLC0415
-    return ChatGoogleGenerativeAI(model=model, temperature=temperature)
+    return ChatGoogleGenerativeAI(model=model, temperature=temperature, google_api_key=api_key)
 
 
 check_connection = api_key_check(PROVIDER.env_key)

@@ -1,4 +1,4 @@
-"""Exchange T: correct the text, explain the edits, find the unclear wording.
+"""The text-first exchange: correct the text, explain the edits, find the unclear wording.
 
 Three requests, each depending only on the one before it::
 
@@ -115,7 +115,7 @@ number and ``"old" → "new"``; the figure covers a batch of long edits.
 """
 
 
-class TExchange:
+class TextFirstExchange:
     """The three-step exchange: ① correct, ② explain, ③ unclear."""
 
     kind: ExchangeKind = ExchangeKind.TEXT_FIRST
@@ -292,8 +292,7 @@ class TExchange:
 
         What the detector measured goes into the counters of the answer's report, and into the
         log, so a file that fails with "the model dropped part of the text" says by how much and
-        by which rule.  The rejected answer itself is written to the log only at debug level: it
-        is the student's text.
+        by which rule.  The rejected answer itself is never logged: it is the student's text.
         """
         rejection = _answer_problem(request_text, answer)
         if rejection is None:
@@ -310,7 +309,6 @@ class TExchange:
             rejection.warning,
             ", ".join(f"{name}={value}" for name, value in counters.items()),
         )
-        _logger.debug("The rejected answer %d of step ①:\n%s", attempt, answer)
         return rejection
 
     def _correct_request(self, text: str, ctx: ProofreadContext) -> StepRequest:

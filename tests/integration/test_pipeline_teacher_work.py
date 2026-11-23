@@ -40,7 +40,7 @@ from teachers_teammate.infrastructure.state_repository import (
 )
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore
-from tests.conftest import make_config
+from tests.conftest import make_config, pipeline_dependencies
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -113,7 +113,15 @@ def _run(cfg, *, corrector: MagicMock | None = None, evaluator: MagicMock | None
                     return_value=evaluator,
                 )
             )
-        return OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        return (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(cfg.output_dir.parent),
+            )
+            .run()
+            .exit_code
+        )
 
 
 def _docx_text(path: Path) -> str:

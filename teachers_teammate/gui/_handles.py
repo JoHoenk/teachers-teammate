@@ -43,6 +43,7 @@ BENCHMARK = "benchmarkAction"
 SYSTEM_MONITOR = "systemMonitorAction"
 SETUP_ASSISTANT = "setupAssistantAction"
 USER_GUIDE = "userGuideAction"
+OPEN_LOG_FOLDER = "openLogFolderAction"
 LICENSES = "licensesAction"
 ABOUT = "aboutAction"
 

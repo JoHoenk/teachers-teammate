@@ -8,12 +8,16 @@ are the personal-info detection and pattern rules of
 The detection tab also carries the "hide personal information in the texts shown in this app"
 choice.  It is a GUI preference, applied by the main window after OK.
 
+Above the tabs sits the one box about what the app *keeps* on this computer: how much is stored
+for earlier runs, deleting it, and how long it may stay
+(:class:`~.._stored_results_box.StoredResultsBox`).
+
 Every change on this page is applied with OK, like the rest of the window.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -32,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from ...config import DEFAULTS
 from ...domain.anonymization import AnonymizerConfig
+from ...domain.install_item import InstallItem
 from ...texts import privacy as priv
 from ...texts import review as txt
 from ...texts import settings as st
@@ -46,11 +51,15 @@ from ._page import (
     SettingsPage,
     SettingsPageBase,
 )
+from ._stored_results_box import StoredResultsBox
 
 _TAB_INDEX = {FOCUS_SENDING: 0, FOCUS_DETECTION: 1, FOCUS_PATTERNS: 2}
 
 #: The settings keys behind the anonymizer rules (written through ``AnonymizerConfig``).
 ANONYMIZER_KEYS = ("anonymizer_primary_model", "anonymizer_secondary_model", "anonymizer_patterns")
+
+#: The one other setting on this page: how long the results of earlier runs stay.
+STORED_KEYS = ("results_keep_days",)
 
 
 class SendingDataTab(QWidget):
@@ -100,6 +109,11 @@ class SendingDataTab(QWidget):
         note = QLabel(priv.CHANGES_ON_OK)
         note.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(note)
+
+        log_note = QLabel(priv.LOG_NOTE)
+        log_note.setWordWrap(True)
+        log_note.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(log_note)
 
         self._refresh()
 
@@ -152,11 +166,13 @@ class PrivacyPage(SettingsPageBase):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        self._stored = StoredResultsBox(context)
+        layout.addWidget(self._stored)
+
         self._rules = AnonymizerConfigWidget(
             context.language, context.anonymizer_config, context.app_service, self
         )
         self._rules.validity_changed.connect(self.validity_changed.emit)
-        layout.addWidget(self._rules)
 
         self._sending_tab = SendingDataTab(context.acknowledgements)
         tabs = self._rules.tabs()
@@ -164,6 +180,7 @@ class PrivacyPage(SettingsPageBase):
         tabs.setTabText(1, priv.PAGE_TAB_PATTERNS)
         tabs.insertTab(0, self._sending_tab, priv.PAGE_TAB_SENDING)
         tabs.setCurrentIndex(0)
+        layout.addWidget(self._rules, stretch=1)
         self._available = context.privacy_available
         self._build_showing_texts_group(context.display_anonymized, context.privacy_available)
 
@@ -185,6 +202,10 @@ class PrivacyPage(SettingsPageBase):
         self._rules.detection_layout().insertWidget(0, group)
 
     # ── public API ────────────────────────────────────────────────────────────
+
+    def stored_results(self) -> StoredResultsBox:
+        """Return the box about what the app stored for earlier runs."""
+        return self._stored
 
     def anonymizer_config(self) -> AnonymizerConfig | None:
         """Return the ``AnonymizerConfig`` as currently shown."""
@@ -208,11 +229,15 @@ class PrivacyPage(SettingsPageBase):
 
     # ── page protocol ─────────────────────────────────────────────────────────
 
+    def load(self, values: Mapping[str, Any]) -> None:
+        """Show the retention; the rules come in through the context."""
+        self._stored.load(values)
+
     def owned_keys(self) -> frozenset[str]:
-        return frozenset(ANONYMIZER_KEYS)
+        return frozenset(ANONYMIZER_KEYS + STORED_KEYS)
 
     def restore_defaults(self) -> None:
-        """Reset the detection models, the patterns and the "hide names" choice.
+        """Reset the detection models, the patterns, the "hide names" choice and the retention.
 
         The remembered answers are kept: they have their own "Ask again" buttons.
         """
@@ -227,6 +252,7 @@ class PrivacyPage(SettingsPageBase):
         )
         if self._available:
             self._hide_personal_cb.setChecked(DISPLAY_ANONYMIZED_DEFAULT)
+        self._stored.load({"results_keep_days": DEFAULTS["results_keep_days"]})
 
     def apply(self) -> None:
         """Write back the remembered answers taken back on the first tab."""
@@ -235,11 +261,15 @@ class PrivacyPage(SettingsPageBase):
     def is_valid(self) -> bool:
         return self._rules.is_valid()
 
-    def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
+    def focus(self, focus: str, preselect: Sequence[InstallItem] = ()) -> None:
         _ = preselect
         index = _TAB_INDEX.get(focus)
         if index is not None:
             self._rules.tabs().setCurrentIndex(index)
+
+    def on_shown(self) -> None:
+        """Look again at what is stored, and whether a run holds the deletion back."""
+        self._stored.refresh()
 
     def on_packages_changed(self) -> None:
         self._rules.reload_models()
@@ -248,5 +278,5 @@ class PrivacyPage(SettingsPageBase):
         self._rules.shutdown()
 
     def values(self) -> dict[str, Any]:
-        """The rules are handed back through :meth:`anonymizer_config`, not the dict."""
-        return {}
+        """The rules are handed back through :meth:`anonymizer_config`; the retention is here."""
+        return {"results_keep_days": self._stored.keep_days()}

@@ -234,6 +234,7 @@ class DocumentCommands:
             try:
                 source_hash = compute_file_hash_cached(file)
             except OSError:
+                _logger.debug("Cannot read %s: its corrections stay as they are", file.name)
                 continue
             state = store.load_valid(file)
             machine = machine_texts(state) if state is not None else None

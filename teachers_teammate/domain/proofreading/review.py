@@ -324,6 +324,7 @@ class CorrectionReview:
                 ),
             )
         except KeyError, TypeError, ValueError, AttributeError:
+            # A stored record of another shape: the caller shows no review.
             return None
 
 

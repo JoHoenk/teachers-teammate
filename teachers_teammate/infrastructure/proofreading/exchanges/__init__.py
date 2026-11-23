@@ -18,9 +18,9 @@ from .base import (
     build_exchange,
     register_exchange,
 )
-from .t import TExchange
+from .text_first import TextFirstExchange
 
-register_exchange(ExchangeKind.TEXT_FIRST, TExchange)
+register_exchange(ExchangeKind.TEXT_FIRST, TextFirstExchange)
 
 __all__ = [
     "EXCHANGES",
@@ -29,6 +29,6 @@ __all__ = [
     "ExchangeFactory",
     "ExchangeResult",
     "ProofreadContext",
-    "TExchange",
+    "TextFirstExchange",
     "build_exchange",
 ]

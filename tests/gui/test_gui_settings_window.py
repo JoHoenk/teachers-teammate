@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 import pytest
 
 from teachers_teammate.domain.anonymization import AnonymizerConfig
+from teachers_teammate.domain.install_item import InstallItem, InstallKind
 from teachers_teammate.config import DEFAULTS, OcrConfig
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _anonymizer_config_widget, _model_fetch
@@ -235,7 +236,7 @@ def test_only_the_opened_page_is_built(qtbot, monkeypatch) -> None:
     Given  the Settings window opened on Privacy
     When   nothing else is visited
     Then   only the Privacy page was built, no model-list fetch started, and the result holds
-           no AI-model key (an unvisited page changes nothing)
+           the Privacy page's own key only (an unvisited page changes nothing)
     """
     started: list[int] = []
     monkeypatch.setattr(_model_fetch.ModelFetcher, "start", lambda self, *a, **k: started.append(1))
@@ -245,7 +246,7 @@ def test_only_the_opened_page_is_built(qtbot, monkeypatch) -> None:
     assert window.built_pages() == [SettingsPage.PRIVACY]
     assert started == []
     result = window.values()
-    assert result.settings == {}
+    assert set(result.settings) == {"results_keep_days"}
     assert result.anonymizer_config is not None
     assert result.display_anonymized is not None
 
@@ -354,8 +355,7 @@ def test_ok_saves_a_key_pasted_on_the_ai_models_page_a_moment_ago(
     When   OK is pressed
     Then   the key is saved and in use, and closing starts no model list that is thrown away
     """
-    monkeypatch.setenv("MISTRAL_API_KEY", "")  # so the undo removes what the window sets
-    monkeypatch.delenv("MISTRAL_API_KEY")
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     service = ProviderAddonsService()
     window = _window(
         qtbot,
@@ -371,7 +371,7 @@ def test_ok_saves_a_key_pasted_on_the_ai_models_page_a_moment_ago(
     window.accept()
 
     assert credential_file["credentials/MISTRAL_API_KEY"] == "k-pasted"
-    assert os.environ["MISTRAL_API_KEY"] == "k-pasted"
+    assert service.key("MISTRAL_API_KEY") == "k-pasted"
     assert service.invalidated == []
 
 
@@ -380,10 +380,9 @@ def test_cancelling_forgets_the_lists_fetched_with_a_discarded_key(qtbot, monkey
     """
     Given  a key committed in the window and a list cached for the services that share it
     When   the window is cancelled
-    Then   the key is gone from the environment and so are the cached lists
+    Then   the app holds no key again and the cached lists are gone
     """
-    monkeypatch.setenv("MISTRAL_API_KEY", "")  # so the undo removes what the window sets
-    monkeypatch.delenv("MISTRAL_API_KEY")
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     service = ProviderAddonsService()
     window = _window(
         qtbot,
@@ -399,7 +398,7 @@ def test_cancelling_forgets_the_lists_fetched_with_a_discarded_key(qtbot, monkey
 
     window.reject()
 
-    assert "MISTRAL_API_KEY" not in os.environ
+    assert service.held("MISTRAL_API_KEY") is None
     assert service.get_cached_models("mistral") is None
     assert service.get_cached_models("mistral_eu") is None
 
@@ -409,45 +408,49 @@ def test_api_keys_are_saved_on_ok_and_not_on_cancel(qtbot, no_openai_key, creden
     """
     Given  a key typed on the Online services page
     When   the window is cancelled, and in another window the same key is entered and OK pressed
-    Then   Cancel stores nothing and leaves the environment as it was; OK stores the key and
-           keeps it in the environment
+    Then   Cancel stores nothing and the app holds nothing again; OK stores the key and the app
+           keeps it in use
     """
-    cancelled = _window(qtbot, SettingsPage.ONLINE_SERVICES)
+    cancelled_service = AddonsCapableService()
+    cancelled = _window(qtbot, SettingsPage.ONLINE_SERVICES, service=cancelled_service)
     _enter_key(cancelled)
     cancelled.page(SettingsPage.ONLINE_SERVICES)._credentials.commit()
-    assert os.environ["OPENAI_API_KEY"] == "sk-typed"  # used right away
+    assert cancelled_service.key("OPENAI_API_KEY") == "sk-typed"  # used right away
     cancelled.reject()
     assert "credentials/OPENAI_API_KEY" not in credential_file
-    assert "OPENAI_API_KEY" not in os.environ
+    assert cancelled_service.held("OPENAI_API_KEY") is None
 
-    accepted = _window(qtbot, SettingsPage.ONLINE_SERVICES)
+    accepted_service = AddonsCapableService()
+    accepted = _window(qtbot, SettingsPage.ONLINE_SERVICES, service=accepted_service)
     _enter_key(accepted)
     accepted.accept()
     assert credential_file["credentials/OPENAI_API_KEY"] == "sk-typed"
-    assert os.environ["OPENAI_API_KEY"] == "sk-typed"
+    assert accepted_service.held("OPENAI_API_KEY") == "sk-typed"
 
 
 @pytest.mark.gui
-def test_escape_and_restore_all_put_the_environment_back(
+def test_escape_and_restore_all_put_the_keys_back(
     qtbot, monkeypatch, no_openai_key, credential_file
 ) -> None:
     """
     Given  a key typed in the window, and a key already stored by an earlier session
     When   the window is closed with Esc, and another is closed through "Restore defaults → All"
-    Then   the environment is as it was both times and the store is untouched
+    Then   the app holds no key again both times and the store is untouched
     """
     credential_file["credentials/MISTRAL_API_KEY"] = "m-stored"
-    escaped = _window(qtbot, SettingsPage.ONLINE_SERVICES)
+    escaped_service = AddonsCapableService()
+    escaped = _window(qtbot, SettingsPage.ONLINE_SERVICES, service=escaped_service)
     _enter_key(escaped)
     escaped.page(SettingsPage.ONLINE_SERVICES)._credentials.commit()
     qtbot.keyClick(escaped, Qt.Key.Key_Escape)
-    assert "OPENAI_API_KEY" not in os.environ
+    assert escaped_service.held("OPENAI_API_KEY") is None
 
-    restoring = _window(qtbot, SettingsPage.ONLINE_SERVICES)
+    restoring_service = AddonsCapableService()
+    restoring = _window(qtbot, SettingsPage.ONLINE_SERVICES, service=restoring_service)
     _enter_key(restoring)
     restoring.page(SettingsPage.ONLINE_SERVICES)._credentials.commit()
     restoring.done(SettingsWindow.RESTORE_ALL_RESULT)
-    assert "OPENAI_API_KEY" not in os.environ
+    assert restoring_service.held("OPENAI_API_KEY") is None
     assert credential_file == {"credentials/MISTRAL_API_KEY": "m-stored"}
 
 
@@ -458,9 +461,10 @@ def test_a_key_waiting_for_its_pause_is_not_written_after_cancel(
     """
     Given  a key being typed, so its commit timer is running
     When   the window is cancelled before the pause is over
-    Then   nothing is committed afterwards: the environment stays clean
+    Then   nothing is committed afterwards: the app holds no key and the store stays empty
     """
-    window = _window(qtbot, SettingsPage.ONLINE_SERVICES)
+    service = AddonsCapableService()
+    window = _window(qtbot, SettingsPage.ONLINE_SERVICES, service=service)
     _enter_key(window, "")
     row = window.page(SettingsPage.ONLINE_SERVICES)._credentials.rows()[0]
     row.field.setText("sk-half")
@@ -470,7 +474,7 @@ def test_a_key_waiting_for_its_pause_is_not_written_after_cancel(
     window.reject()
     qtbot.wait(900)
 
-    assert "OPENAI_API_KEY" not in os.environ
+    assert service.held("OPENAI_API_KEY") is None
     assert credential_file == {}
 
 
@@ -737,15 +741,23 @@ def test_a_provider_preselect_opens_online_services_with_the_package_ticked(qtbo
     """
     service = ProviderAddonsService()
     service.missing = {"mistral": "langchain-mistralai", "openai": "langchain-openai"}
-    window = _window(qtbot, SettingsPage.ADDONS, service=service, preselect=["provider:mistral"])
+    window = _window(
+        qtbot,
+        SettingsPage.ADDONS,
+        service=service,
+        preselect=[InstallItem(InstallKind.PROVIDER, "mistral")],
+    )
     addons = window.page(SettingsPage.ADDONS)
 
     qtbot.waitUntil(
-        lambda: addons.providers.checkboxes["provider:mistral"].isChecked(), timeout=5000
+        lambda: addons.providers.checkboxes[
+            InstallItem(InstallKind.PROVIDER, "mistral")
+        ].isChecked(),
+        timeout=5000,
     )
 
     assert addons._tabs.currentIndex() == AddonsPage.TAB_ONLINE_SERVICES
-    assert not addons.providers.checkboxes["provider:openai"].isChecked()
+    assert not addons.providers.checkboxes[InstallItem(InstallKind.PROVIDER, "openai")].isChecked()
 
 
 @pytest.mark.gui
@@ -829,7 +841,10 @@ def test_a_package_hint_install_switches_to_add_ons_and_the_hint_goes_after_the_
     addons = window.page(SettingsPage.ADDONS)
     assert addons._tabs.currentIndex() == AddonsPage.TAB_ONLINE_SERVICES
     qtbot.waitUntil(
-        lambda: addons.providers.checkboxes["provider:mistral"].isChecked(), timeout=5000
+        lambda: addons.providers.checkboxes[
+            InstallItem(InstallKind.PROVIDER, "mistral")
+        ].isChecked(),
+        timeout=5000,
     )
 
     service.missing = {}  # the install finished

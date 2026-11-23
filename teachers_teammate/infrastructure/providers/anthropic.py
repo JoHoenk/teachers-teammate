@@ -38,15 +38,20 @@ def list_models(**_kwargs: object) -> list[str]:
     return list(PROVIDER.models)
 
 
-def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseChatModel:
+def create(
+    model: str,
+    *,
+    temperature: float = 0.7,
+    api_key: str | None = None,
+    **_kwargs: object,
+) -> BaseChatModel:
     """Return a ``ChatAnthropic`` instance for *model*.
 
-    The API key is read from the ``$ANTHROPIC_API_KEY`` environment variable
-    by LangChain automatically.
+    The key comes in as *api_key*; with none, LangChain reads ``$ANTHROPIC_API_KEY`` itself.
     """
     with import_guard("langchain-anthropic"):
         from langchain_anthropic import ChatAnthropic  # noqa: PLC0415
-    return ChatAnthropic(model=model, temperature=temperature)
+    return ChatAnthropic(model=model, temperature=temperature, api_key=api_key)
 
 
 check_connection = api_key_check(PROVIDER.env_key)

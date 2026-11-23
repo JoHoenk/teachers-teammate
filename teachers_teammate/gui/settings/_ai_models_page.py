@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 
 from ...application.correction_options import review_has_own_model
 from ...config import DEFAULTS, OcrConfig
+from ...domain.install_item import InstallItem, InstallKind
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...domain.stages import Stage
 from ...settings_schema import CONTEXT_SETTINGS
@@ -46,10 +47,15 @@ from ...texts import models as words
 from ...texts import review as txt
 from ...texts import settings as st
 from .._background import LatestTask
-from .._model_guidance import SPACY_PREFIX
 from .._ocr_config_selector import OcrModelPicker
 from . import _page
-from ._ai_service_section import CONTENT_REVIEW, PROOFREADING, AiServiceSection
+from ._ai_service_section import (
+    CONTENT_REVIEW,
+    PROOFREADING,
+    AiServiceSection,
+    PackageOffer,
+    Suggestions,
+)
 from ._computer_box import ComputerBox
 from ._credentials import ApiKeyDrafts
 from ._page import SettingsContext, SettingsPage, SettingsPageBase
@@ -202,11 +208,13 @@ class AiModelsPage(SettingsPageBase):
         return AiServiceSection(
             spec,
             app_service=self._app_service,
-            ollama_url=self._ollama_url,
-            open_downloads=self._open_addons_callback(_page.FOCUS_LOCAL_MODELS),
+            suggestions=Suggestions(
+                ollama_url=self._ollama_url,
+                selector=self._computer_box.selector,
+                same_model_tip=same_model_tip,
+            ),
+            offer=PackageOffer(open_downloads=self._open_addons_callback(_page.FOCUS_LOCAL_MODELS)),
             key_drafts=self._drafts,
-            profile_selector=self._computer_box.selector,
-            same_model_tip=same_model_tip,
         )
 
     def _build_context_row(self) -> tuple[QWidget, QComboBox]:
@@ -339,7 +347,7 @@ class AiModelsPage(SettingsPageBase):
         self._review.on_packages_changed()
         self._ask_availability()
 
-    def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
+    def focus(self, focus: str, preselect: Sequence[InstallItem] = ()) -> None:
         _ = preselect
         if focus == _page.FOCUS_PROOFREADING_KEY:
             self._focus_key(self._shared, self._proofreading_group)
@@ -551,7 +559,7 @@ class AiModelsPage(SettingsPageBase):
             self._navigate(
                 SettingsPage.ADDONS,
                 _page.FOCUS_NAME_DETECTION,
-                (f"{SPACY_PREFIX}{model}",) if model else (),
+                (InstallItem(InstallKind.SPACY, model),) if model else (),
             )
             return
         if state is PrivacyLineState.WILL_TURN_ON:

@@ -42,9 +42,7 @@ COMPLEXITY_LIMIT = 20
 PARAMETER_LIMIT = 8
 
 #: The classes still over the line limit, at the size they have today.
-OVERSIZED_CLASSES: dict[str, int] = {
-    "teachers_teammate/gui/_main_window.py::MainWindow": 1031,
-}
+OVERSIZED_CLASSES: dict[str, int] = {}
 
 #: The classes still over the attribute limit, at the number they assign today.
 OVERSIZED_ATTRIBUTES: dict[str, int] = {}
@@ -59,14 +57,13 @@ OVERSIZED_METHODS: dict[str, int] = {
 
 #: The functions still over the line limit, at the size they have today.
 OVERSIZED_FUNCTIONS: dict[str, int] = {
-    "teachers_teammate/application/composition.py::build_app_services": 122,
     "teachers_teammate/application/setup_plan.py::_downloads_plan": 81,
     "teachers_teammate/cli.py::_add_correction_args": 91,
     "teachers_teammate/cli.py::_add_ocr_args": 85,
-    "teachers_teammate/cli.py::run_cli": 87,
+    "teachers_teammate/cli.py::run_cli": 86,
     "teachers_teammate/gui/_config_panel.py::ConfigPanel.__init__": 81,
-    "teachers_teammate/gui/_fix_targets.py::fix_for": 82,
-    "teachers_teammate/gui/_main_window.py::main_gui": 82,
+    "teachers_teammate/gui/_fix_targets.py::fix_for": 73,
+    "teachers_teammate/gui/_main_window.py::main_gui": 80,
     "teachers_teammate/gui/settings/_ai_service_section.py::AiServiceSection._build": 88,
     (
         "teachers_teammate/gui/settings/addons/_ollama_models_tab.py"
@@ -76,12 +73,7 @@ OVERSIZED_FUNCTIONS: dict[str, int] = {
         "teachers_teammate/infrastructure/ollama_utils.py"
         "::_consume_iterator_with_first_token_timeout"
     ): 82,
-    "teachers_teammate/infrastructure/ollama_utils.py::OllamaClient.chat_with_stats": 137,
     "teachers_teammate/infrastructure/pipeline.py::OCRPipeline._setup_services": 83,
-    (
-        "teachers_teammate/infrastructure/workflow/file_processor.py"
-        "::FileProcessor._run_preprocess_and_ocr"
-    ): 81,
 }
 
 #: The functions still over the branch limit, at the number of branches they have today.
@@ -93,33 +85,21 @@ COMPLEX_FUNCTIONS: dict[str, int] = {
         "teachers_teammate/gui/settings/addons/_ollama_models_tab.py"
         "::OllamaModelsTab._update_model_suitability"
     ): 22,
-    "teachers_teammate/infrastructure/ollama_discovery.py::scan_network": 23,
-    "teachers_teammate/infrastructure/ollama_utils.py::OllamaClient.chat_with_stats": 21,
-    "teachers_teammate/infrastructure/providers/_mistral_common.py::curate_mistral_models": 25,
-    "teachers_teammate/infrastructure/state_repository.py::StateRepository.load_valid": 29,
-    (
-        "teachers_teammate/infrastructure/workflow/file_processor.py"
-        "::FileProcessor._run_preprocess_and_ocr"
-    ): 26,
 }
 
 #: The functions still over the parameter limit, at the number of parameters they have today.
 WIDE_FUNCTIONS: dict[str, int] = {
     "teachers_teammate/application/model_recommendations.py"
     "::ModelRecommendationService.rate_ollama_models": 9,
-    "teachers_teammate/application/run.py::RunService.__init__": 16,
     "teachers_teammate/application/run.py::RunService.run_selected": 9,
     "teachers_teammate/application/speed_estimates.py::SpeedChoices._of": 9,
     "teachers_teammate/gui/_check_controller.py::CheckController.__init__": 9,
     "teachers_teammate/gui/_ocr_config_selector.py::OcrConfigSelector.__init__": 9,
     "teachers_teammate/gui/_settings_launcher.py::SettingsLauncher.__init__": 9,
-    "teachers_teammate/gui/settings/_ai_service_section.py::AiServiceSection.__init__": 13,
-    "teachers_teammate/infrastructure/_llm_invoke.py::invoke_ollama_chat": 13,
-    "teachers_teammate/infrastructure/_llm_invoke.py::invoke_ollama_structured": 10,
     "teachers_teammate/infrastructure/ollama_utils.py::OllamaClient.chat": 11,
     "teachers_teammate/infrastructure/ollama_utils.py::OllamaClient.chat_with_stats": 10,
     "teachers_teammate/infrastructure/proofreading/corrector.py::ollama_exchange_corrector": 12,
-    "teachers_teammate/infrastructure/proofreading/exchanges/t.py::TExchange._ask_explain": 9,
+    "teachers_teammate/infrastructure/proofreading/exchanges/text_first.py::TextFirstExchange._ask_explain": 9,
     "teachers_teammate/infrastructure/state_repository.py"
     "::StateRepository.record_preview_artifact": 9,
     "teachers_teammate/infrastructure/state_repository.py"

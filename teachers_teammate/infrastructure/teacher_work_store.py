@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 import json
+import logging
 from pathlib import Path
 import threading
 
@@ -33,6 +34,8 @@ __all__ = [
     "WorkTooNewError",
     "default_work_root",
 ]
+
+_logger = logging.getLogger(__name__)
 
 
 def default_work_root() -> Path:
@@ -70,7 +73,8 @@ class TeacherWorkStore:
         """
         try:
             return self._read(source_hash)
-        except OSError:
+        except OSError as exc:
+            _logger.debug("Cannot read the work of %s now: %s", source_hash, exc)
             return None
 
     def update(

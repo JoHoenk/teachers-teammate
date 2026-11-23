@@ -70,3 +70,49 @@ def test_write_lock_without_a_bundle_keeps_every_pin(
 
     assert addon_lock.write_lock(output) == 2
     assert output.read_text(encoding="utf-8").splitlines() == ["numpy==2.5.5", "spacy==3.8.18"]
+
+
+def test_extra_pins_are_added_and_win_over_the_locks_line() -> None:
+    """
+    Given  a lock, the bundle's constraints and the pins this platform resolved on its own
+    When   the add-on pins are worked out
+    Then   a package the lock has never seen is added, and a different version of one it holds
+           replaces that line, so the file pins one version per package
+    """
+    lock = "numpy==2.5.5\nspacy==3.8.18\nlangchain-core==1.8.1\n"
+    bundle = "numpy==2.5.4\n"
+
+    assert addon_lock.addon_pins(lock, bundle, ["pywin32==311", "langchain-core==1.8.4"]) == [
+        "langchain-core==1.8.4",
+        "pywin32==311",
+        "spacy==3.8.18",
+    ]
+
+
+def test_write_lock_writes_the_platforms_pins_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a lock, a bundle's constraints and one pin of this platform
+    When   the lock is written
+    Then   the pin is in the file and counted
+    """
+    lock = tmp_path / "requirements_addons_lock.txt"
+    lock.write_text("spacy==3.8.18\n", encoding="utf-8")
+    bundle = tmp_path / "addon_constraints.txt"
+    bundle.write_text("numpy==2.5.4\n", encoding="utf-8")
+    monkeypatch.setattr(addon_lock, "LOCK", lock)
+    monkeypatch.setattr(addon_lock, "BUNDLE", bundle)
+    output = tmp_path / "addon_lock.txt"
+
+    assert addon_lock.write_lock(output, extra_pins=["pywin32==311"]) == 2
+    assert output.read_text(encoding="utf-8").splitlines() == ["pywin32==311", "spacy==3.8.18"]
+
+
+def test_read_lock_pins_of_a_file_that_is_not_there_is_empty(tmp_path: Path) -> None:
+    """
+    Given  a constraints file the build has not written (a bundle build before the first step)
+    When   its pins are read
+    Then   the answer is empty, so the caller needs no test of its own
+    """
+    assert addon_lock.read_lock_pins(tmp_path / "missing.txt") == {}

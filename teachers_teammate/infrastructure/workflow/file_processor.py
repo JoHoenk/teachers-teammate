@@ -24,6 +24,7 @@ from ...domain.proofreading.review import CorrectionReview, fits
 from ...domain.stages import ProgressStage, Stage
 from ...domain.teacher_work import (
     CurrentTexts,
+    TeacherWork,
     TranscriptionWork,
     current_texts,
     text_identity,
@@ -79,6 +80,25 @@ if TYPE_CHECKING:
     from ..ocr_formats import OcrOutputPostprocessor
 
 _logger = logging.getLogger(__name__)
+
+
+def _report_preparation(reporter: Reporter, prepared: PreparedInput) -> None:
+    """Say what the automatic preparation did with the pages of the file."""
+    if not prepared.ocr_inputs:
+        reporter.status(report_text.PREPROCESSING_TEXT_INPUT)
+    elif not prepared.steps:
+        reporter.status(report_text.PREPROCESSING_NO_STEPS)
+    else:
+        applied = ", ".join(dict.fromkeys(prepared.steps))
+        reporter.status(report_text.preprocessing_done(applied, len(prepared.ocr_inputs)))
+
+
+def _teacher_reading(work: TeacherWork | None) -> TranscriptionWork | None:
+    """Return the teacher's transcription of the file, or ``None`` when there is none to go by."""
+    reading = work.transcription if work is not None else None
+    if reading is None or not reading.text.strip():
+        return None  # an emptied text is not a reading to go by
+    return reading
 
 
 def _stage_error(
@@ -421,8 +441,8 @@ class FileProcessor:
                     original_paths=[kept_original] if kept_original is not None else (),
                     preprocess_steps=ctx.state.preprocess_steps,
                 )
-            except OSError:
-                pass
+            except OSError as exc:
+                _logger.warning("Cannot store the preview image of %s: %s", file.name, exc)
         self._reporter.status(report_text.CACHED_OCR)
         if self._on_ocr_done:
             self._on_ocr_done(str(file.resolve()), file.name)
@@ -435,84 +455,80 @@ class FileProcessor:
     def _run_preprocess_and_ocr(
         self, file: Path, ctx: CacheContext
     ) -> tuple[str, str, Path | None, CacheContext]:
-        is_text_input = file.suffix.lower() == ".txt"
-        # The teacher's own transcription is the document's text whatever the cache holds (the
-        # cache may have been emptied): the pages are still prepared, for the scan, but they
-        # are not read again, and the reading may be switched off without leaving the file out.
-        reading = ctx.work.transcription if ctx.work is not None else None
-        if reading is not None and not reading.text.strip():
-            reading = None  # an emptied text is not a reading to go by
-        if not is_text_input:
+        """Prepare the pages of *file* and read them, or take the text the file already has."""
+        reading = _teacher_reading(ctx.work)
+        prepared = self._prepared(file, reading)
+        pages: Sequence[Path] = prepared.ocr_inputs or prepared.page_images
+        preview_img, ctx = self._persist_preview(file, ctx, prepared, pages)
+        _report_preparation(self._reporter, prepared)
+        reading = reading if prepared.raw_text_hint is None else None
+        if reading is not None:
+            prepared = prepared._replace(raw_text_hint=reading.text)
+        if self._stopping() and prepared.raw_text_hint is None:
+            raise _stopped_result(Stage.OCR, preview_img=preview_img)
+        try:
+            raw_text, ctx = self._run_ocr(
+                file,
+                prepared.ocr_inputs,
+                prepared,
+                preview_img,
+                prepared.source_image,
+                ctx,
+                reading=reading,
+            )
+        except RunStoppedError as exc:
+            raise _stopped_result(Stage.OCR, preview_img=preview_img) from exc
+        return raw_text, preview_img, prepared.source_image, ctx
+
+    def _prepared(self, file: Path, reading: TranscriptionWork | None) -> PreparedInput:
+        """Return the pages of *file*, prepared; raises when the file cannot be read."""
+        if file.suffix.lower() != ".txt":
             self._reporter.status(report_text.PREPROCESSING)
             self._notify_stage(file, ProgressStage.PREPROCESSING)
         try:
             if self._recognize or reading is not None:
-                prepared = self._preprocess_service.preprocess_input(file)
-            else:
-                prepared = self._preprocess_service.preprocess_input(file, allow_images=False)
+                return self._preprocess_service.preprocess_input(file)
+            return self._preprocess_service.preprocess_input(file, allow_images=False)
         except RecognitionSwitchedOffError as exc:
             self._reporter.status(report_text.file_skipped(RECOGNITION_OFF_MESSAGE))
             raise FileSkipped(str(exc)) from exc
         except (OSError, ValueError, RuntimeError, PipelineInputError) as exc:
             raise _stage_error(preprocessing_failed, exc, StageErrorKind.PREPROCESSING) from exc
 
-        # The steps of the first page: the preview shows that page.
-        ocr_inputs, prep_steps, source_image = (
-            prepared.ocr_inputs,
-            prepared.steps_per_page[0] if prepared.steps_per_page else (),
-            prepared.source_image,
+    def _persist_preview(
+        self,
+        file: Path,
+        ctx: CacheContext,
+        prepared: PreparedInput,
+        pages: Sequence[Path],
+    ) -> tuple[str, CacheContext]:
+        """Store the page the preview shows, with the pages as they were scanned."""
+        # The steps of the first page: the preview shows that page.  A PDF read through its text
+        # layer has no image units, but its pages are what the teacher compares the text with.
+        steps = prepared.steps_per_page[0] if prepared.steps_per_page else ()
+        preview_source = pages[0] if pages else prepared.source_image
+        if preview_source is None:
+            return "", ctx
+        # Keep the pages as they were scanned too, but only when preprocessing changed them:
+        # without a step the original is the prepared page.
+        originals = prepared.original_pages
+        changed = (
+            bool(steps)
+            and bool(originals)
+            and originals[0] != preview_source
+            and originals[0].exists()
         )
-        # A PDF read through its text layer has no image units, but its pages are what the
-        # teacher compares the text with, so they are stored for the scan all the same.
-        pages: Sequence[Path] = ocr_inputs or prepared.page_images
-        preview_img = ""
-        preview_source = pages[0] if pages else source_image
-        if preview_source is not None:
-            # Keep the pages as they were scanned too, but only when preprocessing changed
-            # them: without a step the original is the prepared page.
-            original_paths = (
-                prepared.original_pages
-                if prep_steps
-                and prepared.original_pages
-                and prepared.original_pages[0] != preview_source
-                and prepared.original_pages[0].exists()
-                else ()
-            )
-            try:
-                preview_img, ctx = self._cache_service.persist_preview_artifact(
-                    file,
-                    ctx,
-                    preview_source,
-                    original_paths=original_paths,
-                    preprocess_steps=prep_steps if ocr_inputs else None,
-                    pages=pages,
-                )
-            except OSError as exc:
-                raise _stage_error(preview_save_failed, exc, StageErrorKind.STORAGE) from exc
-
-        if not ocr_inputs:
-            self._reporter.status(report_text.PREPROCESSING_TEXT_INPUT)
-        elif not prepared.steps:
-            self._reporter.status(report_text.PREPROCESSING_NO_STEPS)
-        else:
-            applied = ", ".join(dict.fromkeys(prepared.steps))
-            self._reporter.status(report_text.preprocessing_done(applied, len(ocr_inputs)))
-
-        if reading is not None and prepared.raw_text_hint is None:
-            prepared = prepared._replace(raw_text_hint=reading.text)
-        else:
-            reading = None  # the file carries its own text; nothing of the teacher's is read in
-
-        if self._stopping() and prepared.raw_text_hint is None:
-            raise _stopped_result(Stage.OCR, preview_img=preview_img)
-
         try:
-            raw_text, ctx = self._run_ocr(
-                file, ocr_inputs, prepared, preview_img, source_image, ctx, reading=reading
+            return self._cache_service.persist_preview_artifact(
+                file,
+                ctx,
+                preview_source,
+                original_paths=originals if changed else (),
+                preprocess_steps=steps if prepared.ocr_inputs else None,
+                pages=pages,
             )
-        except RunStoppedError as exc:
-            raise _stopped_result(Stage.OCR, preview_img=preview_img) from exc
-        return raw_text, preview_img, source_image, ctx
+        except OSError as exc:
+            raise _stage_error(preview_save_failed, exc, StageErrorKind.STORAGE) from exc
 
     def _stopping(self) -> bool:
         """Whether the teacher pressed "Stop now" (the other Stop only keeps new files away)."""

@@ -1270,6 +1270,7 @@ def parse_profile_setting(value: object) -> HardwareProfileSetting | None:
     try:
         return HardwareProfileSetting(str(value).strip().lower())
     except ValueError:
+        # A value the setting does not accept leaves the choice to the app.
         return None
 
 

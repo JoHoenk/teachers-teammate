@@ -69,6 +69,7 @@ def _run(cmd: list[str], timeout: int = 5) -> str | None:
         )
         return result.stdout.strip() if result.returncode == 0 else None
     except FileNotFoundError, subprocess.TimeoutExpired, OSError:
+        _logger.debug("The vendor tool %s does not answer", cmd[0])
         return None
 
 
@@ -77,6 +78,7 @@ def _parse_vram_mb(value: str) -> int | None:
     try:
         return int(value.strip())
     except ValueError:
+        _logger.debug("Not a memory size: '%s'", value)
         return None
 
 
@@ -179,6 +181,7 @@ def _parse_rocm_smi_vram(output: str) -> list[int]:
         try:
             values.append(int(float(raw) / 2**20))
         except ValueError:
+            _logger.debug("The rocm-smi VRAM total is not a number: '%s'", raw)
             continue
     return values
 
@@ -279,6 +282,7 @@ def detect_system_memory_gb() -> float | None:
             return _windows_total_memory_bytes() / 2**30
         return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30
     except AttributeError, OSError, ValueError:
+        _logger.debug("The operating system reports no memory size")
         return None
 
 
@@ -346,6 +350,7 @@ def _windows_device_is_active(winreg: Any, instance_id: str) -> bool:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, rf"{_WIN_ENUM_KEY}\{instance_id}"):
             pass
     except OSError:
+        # No Enum entry to look at: the adapter counts as active rather than hidden.
         return True
     try:
         with winreg.OpenKey(
@@ -354,6 +359,7 @@ def _windows_device_is_active(winreg: Any, instance_id: str) -> bool:
         ) as control:
             winreg.QueryValueEx(control, "ActiveService")
     except OSError:
+        # No ActiveService value: the driver does not run this device, so it is no card to offer.
         return False
     return True
 
@@ -408,6 +414,7 @@ def _read_windows_adapters() -> list[GpuInfo] | None:
                             try:
                                 vram = _bytes_to_mb(winreg.QueryValueEx(adapter, value_name)[0])
                             except OSError:
+                                _logger.debug("The adapter has no %s value", value_name)
                                 continue
                             if vram is not None:
                                 if value_name.endswith(".MemorySize") and (
@@ -427,7 +434,8 @@ def _sysfs_cards(root: Path = _SYSFS_DRM) -> list[tuple[str, Path]]:
     """Return ``(vendor, device folder)`` of every NVIDIA/AMD card in *root*, in card order."""
     try:
         cards = sorted(path for path in root.iterdir() if re.fullmatch(r"card\d+", path.name))
-    except OSError:
+    except OSError as exc:
+        _logger.debug("Cannot list %s: %s", root, exc)
         return []
     found: list[tuple[str, Path]] = []
     for card in cards:
@@ -435,6 +443,7 @@ def _sysfs_cards(root: Path = _SYSFS_DRM) -> list[tuple[str, Path]]:
         try:
             vendor = _VENDOR_IDS.get(int((device / "vendor").read_text().strip(), 16))
         except OSError, ValueError:
+            _logger.debug("Card %s has no readable vendor id", device)
             continue
         if vendor is not None:
             found.append((vendor, device))
@@ -461,8 +470,8 @@ def _read_sysfs_adapters(root: Path = _SYSFS_DRM) -> list[GpuInfo]:
         name = _generic_name(vendor)
         try:
             name = (device / "product_name").read_text().strip() or name
-        except OSError:
-            pass
+        except OSError as exc:
+            _logger.debug("Card %s has no product name: %s", device, exc)
         gpus.append(GpuInfo(vendor, name, vram))
     return gpus
 
@@ -602,6 +611,7 @@ def _read_int(path: Path) -> int | None:
     try:
         return int(path.read_text().strip())
     except OSError, ValueError:
+        # A file the driver does not publish, or one without a number: this card has no answer.
         return None
 
 

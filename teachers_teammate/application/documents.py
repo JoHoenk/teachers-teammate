@@ -10,6 +10,7 @@ from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 import dataclasses
 from dataclasses import dataclass
 import functools
+import logging
 from pathlib import Path
 
 from ..config import DEFAULTS, Config
@@ -49,6 +50,8 @@ from .sent_text import (
     SentTexts,
     describe_sent_texts,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -207,6 +210,7 @@ class DocumentQueries:
             try:
                 work = self._work_store.load(compute_file_hash_cached(file))
             except OSError:
+                _logger.debug("Cannot read %s: nothing to ask about its work", file.name)
                 continue
             if work is None:
                 continue

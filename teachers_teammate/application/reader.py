@@ -20,6 +20,7 @@ from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import preprocess_preview
 from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.storage_root import resolve_storage_root
+from ..interfaces import PreparedPreview
 from .data_flow import ocr_location, ocr_refusal
 from .providers import ProviderService
 
@@ -69,7 +70,7 @@ class ReaderService:
         source_path: Path,
         ocr: OcrConfig,
         tmp_dir: Path,
-    ) -> tuple[Path, Path, list[str]]:
+    ) -> PreparedPreview:
         """Run preprocessing preview for one source file."""
         return preprocess_preview(
             source_path,

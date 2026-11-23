@@ -18,8 +18,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import functools
 import http.client
 import json
+import logging
 import os
 import socket
 import threading
@@ -37,6 +39,8 @@ from ..domain.ollama_discovery import (
     server_url,
 )
 from .wsl import windows_host_addresses
+
+_logger = logging.getLogger(__name__)
 
 #: How long an address on this computer (or the Windows host) gets to answer.
 LOCAL_TIMEOUT_S = 1.0
@@ -78,7 +82,8 @@ def _get_json(url: str, timeout: float) -> Any:
             if response.status != 200:
                 return None
             return json.loads(response.read(_MAX_REPLY_BYTES))
-    except OSError, ValueError, http.client.HTTPException, urllib.error.URLError:
+    except (OSError, ValueError, http.client.HTTPException, urllib.error.URLError) as exc:
+        _logger.debug("No answer from %s: %s", url, exc)
         return None
 
 
@@ -149,7 +154,8 @@ def private_interfaces() -> list[tuple[str, int]]:
         return cards
     try:
         _name, _aliases, addresses = socket.gethostbyname_ex(socket.gethostname())
-    except OSError:
+    except OSError as exc:
+        _logger.debug("Cannot resolve the host name of this computer: %s", exc)
         return []
     return [(address, SCAN_PREFIX) for address in addresses]
 
@@ -175,34 +181,76 @@ def scan_network(
     Never call this without the person asking for it: it contacts every address of the range.
     """
     cards = private_interfaces() if interfaces is None else interfaces
-    own = {address for address, _prefix in cards}
     hosts = windows_host_addresses() if windows_hosts is None else tuple(windows_hosts)
+    targets = _scan_targets(cards)
+    if on_progress is not None:
+        on_progress(0, len(targets))
+    if not targets:
+        return []
+    ask = functools.partial(
+        _ask_host,
+        port=port,
+        probe=probe,
+        own={address for address, _prefix in cards},
+        windows_hosts=hosts,
+        stop_event=stop_event,
+    )
+    found = _ask_all(
+        targets,
+        ask,
+        on_progress=on_progress,
+        on_found=on_found,
+        workers=workers,
+        stop_event=stop_event,
+    )
+    return sorted(found, key=lambda server: server.url)
+
+
+def _scan_targets(cards: list[tuple[str, int]]) -> list[str]:
+    """Return the addresses a search asks: the ``/24`` of each card, once each, up to the cap."""
     targets: list[str] = []
     for address, prefix in cards:
         for target in scan_targets(address, prefix):
             if target not in targets:
                 targets.append(target)
-    targets = targets[:MAX_SCAN_TARGETS]
-    total = len(targets)
+    return targets[:MAX_SCAN_TARGETS]
+
+
+def _ask_host(
+    host: str,
+    *,
+    port: int,
+    probe: ProbeFn,
+    own: Collection[str],
+    windows_hosts: Collection[str],
+    stop_event: threading.Event | None,
+) -> DiscoveredServer | None:
+    """Ask *host* whether an Ollama server answers there; ``None`` when none does."""
+    if stop_event is not None and stop_event.is_set():
+        return None
+    url = server_url(host, port)
+    if probe(url, timeout=NETWORK_TIMEOUT_S, count_models=False) is None:
+        return None
+    info = probe(url, timeout=LOCAL_TIMEOUT_S, count_models=True)
+    if info is None:
+        return None
+    kind = classify_host(host, own_addresses=own, windows_hosts=windows_hosts)
+    return DiscoveredServer(url, kind, info.version, info.model_count)
+
+
+def _ask_all(
+    targets: list[str],
+    ask: Callable[[str], DiscoveredServer | None],
+    *,
+    on_progress: Callable[[int, int], None] | None,
+    on_found: Callable[[DiscoveredServer], None] | None,
+    workers: int,
+    stop_event: threading.Event | None,
+) -> list[DiscoveredServer]:
+    """Ask every target at once, reporting each answer as it comes in."""
     found: list[DiscoveredServer] = []
+    total = len(targets)
     asked = 0
-
-    def ask(host: str) -> DiscoveredServer | None:
-        if stop_event is not None and stop_event.is_set():
-            return None
-        url = server_url(host, port)
-        if probe(url, timeout=NETWORK_TIMEOUT_S, count_models=False) is None:
-            return None
-        info = probe(url, timeout=LOCAL_TIMEOUT_S, count_models=True)
-        if info is None:
-            return None
-        kind = classify_host(host, own_addresses=own, windows_hosts=hosts)
-        return DiscoveredServer(url, kind, info.version, info.model_count)
-
-    if on_progress is not None:
-        on_progress(0, total)
-    if not total:
-        return found
     with ThreadPoolExecutor(max_workers=min(workers, total)) as pool:
         futures = [pool.submit(ask, host) for host in targets]
         for future in as_completed(futures):
@@ -210,14 +258,13 @@ def scan_network(
                 continue
             hit = future.result()
             asked += 1
-            done = asked
             if hit is not None:
                 found.append(hit)
-            if hit is not None and on_found is not None:
-                on_found(hit)
+                if on_found is not None:
+                    on_found(hit)
             if on_progress is not None:
-                on_progress(done, total)
+                on_progress(asked, total)
             if stop_event is not None and stop_event.is_set():
                 for pending in futures:
                     pending.cancel()
-    return sorted(found, key=lambda server: server.url)
+    return found

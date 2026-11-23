@@ -11,6 +11,7 @@ from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.data_location import DataLocation, StageLocation
+from teachers_teammate.domain.install_item import InstallItem, InstallKind
 from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL, HardwareProfileSetting
 from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
@@ -310,20 +311,19 @@ def test_download_best_choice_calls_open_downloads(qtbot) -> None:
     """
     Given  the BEST reading model is not installed and a callback is injected
     When   the "Download best choice…" button is clicked
-    Then   the callback receives the BEST model tag
+    Then   the callback receives the BEST model, as an install item
     """
-    received: list[list[str]] = []
+    received: list[list[InstallItem]] = []
 
-    def open_downloads(tags: list[str], parent) -> str | None:
+    def open_downloads(items: list[InstallItem], parent) -> None:
         _ = parent
-        received.append(tags)
-        return None
+        received.append(items)
 
     selector = _ollama_selector(
         qtbot, models=["glm-ocr:q8_0", "qwen3.5:9b"], open_downloads=open_downloads
     )
     selector._picker._guidance._best_btn.click()
-    assert received == [[DEFAULT_OCR_MODEL]]
+    assert received == [[InstallItem(InstallKind.OLLAMA, DEFAULT_OCR_MODEL)]]
 
 
 @pytest.mark.use_case("Model_Category_Guidance")

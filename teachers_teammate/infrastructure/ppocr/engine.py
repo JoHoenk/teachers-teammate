@@ -18,8 +18,8 @@ import numpy as np
 from ...domain.local_models import PPOCR_SMALL_DET, PPOCR_SMALL_REC, READER_NOT_DOWNLOADED
 from ...exceptions import ModelMissingError, OCRError, RunStoppedError, stop_requested
 from ...interfaces import OCRProcessor
-from ...texts.addons import READER_MODEL_MISMATCH, reader_model_mismatch
-from ...texts.run import READER_PAGE_FAILED, image_unreadable
+from ...messages import image_unreadable, message_of, reader_model_mismatch
+from ...texts.run import READER_PAGE_FAILED
 from ..image_io import read_image
 from ..onnx.runner import CvDnnNet, OnnxNet
 from ..onnx.store import ModelStore
@@ -96,7 +96,7 @@ class PpOcrProcessor(OCRProcessor):
     def _read(self, recogniser: OnnxNet, line: np.ndarray) -> tuple[str, float]:
         output = recogniser.run(recogniser_input(line))
         if output.ndim != 3 or output.shape[2] != len(self._characters):
-            raise OCRError(READER_MODEL_MISMATCH)
+            raise OCRError(reader_model_mismatch())
         return ctc_decode(output, self._characters)
 
     def _load(self) -> tuple[OnnxNet, OnnxNet]:
@@ -113,5 +113,5 @@ class PpOcrProcessor(OCRProcessor):
                 self._recogniser = self._net_factory(rec_path)
             except Exception as exc:  # cv2.error, yaml errors, KeyError of a changed file
                 self._detector = self._recogniser = None
-                raise OCRError(reader_model_mismatch(exc)) from exc
+                raise OCRError(reader_model_mismatch(message_of(exc))) from exc
         return self._detector, self._recogniser

@@ -195,3 +195,8 @@ def not_an_integer(value: str) -> str:
 def dpi_out_of_range(dpi: int, low: int, high: int) -> str:
     """Return what ``--pdf-render-dpi`` says about a *dpi* outside *low*..*high*."""
     return f"DPI must be between {low} and {high}, got {dpi}"
+
+
+def timeout_out_of_range(seconds: int, low: int, high: int) -> str:
+    """Return what ``--ocr-timeout`` says about *seconds* outside *low*..*high*."""
+    return f"the timeout must be between {low} and {high} seconds, got {seconds}"

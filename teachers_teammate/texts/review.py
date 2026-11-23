@@ -122,6 +122,16 @@ def left_out_warning_one(words: int) -> str:
     return f"The AI left out a passage ({words} words); it is kept as you wrote it."
 
 
+def personal_info_still_hidden(tokens: Sequence[str]) -> str:
+    """Return the warning about stand-ins for personal data that are still in the text."""
+    shown = ", ".join(tokens[:3])
+    rest = f" and {len(tokens) - 3} more" if len(tokens) > 3 else ""
+    return (
+        f"Personal info is still hidden in the text ({shown}{rest}). "
+        "The AI changed those stand-ins; check them before you use the text."
+    )
+
+
 # ── Prompt dialog wording ─────────────────────────────────────────────────────
 
 YOUR_INSTRUCTIONS_HEADING = "Instructions"

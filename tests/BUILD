@@ -184,8 +184,11 @@ _CLI_LIB = ["//teachers_teammate:cli_lib"]
 
 # The proofreading steps' schemas (infrastructure/proofreading/schemas.py) are pydantic models,
 # which every stage that reads a proofreading result imports (directly or through cache_service).
+# platformdirs: the app reads its folders from it (``infrastructure/storage_root.py``), so a
+# test that imports the app has it.
 _COMMON_DEPS = [
     "@ocr_test_dependencies//pydantic:pkg",
+    "@ocr_test_dependencies//platformdirs:pkg",
     "@ocr_test_dependencies//pytest:pkg",
     "@ocr_test_dependencies//pytest_mock:pkg",
 ]
@@ -428,6 +431,18 @@ py_test(
     args = ["unit/test_review_v2.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _DOMAIN_LIB,
+)
+
+# The catalogue of messages: one factory per key in ``messages.py``, one renderer per key
+# in ``texts/messages.py``, and a golden list of the key values a stored result keeps.
+py_test(
+    name = "test_messages",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_messages.py"],
+    args = ["unit/test_messages.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _DOMAIN_LIB + _TEXTS_LIB,
 )
 
 py_test(
@@ -809,6 +824,19 @@ py_test(
     deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
+# The library internals the app reaches into, against the versions it is locked to.
+py_test(
+    name = "test_library_internals",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_library_internals.py"],
+    args = ["unit/test_library_internals.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + [
+        "@ocr_test_dependencies//ollama:pkg",
+        "@ocr_test_dependencies//python_docx:pkg",
+    ],
+)
+
 py_test(
     name = "test_pipeline_run_integration",
     size = "small",
@@ -879,6 +907,16 @@ py_test(
     args = ["unit/test_check_desktop_entry.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + ["//tools/packaging:packaging_tools_lib"],
+)
+
+# The groups CI runs on separate machines (tools/ci/target_groups.py): every test in exactly one.
+py_test(
+    name = "test_target_groups",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_target_groups.py"],
+    args = ["unit/test_target_groups.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/ci:ci_tools_lib"],
 )
 
 py_test(
@@ -965,15 +1003,13 @@ py_test(
     deps = _COMMON_DEPS + _TEXTS_LIB,
 )
 
-# The ratchet that keeps teacher-facing text in ``teachers_teammate/texts``: no literal at a
-# call site that is not on the allowlist, no stale allowlist entry, and no ``Notice`` built
-# outside the package.  The sources come in as data because the test parses them with ``ast``.
-# The import direction between the layers of //teachers_teammate (see the libraries there).
+# The ratchet on class and function size over every layer: the sources come in as data because
+# the test parses them with ``ast``.
 py_test(
-    name = "test_gui_class_size",
+    name = "test_class_size",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_gui_class_size.py"],
-    args = ["unit/test_gui_class_size.py"],
+    srcs = _COMMON_SRCS + ["unit/test_class_size.py"],
+    args = ["unit/test_class_size.py"],
     data = ["//teachers_teammate:all_sources"],
     main = "run_test.py",
     deps = _COMMON_DEPS,
@@ -987,6 +1023,16 @@ py_test(
     data = ["//teachers_teammate:all_sources"],
     main = "run_test.py",
     deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_subprocess_env",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_subprocess_env.py"],
+    args = ["unit/test_subprocess_env.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1324,7 +1370,7 @@ py_test(
 )
 
 # The smoke test imports every lazily loaded module of the app, so it needs the whole runtime
-# set — including the packages no other unit test imports (ollama, platformdirs, keyring).
+# set — including the packages no other unit test imports (ollama, keyring).
 # ``medium``: the smoke test now also builds the Setup Assistant and waits for its plan, which
 # has a 30 s timeout of its own, so the 60 s of ``small`` is too tight on a loaded runner.
 py_test(
@@ -1342,7 +1388,6 @@ py_test(
         "//teachers_teammate:gui_layer_lib",
         "@ocr_test_dependencies//keyring:pkg",
         "@ocr_test_dependencies//ollama:pkg",
-        "@ocr_test_dependencies//platformdirs:pkg",
     ],
 )
 
@@ -2357,6 +2402,7 @@ py_test(
     ],
     args = ["gui/test_gui_setup_walkthrough.py"],
     main = "run_test.py",
+    tags = ["walkthrough"],
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
         "//teachers_teammate:gui_layer_lib",
         "@ocr_test_dependencies//ollama:pkg",
@@ -2882,6 +2928,7 @@ py_test(
     data = _READER_MODEL_DATA + _PAGE_MODEL_DATA,
     env = _MODEL_ENV,
     main = "run_test.py",
+    tags = ["walkthrough"],
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
         "//teachers_teammate:gui_layer_lib",
         # The proofreading walk talks to the real ``ollama`` client.
@@ -2901,6 +2948,13 @@ py_test(
     args = ["unit/test_walkthrough_imports.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS,
+)
+
+# The tests that play the whole app (tag ``walkthrough``). CI runs them on a machine of their own
+# (tools/ci/target_groups.py), so a growing walkthrough never slows the other groups.
+test_suite(
+    name = "walkthrough_tests",
+    tags = ["walkthrough"],
 )
 
 # ── Test suite ────────────────────────────────────────────────────────────
@@ -2928,6 +2982,7 @@ test_suite(
         ":test_check_pins",
         ":test_check_smoke",
         ":test_chunking_corrector",
+        ":test_class_size",
         ":test_cli",
         ":test_cli_composition",
         ":test_collect_files",
@@ -2989,6 +3044,7 @@ test_suite(
         ":test_latest_release",
         ":test_layer_imports",
         ":test_lazy_import_budget",
+        ":test_library_internals",
         ":test_license_inventory",
         ":test_llm_factory",
         ":test_llm_invoke",
@@ -2997,6 +3053,7 @@ test_suite(
         ":test_make_version_resource",
         ":test_markdown_shield",
         ":test_merged_view",
+        ":test_messages",
         ":test_model_catalog",
         ":test_model_listing",
         ":test_model_store",
@@ -3051,6 +3108,8 @@ test_suite(
         ":test_state_repository",
         ":test_step_runner",
         ":test_storage_policy",
+        ":test_subprocess_env",
+        ":test_target_groups",
         ":test_teacher_work",
         ":test_teacher_work_readers",
         ":test_text_chunks",
@@ -3084,7 +3143,6 @@ test_suite(
         ":test_gui_check_body",
         ":test_gui_check_page",
         ":test_gui_check_style",
-        ":test_gui_class_size",
         ":test_gui_config_panel",
         ":test_gui_dialogs",
         ":test_gui_formatted_text",

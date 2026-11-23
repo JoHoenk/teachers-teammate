@@ -14,6 +14,7 @@ from teachers_teammate.domain.local_models import LocalModel
 from teachers_teammate.exceptions import ModelMissingError, OCRError, RunStoppedError
 from teachers_teammate.infrastructure.ppocr.detect import DetectorSettings
 from teachers_teammate.infrastructure.ppocr.engine import PpOcrProcessor
+from teachers_teammate.messages import MessageKey
 from teachers_teammate.texts.run import READER_PAGE_FAILED
 
 _CHARS = ["a", "b", "c"]  # classes: blank, a, b, c, space → 5
@@ -177,12 +178,14 @@ def test_wrong_class_count_raises_ocr_error(tmp_path: Path) -> None:
     """
     Given  a recogniser whose output has another class count than the character list
     When   a page is read
-    Then   OCRError says the model files don't match this version
+    Then   OCRError carries the reader-model-mismatch key
     """
     reader = _reader(tmp_path, _FakeRecogniser([1], classes=9))
 
-    with pytest.raises(OCRError, match="don't match this version"):
+    with pytest.raises(OCRError) as raised:
         reader.process_image(_page(tmp_path))
+
+    assert raised.value.args[0].key is MessageKey.READER_MODEL_MISMATCH
 
 
 def test_language_does_not_change_the_result(tmp_path: Path) -> None:
@@ -218,13 +221,16 @@ def test_unreadable_image_raises_ocr_error(tmp_path: Path) -> None:
     """
     Given  a file that is not an image
     When   it is read
-    Then   OCRError says the image cannot be read
+    Then   OCRError carries the unreadable-image key and the path
     """
     bad = tmp_path / "bad.png"
     bad.write_bytes(b"not an image")
 
-    with pytest.raises(OCRError, match="Cannot read image"):
+    with pytest.raises(OCRError) as raised:
         _reader(tmp_path, _FakeRecogniser([1])).process_image(bad)
+
+    assert raised.value.args[0].key is MessageKey.IMAGE_UNREADABLE
+    assert raised.value.args[0].args["path"] == str(bad)
 
 
 def test_a_failing_net_raises_the_one_sentence_the_teacher_can_read(tmp_path: Path) -> None:

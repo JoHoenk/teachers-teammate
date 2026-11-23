@@ -24,6 +24,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
 
+from ..domain.plain_text import xml_safe_text
 from ..domain.proofreading.review import AlignedReview, EditNote, UnclearNote
 from ..domain.proofreading.word_diff import Hunk
 
@@ -318,6 +319,6 @@ def _covered(
 
 def _add_run(para: Any, text: str) -> Any:
     """Add *text* to *para* as one run of the layout's size."""
-    run = para.add_run(text)
+    run = para.add_run(xml_safe_text(text))
     run.font.size = Pt(BODY_PT)
     return run

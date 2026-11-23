@@ -25,6 +25,8 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+from .subprocess_utils import child_env
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -131,10 +133,12 @@ def start_ollama(program: Path) -> None:
         subprocess.Popen(
             command,
             close_fds=True,
+            env=child_env(),
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
         )
         return
-    subprocess.Popen(command, close_fds=True)
+    # Detached, so it outlives the app: it must not keep the teacher's API keys either.
+    subprocess.Popen(command, close_fds=True, env=child_env())
 
 
 def ollama_models_dir() -> Path:

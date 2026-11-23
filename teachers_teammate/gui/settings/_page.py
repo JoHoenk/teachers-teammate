@@ -20,6 +20,7 @@ from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QWidget
 
 from ...config import DEFAULTS
+from ...domain.anonymization import AnonymizerConfig
 from ...domain.model_catalog import HardwareProfileSetting
 from ...texts.settings import (
     PAGE_ADDONS,
@@ -85,7 +86,7 @@ class SettingsContext:
     settings: Mapping[str, Any]
     app_service: AppServices
     language: str = ""
-    anonymizer_config: object | None = None
+    anonymizer_config: AnonymizerConfig | None = None
     acknowledgements: Any = None
     display_anonymized: bool = True
     privacy_available: bool = True
@@ -108,7 +109,7 @@ class SettingsResult:
     """
 
     settings: dict[str, Any]
-    anonymizer_config: object | None = None
+    anonymizer_config: AnonymizerConfig | None = None
     display_anonymized: bool | None = None
     restore_all: bool = False
     turn_on_anonymization: bool = False

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from teachers_teammate.domain.anonymization import pattern_problem
 from teachers_teammate.domain.data_location import (
     DataFlow,
     DataFlowStage,
@@ -212,6 +213,28 @@ def test_the_models_that_are_not_downloaded_are_named_in_the_right_number(
     Then   it is singular, plural or general
     """
     assert issue_text(RequirementIssue(IssueKind.MODEL_MISSING, models=models)) == sentence
+
+
+@pytest.mark.parametrize(
+    ("tag", "pattern", "taken", "sentence"),
+    [
+        ("1st", "x", (), "Invalid pattern: '1st' is not a tag"),
+        ("CITY", "x", ("CITY",), "Invalid pattern: the tag 'CITY' is used twice"),
+        ("CITY", "(", (), "Invalid pattern: the pattern of 'CITY' does not compile: "),
+    ],
+)
+def test_a_pattern_row_says_what_is_wrong_with_it(
+    tag: str, pattern: str, taken: tuple[str, ...], sentence: str
+) -> None:
+    """
+    Given  an anonymizer pattern with a bad tag, a tag used twice, or no valid expression
+    When   the tooltip of its row is asked for
+    Then   it starts with the sentence for that problem
+    """
+    problem = pattern_problem(tag, pattern, taken)
+
+    assert problem is not None
+    assert privacy.invalid_pattern_row(problem).startswith(sentence)
 
 
 @pytest.mark.parametrize(

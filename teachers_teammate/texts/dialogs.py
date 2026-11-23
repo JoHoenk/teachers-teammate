@@ -130,6 +130,26 @@ def save_failed(reason: str) -> Notice:
     return Notice("Save failed", reason, NoticeKind.WARNING)
 
 
+def settings_file_broken(name: str, backup: str) -> Notice:
+    """Tell the teacher that a settings file could not be read, and where the copy is."""
+    return Notice(
+        "Settings file not readable",
+        f"{name} could not be read, so the app uses default settings. Your settings are kept in "
+        f"{backup}.",
+        NoticeKind.WARNING,
+    )
+
+
+def settings_file_not_replaced(name: str) -> Notice:
+    """Tell the teacher that a settings file that could not be read is not written over."""
+    return Notice(
+        "Settings file kept",
+        f"{name} could not be read and no copy of it could be made, so it was left as it is. "
+        "Free the file, or remove it, and save again.",
+        NoticeKind.WARNING,
+    )
+
+
 def busy_with_run() -> Notice:
     """Tell the teacher that a run or a requirement check is already going."""
     return Notice(

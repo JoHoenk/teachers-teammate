@@ -23,6 +23,8 @@ from teachers_teammate.application.export import NothingToExport, WouldOverwrite
 from teachers_teammate.application.model_recommendations import ModelRecommendationService
 from teachers_teammate.application.run import RunPreflight, RunService
 from teachers_teammate.application.setup_plan import SetupService
+from teachers_teammate.config import broken_settings_copy, load_config_file
+from teachers_teammate.settings_schema import LoadedSettings
 from teachers_teammate.domain.requirements import IssueKind, RequirementIssue
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
@@ -1931,7 +1933,7 @@ def test_main_window_load_toml_if_present_loads_values(qtbot, monkeypatch, tmp_p
     )
     monkeypatch.setattr(
         "teachers_teammate.gui._settings_file.load_config_file",
-        lambda _path: {"language": "German"},
+        lambda _path: LoadedSettings({"language": "German"}),
     )
     win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
@@ -2491,8 +2493,10 @@ def test_first_start_non_ollama_correction_provider_untouched(
     Then   correction_model is not replaced
     """
     from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
+    from teachers_teammate.gui import _config_panel  # noqa: PLC0415
 
-    monkeypatch.setitem(DEFAULTS, "correction_provider", "openai")
+    # The panel seeds its settings from this module's ``DEFAULTS``: patch it there.
+    monkeypatch.setattr(_config_panel, "DEFAULTS", {**DEFAULTS, "correction_provider": "openai"})
     detection = HardwareDetection(
         profile=HardwareProfile.CARD_16GB,
         reason=DetectionReason.GPU_DETECTED,
@@ -5451,3 +5455,186 @@ def test_the_walkthrough_finds_every_handle_exactly_once(qtbot, main_window, sto
     # Among the top-level widgets, because the main window does not own it; this test process
     # keeps the monitors of the tests before it, so the walkthrough's own window is checked for.
     assert main_window._monitor in _top_level(_handles.MONITOR_WINDOW)
+
+
+# ── A settings file that cannot be read ──────────────────────────────────────
+
+
+def _settings_file_window(
+    qtbot, monkeypatch, folder: Path, *, content: bytes = b"this is not toml"
+) -> MainWindow:
+    """Open a MainWindow whose ``ocr.toml`` in *folder* is a file the app cannot read.
+
+    The window reads that file as it opens, so a test never loads a second time: a second load
+    would leave a second copy beside the file.
+    """
+    config_path = folder / "ocr.toml"
+    config_path.write_bytes(content)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
+    monkeypatch.setattr(
+        "teachers_teammate.application.setup_plan.SetupService.resolve_config_path",
+        lambda self, _: config_path,
+    )
+    win = MainWindow(app_service=real_service())
+    qtbot.addWidget(win)
+    return win
+
+
+def _files_in(folder: Path) -> list[str]:
+    """Return the names of the files in *folder*, sorted."""
+    return sorted(path.name for path in folder.iterdir())
+
+
+def _refuse_every_copy(monkeypatch) -> None:
+    """Make keeping a copy of the settings file impossible, as a full disk does."""
+
+    def refuse(_path):
+        raise OSError("no room for a copy")
+
+    monkeypatch.setattr("teachers_teammate.gui._settings_file.broken_settings_copy", refuse)
+
+
+def _refuse_the_first_copy(monkeypatch) -> None:
+    """Refuse the first copy and let the next one through, as a file freed in between."""
+    refusals = 1
+
+    def copy_once_refused(path):
+        nonlocal refusals
+        if refusals:
+            refusals -= 1
+            raise OSError("no room for a copy")
+        return broken_settings_copy(path)
+
+    monkeypatch.setattr(
+        "teachers_teammate.gui._settings_file.broken_settings_copy", copy_once_refused
+    )
+
+
+@pytest.mark.gui
+def test_an_unreadable_settings_file_is_kept_and_copied(qtbot, monkeypatch, tmp_path) -> None:
+    """
+    Given  a settings file the app cannot parse
+    When   the window opens and the teacher then saves
+    Then   the file is left untouched, one copy sits beside it, and the save writes a fresh file
+    """
+    record_notices(monkeypatch)
+    win = _settings_file_window(qtbot, monkeypatch, tmp_path)
+
+    assert (tmp_path / "ocr.toml").read_text(encoding="utf-8") == "this is not toml"
+    assert (tmp_path / "ocr.toml.broken").read_text(encoding="utf-8") == "this is not toml"
+    assert _files_in(tmp_path) == ["ocr.toml", "ocr.toml.broken"]
+
+    win._settings_file.save(notify=False)
+
+    assert load_config_file(tmp_path / "ocr.toml").values
+    assert _files_in(tmp_path) == ["ocr.toml", "ocr.toml.broken"]
+
+
+@pytest.mark.gui
+def test_a_settings_file_that_is_not_utf8_is_kept_and_copied(qtbot, monkeypatch, tmp_path) -> None:
+    """
+    Given  a settings file an older Windows editor saved in a code page rather than UTF-8
+    When   the window opens it and the teacher then saves
+    Then   the file keeps its bytes, a copy holds them, and the save writes a file that reads
+    """
+    kept = 'language = "Français"\n'.encode("cp1252")
+    record_notices(monkeypatch)
+    win = _settings_file_window(qtbot, monkeypatch, tmp_path, content=kept)
+
+    assert (tmp_path / "ocr.toml").read_bytes() == kept
+    assert (tmp_path / "ocr.toml.broken").read_bytes() == kept
+
+    win._settings_file.save(notify=False)
+
+    assert load_config_file(tmp_path / "ocr.toml").values
+
+
+@pytest.mark.gui
+def test_settings_are_not_written_over_a_file_whose_copy_failed(
+    qtbot, monkeypatch, tmp_path
+) -> None:
+    """
+    Given  a settings file that cannot be read and cannot be copied either
+    When   the window opens and the teacher then saves
+    Then   the file keeps its bytes
+    """
+    _refuse_every_copy(monkeypatch)
+    record_notices(monkeypatch)
+    win = _settings_file_window(qtbot, monkeypatch, tmp_path)
+
+    win._settings_file.save(notify=False)
+
+    assert (tmp_path / "ocr.toml").read_text(encoding="utf-8") == "this is not toml"
+    assert not (tmp_path / "ocr.toml.broken").exists()
+
+
+@pytest.mark.gui
+def test_a_save_copies_the_file_that_could_not_be_copied_at_start(
+    qtbot, monkeypatch, tmp_path
+) -> None:
+    """
+    Given  a settings file that could not be read, and a copy that failed while the window opened
+    When   the teacher saves once the file can be copied
+    Then   the copy is made and the save goes ahead, so the session is not lost to the refusal
+    """
+    _refuse_the_first_copy(monkeypatch)
+    record_notices(monkeypatch)
+    win = _settings_file_window(qtbot, monkeypatch, tmp_path)
+    assert not (tmp_path / "ocr.toml.broken").exists()
+
+    win._settings_file.save(notify=False)
+
+    assert (tmp_path / "ocr.toml.broken").read_text(encoding="utf-8") == "this is not toml"
+    assert load_config_file(tmp_path / "ocr.toml").values
+
+
+@pytest.mark.gui
+def test_a_save_goes_ahead_when_the_unreadable_file_is_gone(qtbot, monkeypatch, tmp_path) -> None:
+    """
+    Given  a settings file that could neither be read nor copied, and that is removed afterwards
+    When   the teacher saves
+    Then   the settings are written: a file that is gone takes nothing with it
+    """
+    _refuse_every_copy(monkeypatch)
+    record_notices(monkeypatch)
+    win = _settings_file_window(qtbot, monkeypatch, tmp_path)
+    (tmp_path / "ocr.toml").unlink()
+
+    win._settings_file.save(notify=False)
+
+    assert load_config_file(tmp_path / "ocr.toml").values
+
+
+@pytest.mark.gui
+def test_a_save_keeps_the_copy_again_when_the_copy_is_gone(qtbot, monkeypatch, tmp_path) -> None:
+    """
+    Given  an unreadable settings file whose copy the teacher then deletes
+    When   the teacher saves
+    Then   a copy is made again before the file is written over
+    """
+    record_notices(monkeypatch)
+    win = _settings_file_window(qtbot, monkeypatch, tmp_path)
+    (tmp_path / "ocr.toml.broken").unlink()
+
+    win._settings_file.save(notify=False)
+
+    assert (tmp_path / "ocr.toml.broken").read_text(encoding="utf-8") == "this is not toml"
+    assert load_config_file(tmp_path / "ocr.toml").values
+
+
+@pytest.mark.gui
+def test_the_unreadable_settings_file_is_announced_once(qtbot, monkeypatch, tmp_path) -> None:
+    """
+    Given  a settings file that can neither be read nor copied, saved on every ordinary change
+    When   the teacher changes three settings
+    Then   one box tells them, instead of a box per save that they can only dismiss
+    """
+    _refuse_every_copy(monkeypatch)
+    shown = record_notices(monkeypatch)
+    win = _settings_file_window(qtbot, monkeypatch, tmp_path)
+
+    for _ in range(3):
+        win._settings_file.save(notify=False)
+
+    assert [notice.title for notice in shown] == ["Settings file kept"]
+    assert (tmp_path / "ocr.toml").read_text(encoding="utf-8") == "this is not toml"

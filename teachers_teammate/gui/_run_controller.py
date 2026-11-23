@@ -32,6 +32,7 @@ from . import _dialogs, _handles
 from ._background import LatestTask
 from ._chart_widget import ChartWidget
 from ._log_widget import LogWidget
+from ._qt import present
 from ._results_table import ResultsTable
 from ._run_session import (
     PROGRESS_RESOLUTION,
@@ -127,8 +128,7 @@ class RunController(QObject):
         self._log = log
         self._chart = chart
         self._hooks = hooks
-        style = window.style()
-        assert style is not None
+        style = present(window.style(), "style")
         #: Run and Stop, and what the window shows around them: a run's own widgets.
         self.run_button = QPushButton(txt.RUN_SELECTED)
         self.run_button.setObjectName(_handles.RUN_BUTTON)
@@ -209,8 +209,7 @@ class RunController(QObject):
         """First click: finish the document being processed; second click: stop at once."""
         if not self.active:
             return
-        worker = self._worker
-        assert worker is not None
+        worker = present(self._worker, "run worker")
         if self._session.stop_stage is StopStage.RUNNING:
             worker.request_stop(now=False)
             self.set_stop_stage(StopStage.AFTER_FILE)

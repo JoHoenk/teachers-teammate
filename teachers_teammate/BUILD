@@ -9,6 +9,7 @@ exports_files(["__init__.py"])
 _PKG_SRCS = [
     "__init__.py",
     "exceptions.py",
+    "messages.py",
 ]
 
 # domain/: pure business concepts, no import from any other layer.
@@ -35,6 +36,7 @@ _DOMAIN_SRCS = [
     "domain/output_files.py",
     "domain/pdf_text_layer.py",
     "domain/performance_estimate.py",
+    "domain/plain_text.py",
     "domain/prompt_text.py",
     "domain/requirements.py",
     "domain/proofreading/__init__.py",
@@ -58,6 +60,7 @@ _DOMAIN_SRCS = [
 # The settings (config.py) and the stage interfaces: depend on domain/ only.
 _CORE_SRCS = [
     "_model_defaults.py",
+    "atomic_file.py",
     "config.py",
     "interfaces.py",
     "settings_schema.py",
@@ -78,6 +81,7 @@ _TEXTS_SRCS = [
     "texts/issues.py",
     "texts/main_window.py",
     "texts/menus.py",
+    "texts/messages.py",
     "texts/models.py",
     "texts/privacy.py",
     "texts/report.py",
@@ -99,7 +103,6 @@ _INFRASTRUCTURE_SRCS = [
     "infrastructure/benchmark/run_store.py",
     "infrastructure/benchmark/runner.py",
     "infrastructure/anonymizer.py",
-    "infrastructure/atomic_file.py",
     "infrastructure/docx_builder.py",
     "infrastructure/docx_comments.py",
     "infrastructure/evaluation.py",
@@ -270,6 +273,7 @@ _GUI_SRCS = [
     "gui/_prompt_editor.py",
     "gui/_pull_manager.py",
     "gui/_qsettings.py",
+    "gui/_qt.py",
     "gui/_qt_stream.py",
     "gui/_readiness_controller.py",
     "gui/_readiness_line.py",

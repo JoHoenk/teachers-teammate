@@ -137,7 +137,7 @@ class OllamaServerService:
         """Return what *tag* can do on the server at *url*, or ``None`` when it cannot say.
 
         Raises:
-            :exc:`~teachers_teammate.exceptions.OllamaConnectionError`: *url* is unreachable,
+            :exc:`~teachers_teammate.exceptions.OllamaUnreachableError`: *url* is unreachable,
                 so a caller asking about several tags can stop asking.
         """
         return OllamaClient(url, timeout=timeout).model_capabilities(tag)

@@ -22,7 +22,8 @@ from ...domain.proofreading.review import CHANGE_CATEGORIES
 Category = Literal["grammar", "spelling", "punctuation", "word_choice", "word_order", "other"]
 """The categories an explanation may name; the same list the review stores."""
 
-assert set(Category.__args__) == set(CHANGE_CATEGORIES)
+if set(Category.__args__) != set(CHANGE_CATEGORIES):
+    raise RuntimeError("Category names other categories than CHANGE_CATEGORIES does")
 
 
 class ExplainNote(BaseModel):

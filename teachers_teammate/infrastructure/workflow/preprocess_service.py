@@ -7,13 +7,14 @@ from pathlib import Path
 from typing import NamedTuple
 
 from ...exceptions import PipelineInputError, RecognitionSwitchedOffError
-from ...interfaces import ImagePreprocessor, InputPayload, InputProvider, TextOrigin
-from ...texts.run import (
-    image_unit_without_path,
-    input_without_content,
-    input_without_units,
-    unsupported_unit_kind,
+from ...interfaces import (
+    ImagePreprocessor,
+    ImageUnit,
+    InputPayload,
+    InputProvider,
+    TextOrigin,
 )
+from ...messages import input_without_content, input_without_units
 from ..input_provider_factory import get_input_provider
 
 
@@ -22,7 +23,8 @@ class PreparedInput(NamedTuple):
 
     ocr_inputs: list[Path]
     """OCR-ready (preprocessed) page images; empty when the input is text."""
-    steps: list[str]
+    steps_per_page: list[tuple[str, ...]]
+    """What preparation did to each page of ``ocr_inputs``, in that order."""
     source_image: Path | None
     """Image used as the document's source preview, if any."""
     raw_text_hint: str | None
@@ -42,6 +44,11 @@ class PreparedInput(NamedTuple):
     The teacher compares the text with the page as it was scanned, so the app keeps it next to
     the prepared page.  Empty when the input has no image units.
     """
+
+    @property
+    def steps(self) -> list[str]:
+        """Every step the whole input went through, in page order."""
+        return [step for page in self.steps_per_page for step in page]
 
 
 class PreprocessService:
@@ -81,34 +88,28 @@ class PreprocessService:
         payload = self.load_input(file)
         if not payload.units:
             raise PipelineInputError(input_without_units(file.name))
-        if not allow_images and any(unit.kind == "image" for unit in payload.units):
+        if not allow_images and any(isinstance(unit, ImageUnit) for unit in payload.units):
             raise RecognitionSwitchedOffError(file.name)
 
         preprocessed: list[Path] = []
         originals: list[Path] = []
-        steps: list[str] = []
+        steps_per_page: list[tuple[str, ...]] = []
         text_parts: list[str] = []
         for unit in payload.units:
-            if unit.kind == "image":
-                if unit.image_path is None:
-                    raise PipelineInputError(image_unit_without_path(file.name))
-                proc_path, page_steps = self._preprocessor.preprocess(unit.image_path)
+            if isinstance(unit, ImageUnit):
+                proc_path, page_steps = self._preprocessor.preprocess(unit.path)
                 preprocessed.append(proc_path)
-                originals.append(unit.image_path)
-                if not steps:
-                    steps = page_steps
-            elif unit.kind == "text":
-                if unit.text:
-                    text_parts.append(unit.text)
-            else:
-                raise PipelineInputError(unsupported_unit_kind(unit.kind, file.name))
+                originals.append(unit.path)
+                steps_per_page.append(tuple(page_steps))
+            elif unit.text:
+                text_parts.append(unit.text)
 
         raw_text_hint = "\n\n".join(text_parts).strip() if text_parts else None
         if not preprocessed and raw_text_hint is None:
             raise PipelineInputError(input_without_content(file.name))
         return PreparedInput(
             preprocessed,
-            steps,
+            steps_per_page,
             payload.source_image,
             raw_text_hint,
             payload.text_origin,

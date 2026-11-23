@@ -26,6 +26,8 @@ from teachers_teammate.infrastructure.addon_manager import (
     remove_retired_addons,
 )
 from teachers_teammate.infrastructure.spacy_models import spacy_model_url
+from teachers_teammate.infrastructure.storage_root import app_data_folder
+from teachers_teammate.messages import MessageKey
 
 #: The add-on of the OpenAI provider package: an install that needs the network.
 ADDON_LLM_OPENAI = "llm_openai"
@@ -469,18 +471,68 @@ def test_install_addon_subprocess_sets_no_window_flag_on_win32(tmp_path: Path) -
     assert captured_kwargs[0]["creationflags"] == 0x08000000
 
 
-# ── get_packages_dir fallback ─────────────────────────────────────────────────
+# ── where the packages live ──────────────────────────────────────────────────
 
 
-def test_get_packages_dir_falls_back_without_platformdirs() -> None:
+def test_the_packages_folder_sits_in_the_user_data_folder() -> None:
     """
-    Given  platformdirs is not importable
+    Given  the per-user data folder of the app
     When   get_packages_dir() is called
-    Then   the ~/.local/share fallback path is used and ends with ('share', 'teachers_teammate', 'packages')
+    Then   it is the "packages" folder in there, beside the models
     """
-    with patch.dict(sys.modules, {"platformdirs": None}):
-        result = get_packages_dir()
-    assert result.parts[-3:] == ("share", "teachers_teammate", "packages")
+    assert get_packages_dir() == app_data_folder() / "packages"
+
+
+def test_a_folder_that_did_not_change_is_listed_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a packages folder that holds one package
+    When   its distributions are asked for twice in a row
+    Then   the folder is listed once, and a package added afterwards is seen all the same
+    """
+    live = tmp_path / "packages"
+    _dist_info(live, "spacy", "3.8.0")
+    _age(live, hours=1)
+    listings: list[Path] = []
+    read = addon_manager._read_distributions
+
+    def counting(pkg_dir: Path) -> list[tuple[str, str, Path]]:
+        listings.append(pkg_dir)
+        return read(pkg_dir)
+
+    monkeypatch.setattr(addon_manager, "_read_distributions", counting)
+
+    first = addon_manager._distributions(live)
+    second = addon_manager._distributions(live)
+    _dist_info(live, "langchain_core", "1.4.7")
+    third = addon_manager._distributions(live)
+
+    assert first == second
+    assert len(listings) == 2
+    assert {name for name, _version, _folder in third} == {"spacy", "langchain-core"}
+
+
+def test_a_folder_changed_a_moment_ago_is_listed_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a packages folder whose stamp is as new as the clock can tell
+    When   its distributions are asked for, a package is added within the same tick, and they
+           are asked for again
+    Then   the second answer holds the new package: a listing that fresh is never kept
+    """
+    live = tmp_path / "packages"
+    _dist_info(live, "spacy", "3.8.0")
+    stamp = live.stat().st_mtime_ns
+    first = addon_manager._distributions(live)
+    _dist_info(live, "langchain_core", "1.4.7")
+    os.utime(live, ns=(stamp, stamp))  # the same stamp: the change fell into one tick
+
+    second = addon_manager._distributions(live)
+
+    assert {name for name, _version, _folder in first} == {"spacy"}
+    assert {name for name, _version, _folder in second} == {"spacy", "langchain-core"}
 
 
 # ── inject_packages_dir skip-when-unreadable ─────────────────────────────────
@@ -1214,8 +1266,10 @@ def test_foreign_check_is_off_outside_the_installed_app(
 
     assert addon_manager.foreign_python_packages(pkg_dir) == []
     assert addon_manager.addons_outdated() is False
-    with pytest.raises(RuntimeError, match="installed app"):
+    with pytest.raises(RuntimeError) as raised:
         addon_manager.update_installed_addons(lambda _line: None)
+
+    assert raised.value.args[0].key is MessageKey.ADDONS_UPDATE_NEEDS_INSTALL
     assert (pkg_dir / "spacy-3.8.0.dist-info").is_dir()
 
 
@@ -1512,6 +1566,46 @@ def test_prepare_applies_pending_and_drops_redundant_copies(
     assert not (live / "numpy-2.5.4.dist-info").exists()
     assert (live / "spacy-3.8.0.dist-info").is_dir()
     assert not (tmp_path / "packages.staging").exists()
+
+
+def test_prepare_once_cleans_a_folder_a_single_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a pip install's entry point, which starts with no earlier cleanup
+    When   the cleanup is asked for twice in one process
+    Then   the retired add-on is removed by the first, and the folder is not walked again
+    """
+    live = tmp_path / "packages"
+    _plant_package(live, "paddleocr-3.0.0", ["paddleocr/__init__.py"])
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: live)
+    monkeypatch.setattr(addon_manager, "_prepared", set())
+    retired = addon_manager.remove_retired_addons
+    calls: list[Path] = []
+    monkeypatch.setattr(
+        addon_manager, "remove_retired_addons", lambda path: calls.append(path) or retired(path)
+    )
+
+    addon_manager.prepare_packages_dir_once()
+    addon_manager.prepare_packages_dir_once()
+
+    assert calls == [live]
+    assert not (live / "paddleocr").exists()
+
+
+def test_prepare_removes_a_retired_addon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Given  the packages folder holding an add-on that is no longer installed
+    When   prepare_packages_dir() runs at start-up
+    Then   its files are gone before anything is imported from the folder
+    """
+    live = tmp_path / "packages"
+    _plant_package(live, "paddleocr-3.0.0", ["paddleocr/__init__.py"])
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: live)
+
+    addon_manager.prepare_packages_dir()
+
+    assert not (live / "paddleocr").exists()
 
 
 def test_prepare_keeps_the_staging_folder_of_an_install_that_may_still_run(

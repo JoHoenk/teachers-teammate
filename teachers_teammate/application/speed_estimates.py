@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+import functools
 import logging
 from statistics import median
 import threading
@@ -80,6 +81,7 @@ from ..infrastructure.speed_store import (
     SpeedRecord,
     SpeedStore,
     StepRecord,
+    StoredSpeed,
     now_stamp,
 )
 from .ports import OllamaClientFactory, OllamaServer
@@ -335,6 +337,72 @@ class SpeedSummary:
         return total
 
 
+@dataclass
+class _Rows:
+    """The rows of one speed summary, with what the measured ones say about the whole run."""
+
+    estimates: list[StepEstimate] = field(default_factory=list)
+    unmeasured: list[UnmeasuredStep] = field(default_factory=list)
+    load_s: list[float] = field(default_factory=list)
+    """Seconds of model loading one file pays, one entry per distinct figure."""
+    run_samples: list[RunSample] = field(default_factory=list)
+    measured_at: str = ""
+    on_battery: bool | None = None
+    shared: bool = False
+    swaps: bool = False
+    out_of_date: bool = False
+    card_unused: bool = False
+    too_slow: bool = False
+    documents: int = 0
+    pages: int = 0
+
+    def note(
+        self,
+        step: SpeedStep,
+        speed: ModelSpeed,
+        stored: StoredSpeed | None,
+        samples: Sequence[RunSample],
+        *,
+        from_runs: bool,
+        facts: ServerFacts | None,
+        hardware: HardwareDetection | None,
+    ) -> None:
+        """Add what one measured step says about the run as a whole."""
+        if step is SpeedStep.REVIEW:
+            # Only the review step says whether the writing models evict each other.
+            self.run_samples.extend(samples)
+        if step is SpeedStep.READING:
+            self.pages = max(self.pages, len(samples))
+        else:
+            self.documents = max(self.documents, len(samples))
+        if from_runs:
+            self.measured_at = max(self.measured_at, *(sample.at for sample in samples))
+        # The load seconds belong to the speed, wherever it came from: a run whose models evict
+        # each other pays them per file even when nothing was ever tested here.  The reading
+        # model's load is left out: it is another model than the writing ones.
+        if (
+            step is not SpeedStep.READING
+            and speed.load_s is not None
+            and speed.load_s not in self.load_s
+        ):
+            self.load_s.append(speed.load_s)
+        if stored is None:
+            return
+        self.measured_at = max(self.measured_at, stored.record.measured_at)
+        self.shared = self.shared or stored.record.shared
+        self.swaps = self.swaps or (step is not SpeedStep.READING and stored.record.swaps)
+        # A sample carries no digest, so it cannot go out of date; only the test can.
+        self.out_of_date = self.out_of_date or (
+            not from_runs and facts is not None and not stored.current
+        )
+        self.card_unused = self.card_unused or card_not_used(
+            speed.on_card, hardware is not None and hardware.gpu_name is not None
+        )
+        self.too_slow = self.too_slow or _outcome(stored.record, step) is StepOutcome.TOO_SLOW
+        if self.on_battery is None:
+            self.on_battery = stored.record.on_battery
+
+
 class SpeedEstimateService:
     """Runs the speed test and turns stored measurements into estimates."""
 
@@ -504,15 +572,42 @@ class SpeedEstimateService:
         """
         url = normalize_ollama_url(choices.ollama_url)
         facts = self.cached_server_facts(url) if cached_only else self.refresh_server_facts(url)
-        rows: list[StepEstimate] = []
-        unmeasured: list[UnmeasuredStep] = []
-        factors: MachineFactors | None = None
-        measured_at = ""
-        shared = swaps = out_of_date = card_unused = too_slow = False
-        on_battery: bool | None = None
-        load_s: list[float] = []
-        documents = pages = 0
-        run_samples: list[RunSample] = []
+        rows = self._rows(choices, url=url, facts=facts, hardware=hardware)
+        # A run that paid a model load for most of its documents is a run whose models evict
+        # each other: that is what the teacher sees as "every file takes longer than the last".
+        swaps = rows.swaps or _most_loaded(rows.run_samples)
+        return SpeedSummary(
+            steps=tuple(rows.estimates),
+            unmeasured=tuple(rows.unmeasured),
+            class_set=(
+                None
+                if rows.unmeasured
+                else _class_set(rows.estimates, swaps=swaps, load_s=rows.load_s)
+            ),
+            measured_at=rows.measured_at,
+            on_battery=rows.on_battery,
+            shared=rows.shared,
+            swaps=swaps,
+            swap_load_s=sum(rows.load_s) if swaps else 0.0,
+            out_of_date=rows.out_of_date,
+            card_not_used=rows.card_unused,
+            too_slow=rows.too_slow,
+            sample_count=rows.documents or rows.pages,
+            sample_pages=not rows.documents,
+        )
+
+    def _rows(
+        self,
+        choices: SpeedChoices,
+        *,
+        url: str,
+        facts: ServerFacts | None,
+        hardware: HardwareDetection | None,
+    ) -> _Rows:
+        """Return a row per step that runs, measured where there is a measurement to show."""
+        # ``machine_factors`` reads the whole store, so it is worked out on first need and once.
+        factors_of = functools.cache(self.machine_factors)
+        rows = _Rows()
         for step, tag in _steps_of(choices):
             by_mode = self._samples.samples(url, tag, step)
             samples = [sample for group in by_mode.values() for sample in group]
@@ -524,87 +619,28 @@ class SpeedEstimateService:
             if speed is None:
                 # The row stays: a step that runs here but was never measured still takes time,
                 # and a class set that left it out would promise a figure that is too short.
-                if factors is None:
-                    factors = self.machine_factors(url)
-                unmeasured.append(
+                rows.unmeasured.append(
                     UnmeasuredStep(
                         step=step,
                         model=tag,
-                        band=_expected_band(tag, step, hardware, factors),
+                        band=_expected_band(tag, step, hardware, factors_of(url)),
                     )
                 )
                 continue
-            # The rates do not depend on the mode, the answer length does: only the samples of the
-            # mode this run is set to say how long its answers are.
-            corrections_only = choices.correction_output == "text"
-            mode = _proofreading_mode(corrections_only) if step is SpeedStep.PROOFREADING else ""
-            answer = _run_answer_length(step, by_mode.get(mode, ()) if mode else samples)
-            per_page = _page_time(
-                step, speed, tag, answer=answer, corrections_only=corrections_only
-            )
-            rows.append(
-                StepEstimate(
-                    step=step,
-                    model=tag,
-                    per_page=per_page,
-                    band=band(per_page.typical_s),
-                    source=SpeedSource.MEASURED,
-                    outcome=None if stored is None else _outcome(stored.record, step),
-                    on_card=speed.on_card,
-                    message="" if stored is None else _message(stored.record, step),
-                    sample_count=len(samples),
+            rows.estimates.append(
+                _estimate(
+                    step,
+                    tag,
+                    speed,
+                    stored,
+                    by_mode,
+                    corrections_only=choices.correction_output == "text",
                 )
             )
-            if step is SpeedStep.REVIEW:
-                # Only the review step says whether the writing models evict each other.
-                run_samples.extend(samples)
-            if step is SpeedStep.READING:
-                pages = max(pages, len(samples))
-            else:
-                documents = max(documents, len(samples))
-            if from_runs:
-                measured_at = max(measured_at, *(sample.at for sample in samples))
-            # The load seconds belong to the speed, wherever it came from: a run whose models
-            # evict each other pays them per file even when nothing was ever tested here.
-            # The reading model's load is left out: it is another model than the writing ones.
-            if (
-                step is not SpeedStep.READING
-                and speed.load_s is not None
-                and speed.load_s not in load_s
-            ):
-                load_s.append(speed.load_s)
-            if stored is None:
-                continue
-            measured_at = max(measured_at, stored.record.measured_at)
-            shared = shared or stored.record.shared
-            swaps = swaps or (step is not SpeedStep.READING and stored.record.swaps)
-            # A sample carries no digest, so it cannot go out of date; only the test can.
-            out_of_date = out_of_date or (
-                not from_runs and facts is not None and not stored.current
+            rows.note(
+                step, speed, stored, samples, from_runs=from_runs, facts=facts, hardware=hardware
             )
-            card_unused = card_unused or card_not_used(
-                speed.on_card, hardware is not None and hardware.gpu_name is not None
-            )
-            too_slow = too_slow or _outcome(stored.record, step) is StepOutcome.TOO_SLOW
-            on_battery = stored.record.on_battery if on_battery is None else on_battery
-        # A run that paid a model load for most of its documents is a run whose models evict
-        # each other: that is what the teacher sees as "every file takes longer than the last".
-        swaps = swaps or _most_loaded(run_samples)
-        return SpeedSummary(
-            steps=tuple(rows),
-            unmeasured=tuple(unmeasured),
-            class_set=(None if unmeasured else _class_set(rows, swaps=swaps, load_s=load_s)),
-            measured_at=measured_at,
-            on_battery=on_battery,
-            shared=shared,
-            swaps=swaps,
-            swap_load_s=sum(load_s) if swaps else 0.0,
-            out_of_date=out_of_date,
-            card_not_used=card_unused,
-            too_slow=too_slow,
-            sample_count=documents or pages,
-            sample_pages=not documents,
-        )
+        return rows
 
     def _lookup_key(
         self,
@@ -702,6 +738,35 @@ class SpeedEstimateService:
                 if read_factor is not None:
                     reading.append(read_factor)
         return MachineFactors(writing=median_factor(writing), reading=median_factor(reading))
+
+
+def _estimate(
+    step: SpeedStep,
+    tag: str,
+    speed: ModelSpeed,
+    stored: StoredSpeed | None,
+    by_mode: Mapping[str, tuple[RunSample, ...]],
+    *,
+    corrections_only: bool,
+) -> StepEstimate:
+    """Return the row of one measured step, with the answer length its own runs measured."""
+    samples = [sample for group in by_mode.values() for sample in group]
+    # The rates do not depend on the mode, the answer length does: only the samples of the mode
+    # this run is set to say how long its answers are.
+    mode = _proofreading_mode(corrections_only) if step is SpeedStep.PROOFREADING else ""
+    answer = _run_answer_length(step, by_mode.get(mode, ()) if mode else samples)
+    per_page = _page_time(step, speed, tag, answer=answer, corrections_only=corrections_only)
+    return StepEstimate(
+        step=step,
+        model=tag,
+        per_page=per_page,
+        band=band(per_page.typical_s),
+        source=SpeedSource.MEASURED,
+        outcome=None if stored is None else _outcome(stored.record, step),
+        on_card=speed.on_card,
+        message="" if stored is None else _message(stored.record, step),
+        sample_count=len(samples),
+    )
 
 
 def _steps_of(choices: SpeedChoices) -> tuple[tuple[SpeedStep, str], ...]:

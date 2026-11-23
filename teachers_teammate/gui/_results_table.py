@@ -48,6 +48,7 @@ from ._constants import (
     _COLOUR_OK,
 )
 from ._export_menu import build_export_menu
+from ._qt import present
 from ._types import FileDoneEvent, StageStatus
 
 _PENDING_SYMBOL = "-"  # hyphen-minus pending indicator
@@ -180,8 +181,7 @@ class ResultsTable(QTableWidget):
                 txt.OPEN_COLUMN,
             ]
         )
-        _header = self.horizontalHeader()
-        assert _header is not None
+        _header = present(self.horizontalHeader(), "header")
         _header.setStretchLastSection(False)
         _header.setDefaultSectionSize(90)
         self.setColumnWidth(self._COL_FILE, 200)

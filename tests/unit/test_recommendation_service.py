@@ -384,10 +384,10 @@ def test_unreachable_server_is_asked_once_not_per_model() -> None:
     Then   the server is contacted only for the first model (one timeout, not one per
            model), every model maps to None, and a later call asks again
     """
-    from teachers_teammate.exceptions import OllamaConnectionError  # noqa: PLC0415
+    from teachers_teammate.exceptions import OllamaUnreachableError  # noqa: PLC0415
 
     def down(_tag: str) -> frozenset[str] | None:
-        raise OllamaConnectionError("down")
+        raise OllamaUnreachableError("down")
 
     server = _FakeServer(down)
     service = _service(server=server)

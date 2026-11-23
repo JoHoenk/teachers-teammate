@@ -80,9 +80,9 @@ PAGE_MODELS_DOWNLOADED = DOWNLOADED_MARK
 READER_MODEL_MISMATCH = "The built-in reader's model files don't match this version of the app."
 
 
-def reader_model_mismatch(reason: BaseException) -> str:
-    """Return the same sentence for a reader that failed as it loaded, naming *reason*."""
-    return f"{READER_MODEL_MISMATCH} ({reason})"
+def reader_model_mismatch(reason: str | None = None) -> str:
+    """Return the same sentence, naming *reason* when the reader failed as it loaded."""
+    return READER_MODEL_MISMATCH if reason is None else f"{READER_MODEL_MISMATCH} ({reason})"
 
 
 def models_not_downloaded(repo: str) -> str:
@@ -98,7 +98,15 @@ def download_damaged(name: str) -> str:
     )
 
 
-def model_pull_failed(reason: BaseException) -> str:
+def download_too_large(name: str) -> str:
+    """Return what a download says when the answer is bigger than the file it should be."""
+    return (
+        f"The download of {name} sent more data than the file holds, so it was stopped. "
+        "Please try again."
+    )
+
+
+def model_pull_failed(reason: str) -> str:
     """Return what a download of a model from the AI server says when it breaks off."""
     return f"Download failed: {reason}"
 
@@ -126,11 +134,14 @@ def unknown_provider_error(provider: str, available: str) -> str:
 
 # ── Name detection: spaCy ─────────────────────────────────────────────────────
 
-#: What the app says about anonymization without spaCy: the library is required for it.
-SPACY_REQUIRED = "spacy is required for anonymization"
+#: What the app says about anonymization without spaCy: it is one of the add-ons.
+SPACY_REQUIRED = (
+    "Removing personal info needs spaCy, which the Add-ons page installs (and the name "
+    "detection model for the language of the text)"
+)
 
 
-def spacy_not_loadable(reason: BaseException) -> str:
+def spacy_not_loadable(reason: str) -> str:
     """Return what the app says about a spaCy that is installed but cannot be imported."""
     return f"spacy is installed but cannot be loaded: {reason}"
 

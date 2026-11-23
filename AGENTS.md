@@ -83,6 +83,10 @@ or `docs/development.md`.
 - A sentence a teacher reads is defined in `teachers_teammate/texts/` and used by reference,
   never a literal at the call site. Message boxes and file pickers go through
   `gui/_dialogs.py`. `tests/unit/test_user_text_centralised.py` enforces it.
+- A failure raised in `infrastructure` carries a `Message` (`teachers_teammate/messages.py`): a
+  key and its data, never a sentence. `texts/messages.py` words it. A caught error goes in as
+  `message_of(exc)`, never `str(exc)`; a new key is an enum value, a factory, a renderer and a line
+  in the golden list of `tests/unit/test_messages.py`, and a released key's value never changes.
 - A service is built once per entry point (`application/composition.py`, called from the
   composition modules); every other class is given the one it uses, never builds or looks one up
   (`tests/unit/test_service_construction.py`).

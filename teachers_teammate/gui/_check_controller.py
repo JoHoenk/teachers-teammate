@@ -504,11 +504,11 @@ class CheckController(QObject):
 
     # ── The Copy menu of the open document ───────────────────────────────
 
-    def show_copy_state(self, raw_txt: str, corr_txt: str) -> None:
+    def show_copy_state(self, raw_text: str, corrected_text: str) -> None:
         """Say what the Copy menu may offer for a document with these texts."""
         self._copy_state = CopyState(
-            has_raw=bool(raw_txt.strip()),
-            has_corrected=bool(corr_txt.strip()),
+            has_raw=bool(raw_text.strip()),
+            has_corrected=bool(corrected_text.strip()),
             can_hide_names=self._hooks.privacy_available(),
         )
         self._page.set_copy_state(self._copy_state)

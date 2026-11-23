@@ -571,6 +571,7 @@ class CacheReconciliationService:
         ctx: CacheContext,
         *,
         evaluation_text: str,
+        evaluation_warning: str = "",
         names_hidden: int = 0,
     ) -> CacheContext:
         """Persist evaluation result and return updated context.
@@ -584,6 +585,7 @@ class CacheReconciliationService:
             ctx.state,
             evaluation_text=evaluation_text,
             eval_config_hash=ctx.eval_config_hash,
+            evaluation_warning=evaluation_warning,
             sent=sent_record(self._config, Stage.EVALUATION, names_hidden=names_hidden),
         )
         return dataclasses.replace(ctx, state=new_state)

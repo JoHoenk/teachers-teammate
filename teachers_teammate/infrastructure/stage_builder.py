@@ -52,9 +52,10 @@ from ..interfaces import (
     OCRProcessor,
     Reporter,
 )
+from ..messages import message_of, personal_info_setup_failed
 from ..texts import report as report_text
 from ..texts.dialogs import cli_warning
-from ..texts.run import personal_info_not_removed, personal_info_setup_failed
+from ..texts.run import personal_info_not_removed
 from .anonymizer import anonymizer_config_from, resolve_anonymizer_config
 from .docx_builder import DocxDocumentCreator
 from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
@@ -571,7 +572,7 @@ class StageBuilder:
             )
             return self.factory.build_anonymizer(language=cfg.language, config=anon_config)
         except (ImportError, OSError) as exc:
-            raise ProviderNotAvailableError(personal_info_setup_failed(exc)) from exc
+            raise ProviderNotAvailableError(personal_info_setup_failed(message_of(exc))) from exc
 
     def build_text_anonymizer(self, shared: Anonymizer | None = None) -> Anonymizer | None:
         """Return the anonymizer for anonymized text files, or ``None`` when they are off.

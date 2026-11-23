@@ -29,13 +29,13 @@ import json
 from pathlib import Path
 import threading
 
+from ..atomic_file import write_text_atomic
 from ..domain.data_location import SentRecord
 from ..domain.formatted_text import normalize_text_format
 from ..domain.freshness import reset_policy_from_stage, should_invalidate_preview_artifact
 from ..domain.proofreading.review import CorrectionReview
 from ..domain.stages import Stage, normalize_stage
 from ..domain.teacher_work import MachineTexts
-from .atomic_file import write_text_atomic
 from .storage_root import document_stem
 
 
@@ -131,6 +131,8 @@ class DocumentState:
     correction_sent_map: dict[str, str] | None = None
     correction_sent: dict | None = None
     evaluation_text: str = ""
+    # What the content review's run reported, replayed when the cached review is reused.
+    evaluation_warning: str = ""
     # How the stored content review was sent (``SentRecord.to_dict()``).  Its text is not
     # stored: the content review is being redesigned, and what it sends is stored with that.
     evaluation_sent: dict | None = None
@@ -238,6 +240,7 @@ _CLEARED: Mapping[Stage, Mapping[str, object]] = {
         "evaluation_done": False,
         "eval_config_hash": "",
         "evaluation_text": "",
+        "evaluation_warning": "",
         "evaluation_sent": None,
     },
 }
@@ -482,6 +485,7 @@ class StateRepository:
         *,
         evaluation_text: str,
         eval_config_hash: str,
+        evaluation_warning: str = "",
         sent: SentRecord | None = None,
     ) -> DocumentState:
         """Persist evaluation output without changing earlier stages.
@@ -492,6 +496,7 @@ class StateRepository:
             state,
             evaluation_done=bool(evaluation_text),
             evaluation_text=evaluation_text,
+            evaluation_warning=evaluation_warning,
             evaluation_sent=sent.to_dict() if sent is not None else None,
             eval_config_hash=eval_config_hash,
         )

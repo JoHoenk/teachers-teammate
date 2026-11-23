@@ -1,4 +1,4 @@
-"""Unit tests for writing a small file in one step (``infrastructure/atomic_file.py``)."""
+"""Unit tests for writing a small file in one step (``atomic_file.py``)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.infrastructure.atomic_file import write_text_atomic
+from teachers_teammate.atomic_file import write_text_atomic
 
 
 def test_write_text_atomic_writes_the_text(tmp_path: Path) -> None:
@@ -65,7 +65,7 @@ def test_write_text_atomic_keeps_the_old_file_when_the_swap_fails(
     def broken_replace(*_args: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr("teachers_teammate.infrastructure.atomic_file.os.replace", broken_replace)
+    monkeypatch.setattr("teachers_teammate.atomic_file.os.replace", broken_replace)
 
     with pytest.raises(OSError, match="disk full"):
         write_text_atomic(path, "new")
@@ -82,13 +82,13 @@ def test_write_text_atomic_writes_in_place_when_the_swap_is_refused(
     When   the text is written atomically
     Then   the text is still written, and no temporary file is left behind
     """
-    monkeypatch.setattr("teachers_teammate.infrastructure.atomic_file._REPLACE_WAIT_S", 0.0)
+    monkeypatch.setattr("teachers_teammate.atomic_file._REPLACE_WAIT_S", 0.0)
     path = tmp_path / "state.json"
 
     def refused(*_args: object) -> None:
         raise PermissionError("held open")
 
-    monkeypatch.setattr("teachers_teammate.infrastructure.atomic_file.os.replace", refused)
+    monkeypatch.setattr("teachers_teammate.atomic_file.os.replace", refused)
 
     write_text_atomic(path, "new")
 
@@ -106,7 +106,7 @@ def test_write_text_atomic_retries_a_refused_swap_before_giving_in(
     """
     real_replace = os.replace  # the patch below replaces it on the shared os module
 
-    monkeypatch.setattr("teachers_teammate.infrastructure.atomic_file._REPLACE_WAIT_S", 0.0)
+    monkeypatch.setattr("teachers_teammate.atomic_file._REPLACE_WAIT_S", 0.0)
     path = tmp_path / "state.json"
     calls: list[int] = []
 
@@ -116,12 +116,30 @@ def test_write_text_atomic_retries_a_refused_swap_before_giving_in(
             raise PermissionError("held open")
         real_replace(source, target)
 
-    monkeypatch.setattr("teachers_teammate.infrastructure.atomic_file.os.replace", flaky)
+    monkeypatch.setattr("teachers_teammate.atomic_file.os.replace", flaky)
 
     write_text_atomic(path, "new")
 
     assert len(calls) == 2
     assert path.read_text(encoding="utf-8") == "new"
+
+
+def test_write_text_atomic_keeps_a_symlink_a_link(tmp_path: Path) -> None:
+    """
+    Given  a settings file that is a symlink, as a kept dotfiles folder has it
+    When   the text is written atomically
+    Then   the file the link points at holds the text and the link is still a link
+    """
+    target = tmp_path / "dotfiles" / "ocr.toml"
+    target.parent.mkdir()
+    target.write_text("old", encoding="utf-8")
+    link = tmp_path / "ocr.toml"
+    link.symlink_to(target)
+
+    write_text_atomic(link, "new")
+
+    assert target.read_text(encoding="utf-8") == "new"
+    assert link.is_symlink()
 
 
 def test_two_writes_never_share_a_temporary_file(tmp_path: Path) -> None:
@@ -150,3 +168,20 @@ def test_two_writes_never_share_a_temporary_file(tmp_path: Path) -> None:
 
     assert errors == []
     assert path.read_text(encoding="utf-8") in {"a", "b"}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="permission bits are POSIX")
+def test_write_text_atomic_keeps_the_permissions_of_the_file(tmp_path: Path) -> None:
+    """
+    Given  a file that others may read (0644)
+    When   a new text is written atomically
+    Then   the file holds the text and is still 0644
+    """
+    path = tmp_path / "ocr.toml"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o644)
+
+    write_text_atomic(path, "new")
+
+    assert path.read_text(encoding="utf-8") == "new"
+    assert path.stat().st_mode & 0o777 == 0o644

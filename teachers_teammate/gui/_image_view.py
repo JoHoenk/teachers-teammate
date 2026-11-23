@@ -8,6 +8,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QWidget
 
+from ._qt import present
+
 
 class ZoomableImageView(QGraphicsView):
     """QGraphicsView for displaying a QPixmap with interactive zoom and pan."""
@@ -32,8 +34,7 @@ class ZoomableImageView(QGraphicsView):
         if pix.isNull():
             self._show_text("(image unavailable)")
             return
-        pix_item = self._scene.addPixmap(pix)
-        assert pix_item is not None
+        pix_item = present(self._scene.addPixmap(pix), "pixmap item")
         self._pix_item = pix_item
         self.setSceneRect(pix_item.boundingRect())
         self._fitted = True
@@ -56,8 +57,7 @@ class ZoomableImageView(QGraphicsView):
         frac_y = center.y() / old_rect.height()
         zoom = self.transform().m11()
         self._scene.clear()
-        new_item = self._scene.addPixmap(pix)
-        assert new_item is not None
+        new_item = present(self._scene.addPixmap(pix), "pixmap item")
         self._pix_item = new_item
         new_rect = new_item.boundingRect()
         self.setSceneRect(new_rect)

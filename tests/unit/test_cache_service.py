@@ -767,6 +767,7 @@ def test_record_evaluation_delegates_to_repo(tmp_path: Path) -> None:
         ctx.state,
         evaluation_text="quality: good",
         eval_config_hash=ctx.eval_config_hash,
+        evaluation_warning="",
         sent=sent_record(svc._config, Stage.EVALUATION),
     )
     assert result.state is new_state

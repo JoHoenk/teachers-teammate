@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import closing, contextmanager
+import errno
 import hashlib
 import logging
 import os
@@ -25,11 +26,9 @@ from typing import Any
 from ... import __version__
 from ...domain.local_models import HUGGING_FACE_HOST, LocalModel, ModelFile
 from ...exceptions import ModelDownloadCancelledError, ModelDownloadError, ModelMissingError
-from ...texts.addons import (
-    DOWNLOAD_CANCELLED,
-    download_damaged,
-    models_not_downloaded,
-)
+from ...messages import download_cancelled, download_damaged, models_not_downloaded
+from ...texts.addons import download_too_large
+from ..storage_root import app_data_folder
 
 _logger = logging.getLogger(__name__)
 
@@ -53,7 +52,7 @@ def _one_download_at_a_time(cancel: threading.Event | None) -> Iterator[None]:
     """Hold the download lock; a download that waits for it can still be cancelled."""
     while not _DOWNLOAD_LOCK.acquire(timeout=_LOCK_POLL_S):
         if cancel is not None and cancel.is_set():
-            raise ModelDownloadCancelledError(DOWNLOAD_CANCELLED)
+            raise ModelDownloadCancelledError(download_cancelled())
     try:
         yield
     finally:
@@ -65,12 +64,7 @@ def default_models_dir() -> Path:
     override = os.environ.get(MODELS_DIR_ENV)
     if override:
         return Path(override)
-    try:
-        from platformdirs import user_data_dir  # noqa: PLC0415
-
-        return Path(user_data_dir("teachers_teammate", appauthor=False)) / "models"
-    except ImportError:
-        return Path.home() / ".local" / "share" / "teachers_teammate" / "models"
+    return app_data_folder() / "models"
 
 
 def default_bundled_models_dir() -> Path | None:
@@ -286,12 +280,16 @@ class ModelStore:
                     with part.open("wb") as out:
                         for chunk in response.iter_content(chunk_size=_CHUNK):
                             if cancel is not None and cancel.is_set():
-                                raise ModelDownloadCancelledError(DOWNLOAD_CANCELLED)
+                                raise ModelDownloadCancelledError(download_cancelled())
                             if not chunk:
                                 continue
                             out.write(chunk)
                             digest.update(chunk)
                             size += len(chunk)
+                            if size > file.size:
+                                # The answer outgrew the file it should be: reading on would
+                                # fill the disk for a download that cannot pass the check.
+                                raise ModelDownloadError(download_too_large(file.name))
                             report(size)
                 except requests.RequestException as exc:
                     raise ModelDownloadError(_network_message(exc)) from exc
@@ -315,7 +313,7 @@ def _network_message(exc: Exception) -> str:
 
 
 def _disk_message(path: Path, exc: OSError) -> str:
-    if getattr(exc, "errno", None) == 28:  # ENOSPC
+    if getattr(exc, "errno", None) == errno.ENOSPC:
         return f"There is no space left on the disk to save the model files in {path.parent}."
     return _not_writable(path.parent, exc)
 

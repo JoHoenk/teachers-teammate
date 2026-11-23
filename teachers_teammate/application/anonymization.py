@@ -50,7 +50,7 @@ class AnonymizationService:
 
     # ── The anonymizer ────────────────────────────────────────────────────
 
-    def warm_up_anonymizer(self, language: str, config: object | None = None) -> None:
+    def warm_up_anonymizer(self, language: str, config: AnonymizerConfig | None = None) -> None:
         """Load (and cache) the anonymizer for *language* so a missing model shows up early.
 
         Raises:
@@ -61,7 +61,7 @@ class AnonymizationService:
             self._anonymizer(language, config)
 
     def _anonymizer(
-        self, language: str, config: object | None
+        self, language: str, config: AnonymizerConfig | None
     ) -> tuple[Anonymizer, AnonymizerConfig]:
         """Return the cached anonymizer and its resolved settings; callers hold the lock."""
         anon_config = self.resolve_anonymizer_config(language, config)
@@ -91,13 +91,16 @@ class AnonymizationService:
             self._anonymizer_lock,
         )
 
-    def anonymize_preview(
+    def anonymize_text(
         self,
         text: str,
         language: str,
-        config: object | None = None,
+        config: AnonymizerConfig | None = None,
     ) -> tuple[str, dict[str, str]]:
         """Anonymize *text* using NER + configured regex patterns.
+
+        What the privacy preview, the Copy menu and a saved text export all use, so they can
+        never hide different things in the same document.
 
         Args:
             text: Raw text to anonymize.
@@ -148,7 +151,7 @@ class AnonymizationService:
             self._warned.add(message)
             _logger.warning("%s", message)
 
-    def anonymizer_available(self, language: str, config: object | None = None) -> bool:
+    def anonymizer_available(self, language: str, config: AnonymizerConfig | None = None) -> bool:
         """Return whether personal information can be hidden for *language* right now.
 
         The models are resolved the way a run resolves them, so a chosen primary model counts:
@@ -182,7 +185,7 @@ class AnonymizationService:
         return spacy_model_for(language) if language else None
 
     def resolve_anonymizer_config(
-        self, language: str, config: object | None = None
+        self, language: str, config: AnonymizerConfig | None = None
     ) -> AnonymizerConfig:
         """Return *config* with the spaCy models that will actually be loaded.
 
@@ -191,9 +194,7 @@ class AnonymizationService:
         no extra pass runs).  An explicitly chosen model is kept as it is: if it is missing,
         building the anonymizer fails as before.
         """
-        anon_config: AnonymizerConfig = (
-            config if isinstance(config, AnonymizerConfig) else AnonymizerConfig()
-        )
+        anon_config = config if config is not None else AnonymizerConfig()
         from ..infrastructure.anonymizer import resolve_anonymizer_config  # noqa: PLC0415
         from ..infrastructure.system_locale import system_language  # noqa: PLC0415
 
@@ -205,7 +206,7 @@ class AnonymizationService:
             warn=self._warn_once,
         )
 
-    def anonymizer_models(self, language: str, config: object | None = None) -> list[str]:
+    def anonymizer_models(self, language: str, config: AnonymizerConfig | None = None) -> list[str]:
         """Return the spaCy models personal-info removal loads for *language* and *config*.
 
         Resolved the same way a run resolves them, so a chosen primary model counts and an
@@ -215,9 +216,7 @@ class AnonymizationService:
         from ..infrastructure.anonymizer import resolve_anonymizer_config  # noqa: PLC0415
         from ..infrastructure.system_locale import system_language  # noqa: PLC0415
 
-        anon_config: AnonymizerConfig = (
-            config if isinstance(config, AnonymizerConfig) else AnonymizerConfig()
-        )
+        anon_config = config if config is not None else AnonymizerConfig()
         resolved = resolve_anonymizer_config(
             anon_config,
             document_language=language,

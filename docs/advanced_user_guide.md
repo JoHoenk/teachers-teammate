@@ -277,6 +277,10 @@ anonymization_enabled = true
 
 A value the app does not know falls back to the default, with a warning in the log.
 
+A file the app cannot read — damaged, or saved by an old editor in a different encoding — is kept
+as it is: the app copies it to `ocr.toml.broken` in the same folder and starts with default
+settings. Your saved settings stay in that copy.
+
 ## The command line
 
 The command line runs the same processing as the window and reads the same `ocr.toml`; its

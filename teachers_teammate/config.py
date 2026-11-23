@@ -14,10 +14,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import shutil
 import tomllib
 from typing import Any
 
 from ._model_defaults import default_model_for_task
+from .atomic_file import write_text_atomic
 from .domain.correction_policy import CorrectionOutput
 from .domain.model_catalog import (
     OCR_TEMPERATURE,
@@ -310,6 +312,10 @@ def _read_toml(path: Path) -> dict[str, Any]:
             return tomllib.load(fh)
     except OSError as exc:
         raise ConfigFileParseError(f"Cannot read config file '{path}': {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ConfigFileParseError(
+            f"Could not read config file {path}: it is not UTF-8 ({exc.reason} at byte {exc.start})"
+        ) from exc
     except tomllib.TOMLDecodeError as exc:
         raise ConfigFileParseError(f"Could not parse config file {path}: {exc}") from exc
 
@@ -337,57 +343,120 @@ def load_config_file(path: Path) -> LoadedSettings:
     return normalize_settings(_read_toml(path))
 
 
-def _toml_string(val: str) -> str:
-    """Return *val* as a properly-escaped TOML value string.
-
-    Multi-line values use triple-quoted basic strings; single-line values use
-    regular quoted basic strings.  All required escape sequences are applied so
-    that ``tomllib.loads()`` round-trips the value correctly.
-    """
-    if "\n" in val or "\r" in val:
-        # Escape backslashes first, then protect any embedded triple-quote.
-        escaped = val.replace("\\", "\\\\").replace('"""', '""\\"')
-        return f'"""\n{escaped}\n"""'
-    escaped = (
-        val.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\t", "\\t")
-        .replace("\x08", "\\b")
-        .replace("\x0c", "\\f")
-    )
-    return f'"{escaped}"'
+_TOML_ESCAPES = {
+    "\\": "\\\\",
+    '"': '\\"',
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+    "\b": "\\b",
+    "\f": "\\f",
+}
 
 
-def _toml_list(val: list) -> str:
-    """Serialize a Python list as a TOML inline array."""
-    items: list[str] = []
-    for item in val:
-        if isinstance(item, (list, tuple)):
-            sub = ", ".join(_toml_string(x) if isinstance(x, str) else str(x) for x in item)
-            items.append(f"[{sub}]")
-        elif isinstance(item, str):
-            items.append(_toml_string(item))
+def _toml_escape(value: str) -> str:
+    """Return *value* escaped for a single-line TOML basic string."""
+    out: list[str] = []
+    for char in value:
+        escape = _TOML_ESCAPES.get(char)
+        if escape is not None:
+            out.append(escape)
+        elif ord(char) < 0x20 or ord(char) == 0x7F:
+            out.append(f"\\u{ord(char):04X}")
         else:
-            items.append(str(item))
-    return "[" + ", ".join(items) + "]"
+            out.append(char)
+    return "".join(out)
+
+
+def _survives_block_string(value: str) -> bool:
+    """Return whether *value* reads back unchanged from a multi-line basic string.
+
+    A block string trims the newline after its opening delimiter and takes the one before its
+    closing delimiter as content, so only a value of several lines without a backslash, a
+    carriage return, a control character or a trailing quote can use it.
+    """
+    if "\n" not in value or value.endswith('"') or '"""' in value:
+        return False
+    for char in value:
+        if char in "\n\t":
+            continue
+        if char in "\\\r" or ord(char) < 0x20 or ord(char) == 0x7F:
+            return False
+    return True
+
+
+def _toml_string(value: str) -> str:
+    """Return *value* as a TOML string that reads back as *value*.
+
+    A value of several lines keeps the block form, so a prompt stays readable in ``ocr.toml``;
+    anything a block cannot carry is written as one escaped line.
+    """
+    if _survives_block_string(value):
+        return f'"""\n{value}"""'
+    return f'"{_toml_escape(value)}"'
+
+
+def _toml_value(value: object) -> str:
+    """Return *value* as a TOML value.
+
+    Raises:
+        TypeError: the value is of a type a settings file cannot hold.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return _toml_string(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    raise TypeError(f"a settings file cannot hold a {type(value).__name__}")
 
 
 def dump_config_file(values: dict) -> str:
     """Serialize a settings *values* dict to ``ocr.toml`` text.
 
-    Inverse of :func:`load_config_file`: the output round-trips back through it.
-    ``None`` values are skipped.  Keys are written in iteration order.
+    Inverse of :func:`load_config_file`: the output round-trips back through it.  ``None`` values
+    are skipped.  Keys are written in iteration order.
+
+    Raises:
+        TypeError: a value is of a type a settings file cannot hold (the schema produces none).
     """
     lines = ["# ocr.toml — Teacher's Teammate configuration\n"]
     for key, val in values.items():
         if val is None:
             continue
-        if isinstance(val, bool):
-            lines.append(f"{key} = {'true' if val else 'false'}\n")
-        elif isinstance(val, str):
-            lines.append(f"{key} = {_toml_string(val)}\n")
-        elif isinstance(val, list):
-            lines.append(f"{key} = {_toml_list(val)}\n")
-        else:
-            lines.append(f"{key} = {val}\n")
+        try:
+            lines.append(f"{key} = {_toml_value(val)}\n")
+        except TypeError as exc:
+            raise TypeError(f"{key}: {exc}") from exc
     return "".join(lines)
+
+
+def save_settings_file(path: Path, values: dict) -> None:
+    """Write *values* to *path* in one step, so a crash never leaves half a file behind.
+
+    Raises:
+        OSError: the file cannot be written at all.
+    """
+    write_text_atomic(path, dump_config_file(values))
+
+
+def broken_settings_copy(path: Path) -> Path | None:
+    """Copy the settings file at *path* that cannot be read, and return the copy.
+
+    The copy is ``<name>.broken``, or the next free ``<name>.broken.<n>``: an existing copy is
+    never overwritten, because the first broken file is the one worth keeping.  ``None`` when
+    there is no file to copy.
+    """
+    if not path.is_file():
+        return None
+    target = path.with_name(f"{path.name}.broken")
+    counter = 1
+    while target.exists():
+        target = path.with_name(f"{path.name}.broken.{counter}")
+        counter += 1
+    shutil.copy2(path, target)
+    return target

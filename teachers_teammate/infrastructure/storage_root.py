@@ -18,8 +18,7 @@ Responsibilities
 Storage root candidates (in priority order)
 -------------------------------------------
 1. ``TEACHERS_TEAMMATE_TMPDIR`` environment variable, when set.
-2. The per-user OS cache directory returned by ``platformdirs.user_cache_dir``
-   (falls back to ``~/.cache/teachers_teammate`` when ``platformdirs`` is absent).
+2. The per-user OS cache directory returned by ``platformdirs.user_cache_dir``.
 
 Settings and history are not cache
 ----------------------------------
@@ -47,9 +46,12 @@ from pathlib import Path
 import shutil
 import threading
 
+import platformdirs
+from platformdirs import user_cache_dir
+
 from ..config import override_root
 from ..exceptions import ConfigFileNotFoundError, StorageResolutionError
-from ..texts.run import config_file_missing, storage_root_unresolved
+from ..messages import config_file_missing, storage_root_unresolved
 
 # StorageResolutionError is defined in exceptions.py; re-exported here for
 # backwards-compatibility with any code that imported it from this module.
@@ -97,13 +99,6 @@ def document_stem(path: Path) -> str:
 
 def _get_platform_cache_dir() -> Path:
     """Return the per-user OS cache directory used as the persistent cache root."""
-    try:
-        from platformdirs import user_cache_dir  # noqa: PLC0415
-    except ImportError:
-        cache_dir = Path.home() / ".cache" / "teachers_teammate"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        return cache_dir
-
     cache_dir = Path(user_cache_dir("teachers_teammate", appauthor=False, ensure_exists=True))
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
@@ -115,11 +110,6 @@ def _platform_dir(kind: str) -> Path:
     The folder is not created: callers that write create it, and the migration looks at the
     cache folder without making one.
     """
-    try:
-        import platformdirs  # noqa: PLC0415
-    except ImportError:
-        fallback = {"cache": ".cache", "config": ".config", "data": ".local/share"}[kind]
-        return Path.home() / fallback / _APP_NAME
     finder = getattr(platformdirs, f"user_{kind}_dir")
     return Path(finder(_APP_NAME, appauthor=False))
 
@@ -144,6 +134,15 @@ def _user_root(kind: str) -> Path:
         _log.warning("Cannot use %s (%s); keeping the %s in the storage root", path, exc, kind)
         return resolve_storage_root().path
     return path
+
+
+def app_data_folder() -> Path:
+    """Return the per-user data folder of the app, without creating it.
+
+    What belongs next to the data root but not in it — the add-on packages and the downloaded
+    models — hangs off this folder.
+    """
+    return _platform_dir("data")
 
 
 def resolve_config_root() -> Path:

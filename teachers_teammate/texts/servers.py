@@ -37,6 +37,8 @@ STATUS_NOT_FOUND = (
     "this line turns green by itself."
 )
 BUTTON_START_OLLAMA = "Start Ollama"
+#: What the app says about a server that is not running, wherever there is no button to press.
+START_OLLAMA_HINT = "Use “Start Ollama” to start it."
 BUTTON_GET_OLLAMA = "Get Ollama…"
 BUTTON_CHECK_AGAIN = "Check again"
 
@@ -139,14 +141,14 @@ def card_place(kind: ServerKind, url: str) -> str:
 # ── Reaching the server ───────────────────────────────────────────────────────
 
 
-def cannot_reach(url: str, reason: BaseException) -> str:
+def cannot_reach(url: str, reason: str) -> str:
     """Return what the app says about a server whose answer could not be read."""
     return f"Cannot reach Ollama at {url}: {reason}"
 
 
 def cannot_connect(url: str) -> str:
     """Return what the app says about a server it cannot open a connection to."""
-    return f"Cannot connect to Ollama at {url}. Is it running? Start it with: ollama serve"
+    return f"Cannot connect to Ollama at {url}. Is it running? {START_OLLAMA_HINT}"
 
 
 def connection_timed_out(url: str) -> str:
@@ -154,17 +156,17 @@ def connection_timed_out(url: str) -> str:
     return f"Connection to Ollama at {url} timed out. Check the URL and network settings."
 
 
-def contact_failed(url: str, reason: BaseException) -> str:
+def contact_failed(url: str, reason: str) -> str:
     """Return what the app says about a server that failed in a way it cannot name."""
     return f"Unexpected error contacting Ollama at {url}: {reason}"
 
 
-def unreachable(url: str, reason: BaseException) -> str:
+def unreachable(url: str, reason: str) -> str:
     """Return what a proofreading request says about the server it cannot reach."""
     return f"cannot connect to Ollama at {url} — {reason}"
 
 
-def http_error(reason: BaseException) -> str:
+def http_error(reason: str) -> str:
     """Return what a request says about an answer the server refused with an HTTP error."""
     return f"HTTP error from Ollama: {reason}"
 
@@ -216,7 +218,7 @@ def answer_abandoned(seconds: float) -> str:
 
 def check_cannot_connect(url: str) -> str:
     """Return the check's line for a server that refused the connection."""
-    return f"✗ Cannot connect to Ollama at {url} — is it running? (ollama serve)"
+    return f"✗ Cannot connect to Ollama at {url} — is it running? {START_OLLAMA_HINT}"
 
 
 def check_timed_out(url: str) -> str:

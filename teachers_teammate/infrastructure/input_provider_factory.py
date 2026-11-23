@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from ..domain.pdf_text_layer import PdfTextLayerMode
 from ..exceptions import PipelineInputError
 from ..interfaces import SUPPORTED_SUFFIXES, InputProvider
-from ..texts.run import unsupported_input_suffix
+from ..messages import unsupported_input_suffix
 
 if TYPE_CHECKING:
     from ..config import OcrConfig
@@ -84,10 +84,11 @@ _SUFFIX_TO_BUILDER: dict[str, _ProviderBuilder] = {
 # Suffixes whose loaded content depends on an input option beyond the page images' DPI.
 _SUFFIX_TO_FINGERPRINT: dict[str, _FingerprintBuilder] = {".pdf": _pdf_fingerprint}
 
-assert frozenset(_SUFFIX_TO_BUILDER.keys()) == SUPPORTED_SUFFIXES, (
-    f"_SUFFIX_TO_BUILDER keys {set(_SUFFIX_TO_BUILDER)} do not match "
-    f"SUPPORTED_SUFFIXES {SUPPORTED_SUFFIXES} — update both together"
-)
+if frozenset(_SUFFIX_TO_BUILDER.keys()) != SUPPORTED_SUFFIXES:
+    raise RuntimeError(
+        f"_SUFFIX_TO_BUILDER keys {set(_SUFFIX_TO_BUILDER)} do not match "
+        f"SUPPORTED_SUFFIXES {SUPPORTED_SUFFIXES} — update both together"
+    )
 
 
 def supported_suffixes() -> frozenset[str]:

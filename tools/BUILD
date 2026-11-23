@@ -131,6 +131,7 @@ py_binary(
         "@ocr_test_dependencies//ollama:pkg",
         "@ocr_test_dependencies//opencv_python_headless:pkg",
         "@ocr_test_dependencies//pillow:pkg",
+        "@ocr_test_dependencies//platformdirs:pkg",
     ],
 )
 

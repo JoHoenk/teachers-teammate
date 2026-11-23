@@ -14,6 +14,7 @@ from teachers_teammate.infrastructure.input_providers import (
     TextInputProvider,
     pdf_has_text_layer,
 )
+from teachers_teammate.interfaces import ImageUnit, TextUnit
 from tests.conftest import write_text_pdf
 
 
@@ -26,8 +27,9 @@ def test_image_provider_list_has_one_entry(sample_png: Path) -> None:
     provider = ImageInputProvider()
     payload = provider.load(sample_png)
     assert len(payload.units) == 1
-    assert payload.units[0].kind == "image"
-    assert payload.units[0].image_path == sample_png
+    unit = payload.units[0]
+    assert isinstance(unit, ImageUnit)
+    assert unit.path == sample_png
     assert payload.source_image == sample_png
 
 
@@ -51,9 +53,8 @@ def test_pdf_provider_pages_are_existing_files(tmp_path: Path, sample_pdf: Path)
     provider = PdfInputProvider(tmp_dir=tmp_path)
     payload = provider.load(sample_pdf)
     for unit in payload.units:
-        p = unit.image_path
-        assert unit.kind == "image"
-        assert p is not None
+        assert isinstance(unit, ImageUnit)
+        p = unit.path
         assert p.exists(), f"Page image does not exist: {p}"
 
 
@@ -66,9 +67,8 @@ def test_pdf_provider_pages_are_png(tmp_path: Path, sample_pdf: Path) -> None:
     provider = PdfInputProvider(tmp_dir=tmp_path)
     payload = provider.load(sample_pdf)
     for unit in payload.units:
-        p = unit.image_path
-        assert unit.kind == "image"
-        assert p is not None
+        assert isinstance(unit, ImageUnit)
+        p = unit.path
         assert p.suffix.lower() == ".png", f"Expected PNG, got: {p.suffix}"
 
 
@@ -88,13 +88,35 @@ def test_pdf_provider_dpi_scales_rendered_resolution(tmp_path: Path, sample_pdf:
     low = PdfInputProvider(tmp_dir=low_dir, pdf_dpi=72).load(sample_pdf)
     high = PdfInputProvider(tmp_dir=high_dir, pdf_dpi=300).load(sample_pdf)
 
-    lo_path = low.units[0].image_path
-    hi_path = high.units[0].image_path
-    assert lo_path is not None
-    assert hi_path is not None
+    lo_unit, hi_unit = low.units[0], high.units[0]
+    assert isinstance(lo_unit, ImageUnit)
+    assert isinstance(hi_unit, ImageUnit)
+    lo_path, hi_path = lo_unit.path, hi_unit.path
     with Image.open(lo_path) as lo, Image.open(hi_path) as hi:
         assert hi.size[0] > lo.size[0]
         assert hi.size[1] > lo.size[1]
+
+
+def test_a_page_bigger_than_the_pixel_cap_is_rendered_smaller(
+    tmp_path: Path, sample_pdf: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a page that the pixel cap cannot hold at the chosen resolution
+    When   the page is rendered
+    Then   the image is scaled down to the cap instead of the render failing or filling memory
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    from teachers_teammate.infrastructure import input_providers  # noqa: PLC0415
+
+    monkeypatch.setattr(input_providers, "_MAX_PAGE_PIXELS", 10_000)
+
+    payload = PdfInputProvider(tmp_dir=tmp_path, pdf_dpi=300).load(sample_pdf)
+    unit = payload.units[0]
+    assert isinstance(unit, ImageUnit)
+    with Image.open(unit.path) as image:
+        # The scale gives the cap; rounding to whole pixels may add a row or a column.
+        assert image.size[0] * image.size[1] <= 11_000
 
 
 def test_text_provider_loads_text_content(tmp_path: Path) -> None:
@@ -111,8 +133,81 @@ def test_text_provider_loads_text_content(tmp_path: Path) -> None:
 
     assert payload.source_image is None
     assert len(payload.units) == 1
-    assert payload.units[0].kind == "text"
-    assert payload.units[0].text == "alpha\nbeta"
+    unit = payload.units[0]
+    assert isinstance(unit, TextUnit)
+    assert unit.text == "alpha\nbeta"
+
+
+@pytest.mark.parametrize("ending", ["\r\n", "\r"])
+def test_text_provider_keeps_the_line_breaks_of_every_platform(tmp_path: Path, ending: str) -> None:
+    """
+    Given  a .txt file with Windows or classic Mac line endings
+    When   load() is called
+    Then   every line ending is a newline and no line runs into the next
+    """
+    file_path = tmp_path / "note.txt"
+    file_path.write_bytes(f"one{ending}two{ending}{ending}three".encode())
+
+    payload = TextInputProvider().load(file_path)
+
+    assert payload.units[0].text == "one\ntwo\n\nthree"
+
+
+def test_text_provider_keeps_the_joiners_and_direction_marks_of_the_writer(tmp_path: Path) -> None:
+    """
+    Given  a .txt file with an emoji joiner, a Persian half-space and a right-to-left mark,
+           and a control code
+    When   load() is called
+    Then   the joiners and marks stay and only the control code goes
+    """
+    written = (
+        "\U0001f468\u200d\U0001f469 \u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645 \u200fabc"
+    )
+    file_path = tmp_path / "note.txt"
+    file_path.write_text(written + "\x0c", encoding="utf-8")
+
+    payload = TextInputProvider().load(file_path)
+
+    assert payload.units[0].text == written
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        (b"\xef\xbb\xbfHallo Welt", "Hallo Welt"),
+        ("Grüße".encode(), "Grüße"),
+        ("\u201eHallo\u201c \u2013 5 \u20ac".encode("cp1252"), "\u201eHallo\u201c \u2013 5 \u20ac"),
+        ("Hallo Welt".encode("utf-16"), "Hallo Welt"),
+    ],
+)
+def test_text_provider_reads_the_encoding_the_file_has(
+    tmp_path: Path, data: bytes, expected: str
+) -> None:
+    """
+    Given  a .txt file with a BOM, in UTF-8 and in cp1252 with its quotes, dash and euro sign
+    When   load() is called
+    Then   the text it holds comes back, without the BOM and without control codes
+    """
+    file_path = tmp_path / "note.txt"
+    file_path.write_bytes(data)
+
+    payload = TextInputProvider().load(file_path)
+
+    assert payload.units[0].text == expected
+
+
+def test_text_provider_drops_what_no_document_can_hold(tmp_path: Path) -> None:
+    """
+    Given  a .txt file from pdftotext, which leaves a form feed between its pages
+    When   load() is called
+    Then   the text comes back without the form feed and keeps its line breaks
+    """
+    file_path = tmp_path / "note.txt"
+    file_path.write_bytes(b"Seite eins\n\x0cSeite zwei")
+
+    payload = TextInputProvider().load(file_path)
+
+    assert payload.units[0].text == "Seite eins\nSeite zwei"
 
 
 # ── Embedded PDF text layer ────────────────────────────────────────────────
@@ -132,7 +227,7 @@ def test_pdf_provider_uses_embedded_text_for_text_only_pdf(tmp_path: Path) -> No
 
     payload = PdfInputProvider(tmp_dir=render_dir, text_layer="auto").load(pdf)
 
-    assert [unit.kind for unit in payload.units] == ["text"]
+    assert all(isinstance(unit, TextUnit) for unit in payload.units)
     text = payload.units[0].text or ""
     assert text.startswith(f"Page 1:\n{_LONG_TEXT}")
     assert f"Page 2:\n{_LONG_TEXT.upper()}" in text
@@ -141,7 +236,7 @@ def test_pdf_provider_uses_embedded_text_for_text_only_pdf(tmp_path: Path) -> No
         "typed_page0.png",
         "typed_page1.png",
     ]
-    assert payload.page_images == [render_dir / "typed_page0.png", render_dir / "typed_page1.png"]
+    assert payload.page_images == (render_dir / "typed_page0.png", render_dir / "typed_page1.png")
 
 
 def test_pdf_provider_text_layer_renders_every_page_for_the_scan(tmp_path: Path) -> None:
@@ -181,8 +276,9 @@ def test_pdf_provider_text_layer_renders_the_scan_at_the_ocr_resolution(
     (tmp_path / "b").mkdir()
 
     scan_page = scan.load(pdf).page_images[0]
-    ocr_page = ocr.load(pdf).units[0].image_path
-    assert ocr_page is not None
+    ocr_unit = ocr.load(pdf).units[0]
+    assert isinstance(ocr_unit, ImageUnit)
+    ocr_page = ocr_unit.path
 
     with Image.open(scan_page) as shown, Image.open(ocr_page) as read:
         assert shown.width == read.width
@@ -211,7 +307,7 @@ def test_pdf_provider_text_layer_keeps_the_pages_rendered_before_a_broken_one(
 
     assert [path.name for path in payload.page_images] == ["typed_page0.png", "typed_page2.png"]
     assert payload.source_image == payload.page_images[0]
-    assert payload.units[0].kind == "text"
+    assert isinstance(payload.units[0], TextUnit)
 
 
 def test_pdf_provider_single_page_text_has_no_page_label(tmp_path: Path) -> None:
@@ -237,7 +333,8 @@ def test_pdf_provider_never_mode_renders_text_pdf(tmp_path: Path) -> None:
 
     payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="never").load(pdf)
 
-    assert [unit.kind for unit in payload.units] == ["image", "image"]
+    assert all(isinstance(unit, ImageUnit) for unit in payload.units)
+    assert len(payload.units) == 2
     assert payload.text_layer_note == "text layer ignored (mode: never)"
 
 
@@ -263,7 +360,7 @@ def test_pdf_provider_auto_mode_renders_scanned_pdf(tmp_path: Path, sample_pdf: 
     """
     payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="auto").load(sample_pdf)
 
-    assert [unit.kind for unit in payload.units] == ["image"]
+    assert all(isinstance(unit, ImageUnit) for unit in payload.units)
     assert payload.text_layer_note == "page 1: no embedded text"
 
 
@@ -295,7 +392,7 @@ def test_pdf_provider_auto_mode_distrusts_text_next_to_handwriting(
 
     payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="auto").load(pdf)
 
-    assert [unit.kind for unit in payload.units] == ["image"]
+    assert all(isinstance(unit, ImageUnit) for unit in payload.units)
 
 
 def test_pdf_provider_always_mode_trusts_text_over_scan(tmp_path: Path) -> None:
@@ -308,7 +405,7 @@ def test_pdf_provider_always_mode_trusts_text_over_scan(tmp_path: Path) -> None:
 
     payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="always").load(pdf)
 
-    assert [unit.kind for unit in payload.units] == ["text"]
+    assert all(isinstance(unit, TextUnit) for unit in payload.units)
 
 
 def test_pdf_provider_auto_mode_rejects_nearly_empty_text(tmp_path: Path) -> None:
@@ -321,7 +418,7 @@ def test_pdf_provider_auto_mode_rejects_nearly_empty_text(tmp_path: Path) -> Non
 
     payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="auto").load(pdf)
 
-    assert [unit.kind for unit in payload.units] == ["image"]
+    assert all(isinstance(unit, ImageUnit) for unit in payload.units)
 
 
 @pytest.mark.parametrize(
@@ -346,7 +443,7 @@ def test_pdf_provider_auto_mode_keeps_text_for_harmless_extras(
 
     payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="auto").load(pdf)
 
-    assert [unit.kind for unit in payload.units] == ["text"]
+    assert all(isinstance(unit, TextUnit) for unit in payload.units)
 
 
 def test_pdf_provider_auto_mode_stops_measuring_at_first_scanned_page(tmp_path: Path) -> None:
@@ -362,7 +459,8 @@ def test_pdf_provider_auto_mode_stops_measuring_at_first_scanned_page(tmp_path: 
     ) as coverage:
         payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="auto").load(pdf)
 
-    assert [unit.kind for unit in payload.units] == ["image"] * 4
+    assert all(isinstance(unit, ImageUnit) for unit in payload.units)
+    assert len(payload.units) == 4
     assert coverage.call_count == 1
 
 
@@ -392,7 +490,7 @@ def test_pdf_provider_strips_control_characters_from_embedded_text(
     with patch("pypdfium2.PdfPage.get_textpage", return_value=_FakeTextPage(dirty)):
         payload = PdfInputProvider(tmp_dir=tmp_path, text_layer=mode).load(pdf)
 
-    assert [unit.kind for unit in payload.units] == ["text"]
+    assert all(isinstance(unit, TextUnit) for unit in payload.units)
     assert payload.units[0].text == f"{_LONG_TEXT}\nsecond line"
 
 
@@ -407,7 +505,7 @@ def test_pdf_provider_always_mode_renders_page_without_printable_text(tmp_path: 
     with patch("pypdfium2.PdfPage.get_textpage", return_value=_FakeTextPage("\x02\x03\ufffe")):
         payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="always").load(pdf)
 
-    assert [unit.kind for unit in payload.units] == ["image"]
+    assert all(isinstance(unit, ImageUnit) for unit in payload.units)
 
 
 # ── pdf_has_text_layer: the decision without rendering ─────────────────────

@@ -8,20 +8,21 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from teachers_teammate.exceptions import RecognitionSwitchedOffError
+from teachers_teammate.exceptions import PipelineInputError, RecognitionSwitchedOffError
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreprocessService
-from teachers_teammate.interfaces import InputPayload, InputUnit
+from teachers_teammate.interfaces import ImageUnit, InputPayload, TextUnit
+from teachers_teammate.messages import MessageKey
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _image_unit(image_path: Path) -> InputUnit:
-    return InputUnit(kind="image", image_path=image_path)
+def _image_unit(image_path: Path) -> ImageUnit:
+    return ImageUnit(image_path)
 
 
-def _text_unit(text: str) -> InputUnit:
-    return InputUnit(kind="text", text=text)
+def _text_unit(text: str) -> TextUnit:
+    return TextUnit(text)
 
 
 def _make_svc(
@@ -59,7 +60,7 @@ def test_preprocess_input_image_unit_calls_preprocessor(tmp_path: Path) -> None:
     """
     img = tmp_path / "raw.png"
     proc_img = tmp_path / "processed.png"
-    payload = InputPayload(units=[_image_unit(img)], source_image=img)
+    payload = InputPayload(units=(_image_unit(img),), source_image=img)
     svc, _, preprocessor = _make_svc(
         tmp_path=tmp_path,
         payload=payload,
@@ -75,17 +76,17 @@ def test_preprocess_input_image_unit_calls_preprocessor(tmp_path: Path) -> None:
     assert prepared.source_image == img
 
 
-def test_preprocess_input_multiple_image_units_only_first_steps_kept(tmp_path: Path) -> None:
+def test_preprocess_input_multiple_image_units_keep_their_own_steps(tmp_path: Path) -> None:
     """
     Given  two image units in the payload
     When   preprocess_input is called
-    Then   preprocessor.preprocess is called twice but only the first page's steps are returned
+    Then   preprocessor.preprocess is called twice and each page keeps its own steps
     """
     img1 = tmp_path / "p1.png"
     img2 = tmp_path / "p2.png"
     proc1 = tmp_path / "p1_proc.png"
     proc2 = tmp_path / "p2_proc.png"
-    payload = InputPayload(units=[_image_unit(img1), _image_unit(img2)], source_image=img1)
+    payload = InputPayload(units=(_image_unit(img1), _image_unit(img2)), source_image=img1)
     preprocessor = MagicMock()
     preprocessor.preprocess.side_effect = [(proc1, ["step_a"]), (proc2, ["step_b"])]
     provider = MagicMock(return_value=MagicMock(load=MagicMock(return_value=payload)))
@@ -98,7 +99,8 @@ def test_preprocess_input_multiple_image_units_only_first_steps_kept(tmp_path: P
     prepared = svc.preprocess_input(tmp_path / "doc.pdf")
 
     assert prepared.ocr_inputs == [proc1, proc2]
-    assert prepared.steps == ["step_a"]  # only first page steps
+    assert prepared.steps_per_page == [("step_a",), ("step_b",)]
+    assert prepared.steps == ["step_a", "step_b"]
 
 
 # ── Text unit path ─────────────────────────────────────────────────────────
@@ -110,7 +112,7 @@ def test_preprocess_input_text_unit_returns_raw_text_hint(tmp_path: Path) -> Non
     When   preprocess_input is called
     Then   raw_text_hint is the unit's text and preprocessed list is empty
     """
-    payload = InputPayload(units=[_text_unit("hello world")], source_image=None)
+    payload = InputPayload(units=(_text_unit("hello world"),), source_image=None)
     svc, _, preprocessor = _make_svc(tmp_path=tmp_path, payload=payload)
 
     prepared = svc.preprocess_input(tmp_path / "doc.txt")
@@ -127,7 +129,7 @@ def test_preprocess_input_multiple_text_units_joined(tmp_path: Path) -> None:
     When   preprocess_input is called
     Then   raw_text_hint is the joined text of both units
     """
-    payload = InputPayload(units=[_text_unit("first"), _text_unit("second")], source_image=None)
+    payload = InputPayload(units=(_text_unit("first"), _text_unit("second")), source_image=None)
     svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
 
     prepared = svc.preprocess_input(tmp_path / "doc.txt")
@@ -147,7 +149,7 @@ def test_preprocess_input_keeps_each_page_as_it_was_loaded(tmp_path: Path) -> No
     img2 = tmp_path / "p2.png"
     proc1 = tmp_path / "p1_proc.png"
     proc2 = tmp_path / "p2_proc.png"
-    payload = InputPayload(units=[_image_unit(img1), _image_unit(img2)], source_image=img1)
+    payload = InputPayload(units=(_image_unit(img1), _image_unit(img2)), source_image=img1)
     preprocessor = MagicMock()
     preprocessor.preprocess.side_effect = [(proc1, ["step_a"]), (proc2, ["step_b"])]
     provider = MagicMock(return_value=MagicMock(load=MagicMock(return_value=payload)))
@@ -171,7 +173,7 @@ def test_preprocess_input_keeps_the_pages_rendered_for_the_scan(tmp_path: Path) 
     """
     pages = [tmp_path / "typed_page0.png", tmp_path / "typed_page1.png"]
     payload = InputPayload(
-        units=[_text_unit("typed essay")], source_image=pages[0], page_images=pages
+        units=(_text_unit("typed essay"),), source_image=pages[0], page_images=tuple(pages)
     )
     svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
 
@@ -187,57 +189,31 @@ def test_preprocess_input_empty_units_raises_value_error(tmp_path: Path) -> None
     """
     Given  a payload with no units
     When   preprocess_input is called
-    Then   ValueError is raised
+    Then   PipelineInputError (a ValueError) with the no-units key is raised
     """
-    payload = InputPayload(units=[], source_image=None)
+    payload = InputPayload(units=(), source_image=None)
     svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
 
-    with pytest.raises(ValueError, match="no units"):
+    with pytest.raises(PipelineInputError) as raised:
         svc.preprocess_input(tmp_path / "doc.png")
 
-
-def test_preprocess_input_image_unit_without_path_raises_value_error(tmp_path: Path) -> None:
-    """
-    Given  an image unit where image_path is None
-    When   preprocess_input is called
-    Then   ValueError is raised mentioning missing image_path
-    """
-    unit = InputUnit(kind="image", image_path=None)
-    payload = InputPayload(units=[unit], source_image=None)
-    svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
-
-    with pytest.raises(ValueError, match="image_path"):
-        svc.preprocess_input(tmp_path / "doc.png")
-
-
-def test_preprocess_input_unsupported_unit_kind_raises_value_error(tmp_path: Path) -> None:
-    """
-    Given  a unit with an unsupported kind
-    When   preprocess_input is called
-    Then   ValueError is raised mentioning the unsupported kind
-    """
-    from unittest.mock import MagicMock as _MM  # noqa: PLC0415
-
-    unit = _MM(kind="audio", image_path=None, text=None)
-    payload = InputPayload(units=[unit], source_image=None)
-    svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
-
-    with pytest.raises(ValueError, match="audio"):
-        svc.preprocess_input(tmp_path / "doc.wav")
+    assert raised.value.args[0].key is MessageKey.INPUT_WITHOUT_UNITS
 
 
 def test_preprocess_input_no_content_raises_value_error(tmp_path: Path) -> None:
     """
     Given  a text unit whose text is empty (falsy)
     When   preprocess_input is called and produces no images and no text
-    Then   ValueError is raised
+    Then   PipelineInputError with the no-content key is raised
     """
-    unit = InputUnit(kind="text", text="")
-    payload = InputPayload(units=[unit], source_image=None)
+    unit = TextUnit("")
+    payload = InputPayload(units=(unit,), source_image=None)
     svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
 
-    with pytest.raises(ValueError, match="no usable"):
+    with pytest.raises(PipelineInputError) as raised:
         svc.preprocess_input(tmp_path / "empty.txt")
+
+    assert raised.value.args[0].key is MessageKey.INPUT_WITHOUT_CONTENT
 
 
 # ── load_input ─────────────────────────────────────────────────────────────
@@ -249,7 +225,7 @@ def test_load_input_delegates_to_provider_factory(tmp_path: Path) -> None:
     When   load_input is called
     Then   the provider_factory is called with the suffix and tmp_dir, and provider.load is called
     """
-    payload = InputPayload(units=[_text_unit("hi")], source_image=None)
+    payload = InputPayload(units=(_text_unit("hi"),), source_image=None)
     svc, provider, _ = _make_svc(tmp_path=tmp_path, payload=payload)
 
     file = tmp_path / "image.png"
@@ -270,7 +246,7 @@ def test_preprocess_input_image_unit_with_recognition_off_is_refused_before_prep
     When   preprocess_input is called
     Then   RecognitionSwitchedOffError is raised and no page was preprocessed
     """
-    payload = InputPayload(units=[_image_unit(tmp_path / "p1.png")])
+    payload = InputPayload(units=(_image_unit(tmp_path / "p1.png"),))
     svc, _, preprocessor = _make_svc(tmp_path=tmp_path, payload=payload)
 
     with pytest.raises(RecognitionSwitchedOffError, match="switched off"):
@@ -285,7 +261,7 @@ def test_preprocess_input_text_unit_passes_with_recognition_off(tmp_path: Path) 
     When   preprocess_input is called with allow_images=False
     Then   the text is returned as it is
     """
-    payload = InputPayload(units=[_text_unit("typed essay")])
+    payload = InputPayload(units=(_text_unit("typed essay"),))
     svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
 
     prepared = svc.preprocess_input(tmp_path / "essay.txt", allow_images=False)

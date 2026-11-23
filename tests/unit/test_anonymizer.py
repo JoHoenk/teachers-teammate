@@ -17,12 +17,15 @@ from teachers_teammate.domain.anonymization import (
     DEFAULT_PATTERNS,
     resolve_patterns,
 )
+from teachers_teammate.exceptions import AnonymizerError
 from teachers_teammate.infrastructure.anonymizer import (
     AnonymizationResultCache,
     CachedAnonymizer,
     SpacyAnonymizer,
     _trim_street,
 )
+from teachers_teammate.infrastructure.spacy_models import SpacyModels
+from teachers_teammate.messages import MessageKey
 
 
 # ── AnonymizerConfig ───────────────────────────────────────────────────────
@@ -77,7 +80,7 @@ def test_anonymizer_config_is_hashable() -> None:
 def test_anonymizer_config_with_list_patterns_is_not_hashable() -> None:
     """
     Given  an AnonymizerConfig whose patterns field holds a list instead of a tuple
-    When   it is used as a dict key (e.g. as a cache key in anonymize_preview)
+    When   it is used as a dict key (e.g. as a cache key in anonymize_text)
     Then   a TypeError is raised (regression guard for the privacy-preview 'unhashable list' bug)
     """
     cfg = AnonymizerConfig.__new__(AnonymizerConfig)
@@ -375,6 +378,51 @@ def test_postcode_city_follows_a_street_on_the_same_line() -> None:
         assert "Hauptstraße" not in result and "Berlin" not in result
 
 
+@pytest.mark.parametrize(
+    "text", ["Aufgabe 3 10115 Berlin", "Seite 5 12345 Anna", "Nr. 12 20000 Schüler"]
+)
+def test_a_number_after_a_word_that_is_no_street_is_no_house_number(text: str) -> None:
+    """
+    Given  prose where a small number and a five-digit number and a capitalised word follow
+           each other, with no street before the small number
+    When   anonymize() is called with the default patterns
+    Then   nothing is taken for a postcode and city
+    """
+    result, mapping = _make_anonymizer().anonymize(text)
+
+    assert mapping == {}
+    assert result == text
+
+
+@pytest.mark.parametrize("house_number", ["5a", "5 a", "12", "123b"])
+def test_postcode_city_follows_a_house_number_with_a_letter(house_number: str) -> None:
+    """
+    Given  a street whose house number carries a letter, then postcode and city
+    When   anonymize() is called with the default patterns
+    Then   the postcode + city is replaced too and never sent as written
+    """
+    result, mapping = _make_anonymizer().anonymize(f"Hauptstraße {house_number} 12345 Berlin")
+
+    assert "12345" not in result and "Berlin" not in result
+    assert list(mapping.values()) == [f"Hauptstraße {house_number}", "12345 Berlin"]
+
+
+def test_the_leftover_of_overlapping_patterns_does_not_hide_other_text() -> None:
+    """
+    Given  two patterns whose matches overlap, the second leaving a word over, which stands
+           elsewhere in the text too
+    When   anonymize() is called
+    Then   that word stays as written: the leftover is not a placeholder of its own
+    """
+    config = AnonymizerConfig(patterns=(("DATE", r"\d\d\.\d\d\.\d{4}"), ("PHONE", r"2010 in")))
+    text = "Geboren am 01.02.2010 in Köln. Er wohnt in Bonn."
+
+    result, mapping = _make_anonymizer(config=config).anonymize(text)
+
+    assert "in Bonn" in result
+    assert list(mapping.values()) == ["01.02.2010"]
+
+
 def test_address_patterns_do_not_swallow_neighbouring_names() -> None:
     """
     Given  names that stand next to an address, on the same and on the following line
@@ -576,14 +624,18 @@ def test_anonymizer_names_the_cause_when_installed_spacy_cannot_load(monkeypatch
     """
     Given  spacy is found on the path but importing it fails (a module of a dependency is missing)
     When   SpacyAnonymizer is instantiated
-    Then   the ImportError says spacy is installed and carries the original cause
+    Then   the ImportError carries the not-loadable key and the original cause
     """
     import importlib.util  # noqa: PLC0415
 
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
     with patch.dict("sys.modules", {"spacy": None}):
-        with pytest.raises(ImportError, match="installed but cannot be loaded"):
+        with pytest.raises(ImportError) as raised:
             SpacyAnonymizer("English")
+
+    message = raised.value.args[0]
+    assert message.key is MessageKey.SPACY_NOT_LOADABLE
+    assert message.args["reason"].key is MessageKey.DETAIL
 
 
 def test_anonymizer_raises_os_error_when_model_missing() -> None:
@@ -660,6 +712,53 @@ def test_anonymizer_raises_oserror_when_configured_primary_model_missing() -> No
     with patch.dict(sys.modules, {"spacy": mock_spacy}):
         with pytest.raises(OSError, match="configured model not found"):
             SpacyAnonymizer("English", AnonymizerConfig(primary_model="custom_model_sm"))
+
+
+# ── Loading the models ────────────────────────────────────────────────────
+
+
+class _StubModels(SpacyModels):
+    """A model source that answers with fakes and remembers what it was asked."""
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[str, str | None]] = []
+
+    def load(self, primary_model: str, secondary_model: str | None) -> tuple[object, object]:
+        self.asked.append((primary_model, secondary_model))
+        return "the primary pipeline", "the secondary pipeline"
+
+
+def test_the_anonymizer_loads_its_pipelines_through_the_models() -> None:
+    """
+    Given  spaCy with a configured secondary model
+    When   SpacyAnonymizer is instantiated
+    Then   SpacyModels loads both pipelines and the anonymizer holds them
+    """
+    with patch(
+        "teachers_teammate.infrastructure.spacy_models.load_pipelines",
+        return_value=("primary", "secondary"),
+    ) as load:
+        anon = SpacyAnonymizer("English", AnonymizerConfig(secondary_model="xx_ent_wiki_sm"))
+
+    load.assert_called_once_with("en_core_web_sm", "xx_ent_wiki_sm")
+    assert (anon._nlp, anon._nlp_secondary) == ("primary", "secondary")
+
+
+def test_the_anonymizer_takes_the_models_it_is_given() -> None:
+    """
+    Given  a SpacyModels stand-in
+    When   SpacyAnonymizer is instantiated with it
+    Then   the stand-in loads the pipelines, not spaCy itself
+    """
+    models = _StubModels()
+
+    anon = SpacyAnonymizer("German", models=models)
+
+    assert models.asked == [("de_core_news_sm", None)]
+    assert (anon._nlp, anon._nlp_secondary) == (
+        "the primary pipeline",
+        "the secondary pipeline",
+    )
 
 
 # ── anonymize: Markdown markup ─────────────────────────────────────────────
@@ -917,3 +1016,84 @@ def test_result_cache_survives_parallel_readers_and_writers() -> None:
 
     assert errors == []
     assert len(cache) <= 4
+
+
+# ── The placeholder round trip ─────────────────────────────────────────────
+
+
+def test_two_patterns_with_one_tag_count_up_together() -> None:
+    """
+    Given  two configured patterns that share a tag, each matching once
+    When   anonymize() is called
+    Then   the tag counts across both, so the two surfaces get two placeholders
+    """
+    config = AnonymizerConfig(patterns=(("TEL", r"\d{4}"), ("TEL", r"x\d{3}")))
+    result, mapping = _make_anonymizer(config=config).anonymize("1234 und x999")
+
+    assert mapping == {"[TEL_1]": "1234", "[TEL_2]": "x999"}
+    assert result == "[TEL_1] und [TEL_2]"
+
+
+def test_a_pattern_never_runs_over_a_placeholder() -> None:
+    """
+    Given  a pattern that matches four digits and one that matches a single digit
+    When   anonymize() is called on a number both could match
+    Then   only the first pattern replaces it, and the placeholder keeps its shape
+    """
+    config = AnonymizerConfig(patterns=(("TEL", r"\d{4}"), ("DIGIT", r"\d")))
+    result, mapping = _make_anonymizer(config=config).anonymize("Ruf 1234 an")
+
+    assert result == "Ruf [TEL_1] an"
+    assert mapping == {"[TEL_1]": "1234"}
+
+
+def test_a_pattern_that_does_not_compile_ends_the_file() -> None:
+    """
+    Given  a configured pattern that is not a valid regex
+    When   anonymize() is called
+    Then   it raises AnonymizerError instead of sending the text unhidden
+    """
+    config = AnonymizerConfig(patterns=(("BAD", "("),))
+    with pytest.raises(AnonymizerError):
+        _make_anonymizer(config=config).anonymize("Anna Müller")
+
+
+def test_a_placeholder_the_text_already_holds_gets_a_letter() -> None:
+    """
+    Given  a text that already contains the token a placeholder would be
+    When   anonymize() is called on another match of that tag
+    Then   the new placeholder is lettered, so restore cannot put it in the wrong place
+    """
+    config = AnonymizerConfig(patterns=(("TOKEN", r"\d{3}"),))
+    result, mapping = _make_anonymizer(config=config).anonymize("[TOKEN_1] und 123")
+
+    assert result == "[TOKEN_1] und [TOKEN_1a]"
+    assert mapping == {"[TOKEN_1a]": "123"}
+
+
+def test_a_name_found_once_is_replaced_everywhere() -> None:
+    """
+    Given  a name the NER model tags in the first sentence and misses in the second
+    When   anonymize() is called
+    Then   both sentences carry the same placeholder
+    """
+    text = "Anna Müller kam. Später ging Anna Müller."
+    anon = _make_anonymizer([(0, 11, "Anna Müller", "PER")])
+    result, mapping = anon.anonymize(text)
+
+    assert result == "[PERSON_1] kam. Später ging [PERSON_1]."
+    assert mapping == {"[PERSON_1]": "Anna Müller"}
+
+
+def test_a_person_name_wins_the_overlap_with_a_pattern() -> None:
+    """
+    Given  a person span and a street pattern span that overlap
+    When   anonymize() is called
+    Then   the name keeps its own placeholder and the rest of the street is replaced too
+    """
+    text = "Anna Müller Straße 5"
+    anon = _make_anonymizer([(0, 11, "Anna Müller", "PER")])
+    result, mapping = anon.anonymize(text)
+
+    assert mapping == {"[PERSON_1]": "Anna Müller", "[STREET_1]": "Straße 5"}
+    assert result == "[PERSON_1] [STREET_1]"

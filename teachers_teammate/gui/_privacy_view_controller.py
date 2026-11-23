@@ -136,7 +136,7 @@ class PrivacyViewController(QObject):
         anon_config = self._panel.build_anonymizer_config()
 
         def _anonymize() -> object:
-            return service.anonymization.anonymize_preview(raw_text, language, anon_config)
+            return service.anonymization.anonymize_text(raw_text, language, anon_config)
 
         def _on_done(result: object, error: BaseException | None) -> None:
             self._finish_anonymization(result, error)

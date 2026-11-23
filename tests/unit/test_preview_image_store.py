@@ -108,7 +108,7 @@ def test_persist_preview_image_noop_when_source_equals_target(tmp_path: Path) ->
 def test_cleanup_keep_debug_true_leaves_all_files(tmp_path: Path) -> None:
     """
     Given  step images and page images are present
-    When   cleanup_intermediate_images(keep_debug=True) is called
+    When   cleanup_intermediate_images() is called on a store that keeps debug files
     Then   all files remain on disk
     """
     root = tmp_path / "artifacts"
@@ -119,8 +119,8 @@ def test_cleanup_keep_debug_true_leaves_all_files(tmp_path: Path) -> None:
     for f in (step_file, page_file, preview_file):
         f.write_bytes(b"content")
 
-    store = PreviewImageStore(root)
-    store.cleanup_intermediate_images(keep_debug=True)
+    store = PreviewImageStore(root, keep_debug=True)
+    store.cleanup_intermediate_images()
 
     assert step_file.exists()
     assert page_file.exists()
@@ -130,7 +130,7 @@ def test_cleanup_keep_debug_true_leaves_all_files(tmp_path: Path) -> None:
 def test_cleanup_keep_debug_false_deletes_step_and_page_files(tmp_path: Path) -> None:
     """
     Given  step images (*_step*.jpg) and page images (*_page*.png) are present
-    When   cleanup_intermediate_images(keep_debug=False) is called
+    When   cleanup_intermediate_images() is called
     Then   those files are deleted
     """
     root = tmp_path / "artifacts"
@@ -141,7 +141,7 @@ def test_cleanup_keep_debug_false_deletes_step_and_page_files(tmp_path: Path) ->
         f.write_bytes(b"tmp")
 
     store = PreviewImageStore(root)
-    store.cleanup_intermediate_images(keep_debug=False)
+    store.cleanup_intermediate_images()
 
     assert not step_file.exists()
     assert not page_file.exists()
@@ -150,7 +150,7 @@ def test_cleanup_keep_debug_false_deletes_step_and_page_files(tmp_path: Path) ->
 def test_cleanup_preserves_preprocessed_png(tmp_path: Path) -> None:
     """
     Given  both intermediate files and canonical preview files exist
-    When   cleanup_intermediate_images(keep_debug=False) is called
+    When   cleanup_intermediate_images() is called
     Then   *_preprocessed.png files are NOT deleted
     """
     root = tmp_path / "artifacts"
@@ -161,7 +161,7 @@ def test_cleanup_preserves_preprocessed_png(tmp_path: Path) -> None:
     step.write_bytes(b"delete me")
 
     store = PreviewImageStore(root)
-    store.cleanup_intermediate_images(keep_debug=False)
+    store.cleanup_intermediate_images()
 
     assert preview.exists()
     assert not step.exists()
@@ -644,7 +644,7 @@ def test_cleanup_deletes_the_runs_own_page_images_only(tmp_path: Path) -> None:
     """
     Given  the run's intermediate page images and stored pages of documents whose names
            contain '_page'
-    When   cleanup_intermediate_images(keep_debug=False) is called
+    When   cleanup_intermediate_images() is called
     Then   only the run's own intermediates are deleted
     """
     root = tmp_path / "store"
@@ -664,7 +664,23 @@ def test_cleanup_deletes_the_runs_own_page_images_only(tmp_path: Path) -> None:
     for name in deleted + kept:
         (root / name).write_bytes(b"x")
 
-    PreviewImageStore(root).cleanup_intermediate_images(keep_debug=False)
+    PreviewImageStore(root).cleanup_intermediate_images()
 
     assert [name for name in deleted if (root / name).exists()] == []
     assert [name for name in kept if not (root / name).exists()] == []
+
+
+def test_cleanup_can_keep_the_prepared_pages(tmp_path: Path) -> None:
+    """
+    Given  a preview run's rendered page, its prepared page and a step snapshot
+    When   cleanup_intermediate_images() is called with keep_prepared_pages
+    Then   the rendered page and the snapshot go and the prepared page stays
+    """
+    root = tmp_path / "store"
+    root.mkdir()
+    for name in ("x_page0.png", "x_page0_preprocessed.png", "x_step1.jpg"):
+        (root / name).write_bytes(b"x")
+
+    PreviewImageStore(root).cleanup_intermediate_images(keep_prepared_pages=True)
+
+    assert sorted(path.name for path in root.iterdir()) == ["x_page0_preprocessed.png"]

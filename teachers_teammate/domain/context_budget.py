@@ -184,8 +184,7 @@ def _largest_step_within(
         if step > cap:
             break
         need = memory_at_context_gb(spec, step)
-        assert need is not None  # the measurement exists (checked above)
-        if not runs_at_full_speed(need, card_gb, share=full_speed_share):
+        if need is None or not runs_at_full_speed(need, card_gb, share=full_speed_share):
             break
         chosen = step
     return chosen

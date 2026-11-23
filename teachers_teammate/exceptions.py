@@ -5,6 +5,8 @@ from __future__ import annotations
 from enum import StrEnum
 import threading
 
+from .messages import Message
+
 
 class PipelineError(Exception):
     """A failure that ends one file, not the run: the file is ``FAILED``, the next one runs.
@@ -40,7 +42,9 @@ class StageError(PipelineError):
     :attr:`kind` says what failed, :attr:`stage` where.
     """
 
-    def __init__(self, message: str = "", *, kind: StageErrorKind, stage: str = "") -> None:
+    def __init__(
+        self, message: Message | str = "", *, kind: StageErrorKind, stage: str = ""
+    ) -> None:
         super().__init__(message)
         self.kind = kind
         self.stage = stage
@@ -72,7 +76,7 @@ class OCRError(StageError):
     an error (``None`` for connection failures, timeouts and empty responses).
     """
 
-    def __init__(self, message: str = "", *, status_code: int | None = None) -> None:
+    def __init__(self, message: Message | str = "", *, status_code: int | None = None) -> None:
         super().__init__(message, kind=StageErrorKind.ENGINE, stage="ocr")
         self.status_code = status_code
 
@@ -80,7 +84,7 @@ class OCRError(StageError):
 class AnonymizerError(StageError):
     """Hiding or restoring personal data failed (spaCy, a name model, a text over its limit)."""
 
-    def __init__(self, message: str = "", *, stage: str = "") -> None:
+    def __init__(self, message: Message | str = "", *, stage: str = "") -> None:
         super().__init__(message, kind=StageErrorKind.ANONYMIZER, stage=stage)
 
 
@@ -133,11 +137,11 @@ class OCRTimeoutError(OCRError):
 
 
 class OllamaUnreachableError(OCRError):
-    """Raised by a chat request when the Ollama server cannot be reached at all.
+    """Raised when the Ollama server cannot be used: unreachable, an HTTP error, an unknown model.
 
     A subclass of :exc:`OCRError`, so every caller that handles a failed request keeps working,
-    and a caller that must tell an unreachable server from a model that failed (the evaluation
-    tools: an outage says nothing about a model) can.
+    and a caller that must tell an outage from a model that failed (the evaluation tools: an
+    outage says nothing about a model) can.  ``str(exc)`` is the sentence a teacher reads.
     """
 
 
@@ -195,14 +199,6 @@ class OnlineOcrNotAllowedError(ValueError):
 
     Reading a page needs the whole page — names, grades, handwriting — so it must stay on a
     computer the user controls.  ``str(exc)`` explains what to choose instead.
-    """
-
-
-class OllamaConnectionError(RuntimeError):
-    """Raised when the Ollama service cannot be reached or returns an error.
-
-    Covers: connection refused, timeout, HTTP error, model not found.
-    ``str(exc)`` contains a human-readable description suitable for display.
     """
 
 

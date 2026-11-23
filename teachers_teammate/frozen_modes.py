@@ -403,6 +403,10 @@ def _check_qt_licenses() -> str | None:
 
 def _check_pip() -> str | None:
     """Check that the bundled pip answers through the app's pip dispatch (frozen only)."""
+    from teachers_teammate.infrastructure.subprocess_utils import (  # noqa: PLC0415
+        child_env,
+    )
+
     try:
         result = subprocess.run(
             [sys.executable, "--_pip_install_mode", "--version"],
@@ -410,6 +414,7 @@ def _check_pip() -> str | None:
             text=True,
             timeout=120,
             check=False,
+            env=child_env(),
         )
     except OSError as exc:
         return f"pip dispatch could not start: {exc}"
@@ -568,8 +573,8 @@ def set_update_check(value: str, folder: str = "") -> int:
     """
     from teachers_teammate.config import (  # noqa: PLC0415
         ConfigFileParseError,
-        dump_config_file,
         load_config_file,
+        save_settings_file,
     )
     from teachers_teammate.infrastructure.storage_root import (  # noqa: PLC0415
         default_config_path,
@@ -587,8 +592,7 @@ def set_update_check(value: str, folder: str = "") -> int:
             path = resolve_config_path(None) or default_config_path()
         values = load_config_file(path).values if path.is_file() else {}
         values["check_for_updates"] = value == "on"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(dump_config_file(values), encoding="utf-8")
+        save_settings_file(path, values)
     except ConfigFileParseError, OSError:
         return 1
     return 0

@@ -33,14 +33,12 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import json
 import logging
-import os
 from pathlib import Path
 import shutil
-import tempfile
 import threading
-import time
 from typing import Any, cast
 
+from ..atomic_file import write_text_atomic
 from ..domain.ollama_address import normalize_ollama_url
 from ..domain.performance_estimate import ModelSpeed, SpeedStep, StepOutcome
 from .storage_root import resolve_data_folder
@@ -55,10 +53,6 @@ SCHEMA = 1
 #: window covers the last two thirds of one; more would let a model that was updated long ago
 #: keep influencing the median.
 KEEP_SAMPLES = 20
-
-#: How long a replace is retried before giving up (Windows refuses while a file is held open).
-_REPLACE_ATTEMPTS = 5
-_REPLACE_WAIT_S = 0.05
 
 
 @dataclass(frozen=True)
@@ -307,7 +301,7 @@ class SampleStore:
             },
             indent=2,
         )
-        _write_atomically(path, text)
+        write_text_atomic(path, text)
 
 
 class SpeedStore:
@@ -428,7 +422,7 @@ class SpeedStore:
             },
             indent=2,
         )
-        _write_atomically(path, text)
+        write_text_atomic(path, text)
 
 
 #: What identifies one version of a file on disk: modification time, size and inode.  An atomic
@@ -465,38 +459,6 @@ def _keep_foreign_file(path: Path) -> None:
         _logger.warning("speed store: cannot back up %s: %s", path, exc)
     else:
         _logger.info("speed store: kept the file of another schema as %s", backup)
-
-
-def _write_atomically(path: Path, text: str) -> None:
-    """Write *text* to *path* through a temporary file, so a reader never sees half of it."""
-    # Write beside the file, then swap it in: the window may be reading the file while the
-    # test finishes, and a half-written file would lose every measurement.
-    fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    temp = Path(temp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        _replace_file(temp, path)
-    except PermissionError:
-        # Windows refuses to replace a file that something else holds open (the window
-        # reading it, a virus scanner); writing in place still works there.
-        temp.unlink(missing_ok=True)
-        path.write_text(text, encoding="utf-8")
-    except OSError:
-        temp.unlink(missing_ok=True)
-        raise
-
-
-def _replace_file(source: Path, target: Path) -> None:
-    """Move *source* over *target*; retry a refusal for a moment (Windows: file held open)."""
-    for attempt in range(_REPLACE_ATTEMPTS):
-        try:
-            os.replace(source, target)
-            return
-        except PermissionError:
-            if attempt == _REPLACE_ATTEMPTS - 1:
-                raise
-            time.sleep(_REPLACE_WAIT_S)
 
 
 # ── the file's shape ───────────────────────────────────────────────────────

@@ -76,16 +76,6 @@ def input_without_units(name: str) -> str:
     return f"Input '{name}' produced no units."
 
 
-def image_unit_without_path(name: str) -> str:
-    """Return what a run says about a unit that came out of a provider without its image."""
-    return f"Input '{name}' contains an image unit without image_path."
-
-
-def unsupported_unit_kind(kind: str, name: str) -> str:
-    """Return what a run says about a unit whose kind no stage of the pipeline knows."""
-    return f"Unsupported input unit kind '{kind}' for '{name}'."
-
-
 def input_without_content(name: str) -> str:
     """Return what a run says about an input file that had neither an image nor text."""
     return f"Input '{name}' produced no usable image or text content."
@@ -106,7 +96,7 @@ def image_not_encoded(path: Path) -> str:
     return f"Cannot encode image: {path}"
 
 
-def image_not_written(path: Path, reason: BaseException) -> str:
+def image_not_written(path: Path, reason: str) -> str:
     """Return what a run says about a page image that could not be written to disk."""
     return f"Cannot write image: {path}: {reason}"
 
@@ -129,22 +119,22 @@ def storage_root_unresolved(reasons: str) -> str:
 # ── A stage that failed ───────────────────────────────────────────────────────
 
 
-def input_read_failed(reason: BaseException) -> str:
+def input_read_failed(reason: str) -> str:
     """Return what a run says about an input file it could not read from disk."""
     return f"Could not read input file: {reason}"
 
 
-def preprocessing_failed(reason: BaseException) -> str:
+def preprocessing_failed(reason: str) -> str:
     """Return what a run says about a page it could not prepare."""
     return f"Preprocessing failed: {reason}"
 
 
-def preview_save_failed(reason: BaseException) -> str:
+def preview_save_failed(reason: str) -> str:
     """Return what a run says about a preview image it could not store."""
     return f"Could not persist preview image: {reason}"
 
 
-def cache_save_failed(reason: BaseException) -> str:
+def cache_save_failed(reason: str) -> str:
     """Return what a run says about the text of a file it read but could not keep."""
     return f"Could not persist OCR cache state: {reason}"
 
@@ -153,24 +143,30 @@ def cache_save_failed(reason: BaseException) -> str:
 EMPTY_OCR_ANSWER = "Empty response from OCR model."
 
 
-def ocr_failed(page: str, reason: BaseException) -> str:
-    """Return what a run says about one *page* the reader could not read."""
-    return f"OCR failed ({page}): {reason}"
+def ocr_failed(page: int | None, reason: str) -> str:
+    """Return what a run says about one page, or the one image, the reader could not read."""
+    what = "image" if page is None else f"page {page}"
+    return f"OCR failed ({what}): {reason}"
 
 
-def personal_info_setup_failed(reason: BaseException) -> str:
+def personal_info_setup_failed(reason: str) -> str:
     """Return what a run says about the anonymizer it could not build."""
     return f"Cannot initialise anonymizer: {reason}"
 
 
-def personal_info_removal_failed(reason: BaseException) -> str:
+def personal_info_removal_failed(reason: str) -> str:
     """Return what a run says about a file whose personal data could not be hidden."""
     return f"Personal info removal failed: {reason}"
 
 
-def personal_info_restore_failed(reason: BaseException) -> str:
+def personal_info_restore_failed(reason: str) -> str:
     """Return what a run says about a file whose personal data could not be put back."""
     return f"PII restore failed: {reason}"
+
+
+def personal_info_pattern_invalid(tag: str, reason: BaseException) -> str:
+    """Return what a run says about a pattern of the personal-info list that does not compile."""
+    return f"Personal info pattern '{tag}' is not valid: {reason}"
 
 
 def output_not_saved(reason: BaseException) -> str:
@@ -255,15 +251,9 @@ def run_done_tray(done: int, skipped: int = 0) -> str:
 
 PDF_NO_PAGES = "PDF has no pages"
 NO_EMBEDDED_TEXT = "no embedded text"
-OCR_IMAGE_LABEL = "image"
 RESULTS_CACHED = "results cached (no output files)"
 
 
 def text_layer_page_note(page: int, reason: str) -> str:
     """Return why the text layer of a PDF is not used: the *page* that ruled it out."""
     return f"page {page}: {reason or NO_EMBEDDED_TEXT}"
-
-
-def ocr_page_label(page: int) -> str:
-    """Return how a failed text recognition names the *page* it failed on."""
-    return f"page {page}"

@@ -30,25 +30,40 @@ from .domain.output_files import folder_problem
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
 from .domain.stages import Stage
 from .exceptions import ConfigFileNotFoundError, ConfigFileParseError, ModelDownloadError
-from .settings_schema import CONTEXT_SETTINGS, DEFAULTS, PREPROCESS_METHODS, LoadedSettings
+from .settings_schema import (
+    CONTEXT_SETTINGS,
+    DEFAULTS,
+    OCR_TIMEOUT_RANGE,
+    PDF_RENDER_DPI_RANGE,
+    PREPROCESS_METHODS,
+    LoadedSettings,
+)
 from .texts import addons as addon_text
 from .texts import cli as cli_text
 from .texts import dialogs as dlg
 from .texts.run import BATTERY_WARNING
 
-_PDF_DPI_MIN = 72
-_PDF_DPI_MAX = 600
+
+def _bounded_int(
+    bounds: tuple[int, int], out_of_range: Callable[[int, int, int], str]
+) -> Callable[[str], int]:
+    """Return an argparse type that takes a whole number inside *bounds*, as the settings do."""
+
+    def parse(value: str) -> int:
+        try:
+            number = int(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(cli_text.not_an_integer(value)) from exc
+        low, high = bounds
+        if not low <= number <= high:
+            raise argparse.ArgumentTypeError(out_of_range(number, low, high))
+        return number
+
+    return parse
 
 
-def _pdf_dpi_type(value: str) -> int:
-    """Parse and range-check ``--pdf-render-dpi`` (mirrors the GUI's 72-600 spin box)."""
-    try:
-        dpi = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(cli_text.not_an_integer(value)) from exc
-    if not _PDF_DPI_MIN <= dpi <= _PDF_DPI_MAX:
-        raise argparse.ArgumentTypeError(cli_text.dpi_out_of_range(dpi, _PDF_DPI_MIN, _PDF_DPI_MAX))
-    return dpi
+_pdf_dpi_type = _bounded_int(PDF_RENDER_DPI_RANGE, cli_text.dpi_out_of_range)
+_ocr_timeout_type = _bounded_int(OCR_TIMEOUT_RANGE, cli_text.timeout_out_of_range)
 
 
 def _add_correction_args(parser: argparse.ArgumentParser, providers: list[str] | None) -> None:
@@ -155,21 +170,35 @@ def _parse_args(
     provider arguments for immediate validation; when ``None``, any string is
     accepted (useful in tests that do not care about provider names).
     """
+    parser = _make_parser(providers)
+    if extra_defaults:
+        parser.set_defaults(**extra_defaults)
+    return parser.parse_args(list(argv) if argv is not None else None)
+
+
+def _make_parser(providers: list[str] | None) -> argparse.ArgumentParser:
+    """Return the command line, with one function per group of arguments."""
     parser = argparse.ArgumentParser(
         prog="teachers_teammate",
         description=cli_text.DESCRIPTION,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-
-    # Config file (top-level)
     parser.add_argument(
         "--config",
         default=None,
         metavar="FILE",
         help=cli_text.HELP_CONFIG,
     )
+    _add_io_args(parser)
+    _add_ocr_args(parser)
+    _add_correction_args(parser, providers)
+    _add_evaluation_args(parser, providers)
+    _add_output_args(parser)
+    return parser
 
-    # ── Input / Output ─────────────────────────────────────────────────────
+
+def _add_io_args(parser: argparse.ArgumentParser) -> None:
+    """Add the folder, progress and power arguments to *parser*."""
     io_grp = parser.add_argument_group("input / output")
     io_grp.add_argument(
         "-i",
@@ -222,7 +251,9 @@ def _parse_args(
         help=cli_text.HELP_ALLOW_SLEEP,
     )
 
-    # ── OCR Parameters ─────────────────────────────────────────────────────
+
+def _add_ocr_args(parser: argparse.ArgumentParser) -> None:
+    """Add the text recognition arguments to *parser*."""
     ocr_grp = parser.add_argument_group("OCR parameters")
     ocr_grp.add_argument(
         "-m",
@@ -300,17 +331,16 @@ def _parse_args(
     )
     ocr_grp.add_argument(
         "--ocr-timeout",
-        type=int,
+        type=_ocr_timeout_type,
         default=DEFAULTS["ocr_timeout"],
         metavar="SECONDS",
         dest="ocr_timeout",
         help=cli_text.HELP_OCR_TIMEOUT,
     )
 
-    # ── Correction ─────────────────────────────────────────────────────────
-    _add_correction_args(parser, providers)
 
-    # ── Evaluation ───────────────────────────────────────────────────────
+def _add_evaluation_args(parser: argparse.ArgumentParser, providers: list[str] | None) -> None:
+    """Add the content review arguments to *parser*."""
     eval_grp = parser.add_argument_group("evaluation")
     eval_grp.add_argument(
         "--evaluation",
@@ -345,7 +375,9 @@ def _parse_args(
         help=cli_text.HELP_EVALUATE_PROMPT,
     )
 
-    # ── Output ─────────────────────────────────────────────────────────────
+
+def _add_output_args(parser: argparse.ArgumentParser) -> None:
+    """Add the arguments about what a run writes to *parser*."""
     out_grp = parser.add_argument_group("output")
     out_grp.add_argument(
         "--preview-only",
@@ -395,9 +427,6 @@ def _parse_args(
         dest="docx_format",
         help=cli_text.HELP_DOCX_FORMAT,
     )
-    if extra_defaults:
-        parser.set_defaults(**extra_defaults)
-    return parser.parse_args(list(argv) if argv is not None else None)
 
 
 def _validate_providers(args: argparse.Namespace, valid: frozenset[str]) -> list[str]:

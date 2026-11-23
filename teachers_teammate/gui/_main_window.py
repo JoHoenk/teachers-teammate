@@ -16,7 +16,6 @@ from PySide6.QtGui import (
     QIcon,
 )
 from PySide6.QtWidgets import (
-    QApplication,
     QFrame,
     QHBoxLayout,
     QMainWindow,
@@ -68,6 +67,7 @@ from ._privacy_settings import DISPLAY_ANONYMIZED_DEFAULT, FlowAcknowledgements
 from ._privacy_view_controller import PrivacyViewController
 from ._pull_manager import PullManager
 from ._qsettings import app_settings
+from ._qt import present
 from ._readiness_controller import ReadinessController, ReadinessHooks
 from ._readiness_line import ReadinessLine
 from ._results_table import ResultsTable
@@ -206,8 +206,7 @@ class MainWindow(QMainWindow):
 
     def _setup_tray(self) -> None:
         """Create and show the system-tray icon, falling back to a themed icon."""
-        _style = self.style()
-        assert _style is not None
+        _style = present(self.style(), "style")
         _icon_for_tray = _app_icon()
         _tray_icon = (
             _icon_for_tray
@@ -1220,10 +1219,8 @@ def main_gui(
                     )
                 _splash = QSplashScreen(_pix)
                 _splash.show()
-                assert isinstance(app, QApplication)
                 app.processEvents()
 
-    assert isinstance(app, QApplication)
     app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api="pyside6"))
     diagnostics_phase("theme applied")
 

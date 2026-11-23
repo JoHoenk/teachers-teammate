@@ -31,7 +31,7 @@ next start (:func:`prepare_packages_dir`), before anything is imported from the 
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
 import importlib
 import importlib.util
@@ -44,14 +44,16 @@ import subprocess
 import sys
 import threading
 import time
+from types import MappingProxyType
 
 from ..domain.local_models import PRIVACY_ADDON_ID
 from ..domain.providers import AddonPackage
 from ..exceptions import AddonInstallError, AddonUpdateError, InstallFailure
-from ..texts.addons import ADDONS_UPDATE_NEEDS_INSTALL
+from ..messages import addons_update_needs_install
 from .llm_factory import get_provider_info, list_providers
 from .spacy_models import spacy_model_url
-from .subprocess_utils import no_console_window_kwargs
+from .storage_root import app_data_folder
+from .subprocess_utils import child_env, no_console_window_kwargs
 
 _logger = logging.getLogger(__name__)
 
@@ -114,27 +116,24 @@ def _llm_addons() -> dict[str, AddonPackage]:
 # import its package at the top level, which is found only after that folder is injected.
 _LLM_ADDONS: dict[str, AddonPackage] = _llm_addons()
 
-_ADDON_PACKAGES: dict[str, list[str]] = {
-    PRIVACY_ADDON_ID: ["spacy>=3.7"],
-    # LangChain packages — not bundled by PyInstaller; installed at runtime via Add-ons.
-    ADDON_LLM_CORE: ["langchain-core>=1.4.7"],
-    **{addon: [package.requirement] for addon, package in _LLM_ADDONS.items()},
-}
+_ADDON_PACKAGES: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        PRIVACY_ADDON_ID: ("spacy>=3.7",),
+        # LangChain packages — not bundled by PyInstaller; installed at runtime via Add-ons.
+        ADDON_LLM_CORE: ("langchain-core>=1.4.7",),
+        **{addon: (package.requirement,) for addon, package in _LLM_ADDONS.items()},
+    }
+)
 
-# Top-level module name used to check importability for each addon.
-_ADDON_CHECK_MODULE: dict[str, str] = {
-    PRIVACY_ADDON_ID: "spacy",
-    ADDON_LLM_CORE: "langchain_core",
-    **{addon: package.module for addon, package in _LLM_ADDONS.items()},
-}
-
-# sys.modules key prefixes to evict after a successful install so that
-# importlib.util.find_spec() performs a fresh filesystem probe.
-_ADDON_STALE_PREFIXES: dict[str, list[str]] = {
-    PRIVACY_ADDON_ID: ["spacy"],
-    ADDON_LLM_CORE: ["langchain_core"],
-    **{addon: [package.module] for addon, package in _LLM_ADDONS.items()},
-}
+# Top-level module name used to check importability for each addon — and the prefix of the
+# sys.modules entries evicted after an install, so that find_spec() probes the folder again.
+_ADDON_CHECK_MODULE: Mapping[str, str] = MappingProxyType(
+    {
+        PRIVACY_ADDON_ID: "spacy",
+        ADDON_LLM_CORE: "langchain_core",
+        **{addon: package.module for addon, package in _LLM_ADDONS.items()},
+    }
+)
 
 
 def addon_requirements() -> dict[str, list[str]]:
@@ -153,16 +152,11 @@ def addon_package_names() -> list[str]:
 
 def get_packages_dir() -> Path:
     """Return the persistent user-writable directory for addon packages."""
-    try:
-        from platformdirs import user_data_dir  # noqa: PLC0415
-
-        return Path(user_data_dir("teachers_teammate", appauthor=False)) / "packages"
-    except ImportError:
-        return Path.home() / ".local" / "share" / "teachers_teammate" / "packages"
+    return app_data_folder() / "packages"
 
 
 def _packages_dir_readable(pkg_dir: Path) -> bool:
-    """Return False if any .py file in *pkg_dir* cannot be opened by the current user.
+    """Return whether every .py file in *pkg_dir* can be opened by the current user.
 
     On Windows, packages installed while running as Administrator can end up with
     file ACLs that deny read access to the non-elevated user.  Injecting such a
@@ -172,12 +166,9 @@ def _packages_dir_readable(pkg_dir: Path) -> bool:
     try:
         for p in pkg_dir.iterdir():
             if p.is_file() and p.suffix == ".py":
-                try:
-                    p.open("rb").close()
-                    return True
-                except PermissionError:
-                    return False
-        return True  # directory is empty or has no .py files
+                with p.open("rb"):
+                    pass
+        return True
     except PermissionError:
         return False
 
@@ -204,17 +195,42 @@ def _normalise(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def _normalised_name(dist_info: Path) -> str:
-    """Return the package name of a ``<name>-<version>.dist-info`` folder, PEP 503 normalised."""
-    return _normalise(dist_info.name.removesuffix(".dist-info").split("-", 1)[0])
+#: What a folder held when it was last listed, with the stamp of the listing: the four steps of
+#: one start read the same folder, and the window asks for the installed add-ons beside them.
+_listed: dict[Path, tuple[int, tuple[tuple[str, str, Path], ...]]] = {}
+
+
+#: A folder stamp this much older than now cannot be shared with a later change (file systems
+#: stamp with a granularity of up to two seconds).
+_STAMP_SETTLED_NS = 3_000_000_000
 
 
 def _distributions(pkg_dir: Path) -> list[tuple[str, str, Path]]:
     """Return ``(normalised name, version, dist-info folder)`` of what *pkg_dir* holds.
 
-    Read from the folder names only, which pip writes as ``<name>-<version>.dist-info``:
-    cheap enough to do at every start.
+    Read from the folder names only, which pip writes as ``<name>-<version>.dist-info``: cheap
+    enough to do at every start.  The listing is kept against the folder's stamp, so a folder
+    that did not change is read once (an install changes the stamp).  A stamp newer than the
+    clock's granularity may still be shared by a change made right after the listing, so such a
+    listing is not kept.
     """
+    try:
+        stamp = pkg_dir.stat().st_mtime_ns
+    except OSError:
+        return []
+    remembered = _listed.get(pkg_dir)
+    if remembered is not None and remembered[0] == stamp:
+        return list(remembered[1])
+    found = _read_distributions(pkg_dir)
+    if time.time_ns() - stamp > _STAMP_SETTLED_NS:
+        _listed[pkg_dir] = (stamp, tuple(found))
+    else:
+        _listed.pop(pkg_dir, None)
+    return found
+
+
+def _read_distributions(pkg_dir: Path) -> list[tuple[str, str, Path]]:
+    """List the ``*.dist-info`` folders of *pkg_dir*; empty when it cannot be read."""
     found: list[tuple[str, str, Path]] = []
     try:
         folders = sorted(pkg_dir.glob("*.dist-info"))
@@ -799,17 +815,28 @@ def remove_leftover_folders(live: Path) -> None:
     _remove_empty_folder(root)
 
 
+#: The folders :func:`prepare_packages_dir` has cleaned in this process.
+_prepared: set[Path] = set()
+
+
+def prepare_packages_dir_once() -> None:
+    """Run :func:`prepare_packages_dir` unless this process already did it for the folder."""
+    if get_packages_dir() not in _prepared:
+        prepare_packages_dir()
+
+
 def prepare_packages_dir() -> None:
     """Finish an interrupted install and clean up, before anything is imported from the folder.
 
-    Called at every normal start, before :func:`inject_packages_dir`: applies what waited in
-    ``packages.pending/``, drops copies of bundled packages, and deletes what a crashed install
-    left behind.  The add-ons are optional, so a step that fails is logged and the app starts
-    anyway.
+    Called at every normal start, before :func:`inject_packages_dir`: deletes the add-ons that
+    are retired, applies what waited in ``packages.pending/``, drops copies of bundled packages,
+    and deletes what a crashed install left behind.  The add-ons are optional, so a step that
+    fails is logged and the app starts anyway.
     """
     live = get_packages_dir()
     constraints = addon_constraints_path()
     steps: tuple[tuple[str, Callable[[], object]], ...] = (
+        ("remove the retired add-ons", lambda: remove_retired_addons(live)),
         ("apply the pending packages", lambda: apply_pending_packages(live, constraints)),
         ("drop the redundant packages", lambda: drop_redundant_shared_packages(live, constraints)),
         ("remove the leftover folders", lambda: remove_leftover_folders(live)),
@@ -819,6 +846,7 @@ def prepare_packages_dir() -> None:
             step()
         except OSError as exc:
             _logger.warning("Could not %s in %s: %s", what, live, exc)
+    _prepared.add(live)
 
 
 def addons_restart_needed() -> bool:
@@ -861,7 +889,7 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
             bundle, ...); each failure is an :class:`AddonInstallError` when its reason is known.
     """
     if not getattr(sys, "frozen", False):
-        raise RuntimeError(ADDONS_UPDATE_NEEDS_INSTALL)
+        raise RuntimeError(addons_update_needs_install())
     pkg_dir = get_packages_dir()
     failures: list[tuple[str, RuntimeError]] = []
     for requirement in installed_addon_requirements(pkg_dir):
@@ -873,7 +901,7 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
     drop_outdated_shared_packages(pkg_dir, addon_constraints_path())
     drop_foreign_packages(pkg_dir)
     inject_packages_dir()
-    for addon in _ADDON_STALE_PREFIXES:
+    for addon in _ADDON_CHECK_MODULE:
         clear_stale_modules(addon)
     if failures:
         raise AddonUpdateError(failures)
@@ -921,7 +949,6 @@ def inject_packages_dir() -> None:
     """
     pkg_dir = get_packages_dir()
     pkg_str = str(pkg_dir)
-    remove_retired_addons(pkg_dir)
     if pkg_str not in sys.path:
         if pkg_dir.exists() and not _packages_dir_readable(pkg_dir):
             return
@@ -976,7 +1003,8 @@ def clear_stale_modules(addon: str) -> None:
     not be found. Removing those entries forces a fresh filesystem probe on the
     next find_spec / import call so the newly installed package is discovered.
     """
-    prefixes = _ADDON_STALE_PREFIXES.get(addon, [])
+    module = _ADDON_CHECK_MODULE.get(addon, "")
+    prefixes = [module] if module else []
     # Snapshot keys first to avoid mutation-during-iteration.
     to_remove = [
         k
@@ -1042,11 +1070,13 @@ def _run_pip(cmd: list[str], progress_cb: Callable[[str], None]) -> tuple[int, l
         "stderr": subprocess.STDOUT,
         "text": True,
         "bufsize": 1,
+        "env": child_env(),
         **no_console_window_kwargs(),
     }
     lines: list[str] = []
     with subprocess.Popen(cmd, **kwargs) as proc:
-        assert proc.stdout is not None
+        if proc.stdout is None:  # a PIPE always opens a stream; without one nothing comes back
+            raise RuntimeError("the pip process opened no output stream")
         for line in proc.stdout:
             lines.append(line)
             progress_cb(line)
@@ -1079,7 +1109,7 @@ def _install_into_staging(
 
 
 def install_packages_subprocess(
-    packages: list[str],
+    packages: Sequence[str],
     target: Path,
     progress_cb: Callable[[str], None],
     *,

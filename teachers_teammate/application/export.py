@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import Config
+from ..domain.anonymization import AnonymizerConfig
 from ..domain.output_files import feeds_inputs, output_path
 from .anonymization import AnonymizationService
 from .document_view import DocumentStateView
@@ -101,7 +102,7 @@ class ExportService:
         corrected: bool = False,
         anonymize: bool = False,
         language: str = "English",
-        anonymizer_config: object | None = None,
+        anonymizer_config: AnonymizerConfig | None = None,
     ) -> str:
         """Return the text of *view* as plain text, the way a text export writes it.
 
@@ -117,9 +118,7 @@ class ExportService:
         """
         text = view.correction_text if corrected else view.raw_text
         if anonymize:
-            text, _mapping = self._anonymization.anonymize_preview(
-                text, language, anonymizer_config
-            )
+            text, _mapping = self._anonymization.anonymize_text(text, language, anonymizer_config)
         return TextFormatter.plain_text(text, view.raw_text_format)
 
     def export_text(
@@ -130,7 +129,7 @@ class ExportService:
         *,
         anonymize: bool = False,
         language: str = "English",
-        anonymizer_config: object | None = None,
+        anonymizer_config: AnonymizerConfig | None = None,
         protected: Collection[Path] = (),
     ) -> None:
         """Write the transcription of *source* to *out_path* as a UTF-8 text file.

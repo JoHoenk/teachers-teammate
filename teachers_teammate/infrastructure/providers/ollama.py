@@ -12,7 +12,7 @@ from teachers_teammate.domain.ollama_address import normalize_ollama_url
 from teachers_teammate.domain.ollama_discovery import DEFAULT_SERVER_URL
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.exceptions import ProviderNotAvailableError
-from teachers_teammate.texts.addons import package_not_installed
+from teachers_teammate.messages import package_not_installed
 
 # Metadata consumed by the GUI (and any other caller of llm_factory.get_provider_info).
 # ``models`` is intentionally empty: Ollama's model list is fetched live via the API.

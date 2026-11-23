@@ -900,6 +900,16 @@ py_test(
     deps = _COMMON_DEPS + ["//tools/packaging:packaging_tools_lib"],
 )
 
+# The groups CI runs on separate machines (tools/ci/target_groups.py): every test in exactly one.
+py_test(
+    name = "test_target_groups",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_target_groups.py"],
+    args = ["unit/test_target_groups.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/ci:ci_tools_lib"],
+)
+
 py_test(
     name = "test_latest_release",
     size = "small",
@@ -2364,6 +2374,7 @@ py_test(
     ],
     args = ["gui/test_gui_setup_walkthrough.py"],
     main = "run_test.py",
+    tags = ["walkthrough"],
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
         "//teachers_teammate:gui_layer_lib",
         "@ocr_test_dependencies//ollama:pkg",
@@ -2888,6 +2899,7 @@ py_test(
     data = _READER_MODEL_DATA + _PAGE_MODEL_DATA,
     env = _MODEL_ENV,
     main = "run_test.py",
+    tags = ["walkthrough"],
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
@@ -2903,6 +2915,13 @@ py_test(
     args = ["unit/test_walkthrough_imports.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS,
+)
+
+# The tests that play the whole app (tag ``walkthrough``). CI runs them on a machine of their own
+# (tools/ci/target_groups.py), so a growing walkthrough never slows the other groups.
+test_suite(
+    name = "walkthrough_tests",
+    tags = ["walkthrough"],
 )
 
 # ── Test suite ────────────────────────────────────────────────────────────
@@ -3055,6 +3074,7 @@ test_suite(
         ":test_step_runner",
         ":test_storage_policy",
         ":test_subprocess_env",
+        ":test_target_groups",
         ":test_teacher_work",
         ":test_teacher_work_readers",
         ":test_text_chunks",

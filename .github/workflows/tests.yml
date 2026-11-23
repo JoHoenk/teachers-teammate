@@ -22,7 +22,7 @@ jobs:
         run: echo "groups=$(python3 tools/ci/target_groups.py --matrix)" >> "${GITHUB_OUTPUT}"
 
   test:
-    name: Tests (${{ matrix.group }})
+    name: Tests (${{ matrix.group }}, ${{ matrix.libs }})
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -30,6 +30,7 @@ jobs:
       fail-fast: false
       matrix:
         group: ${{ fromJSON(needs.plan.outputs.groups) }}
+        libs: [none, egl]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -39,16 +40,17 @@ jobs:
       - name: Set up Bazel
         uses: ./.github/actions/setup-bazel
         with:
-          disk-cache: tests-${{ matrix.group }}
+          disk-cache: tests-${{ matrix.group }}-${{ matrix.libs }}
 
       - name: Install Qt system libraries
+        if: matrix.libs == 'egl'
         # A slow mirror retries and times out instead of holding the job.
         run: |
           echo 'Acquire::Retries "3"; Acquire::http::Timeout "20";' |
             sudo tee /etc/apt/apt.conf.d/99ci-timeouts > /dev/null
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libxcb-xinerama0 libxcb-cursor0 libegl1 libgl1 libglib2.0-0
+            libegl1
 
       - name: Run the tests of this group
         # LangChain is an optional runtime dependency (pip install "teachers-teammate[llm]").

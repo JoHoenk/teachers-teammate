@@ -4641,8 +4641,10 @@ def test_a_settings_change_checks_once_after_a_pause(qtbot, ready_window, monkey
     Then   one readiness check ran (the changes were bundled)
     """
     calls = _preflight_returns(monkeypatch, RunPreflight())
-    qtbot.waitUntil(lambda: len(calls) >= 1, timeout=3000)  # the start-up check
-    qtbot.wait(100)
+    qtbot.waitUntil(lambda: len(calls) >= 1, timeout=3000)
+    # Start-up asks twice: the debounced data-flow check and the window's 500 ms one. Wait
+    # until both have run, or a late one counts as a check the two changes below made.
+    qtbot.wait(800)
     calls.clear()
 
     ready_window._config_panel._correction_enabled.setChecked(False)

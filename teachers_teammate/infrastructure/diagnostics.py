@@ -1,7 +1,7 @@
 """Opt-in diagnostics for a window that starts slowly or stops answering.
 
 Off unless asked for: start the app with ``--diagnose`` or set ``TEACHERS_TEAMMATE_DIAGNOSE=1``.
-Then a file ``diagnostics.log`` in the data folder (:func:`resolve_data_root`) gets
+Then a file ``logs/diagnostics.log`` in the data folder gets
 
 * a line for each phase of the start (how long after the process began), and
 * a report whenever the GUI thread does not answer for longer than :data:`STALL_S`: what the
@@ -26,7 +26,7 @@ import traceback
 from types import FrameType
 from typing import TextIO
 
-from .storage_root import resolve_data_root
+from .logging_setup import log_folder
 
 _logger = logging.getLogger(__name__)
 
@@ -63,8 +63,8 @@ def _environment() -> Mapping[str, str]:
 
 
 def default_log_path() -> Path:
-    """Return where the log is written: the data folder of the user."""
-    return resolve_data_root() / LOG_NAME
+    """Return where the log is written: the ``logs`` folder of the data folder of the user."""
+    return log_folder() / LOG_NAME
 
 
 class Diagnostics:

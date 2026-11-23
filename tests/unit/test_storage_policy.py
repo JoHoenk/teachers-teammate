@@ -315,3 +315,20 @@ def test_config_root_falls_back_to_the_storage_root(monkeypatch, tmp_path: Path)
     config.write_text("a file, not a folder", encoding="utf-8")
 
     assert storage_root.resolve_config_root() == cache
+
+
+def test_a_folder_probed_by_many_threads_at_once_stays_writable(tmp_path: Path) -> None:
+    """
+    Given  one writable folder that a run and the window's lookups probe at the same moment
+    When   many threads probe it repeatedly
+    Then   every probe says it is writable and no sentinel file is left behind
+    """
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    folder = tmp_path / "root"
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        answers = list(pool.map(lambda _: storage_root._probe_writable(folder), range(400)))
+
+    assert all(ok for ok, _reason in answers), [r for ok, r in answers if not ok][:3]
+    assert list(folder.iterdir()) == []

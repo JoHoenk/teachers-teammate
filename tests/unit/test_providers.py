@@ -223,7 +223,7 @@ def test_openai_create_returns_base_chat_model() -> None:
         mod = _load("openai")
         result = mod.create("gpt-4o-mini")
 
-    fake_mod.ChatOpenAI.assert_called_once_with(model="gpt-4o-mini", temperature=0.7)
+    fake_mod.ChatOpenAI.assert_called_once_with(model="gpt-4o-mini", temperature=0.7, api_key=None)
     assert result is mock_instance
 
 
@@ -285,6 +285,32 @@ def test_uninstalled_provider_create_raises_runtime_error(
     assert raised.value.args[0].key is MessageKey.PACKAGE_NOT_INSTALLED
 
 
+@pytest.mark.parametrize(("installed_app", "expected"), [(True, "Add-ons"), (False, "pip")])
+def test_the_install_hint_fits_the_kind_of_app(
+    monkeypatch, installed_app: bool, expected: str
+) -> None:
+    """
+    Given  a bundled app, then a source checkout, with langchain-anthropic missing
+    When   create() fails and the failure is worded
+    Then   the installed app points at the Add-ons page and only the checkout says pip, because a
+           teacher of the installed app cannot run one
+    """
+    import sys  # noqa: PLC0415
+
+    from teachers_teammate.texts import messages as wording  # noqa: PLC0415
+
+    monkeypatch.setattr(sys, "frozen", installed_app, raising=False)
+    with patch.dict(sys.modules, {"langchain_anthropic": None}):
+        mod = _load("anthropic")
+        with pytest.raises(RuntimeError) as raised:
+            mod.create("some-model")
+
+    sentence = wording.render(raised.value.args[0])
+
+    assert expected in sentence
+    assert ("pip" in sentence) is not installed_app
+
+
 # ── list_models() / create() — mistral (global + EU) ──────────────────────
 
 _MISTRAL_PROVIDERS = [
@@ -333,6 +359,39 @@ def test_mistral_list_models_queries_own_endpoint_and_keeps_chat_models(
     assert result == ["mistral-small-latest", "ministral-8b-2410"]
     assert request.full_url == f"{base_url}/models"
     assert request.get_header("Authorization") == "Bearer k-test"
+
+
+@pytest.mark.parametrize("name", [n for n, _ in _MISTRAL_PROVIDERS])
+def test_mistral_list_models_with_an_empty_key_ignores_the_environment(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  MISTRAL_API_KEY exported, and the app holding no key (an empty one)
+    When   list_models_checked() is called with that empty key
+    Then   the static list comes back as failed and no request is made
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-exported")
+    with patch(_URLOPEN) as urlopen:
+        listing = _load(name).list_models_checked(api_key="")
+
+    assert listing.source == "failed"
+    urlopen.assert_not_called()
+
+
+@pytest.mark.parametrize("name", ["openai", "anthropic", "google", "cohere", "mistral"])
+def test_check_connection_with_an_empty_key_ignores_the_environment(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  the provider's key exported, and the app holding no key (an empty one)
+    When   its check_connection() is called with that empty key
+    Then   the key counts as not set; without a key given, the environment's counts
+    """
+    module = _load(name)
+    monkeypatch.setenv(module.PROVIDER.env_key, "k-exported")
+
+    assert module.check_connection(api_key="")[0] is False
+    assert module.check_connection()[0] is True
 
 
 @pytest.mark.parametrize("name", [n for n, _ in _MISTRAL_PROVIDERS])
@@ -749,7 +808,8 @@ def test_installed_provider_create_returns_model_instance(
         result = mod.create("some-model")
 
     chat_cls = getattr(fake_mod, class_name)
-    chat_cls.assert_called_once_with(model="some-model", temperature=0.7)
+    assert chat_cls.call_args.kwargs["model"] == "some-model"
+    assert chat_cls.call_args.kwargs["temperature"] == 0.7
     assert result is fake_instance
 
 

@@ -16,6 +16,7 @@ full pipeline.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
@@ -108,6 +109,29 @@ def _default_build_llm(
     *, provider: str, model: str, base_url: str, temperature: float
 ) -> BaseChatModel:
     return build_llm(provider, model, base_url=base_url, temperature=temperature)
+
+
+@dataclass(frozen=True)
+class LlmBuilderWithKeys:
+    """Builds the chat model of a provider with the key the app holds for it.
+
+    The key comes in as ``key_for``, so this layer knows nothing of where keys are kept; the
+    composition root hands over the one place they are.
+    """
+
+    key_for: Callable[[str], str | None]
+
+    def __call__(
+        self, *, provider: str, model: str, base_url: str, temperature: float
+    ) -> BaseChatModel:
+        """Return the chat model of *provider*, built with the key it is given."""
+        return build_llm(
+            provider,
+            model,
+            base_url=base_url,
+            temperature=temperature,
+            api_key=self.key_for(provider) or "",
+        )
 
 
 def _default_build_corrector(
@@ -539,7 +563,7 @@ class StageBuilder:
             level=cfg.correction_level,
             explanation_language=cfg.explanation_language,
             teacher_notes=cfg.correction_notes,
-            corrections_only=cfg.correction_output == "text",
+            corrections_only=cfg.correction_output == correction_policy.CorrectionOutput.TEXT,
         )
 
     def _correction_is_online(self) -> bool:

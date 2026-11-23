@@ -217,7 +217,10 @@ RECOGNITION_OFF_MESSAGE = "Needs text recognition, which is switched off."
 FILE_GONE_MESSAGE = "The file is no longer there."
 
 #: What a file says that ended on an error no stage expected; the traceback goes to the log.
-UNEXPECTED_ERROR_MESSAGE = "An unexpected error occurred; the file was not processed."
+UNEXPECTED_ERROR_MESSAGE = (
+    "An unexpected error occurred; the file was not processed. "
+    "The details are in the log file in the app's data folder, under logs."
+)
 
 
 class RecognitionSwitchedOffError(PipelineInputError):

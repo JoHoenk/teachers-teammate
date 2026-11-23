@@ -40,6 +40,7 @@ from dataclasses import dataclass
 import logging
 from pathlib import Path
 import threading
+from typing import NamedTuple
 
 from ..config import Config, OcrConfig
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
@@ -48,7 +49,7 @@ from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import output_folder_refusal
 from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..exceptions import OllamaUnreachableError, ProviderNotAvailableError
-from ..interfaces import ImageUnit, ProgressCallbacks, Reporter
+from ..interfaces import ImageUnit, PreparedPreview, ProgressCallbacks, Reporter
 from ..messages import preview_needs_images
 from ..texts import report as report_text
 from . import run_report
@@ -75,8 +76,12 @@ _logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class PipelineDependencies:
-    """Optional runtime dependencies for explicit injection in tests/adapters."""
+    """What a run is given from outside; a run builds none of these itself."""
 
+    # Where the speed samples of this run go.  One store per process writes the file, so the
+    # application layer passes the store its speed estimates also write to; a second store would
+    # be a second lock on one file.
+    samples: SampleStore
     artifact_store: PreviewImageStore | None = None
     state_repo: StateRepository | None = None
     cache_service: CacheReconciliationService | None = None
@@ -99,9 +104,6 @@ class PipelineDependencies:
     # Where the teacher's work is.  The application layer passes the store the window writes
     # to, so a run reads the corrections the teacher made; ``None`` builds the default one.
     work_store: TeacherWorkStore | None = None
-    # Where the speed samples of this run go.  One store per process writes the file, so the
-    # application layer passes the store its speed estimates also write to.
-    samples: SampleStore | None = None
 
 
 # ── Public helpers ─────────────────────────────────────────────────────────
@@ -113,7 +115,7 @@ def preprocess_preview(
     tmp_dir: Path,
     build_preprocessor: PreprocessorBuilder = default_build_preprocessor,
     model_store: ModelStore | None = None,
-) -> tuple[Path, Path, list[str]]:
+) -> PreparedPreview:
     """Preprocess *source_path* and return paths for both the original and processed image.
 
     Does not run OCR, correction, or DOCX generation.
@@ -137,7 +139,7 @@ def preprocess_preview(
             default folder.
 
     Returns:
-        A tuple of ``(original_image_path, preprocessed_image_path, steps_applied)``.
+        The original page, the prepared page, and the steps that were applied.
     """
     # A preview shows the preprocessed page image, so the PDF is always rendered.
     options = InputOptions(pdf_dpi=ocr.pdf_render_dpi, pdf_text_layer="never")
@@ -152,10 +154,21 @@ def preprocess_preview(
 
     preprocessor = build_preprocessor(tmp_dir=tmp_dir, save_steps=False, ocr=ocr, store=model_store)
     out_path, steps = preprocessor.preprocess(image_path)
-    return image_path, out_path, steps
+    return PreparedPreview(image_path, out_path, steps)
 
 
 # ── Pipeline ───────────────────────────────────────────────────────────────
+
+
+class _RunStart(NamedTuple):
+    """What a run needs set up before it reads the first file."""
+
+    tmp_dir: Path
+    """Where the intermediate images, the previews and the state of the run go."""
+    artifact_store: PreviewImageStore
+    """The store the prepared pages and the step snapshots are written to."""
+    state_repo: StateRepository
+    """What is already done for each file, so a run continues where the last one stopped."""
 
 
 class OCRPipeline:
@@ -179,9 +192,10 @@ class OCRPipeline:
         Optional threading event ("Stop after this file"); when set the file being processed
         is finished completely and no further file is started.
     dependencies:
-        Optional injection seam (tests/adapters).  Notably carries ``reporter``:
-        the sink for the run narrative and advisory warnings, defaulting to
-        :class:`~teachers_teammate.infrastructure.reporting.StdoutReporter`
+        What the run is given from outside: ``samples`` (where the speed samples go, one store
+        per process) is required; the rest are the injection seam for tests and adapters.
+        Notably carries ``reporter``: the sink for the run narrative and advisory warnings,
+        defaulting to :class:`~teachers_teammate.infrastructure.reporting.StdoutReporter`
         (CLI behaviour).  The GUI injects a reporter that feeds its log pane.
     progress:
         Optional per-file progress hooks; see
@@ -196,7 +210,7 @@ class OCRPipeline:
         *,
         stop_after_file_event: threading.Event | None = None,
         config_file: Path | None = None,
-        dependencies: PipelineDependencies | None = None,
+        dependencies: PipelineDependencies,
         progress: ProgressCallbacks | None = None,
     ) -> None:
         self._config = config
@@ -207,7 +221,7 @@ class OCRPipeline:
         self._progress = progress or ProgressCallbacks()
         #: The file the run is on, so a note from the Ollama client can name it.
         self._current_source_id = ""
-        deps = dependencies or PipelineDependencies()
+        deps = dependencies
         self._keep_awake: KeepAwakeState | None = deps.keep_awake
         self._battery_warning = deps.battery_warning
         self._reporter: Reporter = deps.reporter or StdoutReporter()
@@ -215,7 +229,7 @@ class OCRPipeline:
         self._hardware: HardwareDetection | None = deps.hardware
         self._model_store: ModelStore | None = deps.model_store
         self._work_store: TeacherWorkStore | None = deps.work_store
-        self._samples: SampleStore = deps.samples or SampleStore()
+        self._samples: SampleStore = deps.samples
         self._artifact_store: PreviewImageStore | None = deps.artifact_store
         self._state_repo: StateRepository | None = deps.state_repo
         self._cache_service: CacheReconciliationService | None = deps.cache_service
@@ -227,30 +241,53 @@ class OCRPipeline:
     def run(self) -> RunSummary:
         """Execute the full pipeline and return what happened to each file.
 
-        A run that was stopped is not a failure: ``summary.exit_code`` is ``1`` only when a
-        file failed or the run could not start.
+        A stopped run is no failure: ``exit_code`` is ``1`` only when a file failed or the run
+        could not start.
         """
+        refusal = self._refuse_folders()
+        if refusal:
+            self._reporter.error(refusal)
+            return RunSummary(error=refusal)
+        start = self._prepare_run()
+        unreadable = self._check_ocr_model()
+        if unreadable:
+            return RunSummary(error=unreadable)
+        try:
+            file_processor = self._setup_services(
+                start.tmp_dir, start.artifact_store, start.state_repo
+            )
+        except (ValueError, RuntimeError, ProviderNotAvailableError) as exc:
+            self._reporter.error(str(exc))
+            return RunSummary(error=str(exc))
+        files = self._files
+        if not files:
+            return self._report_no_files()
+        self._reporter.status(report_text.files_to_process(len(files)))
+        summary = self._run_files(files, file_processor, start.tmp_dir, start.artifact_store)
+        run_report.summary(summary, self._reporter)
+        return summary
+
+    def _refuse_folders(self) -> str:
+        """Return why a run may not write there, or ``""`` when both folders are fine."""
         cfg = self._config
-        reporter = self._reporter
-        refusal = output_folder_refusal(
+        return output_folder_refusal(
             writes_text_files=cfg.writes_text_files,
             output_dir=cfg.output_dir.resolve(),
             input_dir=cfg.input_dir.resolve(),
             recursive=cfg.recursive,
         )
-        if refusal:
-            reporter.error(refusal)
-            return RunSummary(error=refusal)
+
+    def _prepare_run(self) -> _RunStart:
+        """Create the run's folders and stores, and say where the teacher's work is kept."""
+        cfg = self._config
+        reporter = self._reporter
         tmp_dir = resolve_artifact_dir(cfg.output_dir)
         cfg.output_dir.mkdir(parents=True, exist_ok=True)
         tmp_dir.mkdir(parents=True, exist_ok=True)
-
         artifact_store = self._artifact_store or PreviewImageStore(tmp_dir, keep_debug=cfg.debug)
         state_repo = self._state_repo or StateRepository(tmp_dir / "state")
-
         storage = resolve_storage_root()
         reporter.status(report_text.storage_root(storage.path.resolve(), storage.source))
-
         run_report.banner(
             cfg,
             reporter,
@@ -258,31 +295,28 @@ class OCRPipeline:
             keep_awake=self._keep_awake,
             battery_warning=self._battery_warning,
         )
-        if cfg.recognition_enabled and cfg.ocr.engine == ENGINE_OLLAMA:
-            try:
-                self._component_factory.check_ocr_model(
-                    url=cfg.ollama_url, model=cfg.ocr.model, reporter=reporter
-                )
-                reporter.status(report_text.OLLAMA_CHECKED)
-            except (RuntimeError, OllamaUnreachableError) as exc:
-                reporter.error(str(exc))
-                return RunSummary(error=str(exc))
+        return _RunStart(tmp_dir, artifact_store, state_repo)
+
+    def _check_ocr_model(self) -> str:
+        """Return why the model that reads the pages cannot be used, or ``""``."""
+        cfg = self._config
+        if not (cfg.recognition_enabled and cfg.ocr.engine == ENGINE_OLLAMA):
+            return ""
         try:
-            file_processor = self._setup_services(tmp_dir, artifact_store, state_repo)
-        except (ValueError, RuntimeError, ProviderNotAvailableError) as exc:
-            reporter.error(str(exc))
-            return RunSummary(error=str(exc))
+            self._component_factory.check_ocr_model(
+                url=cfg.ollama_url, model=cfg.ocr.model, reporter=self._reporter
+            )
+        except (RuntimeError, OllamaUnreachableError) as exc:
+            self._reporter.error(str(exc))
+            return str(exc)
+        self._reporter.status(report_text.OLLAMA_CHECKED)
+        return ""
 
-        files = self._files
-        if not files:
-            supported = ", ".join(s.lstrip(".").upper() for s in sorted(supported_suffixes()))
-            reporter.status(report_text.no_supported_files(supported))
-            return RunSummary()
-
-        reporter.status(report_text.files_to_process(len(files)))
-        summary = self._run_files(files, file_processor, tmp_dir, artifact_store)
-        run_report.summary(summary, reporter)
-        return summary
+    def _report_no_files(self) -> RunSummary:
+        """Say which files a run reads; the queue holds none of them."""
+        supported = ", ".join(s.lstrip(".").upper() for s in sorted(supported_suffixes()))
+        self._reporter.status(report_text.no_supported_files(supported))
+        return RunSummary()
 
     def run_preview_only(self) -> RunSummary:
         """Preprocess all input files and save images to the temp cache directory.
@@ -293,16 +327,13 @@ class OCRPipeline:
         reporter = self._reporter
         preprocess_service, files, tmp_dir = self._prepare_preview_run()
         if not files:
-            supported = ", ".join(s.lstrip(".").upper() for s in sorted(supported_suffixes()))
-            reporter.status(report_text.no_supported_files(supported))
-            return RunSummary()
+            return self._report_no_files()
 
         try:
-            succeeded, failed = self._run_preview_batch(preprocess_service, files)
+            summary = self._run_preview_batch(preprocess_service, files)
         finally:
             self._cleanup_preview_intermediates(tmp_dir)
 
-        summary = RunSummary(succeeded=tuple(succeeded), failed=tuple(failed))
         run_report.preview_summary(summary, reporter, tmp_dir)
         return summary
 
@@ -325,7 +356,8 @@ class OCRPipeline:
         self,
         preprocess_service: PreprocessService,
         files: list[Path],
-    ) -> tuple[list[str], list[str]]:
+    ) -> RunSummary:
+        """Preprocess every file, and return the names sorted by what happened to them."""
         reporter = self._reporter
         total = len(files)
         reporter.status(report_text.files_to_preprocess(total))
@@ -344,7 +376,7 @@ class OCRPipeline:
                 failed.append(file.name)
             else:
                 succeeded.append(file.name)
-        return succeeded, failed
+        return RunSummary(succeeded=tuple(succeeded), failed=tuple(failed))
 
     def _cleanup_preview_intermediates(self, tmp_dir: Path) -> None:
         """Delete what the preview run wrote besides its result, in the folder it wrote to.

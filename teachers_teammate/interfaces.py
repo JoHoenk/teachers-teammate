@@ -25,7 +25,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Literal, NamedTuple, Protocol, runtime_checkable
 
 from .domain.evaluation import EvaluationOutcome
 from .domain.formatted_text import FormattedDocument, TextFormat
@@ -462,3 +462,28 @@ class ProgressCallbacks:
     on_keep_awake: Callable[[KeepAwakeState], None] | None = None
     on_stage_detail: OnStageDetailFn | None = None
     on_first_token: OnFirstTokenFn | None = None
+
+
+# ── What a check and a preview answer ──────────────────────────────────────
+
+
+class ConnectionCheck(NamedTuple):
+    """What one check of a provider's server answered."""
+
+    connected: bool
+    """The server answered at all."""
+    model_ok: bool
+    """The model the check asked for is there; equal to ``connected`` when none was asked for."""
+    message: str
+    """The sentence the teacher reads, built in :mod:`teachers_teammate.texts`."""
+
+
+class PreparedPreview(NamedTuple):
+    """The two images a preview shows, and what the preparation did to the page."""
+
+    original: Path
+    """The page as it was scanned or rendered."""
+    preprocessed: Path
+    """The same page after the automatic preparation."""
+    steps: list[str]
+    """What the preparation did, in the order the teacher reads it."""

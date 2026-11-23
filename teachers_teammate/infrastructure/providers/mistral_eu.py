@@ -45,24 +45,31 @@ PROVIDER = ProviderInfo(
 )
 
 
-def list_models_checked(**_kwargs: object) -> ModelListing:
+def list_models_checked(*, api_key: str | None = None, **_kwargs: object) -> ModelListing:
     """Return the chat models this endpoint serves and whether the list is live."""
-    return common.list_chat_models_checked(common.EU_BASE_URL, PROVIDER.models)
+    return common.list_chat_models_checked(common.EU_BASE_URL, PROVIDER.models, api_key=api_key)
 
 
-def list_models(**kwargs: object) -> list[str]:
+def list_models(*, api_key: str | None = None, **_kwargs: object) -> list[str]:
     """Return chat model IDs, or the static list when the endpoint cannot be asked."""
-    return list_models_checked(**kwargs).models
+    return list_models_checked(api_key=api_key).models
 
 
-def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseChatModel:
+def create(
+    model: str,
+    *,
+    temperature: float = 0.7,
+    api_key: str | None = None,
+    **_kwargs: object,
+) -> BaseChatModel:
     """Return a ``ChatMistralAI`` instance for *model* using the EU endpoint.
 
     Args:
         model:       Mistral model name (e.g. ``"mistral-small-latest"``).
         temperature: Sampling temperature (0.0 = deterministic).
+        api_key:     The key the app holds; with none, LangChain reads ``$MISTRAL_API_KEY``.
     """
-    return common.create_chat_model(model, temperature, common.EU_BASE_URL)
+    return common.create_chat_model(model, temperature, common.EU_BASE_URL, api_key)
 
 
 check_connection = api_key_check(PROVIDER.env_key)

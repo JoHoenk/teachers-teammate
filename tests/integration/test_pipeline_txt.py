@@ -15,15 +15,12 @@ import pytest
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.interfaces import ProgressCallbacks
-from teachers_teammate.infrastructure.pipeline import (
-    OCRPipeline,
-    PipelineDependencies,
-)
+from teachers_teammate.infrastructure.pipeline import OCRPipeline
 from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
 from teachers_teammate.infrastructure.stage_builder import StageBuilder
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
-from tests.conftest import make_config
+from tests.conftest import make_config, pipeline_dependencies
 
 
 @pytest.mark.use_case("TXT_Ingestion_Without_OCR")
@@ -42,7 +39,15 @@ def test_pipeline_run_txt_input_writes_raw_text_without_ocr(tmp_path: Path) -> N
     source = cfg.input_dir / "note.txt"
     source.write_text("First line\nSecond line", encoding="utf-8")
 
-    rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+    rc = (
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=pipeline_dependencies(tmp_path),
+        )
+        .run()
+        .exit_code
+    )
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
@@ -76,6 +81,7 @@ def test_pipeline_txt_input_triggers_on_file_done_callback(tmp_path: Path) -> No
             cfg,
             FileDiscovery().collect_input_files(cfg),
             progress=ProgressCallbacks(on_file_done=_on_done),
+            dependencies=pipeline_dependencies(tmp_path),
         )
         .run()
         .exit_code
@@ -113,7 +119,15 @@ def test_pipeline_txt_input_enters_correction_pipeline(tmp_path: Path) -> None:
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
         patch.object(StageBuilder, "build_corrector", return_value=mock_corrector),
     ):
-        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+        rc = (
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                dependencies=pipeline_dependencies(tmp_path),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     call_args = mock_corrector.correct.call_args
@@ -151,6 +165,7 @@ def test_pipeline_txt_input_non_utf8_falls_back_to_latin1(tmp_path: Path) -> Non
             cfg,
             FileDiscovery().collect_input_files(cfg),
             progress=ProgressCallbacks(on_file_done=_on_done),
+            dependencies=pipeline_dependencies(tmp_path),
         )
         .run()
         .exit_code
@@ -180,7 +195,15 @@ def test_pipeline_saves_text_files_below_the_input_subfolder(tmp_path: Path) -> 
         (cfg.input_dir / name).mkdir()
         (cfg.input_dir / name / "essay.txt").write_text(f"text of {name}", encoding="utf-8")
 
-    rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
+    rc = (
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=pipeline_dependencies(tmp_path),
+        )
+        .run()
+        .exit_code
+    )
 
     assert rc == 0
     for name in ("class1", "class2"):
@@ -209,7 +232,7 @@ def test_pipeline_refuses_text_files_in_the_input_folder_before_creating_it(
         OCRPipeline(
             cfg,
             FileDiscovery().collect_input_files(cfg),
-            dependencies=PipelineDependencies(reporter=reporter),
+            dependencies=pipeline_dependencies(tmp_path, reporter=reporter),
         )
         .run()
         .exit_code
@@ -251,6 +274,7 @@ def test_pipeline_with_recognition_off_uses_text_files_and_skips_scans(
                 cfg,
                 FileDiscovery().collect_input_files(cfg),
                 progress=ProgressCallbacks(on_file_done=events.append),
+                dependencies=pipeline_dependencies(tmp_path),
             )
             .run()
             .exit_code

@@ -277,6 +277,20 @@ def make_config(tmp_path: Path, **overrides: object):
     return Config(**defaults)
 
 
+def pipeline_dependencies(tmp_path: Path, **fields: object):
+    """Return what a run is given from outside; its samples go into *tmp_path*.
+
+    A test never lets a run write its speed samples into the folder of the teacher who runs the
+    suite, and every pipeline test passes this so the one store of the process is the test's.
+    """
+    from teachers_teammate.infrastructure.pipeline import PipelineDependencies  # noqa: PLC0415
+    from teachers_teammate.infrastructure.speed_store import SampleStore  # noqa: PLC0415
+
+    values: dict[str, object] = {"samples": SampleStore(tmp_path / "samples.json")}
+    values.update(fields)
+    return PipelineDependencies(**values)  # ty: ignore[invalid-argument-type]
+
+
 # ── Network isolation ──────────────────────────────────────────────────────
 
 
@@ -382,9 +396,6 @@ def credential_file(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
     monkeypatch.setattr(_credential_store, "app_settings", lambda: MemorySettings())
     monkeypatch.setattr(_credential_store, "_keyring", lambda: None)
-    # What start-up found in the environment is process-wide state; no test inherits it.
-    monkeypatch.setattr(_credential_store, "_SET_OUTSIDE_APP", set())
-    monkeypatch.setattr(_credential_store, "_LOADED_BY_APP", set())
     return stored
 
 

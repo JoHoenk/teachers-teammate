@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import DEFAULTS
+from ...domain.install_item import InstallItem
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...texts import models as mdl
 from ...texts import review as txt
@@ -81,7 +82,7 @@ class AiSetupPage(SettingsPageBase):
         layout.addWidget(self._build_server_group())
         layout.addStretch(1)
 
-    def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
+    def focus(self, focus: str, preselect: Sequence[InstallItem] = ()) -> None:
         _ = preselect
         if focus == FOCUS_SERVER:
             self._scroll_to(self._ollama_url)

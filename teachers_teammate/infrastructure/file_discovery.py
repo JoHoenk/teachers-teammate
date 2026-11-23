@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from ..config import Config
 from .input_provider_factory import supported_suffixes
+
+_logger = logging.getLogger(__name__)
 
 
 class FileDiscovery:
@@ -25,5 +28,6 @@ class FileDiscovery:
                 for file_path in glob_fn("*")
                 if file_path.is_file() and file_path.suffix.lower() in suffixes
             )
-        except OSError:
+        except OSError as exc:
+            _logger.warning("Cannot read the input folder %s: %s", input_dir, exc)
             return []

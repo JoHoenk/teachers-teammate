@@ -36,6 +36,9 @@ add-on.  ``tools/licenses/inventory.py --check-resolved DIR`` then holds that ag
 inventory: the add-on lock is resolved on Linux, so a dependency that only exists on Windows or
 macOS never appears in it, and this is the check that finds one.  The *newest* run is not
 reported: its versions are newer than the lock by design.
+
+The reports also fail the run: a package they install that neither the constraints nor the lock
+pins is one the installed app would bring unpinned (``tools/build/addon_pins.py``).
 """
 
 from __future__ import annotations
@@ -43,11 +46,22 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 from functools import partial
+import json
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+
+# The build environment installs the project, but a developer running this from a plain checkout
+# has not: the repo root makes ``tools.build`` importable either way.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.build.addon_lock import read_lock_pins  # noqa: E402
+from tools.build.addon_pins import unpinned  # noqa: E402
 
 #: Longest an add-on's dry run may take (pip downloads metadata, and some wheels, to resolve).
 TIMEOUT_S = 900
@@ -272,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        check, lock = _checker(args, parser)
+        check, lock, constraints = _checker(args, parser)
     except FileNotFoundError as exc:
         print(exc)
         return 1
@@ -282,13 +296,13 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--report needs --lock: only the locked install is what the app brings")
         args.report.mkdir(parents=True, exist_ok=True)
 
-    return _check_all(check, lock, args.report)
+    return _check_all(check, lock, constraints, args.report)
 
 
 def _checker(
     args: argparse.Namespace, parser: argparse.ArgumentParser
-) -> tuple[Callable[..., str], Path | None]:
-    """Return the function that checks one add-on, and the lock it uses (or ``None``).
+) -> tuple[Callable[..., str], Path | None, Path]:
+    """Return the function that checks one add-on, the lock it uses (or ``None``), the pins.
 
     Raises:
         FileNotFoundError: a constraints or lock file the chosen mode needs is missing.
@@ -307,15 +321,31 @@ def _checker(
                     f"{args.lock} is missing; run tools/build/addon_lock.py first"
                 )
             lock = args.lock
-        return partial(check_addon_with_python, args.python, args.constraints), lock
+        check = partial(check_addon_with_python, args.python, args.constraints)
+        return check, lock, args.constraints
     if args.app is None:
         parser.error("give the built app, or --python and --constraints")
-    return partial(check_addon, args.app, find_constraints(args.app)), find_lock(args.app)
+    constraints = find_constraints(args.app)
+    return partial(check_addon, args.app, constraints), find_lock(args.app), constraints
 
 
-def _check_all(check: Callable[..., str], lock: Path | None, report_dir: Path | None) -> int:
-    """Check every add-on in each mode; return 1 when one cannot be installed."""
+def _unpinned(report: Path, constraints: Path, lock: Path | None) -> list[str]:
+    """Return what *report* installs that neither *constraints* nor *lock* pins."""
+    pins = read_lock_pins(constraints)
+    if lock is not None:
+        pins |= read_lock_pins(lock)
+    return unpinned(json.loads(report.read_text(encoding="utf-8")), pins)
+
+
+def _check_all(
+    check: Callable[..., str],
+    lock: Path | None,
+    constraints: Path,
+    report_dir: Path | None,
+) -> int:
+    """Check every add-on in each mode; return 1 when one cannot be installed unpinned."""
     problems = []
+    missing: list[str] = []
     for name, requirements in addons_to_check().items():
         # "newest": the bundle's constraints alone, to meet a release the lock does not know yet.
         # "locked": what the installed app passes to pip, to prove a teacher's install resolves.
@@ -333,12 +363,19 @@ def _check_all(check: Callable[..., str], lock: Path | None, report_dir: Path | 
             print(f"{'FAIL' if problem else 'ok  '} {name} [{mode}]: {' '.join(requirements)}")
             if problem:
                 problems.append(problem)
+            elif report is not None:
+                missing += [
+                    f"{name} [{mode}]: {pin}" for pin in _unpinned(report, constraints, lock)
+                ]
     if problems:
         print("\nThese add-ons cannot be installed next to the bundled packages:")
         for problem in problems:
             print(f"  {problem}")
-        return 1
-    return 0
+    if missing:
+        print("\nThese packages resolve but no pin holds them, so a teacher installs them loose:")
+        for problem in missing:
+            print(f"  {problem}")
+    return 1 if problems or missing else 0
 
 
 if __name__ == "__main__":

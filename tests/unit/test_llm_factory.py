@@ -95,6 +95,72 @@ def test_build_llm_calls_provider_create(mocker) -> None:
     mock_provider.create.assert_called_once()
 
 
+def test_build_llm_hands_the_key_it_was_given_to_the_provider(mocker, monkeypatch) -> None:
+    """
+    Given  the environment holds one key for the provider and the app passes another
+    When   build_llm() is called with that key
+    Then   the provider is built with the key it was given, and the environment is not written
+    """
+    import os  # noqa: PLC0415
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
+    mock_provider = mocker.Mock()
+    mock_provider.PROVIDER = get_provider_info("openai")
+    mock_provider.create.return_value = FakeListChatModel(responses=["ok"])
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
+    )
+
+    build_llm("openai", "gpt-4o-mini", base_url="", api_key="sk-from-the-app")
+
+    mock_provider.create.assert_called_once_with(
+        "gpt-4o-mini", temperature=0.7, api_key="sk-from-the-app"
+    )
+    assert os.environ["OPENAI_API_KEY"] == "sk-from-the-environment"
+
+
+def test_build_llm_falls_back_on_the_environment_when_given_no_key(mocker, monkeypatch) -> None:
+    """
+    Given  a key exported in the environment and no key passed on
+    When   build_llm() is called
+    Then   the provider is built with the environment's key
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
+    mock_provider = mocker.Mock()
+    mock_provider.PROVIDER = get_provider_info("openai")
+    mock_provider.create.return_value = FakeListChatModel(responses=["ok"])
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
+    )
+
+    build_llm("openai", "gpt-4o-mini", base_url="")
+
+    mock_provider.create.assert_called_once_with(
+        "gpt-4o-mini", temperature=0.7, api_key="sk-from-the-environment"
+    )
+
+
+def test_build_llm_with_an_empty_key_does_not_fall_back_on_the_environment(
+    mocker, monkeypatch
+) -> None:
+    """
+    Given  a key exported in the environment and the app holding none (an empty key)
+    When   build_llm() is called with that empty key
+    Then   the provider is built with the empty key, not the environment's
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
+    mock_provider = mocker.Mock()
+    mock_provider.PROVIDER = get_provider_info("openai")
+    mock_provider.create.return_value = FakeListChatModel(responses=["ok"])
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
+    )
+
+    build_llm("openai", "gpt-4o-mini", base_url="", api_key="")
+
+    mock_provider.create.assert_called_once_with("gpt-4o-mini", temperature=0.7, api_key="")
+
+
 def test_list_provider_models_returns_empty_list_on_exception(mocker) -> None:
     """
     Given  importlib.import_module patched so that list_models() raises a RuntimeError
@@ -214,7 +280,7 @@ def test_build_llm_passes_base_url_when_provider_needs_it(mocker) -> None:
 
     assert result is fake
     mock_provider.create.assert_called_once_with(
-        "llama3", base_url="http://custom:11434", temperature=0.7
+        "llama3", base_url="http://custom:11434", temperature=0.7, api_key=None
     )
 
 
@@ -244,7 +310,7 @@ def test_build_llm_forwards_temperature_to_provider_create(mocker) -> None:
 
     build_llm("openai", "gpt-4o", base_url="", temperature=0.3)
 
-    mock_provider.create.assert_called_once_with("gpt-4o", temperature=0.3)
+    mock_provider.create.assert_called_once_with("gpt-4o", temperature=0.3, api_key=None)
 
 
 def test_build_llm_forwards_temperature_with_base_url(mocker) -> None:
@@ -264,7 +330,7 @@ def test_build_llm_forwards_temperature_with_base_url(mocker) -> None:
     build_llm("ollama", "llama3", base_url="http://custom:11434", temperature=0.1)
 
     mock_provider.create.assert_called_once_with(
-        "llama3", base_url="http://custom:11434", temperature=0.1
+        "llama3", base_url="http://custom:11434", temperature=0.1, api_key=None
     )
 
 

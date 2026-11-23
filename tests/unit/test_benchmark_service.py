@@ -34,6 +34,33 @@ def _source(tmp_path: Path) -> Path:
 
 
 @pytest.mark.use_case("OCR_Benchmark_Run")
+def test_a_benchmark_run_counts_as_a_run_in_progress(tmp_path: Path) -> None:
+    """
+    Given  a Benchmark run that is reading a page
+    When   the app is asked whether a run is going, during and after it
+    Then   it says yes while the runner works and no afterwards, so stored results are not
+           deleted under it
+    """
+    during: list[bool] = []
+    services = build_app_services()
+
+    def runner(*_args, **_kwargs):
+        during.append(services.run.busy())
+        return OcrRunResult("hello text", None, 0.2, None)
+
+    service = BenchmarkApplicationService(
+        app_services=services, run_store=BenchmarkRunStore(tmp_path), runner=runner
+    )
+
+    service.run_and_store(
+        _source(tmp_path), ocr=OcrConfig(engine="ppocr", model=""), language="English"
+    )
+
+    assert during == [True]
+    assert services.run.busy() is False
+
+
+@pytest.mark.use_case("OCR_Benchmark_Run")
 def test_run_and_store_never_uses_pdf_text_layer(tmp_path: Path) -> None:
     """
     Given  an OCR config that would trust a PDF's embedded text (pdf_text_layer="always")

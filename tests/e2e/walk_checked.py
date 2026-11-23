@@ -21,8 +21,8 @@ import threading
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
 from teachers_teammate.gui import _dialogs
-from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._run_controller import RunController
+from teachers_teammate.gui._run_start import RunStartController
 from teachers_teammate.infrastructure import stage_builder
 from teachers_teammate.texts import dialogs as dlg
 from tests.e2e import walkthrough
@@ -52,29 +52,29 @@ def _reader_raises() -> None:
 
 def _unexpected_dialog() -> None:
     """Run asks a question the step did not announce."""
-    run_as_asked = MainWindow._on_run
+    run_as_asked = RunStartController.start
 
-    def noisy_on_run(self: MainWindow) -> None:
-        _dialogs.notify(self, dlg.no_files_selected())
+    def noisy_on_run(self: RunStartController) -> None:
+        _dialogs.notify(self._view.window, dlg.no_files_selected())
         run_as_asked(self)
 
-    MainWindow._on_run = noisy_on_run
+    RunStartController.start = noisy_on_run
 
 
 def _unexpected_window() -> None:
     """Run opens a window of its own, after the run has started."""
-    run_as_asked = MainWindow._on_run
+    run_as_asked = RunStartController.start
 
-    def modal_on_run(self: MainWindow) -> None:
+    def modal_on_run(self: RunStartController) -> None:
         run_as_asked(self)
-        dialog = QDialog(self)
+        dialog = QDialog(self._view.window)
         dialog.setWindowTitle("The run can't start")
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel("<b>The run can't start:</b>"))
         layout.addWidget(QLabel("The built-in reader is not downloaded yet."))
         dialog.exec()
 
-    MainWindow._on_run = modal_on_run
+    RunStartController.start = modal_on_run
 
 
 def _slot_raises() -> None:

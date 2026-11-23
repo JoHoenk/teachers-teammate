@@ -594,6 +594,7 @@ def set_update_check(value: str, folder: str = "") -> int:
         values["check_for_updates"] = value == "on"
         save_settings_file(path, values)
     except ConfigFileParseError, OSError:
+        # The exit code carries this to the installer; the settings file is left as it is.
         return 1
     return 0
 
@@ -721,6 +722,7 @@ def _add_failure(out_path: Path, failure: str, extra: dict[str, object]) -> None
         if isinstance(loaded, dict):
             result = loaded
     except OSError, ValueError:
+        # No result file to read, or one this run cannot use: the failure alone is the result.
         pass
     failed = result.get("failed")
     result["ok"] = False

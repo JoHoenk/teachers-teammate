@@ -9,6 +9,7 @@ from typing import Any, ClassVar
 import pytest
 from PySide6.QtCore import QMetaMethod, QObject, QThread, Signal
 
+from teachers_teammate.domain.install_item import InstallItem, InstallKind
 from teachers_teammate.gui import _addon_installer_dialog, _install_round, _long_job
 from teachers_teammate.gui._install_round import InstallRound
 
@@ -27,6 +28,16 @@ class _Script:
 def _fails(item: str) -> bool:
     """True when the script says this item fails."""
     return bool(_Script.fail_with) and _Script.fail_item in ("", item)
+
+
+def _keys(items: list[Any]) -> list[str]:
+    """Return the item keys an install round signal reported."""
+    return [str(item) for item in items]
+
+
+def _failures(seen: dict[str, list[Any]]) -> list[tuple[str, str]]:
+    """Return what the round reported as failed: the item's key and the reason."""
+    return [(str(item), message) for item, message in seen["failed"]]
 
 
 class _Service(RecommendationServiceStub):
@@ -236,8 +247,13 @@ def test_a_round_runs_the_reader_between_spacy_and_the_pulls(qtbot, fake_threads
     )
 
     assert fake_threads.order == ["pip:spacy", "spacy:en_core_web_sm", "reader", "a:1b"]
-    assert seen["started"] == ["package:spacy", "spacy:en_core_web_sm", "reader:ppocr", "a:1b"]
-    assert "reader:ppocr" in seen["done"]
+    assert _keys(seen["started"]) == [
+        "package:spacy",
+        "spacy:en_core_web_sm",
+        "reader:ppocr",
+        "ollama:a:1b",
+    ]
+    assert "reader:ppocr" in _keys(seen["done"])
     assert ("Built-in reader", 1_000_000, 2_000_000) in seen["progress"]
     assert seen["finished"] == [True]
 
@@ -256,8 +272,8 @@ def test_the_add_on_update_runs_first_and_alone_is_a_round(qtbot, fake_threads) 
     assert round_.start(update_addons=True, packages=["langchain-openai"])
 
     assert fake_threads.order == ["update", "pip:langchain-openai"]
-    assert seen["started"] == ["update:addons", "package:langchain-openai"]
-    assert "update:addons" in seen["done"]
+    assert _keys(seen["started"]) == ["update:addons", "package:langchain-openai"]
+    assert "update:addons" in _keys(seen["done"])
     assert service.addon_updates == 1
     assert seen["finished"] == [True]
 
@@ -280,7 +296,7 @@ def test_a_failed_add_on_update_stops_the_round_with_pips_sentence(qtbot, fake_t
 
     round_.start(update_addons=True, packages=["langchain-openai"])
 
-    assert seen["failed"] == [("update:addons", "No matching distribution")]
+    assert _failures(seen) == [("update:addons", "No matching distribution")]
     assert fake_threads.order == ["update"]
     assert seen["finished"] == [False]
 
@@ -319,8 +335,8 @@ def test_a_round_downloads_the_page_models_after_the_reader_and_before_the_pulls
     )
 
     assert fake_threads.order == ["reader", "page_models", "a:1b"]
-    assert seen["started"] == ["reader:ppocr", "page_models:all", "a:1b"]
-    assert "page_models:all" in seen["done"]
+    assert _keys(seen["started"]) == ["reader:ppocr", "page_models:all", "ollama:a:1b"]
+    assert "page_models:all" in _keys(seen["done"])
     assert ("Page models", 1_000_000, 2_000_000) in seen["progress"]
     assert seen["finished"] == [True]
 
@@ -357,7 +373,7 @@ def test_a_failed_page_models_download_stops_the_round_with_its_sentence(
 
     round_.start(page_models=True, ollama_models=["a:1b"], ollama_url="u")
 
-    assert seen["failed"] == [("page_models:all", "Could not reach huggingface.co.")]
+    assert _failures(seen) == [("page_models:all", "Could not reach huggingface.co.")]
     assert "a:1b" not in fake_threads.order
     assert seen["finished"] == [False]
 
@@ -376,7 +392,7 @@ def test_a_failed_reader_download_stops_the_round_with_its_sentence(qtbot, fake_
 
     round_.start(reader=True, ollama_models=["a:1b"], ollama_url="u")
 
-    assert seen["failed"] == [("reader:ppocr", "Could not reach huggingface.co.")]
+    assert _failures(seen) == [("reader:ppocr", "Could not reach huggingface.co.")]
     assert "a:1b" not in fake_threads.order
     assert seen["finished"] == [False]
 
@@ -421,10 +437,20 @@ def test_a_round_installs_pip_then_spacy_then_pulls(qtbot, fake_threads) -> None
     )
 
     assert fake_threads.order == ["pip:spacy", "spacy:en_core_web_sm", "a:1b", "b:1b"]
-    assert seen["started"] == ["package:spacy", "spacy:en_core_web_sm", "a:1b", "b:1b"]
-    assert seen["done"] == ["package:spacy", "spacy:en_core_web_sm", "a:1b", "b:1b"]
+    assert _keys(seen["started"]) == [
+        "package:spacy",
+        "spacy:en_core_web_sm",
+        "ollama:a:1b",
+        "ollama:b:1b",
+    ]
+    assert _keys(seen["done"]) == [
+        "package:spacy",
+        "spacy:en_core_web_sm",
+        "ollama:a:1b",
+        "ollama:b:1b",
+    ]
     assert seen["finished"] == [True]
-    assert seen["failed"] == []
+    assert _failures(seen) == []
 
 
 @pytest.mark.use_case("Runtime_Addon_Installation")
@@ -542,16 +568,16 @@ def test_the_whole_queue_goes_to_the_manager(qtbot) -> None:
     round_.start(ollama_models=["a:1b", "b:1b"], ollama_url="http://127.0.0.1:11434")
 
     assert manager.calls == [("http://127.0.0.1:11434", "a:1b", ["b:1b"])]
-    assert seen["started"] == ["a:1b"]
+    assert _keys(seen["started"]) == ["ollama:a:1b"]
 
     manager.finished.emit("a:1b")  # the manager goes on with b:1b by itself
-    assert seen["done"] == ["a:1b"]
-    assert seen["started"] == ["a:1b", "b:1b"]
+    assert _keys(seen["done"]) == ["ollama:a:1b"]
+    assert _keys(seen["started"]) == ["ollama:a:1b", "ollama:b:1b"]
     assert seen["finished"] == []
 
     manager.queued = []
     manager.finished.emit("b:1b")
-    assert seen["done"] == ["a:1b", "b:1b"]
+    assert _keys(seen["done"]) == ["ollama:a:1b", "ollama:b:1b"]
     assert seen["finished"] == [True]
 
 
@@ -571,7 +597,7 @@ def test_a_pull_survives_detach(qtbot) -> None:
     manager.finished.emit("a:1b")
 
     assert manager.aborted is False
-    assert seen["done"] == []
+    assert _keys(seen["done"]) == []
     assert seen["finished"] == []
 
 
@@ -604,14 +630,14 @@ def test_a_running_pull_can_be_followed(qtbot) -> None:
     round_, _service = _round(manager)
     seen = _record(round_)
 
-    assert round_.follow_running_pull() == "a:1b"
-    assert round_.follow_running_pull() == ""  # already following
+    assert round_.follow_running_pull() == InstallItem(InstallKind.OLLAMA, "a:1b")
+    assert round_.follow_running_pull() is None  # already following
 
     manager.progress.emit("pulling", 5, 10)
     manager.finished.emit("a:1b")
 
     assert seen["progress"] == [("pulling", 5, 10)]
-    assert seen["done"] == ["a:1b"]
+    assert _keys(seen["done"]) == ["ollama:a:1b"]
     assert seen["finished"] == [True]
 
 
@@ -659,7 +685,7 @@ def test_a_failure_stops_the_round_and_names_the_item(qtbot, fake_threads) -> No
         ollama_url="http://127.0.0.1:11434",
     )
 
-    assert seen["failed"] == [("spacy:en_core_web_sm", "no network")]
+    assert _failures(seen) == [("spacy:en_core_web_sm", "no network")]
     assert seen["finished"] == [True]  # the pip install did arrive
     assert fake_threads.order == ["pip:spacy", "spacy:en_core_web_sm"]
     assert round_.running() is False
@@ -679,7 +705,7 @@ def test_a_failed_pip_install_names_the_first_package(qtbot, fake_threads) -> No
 
     round_.start(packages=["spacy", "langchain-core"])
 
-    assert seen["failed"] == [("package:spacy", "pip is not available")]
+    assert _failures(seen) == [("package:spacy", "pip is not available")]
     assert seen["finished"] == [False]
 
 
@@ -699,7 +725,7 @@ def test_without_a_manager_the_round_pulls_by_itself(qtbot, fake_threads) -> Non
     round_.start(ollama_models=["a:1b", "b:1b"], ollama_url="http://127.0.0.1:11434")
 
     assert fake_threads.order == ["a:1b", "b:1b"]
-    assert seen["done"] == ["a:1b", "b:1b"]
+    assert _keys(seen["done"]) == ["ollama:a:1b", "ollama:b:1b"]
     assert seen["finished"] == [True]
     assert service.changed_urls == ["http://127.0.0.1:11434", "http://127.0.0.1:11434"]
 
@@ -837,6 +863,6 @@ def test_a_round_with_two_spacy_models_downloads_both_with_the_real_thread(
         )
 
     assert downloaded == ["en_core_web_sm", "de_core_news_sm"]
-    assert seen["done"] == ["spacy:en_core_web_sm", "spacy:de_core_news_sm"]
-    assert seen["failed"] == []
+    assert _keys(seen["done"]) == ["spacy:en_core_web_sm", "spacy:de_core_news_sm"]
+    assert _failures(seen) == []
     assert round_.running() is False

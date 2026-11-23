@@ -243,8 +243,8 @@ the target; on macOS and Linux, add it to the command:
 --diagnose
 ```
 
-Do what was slow, close the app, and send the file `diagnostics.log` to the developers. It is in
-the app's data folder:
+Do what was slow, close the app, and send the file `logs/diagnostics.log` to the developers. It is
+in the app's data folder:
 
 | System | Folder |
 |---|---|

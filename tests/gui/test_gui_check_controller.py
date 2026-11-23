@@ -533,8 +533,8 @@ def test_a_run_started_from_the_check_header_keeps_the_check_tab(
     monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     monkeypatch.setattr(
-        main_window,
-        "_on_stage_run_requested",
+        main_window._run_start,
+        "start_stage",
         lambda ids, _stage: main_window._run_controller.start(make_config(Path("/tmp")), ids),
     )
 

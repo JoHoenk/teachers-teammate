@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -60,5 +61,9 @@ def create(
         # optional dep; lazy import to avoid startup ImportError when not installed
         from langchain_ollama import ChatOllama  # noqa: PLC0415
     except ImportError as exc:
-        raise ProviderNotAvailableError(package_not_installed("langchain-ollama")) from exc
+        raise ProviderNotAvailableError(
+            package_not_installed(
+                "langchain-ollama", installed_app=bool(getattr(sys, "frozen", False))
+            )
+        ) from exc
     return ChatOllama(model=model, base_url=normalize_ollama_url(base_url), temperature=temperature)

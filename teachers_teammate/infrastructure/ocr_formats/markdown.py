@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import Counter
 import dataclasses
 from dataclasses import dataclass
+import logging
 import re
 from typing import TYPE_CHECKING, ClassVar
 
@@ -34,6 +35,8 @@ from .chandra_html import parse_html_blocks
 
 if TYPE_CHECKING:
     from markdown_it.token import Token
+
+_logger = logging.getLogger(__name__)
 
 # Inline style tags the parser understands (<b>, <strike>, <ins>, ...) and the layout tags of
 # HTML a model may answer with instead of Markdown (<table>, <p>, <br>, ...).
@@ -224,6 +227,7 @@ def _html_blocks(content: str) -> tuple[Block, ...]:
     try:
         return parse_html_blocks(content)
     except etree.LxmlError, ValueError:
+        _logger.debug("An HTML block does not parse, keeping it as plain text")
         return (Block("paragraph", (Span(content.strip()),)),)
 
 

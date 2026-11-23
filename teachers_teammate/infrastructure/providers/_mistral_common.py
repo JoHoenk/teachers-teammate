@@ -15,7 +15,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import date
 import json
-import os
 import re
 from typing import TYPE_CHECKING, Any
 import urllib.error
@@ -30,7 +29,7 @@ from teachers_teammate.domain.model_listing import (
     ModelGroup,
     ModelListing,
 )
-from teachers_teammate.infrastructure.providers._helpers import import_guard
+from teachers_teammate.infrastructure.providers._helpers import import_guard, key_of
 from teachers_teammate.texts.models import (
     OWN_LABEL,
     PINNED_LABEL,
@@ -86,12 +85,22 @@ def curate_mistral_models(entries: list[dict[str, Any]], today: date) -> Curated
     proofreading model.  A model that retires in the future is hidden from the list but
     returned in :attr:`CuratedModels.retiring`, so the dialog can warn a teacher who saved it.
     """
-    # Fine-tuned models are listed on their own: their IDs are numbered per account and
-    # share no alias with the base model they were trained from.
+    offered = _offered(entries, today)
+    shown = {model.id for model in offered}
+    return CuratedModels(
+        tuple(offered),
+        tuple(_retiring(entries, today, shown)),
+        tuple(_also_served(entries, today, shown)),
+    )
+
+
+def _offered(entries: list[dict[str, Any]], today: date) -> list[ListedModel]:
+    """Return the models worth offering: one per model, biggest first, then the teacher's own."""
+    # Fine-tuned models are listed on their own: their IDs are numbered per account and share no
+    # alias with the base model they were trained from.
     base = [entry for entry in entries if _usable(entry) and not _is_fine_tuned(entry)]
-    families = _group_families(base)
     current: list[ListedModel] = []
-    for entries_of_family in families:
+    for entries_of_family in _group_families(base):
         alive = [entry for entry in entries_of_family if not _retired(entry, today)]
         if not alive:
             continue
@@ -113,9 +122,12 @@ def curate_mistral_models(entries: list[dict[str, Any]], today: date) -> Curated
     ]
     current.sort(key=_sort_key)
     own.sort(key=_sort_key)
-    offered = [*current, *own]
-    shown = {model.id for model in offered}
-    retiring = sorted(
+    return [*current, *own]
+
+
+def _retiring(entries: list[dict[str, Any]], today: date, shown: set[str]) -> list[ListedModel]:
+    """Return the models a teacher saved that are going away, so the dialog can warn."""
+    return sorted(
         (
             _describe(entry, str(entry["id"]), None)
             for entry in entries
@@ -125,8 +137,11 @@ def curate_mistral_models(entries: list[dict[str, Any]], today: date) -> Curated
         ),
         key=_sort_key,
     )
-    # Every other name a live entry answers to (aliases, older dated versions) still works.
-    also_served = sorted(
+
+
+def _also_served(entries: list[dict[str, Any]], today: date, shown: set[str]) -> list[str]:
+    """Return every other name a live entry answers to: an alias or an older dated version."""
+    return sorted(
         {
             token
             for entry in entries
@@ -135,7 +150,6 @@ def curate_mistral_models(entries: list[dict[str, Any]], today: date) -> Curated
         }
         - shown
     )
-    return CuratedModels(tuple(offered), tuple(retiring), tuple(also_served))
 
 
 def unusable_reason(entry: dict[str, Any]) -> str:
@@ -190,7 +204,7 @@ def _as_date(value: object) -> date | None:
         try:
             return date.fromisoformat(value[:10])
         except ValueError:
-            return None
+            return None  # a date not in ISO form: the model is not marked as retiring
     return None
 
 
@@ -334,14 +348,21 @@ def fetch_model_entries(base_url: str, api_key: str) -> list[dict[str, Any]]:
         return json.load(response).get("data", [])
 
 
-def list_chat_models_checked(base_url: str, fallback: Sequence[str]) -> ModelListing:
+def list_chat_models_checked(
+    base_url: str,
+    fallback: Sequence[str],
+    *,
+    api_key: str | None = None,
+) -> ModelListing:
     """Return the chat-capable model IDs served at *base_url*, saying whether they are live.
 
     Asking the endpoint the provider will use means the EU provider only lists models the
-    EU endpoint actually serves.  Any problem gives the *fallback* list with
-    ``source="failed"`` and the reason, never a list that looks like the service's answer.
+    EU endpoint actually serves.  The key is the one the app hands over; ``None`` asks the
+    environment.
+    Any problem gives the *fallback* list with ``source="failed"`` and the reason, never a list
+    that looks like the service's answer.
     """
-    api_key = os.environ.get(ENV_KEY, "").strip()
+    api_key = key_of(ENV_KEY, api_key)
     if not api_key:
         return ModelListing(list(fallback), "failed", "no Mistral key is set")
     try:
@@ -368,11 +389,13 @@ def list_chat_models_checked(base_url: str, fallback: Sequence[str]) -> ModelLis
     )
 
 
-def create_chat_model(model: str, temperature: float, base_url: str) -> BaseChatModel:
+def create_chat_model(
+    model: str, temperature: float, base_url: str, api_key: str | None
+) -> BaseChatModel:
     """Return a ``ChatMistralAI`` for *model* talking to *base_url*.
 
-    The API key is read from ``$MISTRAL_API_KEY`` by LangChain.  Retries (5) and the
-    request timeout (120 s) are LangChain's defaults.
+    *api_key* is the key the app holds; with none, LangChain reads ``$MISTRAL_API_KEY``.
+    Retries (5) and the request timeout (120 s) are LangChain's defaults.
     """
     with import_guard("langchain-mistralai"):
         from langchain_mistralai import ChatMistralAI  # noqa: PLC0415
@@ -381,4 +404,5 @@ def create_chat_model(model: str, temperature: float, base_url: str) -> BaseChat
         temperature=temperature,
         endpoint=base_url,
         random_seed=RANDOM_SEED,
+        api_key=api_key,
     )

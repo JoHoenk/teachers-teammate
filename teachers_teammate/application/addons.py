@@ -12,6 +12,12 @@ import importlib.util
 from pathlib import Path
 
 from ..domain.data_location import PROVIDER_OLLAMA
+from ..domain.install_item import (
+    PAGE_MODELS_ITEM,
+    READER_ITEM,
+    InstallItem,
+    InstallKind,
+)
 from ..domain.local_models import PAGE_MODELS, READER_MODELS
 from ..domain.model_catalog import normalize_tag
 from ..infrastructure.onnx.store import ModelStore
@@ -19,18 +25,6 @@ from .anonymization import AnonymizationService
 from .ports import AddonState
 from .providers import ProviderService, importable
 from .reader import ReaderService
-
-#: Keys of :meth:`AddonService.get_installation_status` for the two model sets the app can carry
-#: itself; the Add-ons page names its rows (and its install items) the same way.
-READER_STATUS_KEY = "reader:ppocr"
-PAGE_MODELS_STATUS_KEY = "page_models:all"
-#: In front of a status key: whether the bundle itself carries that item (``bundled:reader:ppocr``).
-BUNDLED_PREFIX = "bundled:"
-
-
-def bundled_status_key(key: str) -> str:
-    """Return the status key that says whether the app carries *key*'s files itself."""
-    return f"{BUNDLED_PREFIX}{key}"
 
 
 class AddonService:
@@ -63,35 +57,37 @@ class AddonService:
         ollama_models: list[str] | None = None,
         ollama_url: str = "",
         langchain_packages: dict[str, str] | None = None,
-    ) -> dict[str, bool]:
+    ) -> dict[InstallItem, bool]:
         """Probe availability of optional components and return a status map.
 
         Keys produced (all optional — only those whose *inputs* are supplied):
-        - ``"reader:ppocr"`` — always checked (the built-in reader's model files)
-        - ``"page_models:all"`` — always checked (the page models of the automatic preparation)
-        - ``"bundled:reader:ppocr"``, ``"bundled:page_models:all"`` — always checked: whether
-          the app carries those files itself, so the Add-ons rows say *included* not *downloaded*
-        - ``"provider:{name}"`` — for each entry in *provider_modules*
-        - ``"spacy:{model_id}"`` — for each id in *spacy_models*
-        - ``"ollama:{model}"`` — for each model in *ollama_models*
-        - ``"langchain:{key}"`` — for each entry in *langchain_packages*
+        - :data:`~teachers_teammate.domain.install_item.READER_ITEM` — always checked (the
+          built-in reader's model files)
+        - :data:`~teachers_teammate.domain.install_item.PAGE_MODELS_ITEM` — always checked (the
+          page models of the automatic preparation)
+        - both, ``.bundled`` — always checked: whether the app carries those files itself, so
+          the Add-ons rows say *included* not *downloaded*
+        - a :attr:`~.InstallKind.PROVIDER` item — for each entry in *provider_modules*
+        - a :attr:`~.InstallKind.SPACY` item — for each id in *spacy_models*
+        - a :attr:`~.InstallKind.OLLAMA` item — for each model in *ollama_models*
+        - a :attr:`~.InstallKind.LANGCHAIN` item — for each entry in *langchain_packages*
         """
-        result: dict[str, bool] = {}
-        result[READER_STATUS_KEY] = self._reader.reader_installed()
-        result[PAGE_MODELS_STATUS_KEY] = self._reader.page_models_installed()
-        result[bundled_status_key(READER_STATUS_KEY)] = self._model_store.is_bundled(READER_MODELS)
-        result[bundled_status_key(PAGE_MODELS_STATUS_KEY)] = self._model_store.is_bundled(
-            PAGE_MODELS
-        )
+        result: dict[InstallItem, bool] = {}
+        result[READER_ITEM] = self._reader.reader_installed()
+        result[PAGE_MODELS_ITEM] = self._reader.page_models_installed()
+        result[READER_ITEM.bundled] = self._model_store.is_bundled(READER_MODELS)
+        result[PAGE_MODELS_ITEM.bundled] = self._model_store.is_bundled(PAGE_MODELS)
 
         if provider_modules:
             for name, module_name in provider_modules.items():
-                result[f"provider:{name}"] = importlib.util.find_spec(module_name) is not None
+                result[InstallItem(InstallKind.PROVIDER, name)] = (
+                    importlib.util.find_spec(module_name) is not None
+                )
 
         if spacy_models:
             installed_spacy = set(self._anonymization.list_installed_spacy_models())
             for model_id in spacy_models:
-                result[f"spacy:{model_id}"] = model_id in installed_spacy
+                result[InstallItem(InstallKind.SPACY, model_id)] = model_id in installed_spacy
 
         if ollama_models:
             try:
@@ -106,11 +102,13 @@ class AddonService:
                 # Ollama may be unreachable; treat as no models pulled
                 pulled = set()
             for model in ollama_models:
-                result[f"ollama:{model}"] = normalize_tag(model) in pulled
+                result[InstallItem(InstallKind.OLLAMA, model)] = normalize_tag(model) in pulled
 
         if langchain_packages:
             for key, module_name in langchain_packages.items():
-                result[f"langchain:{key}"] = importlib.util.find_spec(module_name) is not None
+                result[InstallItem(InstallKind.LANGCHAIN, key)] = (
+                    importlib.util.find_spec(module_name) is not None
+                )
 
         return result
 

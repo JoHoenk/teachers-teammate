@@ -5,6 +5,12 @@ from __future__ import annotations
 import pytest
 from PySide6.QtWidgets import QPushButton
 
+from teachers_teammate.domain.install_item import (
+    READER_ITEM,
+    SPACY_ITEM,
+    InstallItem,
+    InstallKind,
+)
 from teachers_teammate.domain.requirements import IssueKind, RequirementIssue
 from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog
 from teachers_teammate.gui._fix_targets import (
@@ -88,9 +94,7 @@ def test_fix_for_a_missing_reader_offers_the_download() -> None:
 
     assert fix.line == "The built-in reader isn't downloaded yet"
     assert fix.actions == (
-        FixAction(
-            "Download…", SettingsPage.ADDONS, FOCUS_READING_MODELS, preselect=("reader:ppocr",)
-        ),
+        FixAction("Download…", SettingsPage.ADDONS, FOCUS_READING_MODELS, preselect=(READER_ITEM,)),
     )
 
 
@@ -190,9 +194,17 @@ def test_fix_for_missing_models_says_how_many_and_preselects_them() -> None:
     assert one.line == "qwen3:8b isn't downloaded yet"
     assert two.line == "2 AI models aren't downloaded yet"
     assert two.actions == (
-        FixAction("Download…", SettingsPage.ADDONS, FOCUS_LOCAL_MODELS, ("a:1", "b:2")),
+        FixAction(
+            "Download…",
+            SettingsPage.ADDONS,
+            FOCUS_LOCAL_MODELS,
+            (
+                InstallItem(InstallKind.OLLAMA, "a:1"),
+                InstallItem(InstallKind.OLLAMA, "b:2"),
+            ),
+        ),
     )
-    assert none.actions[0].preselect == ("qwen3:8b",)
+    assert none.actions[0].preselect == (InstallItem(InstallKind.OLLAMA, "qwen3:8b"),)
 
 
 @pytest.mark.unit
@@ -206,7 +218,12 @@ def test_fix_for_a_missing_package_ticks_the_provider_in_add_ons() -> None:
 
     assert fix.line == "Mistral support isn't installed"
     assert fix.actions == (
-        FixAction("Install…", SettingsPage.ADDONS, FOCUS_ONLINE_SERVICES, ("provider:mistral",)),
+        FixAction(
+            "Install…",
+            SettingsPage.ADDONS,
+            FOCUS_ONLINE_SERVICES,
+            (InstallItem(InstallKind.PROVIDER, "mistral"),),
+        ),
     )
 
 
@@ -275,7 +292,10 @@ def test_fix_for_missing_name_detection_ticks_the_spacy_model() -> None:
     assert fix.line == "The German name detection model isn't downloaded"
     assert fix.actions == (
         FixAction(
-            "Download…", SettingsPage.ADDONS, FOCUS_NAME_DETECTION, ("spacy:de_core_news_sm",)
+            "Download…",
+            SettingsPage.ADDONS,
+            FOCUS_NAME_DETECTION,
+            (InstallItem(InstallKind.SPACY, "de_core_news_sm"),),
         ),
     )
     assert _fix("anonymizer", issue).line == "The model isn't downloaded"
@@ -298,7 +318,7 @@ def test_fix_for_a_missing_spacy_installs_it_with_the_model() -> None:
             "Install…",
             SettingsPage.ADDONS,
             FOCUS_NAME_DETECTION,
-            ("package:spacy", "spacy:de_core_news_sm"),
+            (SPACY_ITEM, InstallItem(InstallKind.SPACY, "de_core_news_sm")),
         ),
     )
 

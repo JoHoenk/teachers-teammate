@@ -6,6 +6,7 @@ import dataclasses
 from pathlib import Path
 
 import pytest
+from teachers_teammate.domain.install_item import InstallItem, InstallKind
 from teachers_teammate.domain.stages import Stage
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui.settings import SettingsPage
@@ -527,7 +528,7 @@ def test_guard_dialog_opens_addons_on_local_models_with_missing_model_ticked(
     qtbot.addWidget(panel)
     panel.set_service(services_of(_GuardService()))
     panel.update_settings({"correction_provider": "ollama", "correction_model": "qwen3.5:9b"})
-    requests: list[tuple[object, str, list[str]]] = []
+    requests: list[tuple[object, str, list[InstallItem]]] = []
     panel.open_settings_requested.connect(
         lambda page, focus, tags: requests.append((page, focus, tags))
     )
@@ -536,7 +537,13 @@ def test_guard_dialog_opens_addons_on_local_models_with_missing_model_ticked(
     panel._correction_enabled.setChecked(True)
     qtbot.waitUntil(lambda: bool(requests), timeout=3000)
 
-    assert requests == [(SettingsPage.ADDONS, FOCUS_LOCAL_MODELS, ["qwen3.5:9b"])]
+    assert requests == [
+        (
+            SettingsPage.ADDONS,
+            FOCUS_LOCAL_MODELS,
+            [InstallItem(InstallKind.OLLAMA, "qwen3.5:9b")],
+        )
+    ]
     assert panel._correction_enabled.isChecked() is False  # unticked: requirement unmet
 
 
@@ -1031,7 +1038,7 @@ def test_change_opens_ai_models_on_that_step(qtbot, line, focus) -> None:
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    requests: list[tuple[object, str, list[str]]] = []
+    requests: list[tuple[object, str, list[InstallItem]]] = []
     panel.open_settings_requested.connect(lambda *args: requests.append(args))
 
     getattr(panel, line).change_link.linkActivated.emit("change")

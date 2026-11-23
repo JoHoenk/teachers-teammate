@@ -7,9 +7,10 @@ import sys
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
+from ..domain.install_item import InstallItem, InstallKind
 from ..texts import addons as addon_text
 from ..texts.issues import package_missing_line
-from ._model_guidance import PROVIDER_PREFIX, OpenDownloads
+from ._model_guidance import OpenDownloads
 
 
 class PackageHint(QWidget):
@@ -71,4 +72,4 @@ class PackageHint(QWidget):
     def _on_install(self) -> None:
         if self._open_downloads is None or not self._provider:
             return
-        self._open_downloads([f"{PROVIDER_PREFIX}{self._provider}"], self.window())
+        self._open_downloads([InstallItem(InstallKind.PROVIDER, self._provider)], self.window())

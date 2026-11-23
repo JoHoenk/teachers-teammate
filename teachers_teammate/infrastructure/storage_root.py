@@ -6,6 +6,7 @@ Responsibilities
   application data (state JSON files and preview images).  Tries candidates in
   priority order: env-var override → OS user-cache directory.
 - `compute_cache_key(value)` — produce a short stable identifier from a string.
+- `artifacts_root()` — the folder the per-output-folder caches live in, one keyed folder each.
 - `document_stem(path)` — the name a document's stored files carry: its stem and that key.
   Used by `StateRepository` for the JSON state file and by the cache service for the images.
 - `resolve_config_root()` / `resolve_data_root()` — where the teacher's *own* data lives
@@ -58,6 +59,7 @@ from ..messages import config_file_missing, storage_root_unresolved
 __all__ = [
     "StorageResolutionError",
     "StorageRoot",
+    "artifacts_root",
     "compute_cache_key",
     "default_config_path",
     "document_stem",
@@ -205,13 +207,24 @@ def _probe_writable(path: Path) -> tuple[bool, str | None]:
         sentinel.unlink(missing_ok=True)
         return True, None
     except OSError as exc:
+        # The reason travels back to the caller, which reports it with the other candidates.
         return False, str(exc)
     finally:
         if fd != -1:
             try:
                 os.close(fd)
             except OSError:
+                # The probe's answer is already recorded; a close that fails cannot change it.
                 pass
+
+
+def artifacts_root() -> Path:
+    """Return the folder of the per-output-folder caches: ``<storage_root>/artifacts``.
+
+    One folder per output folder sits inside it, keyed by that folder's path.  The whole folder
+    is what "delete stored results" removes.
+    """
+    return resolve_storage_root().path / "artifacts"
 
 
 def resolve_artifact_dir(output_dir: Path) -> Path:
@@ -227,9 +240,7 @@ def resolve_artifact_dir(output_dir: Path) -> Path:
     Returns:
         ``<storage_root>/artifacts/<key>`` as a :class:`~pathlib.Path`.
     """
-    root = resolve_storage_root().path
-    key = compute_cache_key(str(output_dir.resolve()))
-    return root / "artifacts" / key
+    return artifacts_root() / compute_cache_key(str(output_dir.resolve()))
 
 
 def resolve_storage_root() -> StorageRoot:

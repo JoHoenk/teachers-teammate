@@ -27,7 +27,13 @@ from ..domain.notation import with_notation_hint
 from ..domain.stages import Stage
 from ..interfaces import Evaluator
 from ..texts.review import TOO_LONG_FOR_REVIEW_WARNING, evaluation_failed
-from ._llm_invoke import InvokeAnswer, invoke_langchain_chain, invoke_ollama_chat, tidy_answer
+from ._llm_invoke import (
+    ChatRequest,
+    InvokeAnswer,
+    invoke_langchain_chain,
+    invoke_ollama_chat,
+    tidy_answer,
+)
 
 
 def _outcome(answer: InvokeAnswer) -> EvaluationOutcome:
@@ -116,17 +122,19 @@ class NativeOllamaEvaluator(Evaluator):
     ) -> EvaluationOutcome:
         result = invoke_ollama_chat(
             self._client,
-            model=self._model,
-            prompt=self._message(corrected_text, language, text_format),
-            timeout=self._timeout,
-            temperature=self._temperature,
-            think=self._think,
+            ChatRequest(
+                model=self._model,
+                prompt=self._message(corrected_text, language, text_format),
+                temperature=self._temperature,
+                timeout=self._timeout,
+                num_ctx=self._num_ctx,
+                think=self._think,
+                # A review's answer is short and fixed, so the text gets the rest of the window:
+                # a content review cannot be split into pieces the way proofreading can.
+                answer_tokens=EVALUATION_ANSWER_TOKENS,
+            ),
             fallback="",
             failure=evaluation_failed,
-            num_ctx=self._num_ctx,
-            # A review's answer is short and fixed, so the text gets the rest of the window:
-            # a content review cannot be split into pieces the way proofreading can.
-            answer_tokens=EVALUATION_ANSWER_TOKENS,
             truncated_warning=TOO_LONG_FOR_REVIEW_WARNING,
         )
         return _outcome(tidy_answer(result, _tidy_review))

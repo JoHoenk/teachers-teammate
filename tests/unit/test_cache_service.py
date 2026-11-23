@@ -326,7 +326,7 @@ def test_correction_config_hash_follows_the_text_of_a_step_prompt(
     When   _correction_config_hash() is called before and after the edit
     Then   the hashes differ, so an edited prompt invalidates the stored proofreadings
     """
-    from teachers_teammate.infrastructure.proofreading.exchanges import t  # noqa: PLC0415
+    from teachers_teammate.infrastructure.proofreading.exchanges import text_first as t  # noqa: PLC0415
 
     svc, _, _ = _make_svc(tmp_path, correction_enabled=True)
     before = svc._correction_config_hash()

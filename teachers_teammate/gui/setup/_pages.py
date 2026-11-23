@@ -54,6 +54,7 @@ from ...domain.data_location import (
     DataRegion,
     StageLocation,
 )
+from ...domain.install_item import InstallItem, InstallKind
 from ...domain.language import LANGUAGES
 from ...domain.local_models import PAGE_MODELS_ADDON_ID
 from ...domain.model_catalog import (
@@ -169,16 +170,15 @@ from ...texts.setup import (
 )
 from .._background import LatestTask
 from .._hardware_profile_selector import HardwareProfileSelector
-from .._install_round import (
-    PACKAGE_PREFIX,
-    PAGE_MODELS_ITEM,
-    READER_PREFIX,
-)
-from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .._model_item_delegate import ModelItem, fill_grouped
 from .._model_item_delegate import install as install_model_labels
 from .._ollama_status_line import OllamaStatusLine
-from ..settings._ai_service_section import PROOFREADING, AiServiceSection
+from ..settings._ai_service_section import (
+    PROOFREADING,
+    AiServiceSection,
+    PackageOffer,
+    Suggestions,
+)
 from ..settings._server_search_dialog import ServerSearchDialog
 from ..settings._speed_panel import SpeedPanel
 from ._context import SetupContext
@@ -669,30 +669,32 @@ class ProofreadingPage(SetupPage):
         section = AiServiceSection(
             PROOFREADING,
             app_service=self._context.app_service,
-            hardware_profile=profile_setting(answers.hardware_profile),
-            ollama_url=answers.ollama_url,
-            open_downloads=self._install_package,
+            suggestions=Suggestions(
+                hardware_profile=profile_setting(answers.hardware_profile),
+                ollama_url=answers.ollama_url,
+                same_model_tip=False,
+            ),
+            offer=PackageOffer(
+                open_downloads=self._install_package,
+                button_text=PROOFREADING_INSTALL_NOW,
+                button_tooltip=PROOFREADING_INSTALL_TOOLTIP,
+            ),
             key_drafts=self.assistant().key_drafts(),
-            same_model_tip=False,
             self_hosted=False,
-            install_button_text=PROOFREADING_INSTALL_NOW,
-            install_button_tooltip=PROOFREADING_INSTALL_TOOLTIP,
             parent=self._online_holder,
         )
         section.load(self._context.settings)
         self._online_layout.addWidget(section)
         self._section = section
 
-    def _install_package(self, preselect: list[str], _parent: QWidget | None) -> None:
+    def _install_package(self, preselect: list[InstallItem], _parent: QWidget | None) -> None:
         """Install the service's package right here, then ask it for its models."""
         packages = [
             pip_name
             for entry in preselect
-            if entry.startswith(PROVIDER_PREFIX)
+            if entry.kind is InstallKind.PROVIDER
             for pip_name in [
-                self._context.app_service.providers.missing_provider_package(
-                    entry[len(PROVIDER_PREFIX) :]
-                )
+                self._context.app_service.providers.missing_provider_package(entry.name)
             ]
             if pip_name
         ]
@@ -1160,9 +1162,13 @@ class DonePage(SetupPage):
         manager = self._context.pull_manager
         if manager is None:
             return
-        manager.started.connect(self._rows.started)
+        manager.started.connect(
+            lambda model: self._rows.started(InstallItem(InstallKind.OLLAMA, model))
+        )
         manager.progress.connect(self._rows.pull_progress)
-        manager.finished.connect(self._rows.done)
+        manager.finished.connect(
+            lambda model: self._rows.done(InstallItem(InstallKind.OLLAMA, model))
+        )
         manager.error.connect(self._rows.error)
         manager.finished.connect(self._on_pull_finished)
 
@@ -1261,20 +1267,20 @@ class _DownloadRows(QWidget):
             self._kinds[name] = download.kind
         self.changed.emit()
 
-    def started(self, item: str) -> None:
+    def started(self, item: InstallItem) -> None:
         """The round began *item*."""
-        if _item_name(item) == item:  # no pip / spaCy prefix: an Ollama pull
-            self._pulling = item
+        if item.kind is InstallKind.OLLAMA:  # only a pull reports its progress in bytes
+            self._pulling = item.name
         self._set(item, DONE_RUNNING)
 
-    def done(self, item: str) -> None:
+    def done(self, item: InstallItem) -> None:
         """The round finished *item*."""
-        if item == self._pulling:
+        if item.kind is InstallKind.OLLAMA and item.name == self._pulling:
             self._pulling = ""
         self._fraction.pop(_item_name(item), None)
         self._set(item, DONE_DONE)
 
-    def failed(self, item: str, message: str) -> None:
+    def failed(self, item: InstallItem, message: str) -> None:
         """The round could not install *item*."""
         self._set(item, done_failed(message), failed=True)
 
@@ -1352,7 +1358,7 @@ class _DownloadRows(QWidget):
         """Return whether the download *name* is over: done or failed."""
         return name in self._failed or self._state.get(name, DONE_WAITING) == DONE_DONE
 
-    def _set(self, item: str, text: str, *, failed: bool = False) -> None:
+    def _set(self, item: InstallItem, text: str, *, failed: bool = False) -> None:
         """Record *text* for *item* and show it when the row is there."""
         name = _item_name(item)
         self._state[name] = text
@@ -1395,15 +1401,12 @@ def _download_words(download: PlannedDownload, language: str) -> tuple[str, str]
     return purpose, download.name
 
 
-def _item_name(item: str) -> str:
-    """Return the download name behind an install round item key."""
-    if item == PAGE_MODELS_ITEM:
-        # The round says ``page_models:all``; the setup plan's row is named by the add-on id.
+def _item_name(item: InstallItem) -> str:
+    """Return the name of the setup plan's row for an install round item."""
+    if item.kind is InstallKind.PAGE_MODELS:
+        # The setup plan's row is named by the add-on id, not by the round's item.
         return PAGE_MODELS_ADDON_ID
-    for prefix in (PACKAGE_PREFIX, SPACY_PREFIX, READER_PREFIX):
-        if item.startswith(prefix):
-            return item[len(prefix) :]
-    return item
+    return item.name
 
 
 PAGE_CLASSES: dict[SetupPageId, type[SetupPage]] = {

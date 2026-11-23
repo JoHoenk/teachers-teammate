@@ -23,6 +23,7 @@ def read_image(path: Path, flags: int = cv2.IMREAD_COLOR) -> Any:
     try:
         data = np.fromfile(path, dtype=np.uint8)
     except OSError:
+        # The callers report an unreadable page themselves, with its path.
         return None
     if data.size == 0:
         return None

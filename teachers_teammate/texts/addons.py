@@ -114,8 +114,13 @@ def model_pull_failed(reason: str) -> str:
 # ── Provider packages ─────────────────────────────────────────────────────────
 
 
-def package_not_installed(package: str) -> str:
-    """Return the install hint of a provider package that is missing."""
+def package_not_installed(package: str, *, installed_app: bool) -> str:
+    """Return the install hint of a provider package that is missing.
+
+    The installed app points at the Add-ons page; a source checkout at ``pip``.
+    """
+    if installed_app:
+        return f"{package} is not installed. Install it under {WHERE_ADDONS}."
     return f"{package} is not installed. Run: pip install {package}"
 
 

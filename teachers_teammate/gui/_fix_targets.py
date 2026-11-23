@@ -11,14 +11,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from ..domain.install_item import READER_ITEM, SPACY_ITEM, InstallItem, InstallKind
 from ..domain.requirements import IssueKind, RequirementIssue
 from ..domain.stages import Stage
 from ..texts import addons, fixes
 from ..texts import main_window as win
 from ..texts import review as txt
 from ..texts.issues import issue_text
-from ._install_round import PACKAGE_PREFIX, READER_ITEM
-from ._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .settings._page import (
     FOCUS_ADDON_UPDATE,
     FOCUS_FIND_SERVER,
@@ -54,7 +53,7 @@ class FixAction:
     #: The Settings page to open, or ``None`` when the action is a :attr:`command`.
     page: SettingsPage | None = None
     focus: str = ""
-    preselect: tuple[str, ...] = ()
+    preselect: tuple[InstallItem, ...] = ()
     #: ``"retry"``, ``"choose_folder"``, ``"turn_on_recognition"``, ``"use_server"``,
     #: ``"get_ollama"`` or ``"start_ollama"`` when there is no page.
     command: str = ""
@@ -71,6 +70,12 @@ class Fix:
     #: A short sentence for the readiness line.
     line: str
     actions: tuple[FixAction, ...]
+
+
+def _reader_fix() -> Fix:
+    """Return the fix for missing reader model files: download them on the Add-ons page."""
+    download = FixAction(fixes.DOWNLOAD, SettingsPage.ADDONS, FOCUS_READING_MODELS, (READER_ITEM,))
+    return Fix(fixes.READER_MISSING, (download,))
 
 
 def found_server_fix(where: str, url: str) -> Fix:
@@ -180,29 +185,20 @@ def fix_for(
     if general is not None:
         return general
     if kind is IssueKind.READER_MODEL_MISSING:
-        return Fix(
-            fixes.READER_MISSING,
-            (
-                FixAction(
-                    fixes.DOWNLOAD,
-                    SettingsPage.ADDONS,
-                    FOCUS_READING_MODELS,
-                    (READER_ITEM,),
-                ),
-            ),
-        )
+        return _reader_fix()
     ollama = _ollama_fix(issue)
     if ollama is not None:
         return ollama
+    models = tuple(InstallItem(InstallKind.OLLAMA, model) for model in issue.models)
     if kind is IssueKind.NO_OLLAMA_MODEL:
         return Fix(
             fixes.NO_OLLAMA_MODEL,
-            (FixAction(fixes.DOWNLOAD, SettingsPage.ADDONS, FOCUS_LOCAL_MODELS, issue.models),),
+            (FixAction(fixes.DOWNLOAD, SettingsPage.ADDONS, FOCUS_LOCAL_MODELS, models),),
         )
     if kind is IssueKind.MODEL_MISSING:
         return Fix(
             fixes.models_missing(issue.models),
-            (FixAction(fixes.DOWNLOAD, SettingsPage.ADDONS, FOCUS_LOCAL_MODELS, issue.models),),
+            (FixAction(fixes.DOWNLOAD, SettingsPage.ADDONS, FOCUS_LOCAL_MODELS, models),),
         )
     if kind is IssueKind.PACKAGE_MISSING:
         return Fix(
@@ -212,7 +208,7 @@ def fix_for(
                     fixes.INSTALL,
                     SettingsPage.ADDONS,
                     FOCUS_ONLINE_SERVICES,
-                    (f"{PROVIDER_PREFIX}{issue.provider}",),
+                    (InstallItem(InstallKind.PROVIDER, issue.provider),),
                 ),
             ),
         )
@@ -222,7 +218,7 @@ def fix_for(
             fixes.key_missing(display_name(issue.provider)),
             (FixAction(fixes.ENTER_KEY, SettingsPage.AI_MODELS, focus),),
         )
-    models = tuple(f"{SPACY_PREFIX}{model}" for model in issue.models)
+    models = tuple(InstallItem(InstallKind.SPACY, model) for model in issue.models)
     if kind is IssueKind.PRIVACY_ADDON_MISSING:
         # spaCy itself is missing: installing it brings the model along, so the fix ticks both.
         return Fix(
@@ -232,7 +228,7 @@ def fix_for(
                     fixes.INSTALL,
                     SettingsPage.ADDONS,
                     FOCUS_NAME_DETECTION,
-                    (f"{PACKAGE_PREFIX}spacy", *models),
+                    (SPACY_ITEM, *models),
                 ),
             ),
         )

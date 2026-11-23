@@ -36,10 +36,10 @@ def _provider_env_keys() -> frozenset[str]:
 def child_env() -> dict[str, str]:
     """Return this process's environment without the providers' API keys.
 
-    The window puts the teacher's stored keys into its own environment, where the provider
-    libraries read them.  Every child would inherit them — including the detached
-    ``ollama serve`` that outlives the run — so a child is given a copy without them.  Nothing
-    a child does asks a provider on the teacher's account.
+    A key exported before the app started is in this environment, where the provider libraries
+    read it.  Every child would inherit it — including the detached ``ollama serve`` that
+    outlives the run — so a child is given a copy without the keys.  Nothing a child does asks
+    a provider on the teacher's account.
     """
     keys = _provider_env_keys()
     return {name: value for name, value in os.environ.items() if name not in keys}

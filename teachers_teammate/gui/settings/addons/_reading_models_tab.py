@@ -14,14 +14,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGroupBox, QLabel, QVBoxLayout, QWidget
 
 from ....application.composition import AppServices
+from ....domain.install_item import PAGE_MODELS_ITEM, READER_ITEM, InstallItem, InstallKind
 from ....texts import addons as txt
 from ....texts.settings import TAB_READING_MODELS
-from ..._install_round import (
-    PAGE_MODELS_ITEM,
-    PAGE_MODELS_PREFIX,
-    READER_ITEM,
-    READER_PREFIX,
-)
 from ._common import GREY_NOTE_STYLE, ScrolledTab, apply_installed, tick_enabled
 
 
@@ -31,7 +26,7 @@ class ReadingModelsTab(ScrolledTab):
     def __init__(self, app_service: AppServices, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._svc = app_service
-        self._pending: list[str] = []
+        self._pending: list[InstallItem] = []
 
         group = QGroupBox(TAB_READING_MODELS)
         group_layout = QVBoxLayout(group)
@@ -58,34 +53,36 @@ class ReadingModelsTab(ScrolledTab):
         self.body_layout.addWidget(group)
         self.body_layout.addStretch(1)
 
-    def preselect(self, entries: Sequence[str]) -> None:
+    def preselect(self, entries: Sequence[InstallItem]) -> None:
         """Tick the reader's and the page models' boxes when a deep link asks for them.
 
         They are ticked before the installation check has answered: these files need no server,
         and the check ticks them again once it knows which of them are there already.
         """
-        keys: list[str] = []
-        if any(entry.startswith(READER_PREFIX) for entry in entries):
-            keys.append(READER_ITEM)
-        if any(entry.startswith(PAGE_MODELS_PREFIX) for entry in entries):
-            keys.append(PAGE_MODELS_ITEM)
-        self._pending.extend(keys)
-        tick_enabled(self.checkboxes, keys)
+        items: list[InstallItem] = []
+        if any(entry.kind is InstallKind.READER for entry in entries):
+            items.append(READER_ITEM)
+        if any(entry.kind is InstallKind.PAGE_MODELS for entry in entries):
+            items.append(PAGE_MODELS_ITEM)
+        self._pending.extend(items)
+        tick_enabled(self.checkboxes, items)
 
     def tick_preselect(self) -> None:
         """Tick the requested boxes again, now that the check knows what is installed."""
         tick_enabled(self.checkboxes, self._pending)
         self._pending.clear()
 
-    def mark_installed(self, results: Mapping[str, object]) -> None:
+    def mark_installed(self, results: Mapping[InstallItem, bool]) -> None:
         """Show which items are there and disable the boxes of the ones that are."""
         apply_installed(self.checkboxes, self.labels, results)
 
-    def checked_items(self) -> list[str]:
+    def checked_items(self) -> list[InstallItem]:
         """Return the items this tab asks to install."""
-        return [key for key, box in self.checkboxes.items() if box.isChecked() and box.isEnabled()]
+        return [
+            item for item, box in self.checkboxes.items() if box.isChecked() and box.isEnabled()
+        ]
 
-    def step_label(self, item: str) -> str | None:
+    def step_label(self, item: InstallItem) -> str | None:
         """Return how the status line names *item*, or ``None`` when this tab does not own it."""
         if item == READER_ITEM:
             return txt.ADDONS_ITEM_READER

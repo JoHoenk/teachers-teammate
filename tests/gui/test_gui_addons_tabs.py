@@ -10,12 +10,18 @@ from __future__ import annotations
 from PySide6.QtWidgets import QCheckBox
 import pytest
 
+from teachers_teammate.domain.install_item import (
+    PAGE_MODELS_ITEM,
+    READER_ITEM,
+    SPACY_ITEM,
+    InstallItem,
+    InstallKind,
+)
 from teachers_teammate.domain.model_catalog import HardwareProfileSetting
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.texts import addons as txt
-from teachers_teammate.gui._install_round import PACKAGE_PREFIX, PAGE_MODELS_ITEM, READER_ITEM
-from teachers_teammate.gui._model_guidance import SPACY_PREFIX
 from teachers_teammate.gui.settings.addons import (
+    DetectedAddons,
     NameDetectionTab,
     OllamaModelsTab,
     ProvidersTab,
@@ -24,6 +30,11 @@ from teachers_teammate.gui.settings.addons import (
 
 from ._gui_harness import settings_context
 from ._service_stubs import RecommendationServiceStub
+
+#: The two provider packages the stub service offers, and the German name-detection model.
+MISTRAL = InstallItem(InstallKind.PROVIDER, "mistral")
+OPENAI = InstallItem(InstallKind.PROVIDER, "openai")
+GERMAN_NAMES = InstallItem(InstallKind.SPACY, "de_core_news_sm")
 
 
 class _ProviderPackagesService(RecommendationServiceStub):
@@ -60,8 +71,8 @@ def _providers_tab(qtbot) -> ProvidersTab:
     return tab
 
 
-def _ticked(tab: ProvidersTab | NameDetectionTab | ReadingModelsTab) -> list[str]:
-    """Return the keys of the boxes *tab* shows ticked."""
+def _ticked(tab: ProvidersTab | NameDetectionTab | ReadingModelsTab) -> list[InstallItem]:
+    """Return the items of the boxes *tab* shows ticked."""
     return [key for key, box in tab.checkboxes.items() if _is_ticked(box)]
 
 
@@ -78,10 +89,8 @@ def test_a_package_box_names_every_service_that_needs_it(qtbot) -> None:
     """
     tab = _providers_tab(qtbot)
 
-    assert tab.checkboxes["provider:mistral"].text() == (
-        "Mistral and Mistral Eu — langchain-mistralai"
-    )
-    assert tab.checkboxes["provider:openai"].text() == "Openai — langchain-openai"
+    assert tab.checkboxes[MISTRAL].text() == "Mistral and Mistral Eu — langchain-mistralai"
+    assert tab.checkboxes[OPENAI].text() == "Openai — langchain-openai"
 
 
 def test_an_optional_connector_is_labelled_as_one() -> None:
@@ -103,8 +112,8 @@ def test_the_providers_tab_lists_every_package_once(qtbot) -> None:
     """
     tab = _providers_tab(qtbot)
 
-    assert list(tab.checkboxes) == ["provider:mistral", "provider:openai"]
-    assert tab.key_for("mistral_eu") == "provider:mistral"
+    assert list(tab.checkboxes) == [MISTRAL, OPENAI]
+    assert tab.key_for("mistral_eu") == MISTRAL
 
 
 def test_the_providers_tab_reports_the_package_of_a_ticked_box(qtbot) -> None:
@@ -115,7 +124,7 @@ def test_the_providers_tab_reports_the_package_of_a_ticked_box(qtbot) -> None:
     """
     tab = _providers_tab(qtbot)
 
-    tab.checkboxes["provider:mistral"].setChecked(True)
+    tab.checkboxes[MISTRAL].setChecked(True)
 
     assert tab.pip_packages() == ["langchain-mistralai"]
 
@@ -130,8 +139,8 @@ def test_the_name_detection_tab_keeps_spacy_and_its_models_apart(qtbot) -> None:
     tab = NameDetectionTab(context.app_service)
     qtbot.addWidget(tab)
 
-    tab.checkboxes["spacy"].setChecked(True)
-    tab.checkboxes[f"{SPACY_PREFIX}de_core_news_sm"].setChecked(True)
+    tab.checkboxes[SPACY_ITEM].setChecked(True)
+    tab.checkboxes[GERMAN_NAMES].setChecked(True)
 
     assert tab.pip_packages() == ["spacy"]
     assert tab.spacy_models() == ["de_core_news_sm"]
@@ -147,11 +156,11 @@ def test_a_deep_link_ticks_the_name_detection_model_it_names(qtbot) -> None:
     tab = NameDetectionTab(context.app_service)
     qtbot.addWidget(tab)
 
-    tab.preselect([f"{SPACY_PREFIX}de_core_news_sm"])
-    assert _ticked(tab) == [f"{SPACY_PREFIX}de_core_news_sm"]
+    tab.preselect([GERMAN_NAMES])
+    assert _ticked(tab) == [GERMAN_NAMES]
 
-    tab.preselect([f"{PACKAGE_PREFIX}spacy"])
-    assert sorted(_ticked(tab)) == sorted(["spacy", f"{SPACY_PREFIX}de_core_news_sm"])
+    tab.preselect([SPACY_ITEM])
+    assert sorted(_ticked(tab)) == sorted([SPACY_ITEM, GERMAN_NAMES])
 
 
 def test_the_reading_models_tab_reports_the_files_a_deep_link_asked_for(qtbot) -> None:
@@ -164,10 +173,10 @@ def test_the_reading_models_tab_reports_the_files_a_deep_link_asked_for(qtbot) -
     tab = ReadingModelsTab(context.app_service)
     qtbot.addWidget(tab)
 
-    tab.preselect(["reader:ppocr"])
+    tab.preselect([READER_ITEM])
     assert tab.checked_items() == [READER_ITEM]
 
-    tab.preselect(["page_models:all"])
+    tab.preselect([PAGE_MODELS_ITEM])
     assert tab.checked_items() == [READER_ITEM, PAGE_MODELS_ITEM]
 
 
@@ -181,14 +190,14 @@ def test_an_installed_file_says_included_or_downloaded_and_is_not_checked(qtbot)
     context = settings_context(RecommendationServiceStub())
     tab = ReadingModelsTab(context.app_service)
     qtbot.addWidget(tab)
-    tab.preselect(["reader:ppocr", "page_models:all"])
+    tab.preselect([READER_ITEM, PAGE_MODELS_ITEM])
 
     tab.mark_installed(
         {
-            "reader:ppocr": True,
-            "page_models:all": True,
-            "bundled:reader:ppocr": True,
-            "bundled:page_models:all": False,
+            READER_ITEM: True,
+            PAGE_MODELS_ITEM: True,
+            READER_ITEM.bundled: True,
+            PAGE_MODELS_ITEM.bundled: False,
         }
     )
 
@@ -205,12 +214,12 @@ def test_an_installed_package_box_is_left_out_of_the_install(qtbot) -> None:
     Then   the box says so, is disabled and no longer part of what will be installed
     """
     tab = _providers_tab(qtbot)
-    tab.checkboxes["provider:mistral"].setChecked(True)
+    tab.checkboxes[MISTRAL].setChecked(True)
 
-    tab.mark_installed({"provider:mistral": True})
+    tab.mark_installed({MISTRAL: True})
 
-    assert not tab.checkboxes["provider:mistral"].isEnabled()
-    assert "✓" in tab.checkboxes["provider:mistral"].text()
+    assert not tab.checkboxes[MISTRAL].isEnabled()
+    assert "✓" in tab.checkboxes[MISTRAL].text()
     assert tab.pip_packages() == []
 
 
@@ -234,7 +243,10 @@ def test_the_ollama_tab_lists_the_catalog_and_marks_a_downloaded_model(qtbot) ->
     assert DEFAULT_OCR_MODEL in tab.all_tags()
 
     tab.mark_installed(
-        {f"ollama:{DEFAULT_OCR_MODEL}": True, f"size:{DEFAULT_OCR_MODEL}": 5_000_000_000}
+        DetectedAddons(
+            installed={InstallItem(InstallKind.OLLAMA, DEFAULT_OCR_MODEL): True},
+            model_sizes={DEFAULT_OCR_MODEL: 5_000_000_000},
+        )
     )
 
     item = tab._model_items[DEFAULT_OCR_MODEL]

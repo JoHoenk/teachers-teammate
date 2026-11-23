@@ -26,9 +26,12 @@ from __future__ import annotations
 import atexit
 from collections.abc import Callable
 import functools
+import logging
 import time
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+
+_logger = logging.getLogger(__name__)
 
 #: Upper bound of simultaneous background tasks.  The tasks are I/O bound
 #: (subprocesses, HTTP), so a small fixed number is plenty.
@@ -61,6 +64,7 @@ def _owner_alive(owner: QObject | None) -> bool:
     try:
         owner.objectName()
     except RuntimeError:
+        _logger.debug("The owner of the task is gone, so its result is dropped")
         return False
     return True
 

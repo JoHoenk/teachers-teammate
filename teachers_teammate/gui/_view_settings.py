@@ -73,6 +73,7 @@ def _sizes(raw: object, count: int) -> tuple[int, ...]:
     try:
         sizes = tuple(int(part) for part in parts)
     except ValueError:
+        # A stored value that holds no numbers: the callers use the default sizes.
         return ()
     return sizes if all(size > 0 for size in sizes) else ()
 

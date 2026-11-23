@@ -26,6 +26,7 @@ import dataclasses
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
+import logging
 from pathlib import Path
 import threading
 
@@ -37,6 +38,8 @@ from ..domain.proofreading.review import CorrectionReview
 from ..domain.stages import Stage, normalize_stage
 from ..domain.teacher_work import MachineTexts
 from .storage_root import document_stem
+
+_logger = logging.getLogger(__name__)
 
 
 def compute_file_hash(path: Path) -> str:
@@ -294,6 +297,60 @@ def _inconsistent(state: DocumentState) -> bool:
     return (state.correction_done or state.evaluation_done) and not state.ocr_done
 
 
+def _is_current(state: DocumentState, input_file: Path) -> bool:
+    """Return whether *state* was stored for exactly this file, as it is now."""
+    if state.source_path != str(input_file.resolve()):
+        return False
+    try:
+        return state.source_hash == compute_file_hash_cached(input_file)
+    except OSError as exc:
+        _logger.debug("Cannot hash %s, no state matches it: %s", input_file, exc)
+        return False
+
+
+def _repaired_paths(state: DocumentState) -> DocumentState:
+    """Return *state* with the previews that are no longer on disk dropped.
+
+    The pages, the source image and the originals describe the preview: a path that is gone
+    says nothing, so it is dropped, and *state* itself comes back when every path is there.
+    """
+    pages = _pages_still_there(state.page_images)
+    source = _source_still_there(state.source_image, pages)
+    # The originals are only worth listing for a preview that is there to compare them with.
+    originals = _pages_still_there(state.original_images) if pages else []
+    steps = state.preprocess_steps if pages else None
+    if (pages, source, originals, steps) == (
+        state.page_images,
+        state.source_image,
+        state.original_images,
+        state.preprocess_steps,
+    ):
+        return state
+    return dataclasses.replace(
+        state,
+        page_images=pages,
+        source_image=source,
+        original_images=originals,
+        preprocess_steps=steps,
+    )
+
+
+def _pages_still_there(pages: Sequence[str]) -> list[str]:
+    """Return the pages a teacher can still see: all of them, the first one, or none."""
+    if pages and all(Path(page).exists() for page in pages):
+        return list(pages)
+    if pages and Path(pages[0]).exists():
+        return [pages[0]]
+    return []
+
+
+def _source_still_there(source: str, pages: list[str]) -> str:
+    """Return what the preview shows: the source image when it is there, else the first page."""
+    if source and Path(source).exists():
+        return source
+    return pages[0] if pages else ""
+
+
 def _without_orphan_sent(state: DocumentState) -> DocumentState:
     """Return *state* without the sent text and records whose result is not stored.
 
@@ -354,7 +411,8 @@ class StateRepository:
                 state = dataclasses.replace(state, page_images=[raw["preview_img"]])
             if not state.original_images and raw.get("original_img"):
                 state = dataclasses.replace(state, original_images=[raw["original_img"]])
-        except OSError, json.JSONDecodeError, TypeError, ValueError:
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            _logger.warning("Cannot read %s, the document is processed from scratch: %s", path, exc)
             return None
         if state.schema_version != self._SCHEMA_VERSION:
             return None
@@ -558,66 +616,13 @@ class StateRepository:
         return new_state
 
     def load_valid(self, input_file: Path) -> DocumentState | None:
+        """Return the stored state of *input_file*, or ``None`` when it does not describe it."""
         state = self.load(input_file)
-        if state is None or state.source_path != str(input_file.resolve()):
+        if state is None or not _is_current(state, input_file):
             return None
-        try:
-            if state.source_hash != compute_file_hash_cached(input_file):
-                return None
-        except OSError:
-            return None
-
         if _inconsistent(state):
             return None
-        state = _without_orphan_sent(state)
-
-        # The pages only describe the preview: without one of them on disk the document has
-        # the one page it had.
-        page_images = (
-            list(state.page_images)
-            if state.page_images and all(Path(page).exists() for page in state.page_images)
-            else []
-        )
-        if not page_images and state.page_images and Path(state.page_images[0]).exists():
-            page_images = [state.page_images[0]]
-        source_image = (
-            state.source_image
-            if not state.source_image or Path(state.source_image).exists()
-            else ""
-        )
-        if not source_image and page_images:
-            source_image = page_images[0]
-        # The originals describe the preview too, and they are only worth listing when the
-        # first one is there: without it the document has the one original it had.
-        original_images = (
-            list(state.original_images)
-            if page_images
-            and state.original_images
-            and all(Path(page).exists() for page in state.original_images)
-            else []
-        )
-        if (
-            not original_images
-            and page_images
-            and state.original_images
-            and Path(state.original_images[0]).exists()
-        ):
-            original_images = [state.original_images[0]]
-        preprocess_steps = state.preprocess_steps if page_images else None
-        if (
-            page_images != state.page_images
-            or source_image != state.source_image
-            or original_images != state.original_images
-            or preprocess_steps != state.preprocess_steps
-        ):
-            state = dataclasses.replace(
-                state,
-                page_images=page_images,
-                source_image=source_image,
-                original_images=original_images,
-                preprocess_steps=preprocess_steps,
-            )
-        return state
+        return _repaired_paths(_without_orphan_sent(state))
 
     def invalidate_from_stage(self, input_file: Path, stage: str) -> DocumentState | None:
         state = self.load_valid(input_file)

@@ -38,13 +38,14 @@ from ..application.correction_options import (
 from ..application.data_flow import ticked_steps
 from ..config import DEFAULTS, Config
 from ..domain.anonymization import AnonymizerConfig
-from ..domain.correction_policy import LEVELS
+from ..domain.correction_policy import LEVELS, CorrectionOutput
 from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import (
     ENGINE_OLLAMA,
     STAGE_ANONYMIZATION,
     DataFlow,
 )
+from ..domain.install_item import InstallItem
 from ..domain.output_files import folder_problem
 from ..domain.stages import Stage
 from ..settings_schema import SECONDARY_MODEL_NONE, normalize_notes, normalize_settings
@@ -174,7 +175,11 @@ class _ProofreadingDialog(QDialog):
         """Return ``explanation_language`` and ``correction_output``."""
         return {
             "explanation_language": str(self._explanation_language.currentData() or ""),
-            "correction_output": "text" if self._corrections_only.isChecked() else "review",
+            "correction_output": (
+                CorrectionOutput.TEXT
+                if self._corrections_only.isChecked()
+                else CorrectionOutput.REVIEW
+            ),
         }
 
     def _build_explanations_group(self, language: str, output_mode: str) -> QGroupBox:
@@ -194,7 +199,7 @@ class _ProofreadingDialog(QDialog):
 
         self._corrections_only = QCheckBox(txt.CORRECTIONS_ONLY)
         self._corrections_only.setToolTip(txt.CORRECTIONS_ONLY_TOOLTIP)
-        self._corrections_only.setChecked(output_mode == "text")
+        self._corrections_only.setChecked(output_mode == CorrectionOutput.TEXT)
         self._corrections_only.toggled.connect(self._sync_prompts)
         form.addRow("", self._corrections_only)
         return group
@@ -310,8 +315,7 @@ class ConfigPanel(QScrollArea):
             "correction_output": DEFAULTS["correction_output"],
             "evaluate_provider": DEFAULTS["evaluate_provider"],
             "evaluate_model": DEFAULTS["evaluate_model"],
-            # "" = the built-in instructions; the default text is never copied here, so a
-            # code-side change keeps being recognised.
+            # "" = the built-in instructions, never copied, so a code change still applies.
             "evaluate_prompt": "",
             "output": "",
             "docx_format": DEFAULTS["docx_format"],
@@ -323,6 +327,7 @@ class ConfigPanel(QScrollArea):
             "debug": DEFAULTS["debug"],
             "keep_awake": DEFAULTS["keep_awake"],
             "check_for_updates": DEFAULTS["check_for_updates"],
+            "results_keep_days": DEFAULTS["results_keep_days"],
         }
         self._settings_dict["anonymizer_primary_model"] = None
         # SECONDARY_MODEL_AUTO by default; SECONDARY_MODEL_NONE = the user chose "(none)".
@@ -566,7 +571,9 @@ class ConfigPanel(QScrollArea):
         """Return the prompts the AI is asked for, for the dialog's read-only section."""
         config = dataclasses.replace(
             self.lookup_config(),
-            correction_output="text" if corrections_only else "review",
+            correction_output=CorrectionOutput.TEXT
+            if corrections_only
+            else CorrectionOutput.REVIEW,
         )
         return proofreading_prompts(config)
 
@@ -778,7 +785,7 @@ class ConfigPanel(QScrollArea):
         """Emit anonymizer_configure_requested (called from the menu action)."""
         self._on_configure_anonymizer()
 
-    def update_anonymizer_config(self, config: object) -> None:
+    def update_anonymizer_config(self, config: AnonymizerConfig) -> None:
         """Write an updated AnonymizerConfig back into the settings dict."""
         _anonymizer_settings.store(self._settings(), config)
 
@@ -995,7 +1002,9 @@ class ConfigPanel(QScrollArea):
             dialog_parent=self,
         )
 
-    def _open_settings_page(self, page: SettingsPage, focus: str, preselect: list[str]) -> None:
+    def _open_settings_page(
+        self, page: SettingsPage, focus: str, preselect: list[InstallItem]
+    ) -> None:
         """Have the main window open *page* on *focus*, with the *preselect* entries chosen."""
         self.open_settings_requested.emit(page, focus, preselect)
 

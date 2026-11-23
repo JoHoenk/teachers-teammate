@@ -21,6 +21,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from ..application.composition import AppServices
+from ..domain.install_item import InstallItem, InstallKind
 from ..domain.model_catalog import (
     HardwareProfile,
     ModelCategory,
@@ -53,17 +54,11 @@ from ._model_item_delegate import (
     widen,
 )
 
-#: Shows Settings → Add-ons with the given model tags (or ``provider:<name>`` entries)
-#: preselected; the second argument is the widget asking.  Supplied by the Settings window,
-#: it returns at once: the list is fetched again when an install finished
-#: (``on_packages_changed``), and a profile change arrives through the window's wiring.
-OpenDownloads = Callable[[list[str], "QWidget | None"], None]
-
-#: Prefix of the Add-ons checkbox keys, and of the ``preselect`` entries, that name an AI
-#: service's package (``provider:mistral``) rather than an Ollama model.
-PROVIDER_PREFIX = "provider:"
-#: Prefix of a name-detection (spaCy) model in an Add-ons preselection: ``spacy:de_core_news_sm``.
-SPACY_PREFIX = "spacy:"
+#: Shows Settings → Add-ons with the given items preselected; the second argument is the widget
+#: asking.  Supplied by the Settings window, it returns at once: the list is fetched again when
+#: an install finished (``on_packages_changed``), and a profile change arrives through the
+#: window's wiring.
+OpenDownloads = Callable[[list[InstallItem], "QWidget | None"], None]
 
 _GREY = QColor("#888888")
 _ORANGE = QColor("#e67e22")
@@ -326,11 +321,11 @@ class OllamaModelGuidance(QWidget):
         if tag:
             self._request_download([tag])
 
-    def _request_download(self, tags: list[str]) -> None:
+    def _request_download(self, tags: Sequence[str]) -> None:
         """Show Add-ons with *tags* ticked; the list is fetched again once they arrived."""
         if self._open_downloads is None:
             return
-        self._open_downloads(tags, self.window())
+        self._open_downloads([InstallItem(InstallKind.OLLAMA, tag) for tag in tags], self.window())
 
     def _on_resolved(self, detection: object) -> None:
         if detection is None:

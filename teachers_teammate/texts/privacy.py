@@ -31,6 +31,10 @@ WHAT_IS_SENT_TITLE = "What is sent for this file"
 WHAT_IS_SENT_WORKING = "Working out what is sent…"
 NO_TEXT_YET = "No text recognized for this file yet."
 RESULTS_UNREADABLE = "Could not read the stored results of this file."
+LOG_NOTE = (
+    "What goes wrong is written to a log file on this computer (Help → Open Log Folder). "
+    "It holds file names and error messages, never the text of a document."
+)
 
 
 def what_is_sent_title(name: str) -> str:
@@ -438,6 +442,46 @@ NOTHING_REMEMBERED = (
 ASK_AGAIN_SELECTED = "Ask again for selected"
 ASK_AGAIN_ALL = "Ask again for all"
 CHANGES_ON_OK = "Changes are saved when you press OK."
+
+# ── Settings → Privacy: what the app stored for earlier runs ─────────────────
+
+STORED_GROUP = "Stored results"
+STORED_EXPLAIN = (
+    "The app keeps what it recognized and proofread for every document, so a second run does "
+    "not read the pages again. After deleting it the next run reads and proofreads them again, "
+    "which takes time and, with an online service, is paid for again."
+)
+STORED_NOTHING = "Nothing is stored for earlier runs."
+STORED_ONE_DOCUMENT = "1 document"
+STORED_DOCUMENTS = "{count} documents"
+STORED_DELETE = "Delete stored results…"
+STORED_INCLUDE_WORK = "Also delete my corrections, marks and edited texts"
+STORED_INCLUDE_WORK_TIP = (
+    "What you corrected by hand, the marks you set and the texts you edited. They cannot be "
+    "brought back; your Word and text files stay."
+)
+STORED_KEEP = "Delete stored results older than"
+STORED_KEEP_SUFFIX = " days"
+
+
+def stored_size(documents: int, size: int) -> str:
+    """Return how much the app keeps: ``"12 documents · 48.0 MB"``, or that it keeps nothing."""
+    if documents <= 0:
+        return STORED_NOTHING
+    count = STORED_ONE_DOCUMENT if documents == 1 else STORED_DOCUMENTS.format(count=documents)
+    return f"{count} · {_size_text(size)}"
+
+
+def _size_text(size: int) -> str:
+    """Return *size* in bytes in the largest unit that still reads as a number: kB, MB or GB."""
+    kilobyte = 1_000
+    megabyte = 1_000 * kilobyte
+    gigabyte = 1_000 * megabyte
+    if size < megabyte:
+        return f"{max(size, 0) / kilobyte:.0f} kB"
+    if size < gigabyte:
+        return f"{size / megabyte:.1f} MB"
+    return f"{size / gigabyte:.1f} GB"
 
 
 def names_in_text_note(hidden: bool) -> str:

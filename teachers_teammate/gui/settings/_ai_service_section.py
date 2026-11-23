@@ -99,6 +99,30 @@ CONTENT_REVIEW = AiServiceSpec(
 )
 
 
+@dataclass(frozen=True)
+class Suggestions:
+    """Where the models a section suggests come from, and whether it compares the two steps."""
+
+    hardware_profile: HardwareProfileSetting = HardwareProfileSetting.AUTO
+    ollama_url: str = DEFAULTS["ollama_url"]
+    #: The page's own "Suggestions are for …" selector, which the section then follows instead
+    #: of resolving this computer again for itself (and shows no line of its own).
+    selector: HardwareProfileSelector | None = None
+    #: Whether the section says that both steps use the same model.
+    same_model_tip: bool = True
+
+
+@dataclass(frozen=True)
+class PackageOffer:
+    """How a section offers a missing package: the action, and the wording of its button."""
+
+    open_downloads: OpenDownloads | None = None
+    #: Empty keeps the hint's own "Install…"; the Setup Assistant installs the package right
+    #: there and says so.
+    button_text: str = ""
+    button_tooltip: str = ""
+
+
 #: Where a self-hosted service runs, as the service list says it.
 _PLACE_OF_SELF_HOSTED = {
     DataLocation.THIS_COMPUTER: PLACE_THIS_COMPUTER,
@@ -181,39 +205,31 @@ class AiServiceSection(QWidget):
     #: ``(provider, model)`` of this section changed.
     choice_changed = Signal(str, str)
 
-    def __init__(  # noqa: PLR0913  # independent keyword-only options, like OcrModelPicker's
+    def __init__(
         self,
         spec: AiServiceSpec,
         *,
         app_service: AppServices,
-        hardware_profile: HardwareProfileSetting = HardwareProfileSetting.AUTO,
-        ollama_url: str = DEFAULTS["ollama_url"],
-        open_downloads: OpenDownloads | None = None,
+        suggestions: Suggestions | None = None,
+        offer: PackageOffer | None = None,
         key_drafts: ApiKeyDrafts | None = None,
-        profile_selector: HardwareProfileSelector | None = None,
-        same_model_tip: bool = True,
         self_hosted: bool = True,
-        install_button_text: str = "",
-        install_button_tooltip: str = "",
         parent: QWidget | None = None,
     ) -> None:
         """Build the section.
 
-        *profile_selector* is the page's own "Suggestions are for …" selector: with it the
-        section follows that one (the page keeps it up to date) instead of resolving this
-        computer again for itself, and shows no line of its own.
-
         ``self_hosted=False`` offers the online services only, for a place that cannot download
-        a local model (the Setup Assistant's proofreading page).  *install_button_text* and
-        *install_button_tooltip* rename the package hint's button; empty keeps its own wording.
+        a local model (the Setup Assistant's proofreading page).
         """
         super().__init__(parent)
+        offer = offer or PackageOffer()
         self._spec = spec
+        self._suggestions = suggestions or Suggestions()
         self._drafts = key_drafts or ApiKeyDrafts(app_service, parent=self)
-        self._show_same_model_tip = same_model_tip
+        self._show_same_model_tip = self._suggestions.same_model_tip
         self._self_hosted = self_hosted
-        self._install_button_text = install_button_text
-        self._install_button_tooltip = install_button_tooltip
+        self._install_button_text = offer.button_text
+        self._install_button_tooltip = offer.button_tooltip
         self._loaded = False
         self._app_service = app_service
         self._fetcher = ModelFetcher(self)
@@ -224,15 +240,15 @@ class AiServiceSection(QWidget):
         self._saved_model_provider = ""
         #: The list the field was last filled from, so a status link can restore its status line.
         self._shown_listing: ModelListing | None = None
-        self._ollama_url = ollama_url or DEFAULTS["ollama_url"]
-        self._open_downloads = open_downloads
-        self._shared_selector = profile_selector
+        self._ollama_url = self._suggestions.ollama_url or DEFAULTS["ollama_url"]
+        self._open_downloads = offer.open_downloads
+        self._shared_selector = self._suggestions.selector
         #: Which services miss their package (asked again only when a package may have changed).
         self._missing_packages: dict[str, str | None] = {}
         #: The other step's current choice, for the same-model tip.
         self._other_provider = ""
         self._other_model = ""
-        self._build(hardware_profile)
+        self._build(self._suggestions.hardware_profile)
 
     # ── construction ──────────────────────────────────────────────────────────
 

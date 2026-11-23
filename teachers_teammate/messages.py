@@ -222,9 +222,11 @@ def reader_model_mismatch(reason: Message | None = None) -> Message:
     return Message(MessageKey.READER_MODEL_MISMATCH, {"reason": reason})
 
 
-def package_not_installed(package: str) -> Message:
+def package_not_installed(package: str, *, installed_app: bool) -> Message:
     """Return the install hint of a provider package that is missing."""
-    return Message(MessageKey.PACKAGE_NOT_INSTALLED, {"package": package})
+    return Message(
+        MessageKey.PACKAGE_NOT_INSTALLED, {"package": package, "installed_app": installed_app}
+    )
 
 
 def model_pull_failed(reason: Message) -> Message:

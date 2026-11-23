@@ -13,6 +13,7 @@ from collections.abc import Sequence
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from ...domain.install_item import InstallItem
 from ...texts import settings as st
 from ._credentials import ApiKeyDrafts, CredentialsGroup
 from ._page import FOCUS_API_KEYS, SettingsContext, SettingsPage, SettingsPageBase
@@ -42,7 +43,7 @@ class OnlineServicesPage(SettingsPageBase):
         """
         self._credentials.commit()
 
-    def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
+    def focus(self, focus: str, preselect: Sequence[InstallItem] = ()) -> None:
         _ = preselect
         if focus == FOCUS_API_KEYS:
             self._scroll_to(self._credentials)

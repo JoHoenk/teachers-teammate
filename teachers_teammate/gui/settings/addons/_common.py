@@ -12,33 +12,16 @@ from collections.abc import Iterable, Mapping
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QScrollArea, QVBoxLayout, QWidget
 
-from ....application.addons import bundled_status_key
+from ....domain.install_item import InstallItem, InstallKind
 from ....texts import addons as txt
-from ..._install_round import (
-    PACKAGE_PREFIX,
-    PAGE_MODELS_ITEM,
-    PAGE_MODELS_PREFIX,
-    READER_ITEM,
-    READER_PREFIX,
-)
-from ..._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 
 #: A small grey note under a control (the main content of a tab is never this small).
 GREY_NOTE_STYLE = "color: #888; font-size: 11px;"
 
-#: The prefixes of a deep link's entries that name a package or a model file, not a model tag.
-_ENTRY_PREFIXES = (
-    PROVIDER_PREFIX,
-    PACKAGE_PREFIX,
-    SPACY_PREFIX,
-    READER_PREFIX,
-    PAGE_MODELS_PREFIX,
-)
 
-
-def is_model_tag(entry: str) -> bool:
-    """Return whether *entry* names an Ollama model, rather than a package or a model file."""
-    return bool(entry) and not entry.startswith(_ENTRY_PREFIXES)
+def is_model_tag(item: InstallItem) -> bool:
+    """Return whether *item* names an Ollama model, rather than a package or a model file."""
+    return item.kind is InstallKind.OLLAMA
 
 
 class ScrolledTab(QScrollArea):
@@ -57,31 +40,31 @@ class ScrolledTab(QScrollArea):
         self.setWidget(content)
         self.body_layout = QVBoxLayout(content)
         #: The items of this tab, keyed like the installation check reports them.
-        self.checkboxes: dict[str, QCheckBox] = {}
+        self.checkboxes: dict[InstallItem, QCheckBox] = {}
         #: Each box's own label, by item: the mark of an installed item is added to it.
-        self.labels: dict[str, str] = {}
+        self.labels: dict[InstallItem, str] = {}
 
-    def item_box(self, key: str, label: str) -> QCheckBox:
-        """Return the box of item *key*, labelled *label*, and list it under that label."""
+    def item_box(self, item: InstallItem, label: str) -> QCheckBox:
+        """Return the box of *item*, labelled *label*, and list it under that label."""
         box = QCheckBox(label)
-        self.checkboxes[key] = box
-        self.labels[key] = label
+        self.checkboxes[item] = box
+        self.labels[item] = label
         return box
 
 
-def installed_mark(key: str, results: Mapping[str, object]) -> str:
+def installed_mark(item: InstallItem, results: Mapping[InstallItem, bool]) -> str:
     """Return what an installed row says: *included* when the app carries the files itself."""
-    if results.get(bundled_status_key(key)):
+    if results.get(item.bundled):
         return txt.INCLUDED
-    if key in (READER_ITEM, PAGE_MODELS_ITEM):
+    if item.kind in (InstallKind.READER, InstallKind.PAGE_MODELS):
         return txt.READER_DOWNLOADED
     return txt.INSTALLED_MARK
 
 
 def apply_installed(
-    boxes: Mapping[str, QCheckBox],
-    labels: Mapping[str, str],
-    results: Mapping[str, object],
+    boxes: Mapping[InstallItem, QCheckBox],
+    labels: Mapping[InstallItem, str],
+    results: Mapping[InstallItem, bool],
 ) -> None:
     """Mark the boxes of what is installed and untick every box.
 
@@ -89,20 +72,20 @@ def apply_installed(
     the widget.  An installed box is disabled: the mark says it is there, while a tick always
     means "install it", and nothing is installed without the teacher's click.
     """
-    for key, box in boxes.items():
-        base = labels[key]
+    for item, box in boxes.items():
+        base = labels[item]
         box.setChecked(False)
-        if results.get(key, False):
-            box.setText(f"{base}  {installed_mark(key, results)}")
+        if results.get(item, False):
+            box.setText(f"{base}  {installed_mark(item, results)}")
             box.setEnabled(False)
         else:
             box.setText(base)
             box.setEnabled(True)
 
 
-def tick_enabled(boxes: Mapping[str, QCheckBox], keys: Iterable[str]) -> None:
-    """Tick the boxes named by *keys* that can still be ticked (installed ones cannot)."""
-    for key in keys:
-        box = boxes.get(key)
+def tick_enabled(boxes: Mapping[InstallItem, QCheckBox], items: Iterable[InstallItem]) -> None:
+    """Tick the boxes named by *items* that can still be ticked (installed ones cannot)."""
+    for item in items:
+        box = boxes.get(item)
         if box is not None and box.isEnabled():
             box.setChecked(True)

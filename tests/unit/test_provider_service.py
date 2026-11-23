@@ -6,7 +6,9 @@ from typing import cast
 
 import pytest
 
+from teachers_teammate.application import api_keys as api_keys_module
 from teachers_teammate.application import providers as providers_module
+from teachers_teammate.application.api_keys import ApiKeys
 from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.application.ports import OllamaServer
 from teachers_teammate.application.providers import ProviderService
@@ -29,7 +31,7 @@ class _NoServer:
 
 def _service(**kwargs) -> ProviderService:
     """Return the service over a server that is never asked."""
-    return ProviderService(ollama=cast(OllamaServer, _NoServer()), **kwargs)
+    return ProviderService(ollama=cast(OllamaServer, _NoServer()), credentials=ApiKeys(), **kwargs)
 
 
 # ── the model lists ───────────────────────────────────────────────────────
@@ -221,16 +223,19 @@ def test_provider_key_missing_follows_the_provider_and_environment(
     monkeypatch: pytest.MonkeyPatch, info: ProviderInfo | None, key_set: bool, missing: bool
 ) -> None:
     """
-    Given  a declaration that does or does not need an API key, with the key set or not
+    Given  a declaration that does or does not need an API key, with the app holding one or not
     When   the service is asked whether the key is missing
-    Then   it is missing only for a provider that needs a key while none is set
+    Then   it is missing only for a provider that needs a key while the app holds none
     """
-    monkeypatch.delenv("TT_TEST_KEY", raising=False)
-    if key_set:
-        monkeypatch.setenv("TT_TEST_KEY", "k")
     monkeypatch.setattr(providers_module, "get_provider_info", lambda _provider: info)
+    monkeypatch.setattr(api_keys_module, "get_provider_info", lambda _provider: info)
+    keys = ApiKeys()
+    if key_set:
+        keys.remember("TT_TEST_KEY", "k")
 
-    assert _service().provider_key_missing("any") is missing
+    service = ProviderService(ollama=cast(OllamaServer, _NoServer()), credentials=keys)
+
+    assert service.provider_key_missing("any") is missing
 
 
 # ── what a provider declares ──────────────────────────────────────────────
@@ -343,6 +348,23 @@ def test_check_connection_provider_returns_true_when_env_var_set(
     ok, _, msg = services.providers.check_connection(provider, url="http://127.0.0.1:11434")
     assert ok is True
     assert env_var in msg
+
+
+@pytest.mark.unit
+def test_a_key_removed_in_the_app_is_not_taken_from_the_environment(monkeypatch) -> None:
+    """
+    Given  a key exported in the environment that the app then removed
+    When   the connection of that provider is checked
+    Then   it answers that the key is not set
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-exported")
+    services = build_app_services()
+    services.keys.remember("OPENAI_API_KEY", "")
+
+    ok, _, msg = services.providers.check_connection("openai", url="http://127.0.0.1:11434")
+
+    assert ok is False
+    assert "OPENAI_API_KEY" in msg
 
 
 @pytest.mark.parametrize(

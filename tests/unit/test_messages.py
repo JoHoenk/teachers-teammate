@@ -37,6 +37,7 @@ _SAMPLES: dict[str, object] = {
     "Message": None,  # filled below: a message needs a key of its own
     "Message | None": None,
     "Path": Path("/tmp/page.png"),
+    "bool": True,
 }
 
 

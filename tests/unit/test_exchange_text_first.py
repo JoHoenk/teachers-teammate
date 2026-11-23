@@ -1,4 +1,4 @@
-"""Unit tests for exchange T (``infrastructure/proofreading/exchanges/t.py``)."""
+"""Unit tests for exchange T (``infrastructure/proofreading/exchanges/text_first.py``)."""
 
 from __future__ import annotations
 
@@ -12,9 +12,10 @@ from teachers_teammate.domain.correction_prompts import (
     correct_system,
 )
 from teachers_teammate.domain.model_catalog import RequestProfile, StepProfile
-from teachers_teammate.infrastructure.proofreading.exchanges import TExchange
+from teachers_teammate.infrastructure.proofreading.exchanges import TextFirstExchange
+from teachers_teammate.infrastructure.proofreading.corrector import exchange_identity
 from teachers_teammate.infrastructure.proofreading.exchanges.base import ProofreadContext
-from teachers_teammate.infrastructure.proofreading.exchanges.t import (
+from teachers_teammate.infrastructure.proofreading.exchanges.text_first import (
     EXPLAIN_EDITS_CHARS,
 )
 from teachers_teammate.texts.review import (
@@ -98,7 +99,7 @@ def test_a_corrected_text_gets_one_explained_edit() -> None:
         answer(_unclear()),
     )
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert result.text == CORRECTED
     assert result.failed is False
@@ -116,7 +117,7 @@ def test_every_step_leaves_a_report() -> None:
     """
     port = FakePort(answer(CORRECTED), answer(_notes((1, "grammar", "x"))), answer(_unclear()))
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert [report.step for report in result.reports] == ["correct", "explain", "unclear"]
 
@@ -129,7 +130,7 @@ def test_a_text_without_edits_is_not_explained() -> None:
     """
     port = FakePort(answer(SOURCE), answer(_unclear()))
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert [request.step for request in port.requests] == ["correct", "unclear"]
     assert result.review is not None
@@ -144,7 +145,7 @@ def test_a_cut_off_correction_fails_the_file() -> None:
     """
     port = FakePort(cut_off())
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert result.failed is True
     assert result.text == SOURCE
@@ -159,7 +160,7 @@ def test_an_unreachable_server_fails_the_file() -> None:
     """
     port = FakePort(transport("Correction failed (connection refused)."))
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert result.failed is True
     assert result.warnings == ("Correction failed (connection refused).",)
@@ -178,7 +179,7 @@ def test_a_lead_in_is_asked_for_once_more() -> None:
         answer(_unclear()),
     )
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert result.failed is False
     assert result.text == CORRECTED
@@ -194,7 +195,7 @@ def test_a_lead_in_twice_fails_the_file() -> None:
     framed = f"Hier ist der korrigierte Text:\n\n{CORRECTED}"
     port = FakePort(answer(framed), answer(framed))
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert result.failed is True
     assert result.warnings == (FRAMING_WARNING,)
@@ -213,7 +214,7 @@ def test_a_dropped_paragraph_is_asked_for_once_more() -> None:
         answer(_unclear()),
     )
 
-    result = TExchange(port).proofread(LONG_SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(LONG_SOURCE, _ctx())
 
     assert result.failed is False
     assert result.text == LONG_CORRECTED
@@ -236,7 +237,7 @@ def test_a_dropped_paragraph_twice_is_put_back_and_the_file_is_stored() -> None:
         answer(_unclear()),
     )
 
-    result = TExchange(port).proofread(LONG_SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(LONG_SOURCE, _ctx())
 
     assert result.failed is False
     assert result.text == LONG_CORRECTED
@@ -266,7 +267,7 @@ def test_several_stretches_left_out_are_counted_in_one_warning() -> None:
         answer(_unclear()),
     )
 
-    result = TExchange(port).proofread(source, _ctx())
+    result = TextFirstExchange(port).proofread(source, _ctx())
 
     assert result.failed is False
     assert result.text == source
@@ -286,7 +287,7 @@ def test_a_cut_too_short_to_repair_still_fails_the_file() -> None:
     """
     port = FakePort(answer(SHORT_CUTS_ANSWER), answer(SHORT_CUTS_ANSWER))
 
-    result = TExchange(port).proofread(SHORT_CUTS_SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SHORT_CUTS_SOURCE, _ctx())
 
     assert result.failed is True
     assert result.text == SHORT_CUTS_SOURCE
@@ -302,7 +303,7 @@ def test_a_text_that_is_whole_after_the_repair_is_not_asked_about_again() -> Non
     short = "Ich habe einen großen Hund."
     port = FakePort(answer(short), answer(short))
 
-    result = TExchange(port).proofread(LONG_SOURCE, _ctx(corrections_only=True))
+    result = TextFirstExchange(port).proofread(LONG_SOURCE, _ctx(corrections_only=True))
 
     assert result.failed is False
     assert result.review is None
@@ -316,12 +317,12 @@ def test_a_rejected_answer_leaves_its_measurement_in_its_report(caplog) -> None:
     When   the exchange proofreads the text
     Then   the report of each rejected answer holds the words sent and returned, the longest cut
            and the rule that fired; the log says it with numbers only, and the rejected text is
-           written only at debug level
+           written nowhere
     """
     port = FakePort(answer(SHORT_CUTS_ANSWER), answer(SHORT_CUTS_ANSWER))
 
     with caplog.at_level(logging.DEBUG):
-        result = TExchange(port).proofread(SHORT_CUTS_SOURCE, _ctx())
+        result = TextFirstExchange(port).proofread(SHORT_CUTS_SOURCE, _ctx())
 
     rejected = [report for report in result.reports if report.counters]
     assert len(rejected) == 2
@@ -337,9 +338,7 @@ def test_a_rejected_answer_leaves_its_measurement_in_its_report(caplog) -> None:
     assert len(warnings) == 2
     assert "words_in=25" in warnings[0].getMessage()
     assert SHORT_CUTS_ANSWER not in warnings[0].getMessage()
-    assert any(
-        r.levelno == logging.DEBUG and SHORT_CUTS_ANSWER in r.getMessage() for r in caplog.records
-    )
+    assert not any(SHORT_CUTS_ANSWER in r.getMessage() for r in caplog.records)
 
 
 def test_an_accepted_answer_leaves_no_counters() -> None:
@@ -350,7 +349,7 @@ def test_an_accepted_answer_leaves_no_counters() -> None:
     """
     port = FakePort(answer(CORRECTED), answer(_notes((1, "grammar", "x"))), answer(_unclear()))
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert all(not report.counters for report in result.reports)
 
@@ -368,7 +367,7 @@ def test_a_first_answer_that_is_rejected_and_a_second_that_is_good_counts_only_t
         answer(_unclear()),
     )
 
-    result = TExchange(port).proofread(LONG_SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(LONG_SOURCE, _ctx())
 
     corrects = [report for report in result.reports if report.step == "correct"]
     assert [bool(report.counters) for report in corrects] == [True, False]
@@ -385,7 +384,7 @@ def test_text_the_model_added_twice_fails_the_file_with_its_own_warning() -> Non
     )
     port = FakePort(answer(padded), answer(padded))
 
-    result = TExchange(port).proofread(LONG_SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(LONG_SOURCE, _ctx())
 
     assert result.failed is True
     assert result.warnings == (ADDED_TEXT_WARNING,)
@@ -401,7 +400,7 @@ def test_a_short_text_that_gains_a_full_stop_is_not_a_dropped_or_added_text() ->
         answer("Ich bin müde."), answer(_notes((1, "grammar", "x"))), answer(_unclear())
     )
 
-    result = TExchange(port).proofread("ich bin müde", _ctx())
+    result = TextFirstExchange(port).proofread("ich bin müde", _ctx())
 
     assert result.failed is False
     assert result.text == "Ich bin müde."
@@ -421,7 +420,7 @@ def test_an_unusable_explanation_only_warns() -> None:
         answer(_unclear()),
     )
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert result.failed is False
     assert result.text == CORRECTED
@@ -445,7 +444,7 @@ def test_a_missing_note_is_asked_for_once_more() -> None:
         answer(_unclear()),
     )
 
-    result = TExchange(port).proofread(source, _ctx())
+    result = TextFirstExchange(port).proofread(source, _ctx())
 
     explain = [request for request in port.requests if request.step == "explain"]
     assert len(explain) == 2
@@ -461,7 +460,9 @@ def test_step_three_can_be_switched_off() -> None:
     """
     port = FakePort(answer(CORRECTED), answer(_notes((1, "grammar", "x"))))
 
-    result = TExchange(port).proofread(SOURCE, _ctx(profile=RequestProfile(unclear_check=False)))
+    result = TextFirstExchange(port).proofread(
+        SOURCE, _ctx(profile=RequestProfile(unclear_check=False))
+    )
 
     assert [request.step for request in port.requests] == ["correct", "explain"]
     assert result.review is not None
@@ -480,7 +481,7 @@ def test_an_unclear_expression_is_anchored_on_the_students_text() -> None:
         answer(_unclear("Er ist nett.")),
     )
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert result.review is not None
     note = result.review.unclear[0]
@@ -500,7 +501,7 @@ def test_an_unclear_expression_on_an_edit_is_dropped() -> None:
         answer(_unclear("einen großen Hund")),
     )
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert result.review is not None
     assert result.review.unclear == ()
@@ -516,7 +517,7 @@ def test_an_unusable_unclear_answer_only_warns() -> None:
         answer(CORRECTED), answer(_notes((1, "grammar", "x"))), invalid("nope"), invalid("nope")
     )
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert result.failed is False
     assert UNCLEAR_FAILED in result.warnings
@@ -534,7 +535,7 @@ def test_markdown_marks_and_crossed_out_words_survive() -> None:
         answer(_unclear()),
     )
 
-    result = TExchange(port).proofread(source, _ctx(text_format="markdown"))
+    result = TextFirstExchange(port).proofread(source, _ctx(text_format="markdown"))
 
     assert result.text == source
     assert result.failed is False
@@ -548,7 +549,7 @@ def test_the_request_carries_the_notes_and_the_parameters() -> None:
     """
     port = FakePort(answer(SOURCE), answer(_unclear()))
 
-    TExchange(port).proofread(SOURCE, _ctx(teacher_notes="Klasse 7b"))
+    TextFirstExchange(port).proofread(SOURCE, _ctx(teacher_notes="Klasse 7b"))
 
     user = port.requests[0].user
     assert "Text language: German" in user
@@ -569,7 +570,7 @@ def test_each_step_is_sent_at_its_own_temperature() -> None:
     )
     port = FakePort(answer(CORRECTED), answer(_notes((1, "grammar", "x"))), answer(_unclear()))
 
-    TExchange(port).proofread(SOURCE, _ctx(profile=profile))
+    TextFirstExchange(port).proofread(SOURCE, _ctx(profile=profile))
 
     assert [request.temperature for request in port.requests] == [0.1, 0.2, 0.3]
 
@@ -580,7 +581,7 @@ def test_a_provider_with_its_own_window_has_no_text_limit() -> None:
     When   the exchange is asked how much text one request carries
     Then   there is no limit
     """
-    assert TExchange(FakePort()).max_text_chars(_ctx()) is None
+    assert TextFirstExchange(FakePort()).max_text_chars(_ctx()) is None
 
 
 def test_a_local_window_gives_a_text_limit() -> None:
@@ -589,7 +590,7 @@ def test_a_local_window_gives_a_text_limit() -> None:
     When   the exchange is asked how much text one request carries
     Then   the limit is a positive number of characters
     """
-    exchange = TExchange(FakePort(window=ContextBudget(8192)))
+    exchange = TextFirstExchange(FakePort(window=ContextBudget(8192)))
 
     limit = exchange.max_text_chars(_ctx())
 
@@ -604,7 +605,7 @@ def test_a_text_of_the_limit_passes_the_request_check_of_every_step() -> None:
     Then   none is refused: step ① and ③ carry the text once, step ② twice next to its edit list
     """
     window = ContextBudget(8192)
-    exchange = TExchange(FakePort(window=window))
+    exchange = TextFirstExchange(FakePort(window=window))
     limit = exchange.max_text_chars(_ctx())
     assert limit is not None
     text = "a" * limit
@@ -625,7 +626,7 @@ def test_the_cost_model_names_the_three_steps() -> None:
     When   its cost model is read
     Then   every step has a request count and an answer length
     """
-    cost = TExchange(FakePort()).cost_model()
+    cost = TextFirstExchange(FakePort()).cost_model()
 
     assert set(cost.requests_per_page) == {"correct", "explain", "unclear"}
     assert set(cost.answer_tokens_per_100_words) == {"correct", "explain", "unclear"}
@@ -639,7 +640,7 @@ def test_an_empty_correction_fails_the_file() -> None:
     """
     port = FakePort(answer(""))
 
-    result = TExchange(port).proofread(SOURCE, _ctx())
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
 
     assert result.failed is True
     assert result.text == SOURCE
@@ -658,7 +659,7 @@ def test_the_sampling_values_of_a_step_reach_its_request_only() -> None:
     )
     port = FakePort(answer(CORRECTED), answer(_notes((1, "grammar", "x"))), answer(_unclear()))
 
-    TExchange(port).proofread(SOURCE, _ctx(profile=profile))
+    TextFirstExchange(port).proofread(SOURCE, _ctx(profile=profile))
 
     assert [request.options for request in port.requests] == [
         (("presence_penalty", 0.0),),
@@ -677,13 +678,25 @@ def test_step_one_sends_the_prompt_variant_of_its_profile_and_no_other_step_does
     profile = RequestProfile(correct=StepProfile(prompt="find"))
     port = FakePort(answer(CORRECTED), answer(_notes((1, "grammar", "x"))), answer(_unclear()))
 
-    TExchange(port).proofread(SOURCE, _ctx(profile=profile))
+    TextFirstExchange(port).proofread(SOURCE, _ctx(profile=profile))
 
     assert port.requests[0].system == correct_system("find")
     assert port.requests[0].system != CORRECT_SYSTEM
     assert port.requests[1].system == EXPLAIN_SYSTEM
 
     plain = FakePort(answer(CORRECTED), answer(_notes((1, "grammar", "x"))), answer(_unclear()))
-    TExchange(plain).proofread(SOURCE, _ctx())
+    TextFirstExchange(plain).proofread(SOURCE, _ctx())
 
     assert plain.requests[0].system == CORRECT_SYSTEM
+
+
+def test_a_stored_proofreading_is_still_found_after_the_exchange_was_renamed() -> None:
+    """
+    Given  the text-first exchange, by whatever name its module and class carry
+    When   the identity of its requests is taken for the cache key
+    Then   it still starts at ``T``, so proofreading stored before the rename is reused instead of
+           being read again
+    """
+    identity = exchange_identity(RequestProfile(), corrections_only=False)
+
+    assert identity.split("|")[0] == "T"

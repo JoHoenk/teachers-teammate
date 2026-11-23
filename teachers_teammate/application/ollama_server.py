@@ -27,6 +27,7 @@ from ..infrastructure.ollama_utils import (
     warm_up_own_host_names,
 )
 from ..infrastructure.wsl import windows_host_addresses
+from ..interfaces import ConnectionCheck
 
 
 @dataclass(frozen=True)
@@ -129,7 +130,7 @@ class OllamaServerService:
         """Drop *model* out of the server's memory at *url*, so it costs no memory any more."""
         OllamaClient(url).unload(model)
 
-    def check_connection(self, url: str, model: str = "") -> tuple[bool, bool, str]:
+    def check_connection(self, url: str, model: str = "") -> ConnectionCheck:
         """Return ``(connected, model_ok, message)`` for the server at *url*."""
         return OllamaClient(url).check_connection(model)
 

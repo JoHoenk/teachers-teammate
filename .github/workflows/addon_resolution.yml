@@ -56,8 +56,10 @@ jobs:
       - name: Write the bundle's constraints
         run: python tools/build/addon_constraints.py
 
+      # The lock of the repository is compiled on Linux; this adds the packages this runner's own
+      # resolve needs, as the bundle build does.
       - name: Write the add-on lock
-        run: python tools/build/addon_lock.py
+        run: python tools/build/platform_lock.py
 
       - name: Check that the add-ons resolve against the bundle
         shell: bash

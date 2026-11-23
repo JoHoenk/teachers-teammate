@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
+import logging
 from pathlib import Path
 import shutil
 import uuid
@@ -35,6 +36,8 @@ from ..storage_root import resolve_data_folder
 BENCHMARK_KEEP_LAST_N = 20
 _SCHEMA_VERSION = 1
 _DOCUMENT_META = "document.json"
+
+_logger = logging.getLogger(__name__)
 
 # Models that online OCR runs used before they were removed.  Old runs stored no model
 # and showed the provider's default, so that default is frozen here rather than looked
@@ -264,8 +267,8 @@ class BenchmarkRunStore:
                     display = json.loads(meta.read_text(encoding="utf-8")).get(
                         "display_name", doc_dir.name
                     )
-                except OSError, json.JSONDecodeError:
-                    pass
+                except (OSError, json.JSONDecodeError) as exc:
+                    _logger.debug("Cannot read %s, showing the folder name: %s", meta, exc)
             result.append((doc_dir.name, display))
         return result
 
@@ -285,7 +288,8 @@ class BenchmarkRunStore:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
             run = StoredRun.from_json_dict(raw)
-        except OSError, json.JSONDecodeError, KeyError, TypeError:
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            _logger.warning("Skipping the stored run %s, it cannot be read: %s", path, exc)
             return None
         if run.schema_version != _SCHEMA_VERSION:
             return None

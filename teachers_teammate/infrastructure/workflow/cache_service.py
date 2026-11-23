@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ...config import Config, OcrConfig
 from ...domain.context_budget import RunWindows, window_from_setting
+from ...domain.correction_policy import CorrectionOutput
 from ...domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, PROVIDER_OLLAMA, SentRecord
 from ...domain.freshness import (
     StageHashes,
@@ -217,7 +218,9 @@ def compute_correction_config_hash(config: Config, windows: RunWindows | None = 
         config.correction_provider,
         config.effective_correction_model,
         config.language,
-        exchange_identity(profile, corrections_only=config.correction_output == "text"),
+        exchange_identity(
+            profile, corrections_only=config.correction_output == CorrectionOutput.TEXT
+        ),
         # What the teacher set changes the answer itself, so it belongs in the key.
         config.correction_level,
         config.explanation_language,

@@ -6,7 +6,8 @@ pip install langchain-cohere
 
 Authentication
 --------------
-Set the ``COHERE_API_KEY`` environment variable to your Cohere API key:
+The key is passed in as ``api_key``; with none, LangChain reads the ``COHERE_API_KEY``
+environment variable, so exporting it works as well:
 
     export COHERE_API_KEY=<your-key>
 """
@@ -47,11 +48,16 @@ def list_models(**_kwargs: object) -> list[str]:
     return list(PROVIDER.models)
 
 
-def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseChatModel:
+def create(
+    model: str,
+    *,
+    temperature: float = 0.7,
+    api_key: str | None = None,
+    **_kwargs: object,
+) -> BaseChatModel:
     """Return a ``ChatCohere`` instance for *model*.
 
-    The API key is read from the ``$COHERE_API_KEY`` environment variable
-    by LangChain automatically.
+    The key comes in as *api_key*; with none, LangChain reads ``$COHERE_API_KEY`` itself.
 
     Args:
         model:       Cohere model name (e.g. ``"command-r-plus"``).
@@ -59,7 +65,7 @@ def create(model: str, *, temperature: float = 0.7, **_kwargs: object) -> BaseCh
     """
     with import_guard("langchain-cohere"):
         from langchain_cohere import ChatCohere  # noqa: PLC0415
-    return ChatCohere(model=model, temperature=temperature)
+    return ChatCohere(model=model, temperature=temperature, cohere_api_key=api_key)
 
 
 check_connection = api_key_check(PROVIDER.env_key)

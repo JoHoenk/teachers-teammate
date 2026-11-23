@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from ..domain.model_catalog import GpuInfo, GpuUsage, ServerFacts
     from ..domain.ollama_discovery import WaitDetail
     from ..infrastructure.ollama_utils import ServerActivity
-    from ..interfaces import Anonymizer
+    from ..interfaces import Anonymizer, ConnectionCheck
 
 
 class OllamaServer(Protocol):
@@ -63,7 +63,7 @@ class OllamaServer(Protocol):
         """Drop *model* out of the server's memory."""
         ...
 
-    def check_connection(self, url: str, model: str = "") -> tuple[bool, bool, str]:
+    def check_connection(self, url: str, model: str = "") -> ConnectionCheck:
         """Return ``(connected, model_ok, message)`` for the server at *url*."""
         ...
 
@@ -94,6 +94,25 @@ class OllamaServer(Protocol):
 #: Builds the Ollama client of one address; *cancel_event* makes a waiting request abandonable.
 #: The client is opaque here: only the probe that drives it knows its shape.
 OllamaClientFactory = Callable[[str, threading.Event | None], object]
+
+
+class Credentials(Protocol):
+    """The API keys of the online AI services, as the parts that ask a service see them."""
+
+    def key_for(self, provider: str) -> str | None:
+        """Return the key *provider* sends to its service, or ``None`` when there is none."""
+        ...
+
+
+class RunActivity(Protocol):
+    """The run in progress, as the parts of the app that must wait for it see it.
+
+    ``RunService`` implements it: anything that writes the files a run is writing asks first.
+    """
+
+    def busy(self) -> bool:
+        """Return whether a run is going in this process."""
+        ...
 
 
 class AddonState(Protocol):

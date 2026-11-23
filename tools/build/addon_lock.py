@@ -11,17 +11,22 @@ bundle's own constraints.
 The bundle's packages are left out: ``addon_constraints.txt`` already pins them, and two
 constraints files that disagree make pip refuse the install.
 
+A bundle build passes the pins its own platform resolved and the lock does not hold — a
+dependency only Windows or macOS needs (``tools/build/platform_lock.py``).  A plain checkout writes
+the lock as it is.
+
 Usage (from the repo root, inside the build environment, before PyInstaller runs):
 
     python tools/build/addon_constraints.py
     python tools/build/addon_lock.py
 
 Output: ``teachers_teammate/_build/addon_lock.txt`` (git-ignored), which the spec adds to the
-bundle.  ``build_standalone.py`` calls :func:`write_lock` itself.
+bundle.  ``build_standalone.py`` runs ``platform_lock.py``, which calls :func:`write_lock`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 import sys
 
@@ -38,7 +43,7 @@ if str(ROOT) not in sys.path:
 from tools.build.make_constraints import normalize, parse_pins  # noqa: E402
 
 
-def _pins(text: str) -> dict[str, str]:
+def lock_pins(text: str) -> dict[str, str]:
     """Return ``{normalised name: version}`` of a ``name==version`` file."""
     pins: dict[str, str] = {}
     for pin in parse_pins(text):
@@ -47,21 +52,32 @@ def _pins(text: str) -> dict[str, str]:
     return pins
 
 
-def addon_pins(lock_text: str, bundle_text: str) -> list[str]:
-    """Return the add-ons' ``name==version`` pins: the lock without the bundle's packages."""
-    bundle = _pins(bundle_text)
-    return [
-        f"{name}=={version}"
-        for name, version in sorted(_pins(lock_text).items())
-        if name not in bundle
-    ]
+def read_lock_pins(lock: Path) -> dict[str, str]:
+    """Return the pins of *lock*, empty when the file is not there."""
+    return lock_pins(lock.read_text(encoding="utf-8")) if lock.is_file() else {}
 
 
-def write_lock(output: Path = OUTPUT) -> int:
-    """Write the add-on lock; return how many pins it holds."""
+def addon_pins(lock_text: str, bundle_text: str, extra_pins: Iterable[str] = ()) -> list[str]:
+    """Return the add-ons' ``name==version`` pins: the lock without the bundle's packages.
+
+    *extra_pins* are the pins this platform resolved and the lock does not hold — a dependency
+    only Windows or macOS needs (``tools/build/platform_lock.py``).  They replace the lock's own
+    line for the same name, so the file pins one version per package.
+    """
+    pins = lock_pins(lock_text)
+    for pin in extra_pins:
+        name, _, version = pin.partition("==")
+        pins[normalize(name)] = version
+    bundle = lock_pins(bundle_text)
+    return [f"{name}=={version}" for name, version in sorted(pins.items()) if name not in bundle]
+
+
+def write_lock(output: Path = OUTPUT, extra_pins: Iterable[str] = ()) -> int:
+    """Write the add-on lock, with *extra_pins* of this platform; return how many pins it holds."""
     pins = addon_pins(
         LOCK.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8") if BUNDLE.is_file() else "",
+        extra_pins,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("".join(f"{pin}\n" for pin in pins), encoding="utf-8")

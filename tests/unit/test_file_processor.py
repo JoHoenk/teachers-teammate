@@ -24,7 +24,7 @@ from teachers_teammate.infrastructure.proofreading.corrector import (
     ExchangeCorrector,
     ProofreadingSettings,
 )
-from teachers_teammate.infrastructure.proofreading.exchanges import TExchange
+from teachers_teammate.infrastructure.proofreading.exchanges import TextFirstExchange
 from teachers_teammate.infrastructure.ollama_utils import ChatStats
 from teachers_teammate.infrastructure.run_stats import RunStatsCollector
 from teachers_teammate.infrastructure.speed_store import RunSample, SampleKey
@@ -2591,7 +2591,7 @@ _CORRECTED = "[PERSON_1] hat einen großen Hund. Er ist nett."
 def _exchange_corrector(port: FakePort, *, corrections_only: bool = False) -> ExchangeCorrector:
     """Return the corrector the pipeline runs, over a scripted port."""
     return ExchangeCorrector(
-        TExchange(port),
+        TextFirstExchange(port),
         settings=ProofreadingSettings(level="B1", corrections_only=corrections_only),
     )
 

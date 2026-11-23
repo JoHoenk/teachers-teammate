@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 from pathlib import Path
 import re
 from types import ModuleType
@@ -113,6 +114,7 @@ def _load_provider(provider: str) -> ModuleType | None:
     try:
         return importlib.import_module(f".providers.{provider}", package=__package__)
     except ImportError:
+        _logger.debug("provider '%s' is not installed", provider)
         return None
 
 
@@ -234,6 +236,7 @@ def build_llm(
     *,
     base_url: str,
     temperature: float = 0.7,
+    api_key: str | None = None,
 ) -> BaseChatModel:
     """Instantiate and return a LangChain chat model via the named provider module.
 
@@ -243,6 +246,8 @@ def build_llm(
         base_url:    Base URL for providers that require one (e.g. Ollama).
                      Ignored for providers whose ``PROVIDER.needs_base_url`` is ``False``.
         temperature: Sampling temperature forwarded to the model constructor (0.0 = deterministic).
+        api_key:     The key the model sends to its service.  ``None`` uses the environment's
+                     (never written); ``""`` means the app has none.
 
     Returns:
         A :class:`~langchain_core.language_models.BaseChatModel` ready to invoke.
@@ -251,9 +256,20 @@ def build_llm(
         RuntimeError: On unknown provider or missing dependency.
     """
     module = _provider_module(provider.lower())
+    key = _api_key(module, api_key)
     try:
         if module.PROVIDER.needs_base_url:
-            return module.create(model, base_url=base_url, temperature=temperature)
-        return module.create(model, temperature=temperature)
+            return module.create(model, base_url=base_url, temperature=temperature, api_key=key)
+        return module.create(model, temperature=temperature, api_key=key)
     except SystemExit as exc:
         raise ProviderNotAvailableError(provider_not_loaded(provider)) from exc
+
+
+def _api_key(module: LLMProviderModule, api_key: str | None) -> str | None:
+    """Return the key to build with: the one given, else the environment's (never written)."""
+    if api_key is not None:
+        return api_key
+    env_key = module.PROVIDER.env_key
+    if not isinstance(env_key, str) or not env_key:
+        return None
+    return os.environ.get(env_key, "").strip() or None

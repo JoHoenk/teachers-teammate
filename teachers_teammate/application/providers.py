@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 import importlib
 import importlib.util
-import os
+import threading
 import time
 
 from .._model_defaults import default_model_for_task
@@ -27,8 +27,9 @@ from ..infrastructure.llm_factory import (
     provider_package,
     provider_package_required,
 )
+from ..interfaces import ConnectionCheck
 from .data_flow import llm_location, text_goes_online
-from .ports import OllamaServer
+from .ports import Credentials, OllamaServer
 
 
 def importable(module: str) -> bool:
@@ -50,10 +51,16 @@ class ProviderService:
         self,
         *,
         ollama: OllamaServer,
+        credentials: Credentials,
         importable_module: Callable[[str], bool] | None = None,
     ) -> None:
         self._ollama = ollama
+        self._credentials = credentials
         self._importable = importable_module or importable
+        # The lists are read from a background thread and written from the window's; one lock
+        # covers the dict.  Re-entrant, because invalidating tells the recommender, which asks
+        # this service again.
+        self._cache_lock = threading.RLock()
         self._model_cache: dict[str, tuple[float, ModelListing]] = {}
         # Told when an Ollama model list is forgotten, so what was derived from it is forgotten
         # too; the recommender that derives it is built after this service.
@@ -113,13 +120,12 @@ class ProviderService:
         return provider_package(provider) is not None and not provider_package_required(provider)
 
     def provider_key_missing(self, provider: str) -> bool:
-        """Return whether *provider* needs an API key that is not set in the environment.
+        """Return whether *provider* needs an API key the app has none of.
 
         Without it the service cannot be asked for its models, so the GUI says "no key"
         instead of starting a request that is certain to fail.
         """
-        env_key = self.env_key(provider)
-        return self.provider_needs_key(provider) and not os.environ.get(env_key)
+        return self.provider_needs_key(provider) and not self._credentials.key_for(provider)
 
     def default_model_for_task(self, provider: str, task: str) -> str:
         """Resolve default model for provider and task."""
@@ -178,7 +184,7 @@ class ProviderService:
         *,
         url: str,
         model: str = "",
-    ) -> tuple[bool, bool, str]:
+    ) -> ConnectionCheck:
         """Check whether an LLM *provider* answers, and whether *model* is there.
 
         Returns ``(connected, model_ok, message)``.  For the services that are not Ollama the
@@ -188,12 +194,12 @@ class ProviderService:
             return self._ollama.check_connection(url, model)
         # Unknown providers are not blocked — assume OK by default.
         if provider not in list_providers():
-            return True, True, "✓ OK"
-        # Delegate to the provider module's own health check (env-key presence for API
-        # providers).  The provider declares its own env_key, so no provider→env-var mapping
-        # is duplicated here.
-        ok, message = check_provider_connection(provider)
-        return ok, ok, message
+            return ConnectionCheck(True, True, "✓ OK")
+        # Delegate to the provider module's own health check (key presence for API providers)
+        # and hand it the key the app holds for that provider.
+        api_key = self._credentials.key_for(provider) or ""
+        ok, message = check_provider_connection(provider, api_key=api_key)
+        return ConnectionCheck(ok, ok, message)
 
     # ── the model lists ───────────────────────────────────────────────────────
 
@@ -224,6 +230,7 @@ class ProviderService:
         if cached is not None:
             return cached
         kwargs: dict[str, str] = {"base_url": base_url} if base_url else {}
+        kwargs["api_key"] = self._credentials.key_for(provider) or ""
         listing = list_provider_models_checked(provider, **kwargs)
         self.remember_listing(provider, listing, base_url=base_url)
         return listing
@@ -235,14 +242,16 @@ class ProviderService:
         server that was started a moment later would keep being reported as down.
         """
         if listing.cacheable:
-            self._model_cache[self._model_cache_key(provider, base_url)] = (
-                time.monotonic(),
-                listing,
-            )
+            with self._cache_lock:
+                self._model_cache[self._model_cache_key(provider, base_url)] = (
+                    time.monotonic(),
+                    listing,
+                )
 
     def get_cached_listing(self, provider: str, *, base_url: str = "") -> ModelListing | None:
         """Return the cached listing for *provider* if still within TTL, else ``None``."""
-        entry = self._model_cache.get(self._model_cache_key(provider, base_url))
+        with self._cache_lock:
+            entry = self._model_cache.get(self._model_cache_key(provider, base_url))
         if entry and (time.monotonic() - entry[0]) < self._MODEL_CACHE_TTL_S:
             return entry[1]
         return None
@@ -257,10 +266,12 @@ class ProviderService:
 
         For Ollama this also forgets the model classifications of that server.
         """
-        self._model_cache.pop(self._model_cache_key(provider, base_url), None)
-        if provider == PROVIDER_OLLAMA:
-            self._forget_classifications(base_url)
+        with self._cache_lock:
+            self._model_cache.pop(self._model_cache_key(provider, base_url), None)
+            if provider == PROVIDER_OLLAMA:
+                self._forget_classifications(base_url)
 
     def forget_ollama_model_list(self, normalized_url: str) -> None:
         """Drop only the cached Ollama model list (the recommender forgets the rest)."""
-        self._model_cache.pop(self._model_cache_key(PROVIDER_OLLAMA, normalized_url), None)
+        with self._cache_lock:
+            self._model_cache.pop(self._model_cache_key(PROVIDER_OLLAMA, normalized_url), None)

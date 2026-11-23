@@ -25,8 +25,14 @@ from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.texts import addons as txt
 from teachers_teammate.gui._constants import _SPACY_MODEL_CHOICES
-from teachers_teammate.gui._install_round import PAGE_MODELS_ITEM, READER_ITEM
-from teachers_teammate.gui.settings.addons import _install_status
+from teachers_teammate.domain.install_item import (
+    PAGE_MODELS_ITEM,
+    READER_ITEM,
+    SPACY_ITEM,
+    InstallItem,
+    InstallKind,
+)
+from teachers_teammate.gui.settings.addons import DetectedAddons, _install_status
 from teachers_teammate.gui.settings._addons_page import AddonsPage
 from teachers_teammate.domain.name_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
 from teachers_teammate.gui.settings._page import (
@@ -42,6 +48,13 @@ from teachers_teammate.texts._types import Question
 from ..fakes.fake_ollama import FakeOllama
 from ._gui_harness import settings_context
 from ._service_stubs import FinishedThreadStub, RecommendationServiceStub
+
+#: The items these tests hand to the page, and the German name-detection model.
+MISTRAL = InstallItem(InstallKind.PROVIDER, "mistral")
+MISTRAL_EU = InstallItem(InstallKind.PROVIDER, "mistral_eu")
+OPENAI = InstallItem(InstallKind.PROVIDER, "openai")
+GERMAN_NAMES = InstallItem(InstallKind.SPACY, "de_core_news_sm")
+OPENAI_PACKAGE = InstallItem(InstallKind.PACKAGE, "langchain-openai")
 
 _USER_ROLE = 0x0100  # Qt.ItemDataRole.UserRole
 
@@ -75,13 +88,15 @@ class _StubService(RecommendationServiceStub):
         return super().detect_hardware(ollama_url, refresh=refresh)
 
     # ── installation probing ──────────────────────────────────────────────
-    def get_installation_status(self, *, ollama_models=None, **_kwargs) -> dict[str, bool]:
+    def get_installation_status(self, *, ollama_models=None, **_kwargs) -> dict[InstallItem, bool]:
         self.status_calls += 1
         if self.status_error is not None:
             raise self.status_error
         if self.status_gate is not None and self.status_calls == 1:
             assert self.status_gate.wait(timeout=5), "test never released the check"
-        return {f"ollama:{m}": (m in self.installed) for m in (ollama_models or [])}
+        return {
+            InstallItem(InstallKind.OLLAMA, m): (m in self.installed) for m in (ollama_models or [])
+        }
 
     def is_module_importable(self, module: str) -> bool:
         _ = module
@@ -131,10 +146,12 @@ def _make_dialog(
     return dlg
 
 
-def _detection_results(dlg: AddonsPage, installed: set[str]) -> dict:
-    """Build the results dict ``detect_installed`` would produce."""
+def _detection_results(dlg: AddonsPage, installed: set[str]) -> DetectedAddons:
+    """Build the answer ``detect_installed`` gives for the models of the tree."""
     tags = [tag for tag, _item in dlg.ollama_models._iter_model_items()]
-    return {f"ollama:{t}": (t in installed) for t in tags}
+    return DetectedAddons(
+        installed={InstallItem(InstallKind.OLLAMA, t): (t in installed) for t in tags}
+    )
 
 
 def _group_tags(dlg: AddonsPage, key: str) -> list[str]:
@@ -337,13 +354,13 @@ def test_no_pre_ticking_when_category_already_downloaded(qtbot) -> None:
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
 def test_preselect_ticks_given_tags(qtbot) -> None:
     """
-    Given  the dialog opened with preselect=["glm-ocr:q8_0"]
+    Given  the dialog opened with an Ollama item for the tag glm-ocr:q8_0
     When   install detection finishes
     Then   the given tag is ticked
     """
     from PySide6.QtCore import Qt  # noqa: PLC0415
 
-    dlg = _make_dialog(qtbot, preselect=["glm-ocr:q8_0"])
+    dlg = _make_dialog(qtbot, preselect=[InstallItem(InstallKind.OLLAMA, "glm-ocr:q8_0")])
     dlg._on_detection_done(_detection_results(dlg, set()))
     assert dlg.ollama_models._model_items["glm-ocr:q8_0"].checkState(0) is Qt.CheckState.Checked
 
@@ -372,16 +389,16 @@ class _ProviderPackagesService(_StubService):
         )
         return ProviderInfo(name=provider, display_name=provider.title(), package=package)
 
-    def get_installation_status(self, *, ollama_models=None, **kwargs) -> dict[str, bool]:
+    def get_installation_status(self, *, ollama_models=None, **kwargs) -> dict[InstallItem, bool]:
         status = super().get_installation_status(ollama_models=ollama_models, **kwargs)
         for name in self.list_provider_packages():
-            status[f"provider:{name}"] = name in self.installed_providers
+            status[InstallItem(InstallKind.PROVIDER, name)] = name in self.installed_providers
         return status
 
 
 def test_provider_preselect_opens_the_providers_tab_and_ticks_the_package(qtbot) -> None:
     """
-    Given  the page focused with preselect=["provider:mistral"] (the Install button of an AI
+    Given  the page focused with Mistral among the preselected items (the Install button of an AI
            service hint), and Mistral not installed
     When   install detection finishes
     Then   the Online AI services tab is shown, the Mistral box is ticked and the pip package
@@ -389,26 +406,26 @@ def test_provider_preselect_opens_the_providers_tab_and_ticks_the_package(qtbot)
     """
     from PySide6.QtWidgets import QTabWidget  # noqa: PLC0415
 
-    dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=["provider:mistral"])
+    dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=[MISTRAL])
     dlg._on_detection_done(_detection_results(dlg, set()))
 
     assert dlg.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_ONLINE_SERVICES
-    assert dlg.providers.checkboxes["provider:mistral"].isChecked() is True
-    assert dlg.providers.checkboxes["provider:openai"].isChecked() is False
+    assert dlg.providers.checkboxes[MISTRAL].isChecked() is True
+    assert dlg.providers.checkboxes[OPENAI].isChecked() is False
     assert dlg._collect_pip_packages() == ["langchain-mistralai"]
 
 
 def test_provider_preselect_for_a_provider_sharing_a_package_ticks_the_shared_box(qtbot) -> None:
     """
-    Given  the dialog opened with preselect=["provider:mistral_eu"], while the list offers the
+    Given  the dialog opened with Mistral (EU) preselected, while the list offers the
            package shared by Mistral and Mistral (EU) once, under "mistral"
     When   install detection finishes
     Then   the shared Mistral box is ticked, so the Install button of the EU service works
     """
-    dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=["provider:mistral_eu"])
+    dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=[MISTRAL_EU])
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert dlg.providers.checkboxes["provider:mistral"].isChecked() is True
+    assert dlg.providers.checkboxes[MISTRAL].isChecked() is True
     assert dlg._collect_pip_packages() == ["langchain-mistralai"]
 
 
@@ -419,12 +436,13 @@ def test_provider_preselect_leaves_an_installed_package_alone(qtbot) -> None:
     Then   its box shows "Installed" and is disabled, so nothing is installed again
     """
     service = _ProviderPackagesService(installed_providers=frozenset({"mistral"}))
-    dlg = _make_dialog(qtbot, service=service, preselect=["provider:mistral"])
-    results = {**_detection_results(dlg, set()), "provider:mistral": True, "provider:openai": False}
+    dlg = _make_dialog(qtbot, service=service, preselect=[MISTRAL])
+    detected = _detection_results(dlg, set())
+    detected.installed.update({MISTRAL: True, OPENAI: False})
 
-    dlg._on_detection_done(results)
+    dlg._on_detection_done(detected)
 
-    box = dlg.providers.checkboxes["provider:mistral"]
+    box = dlg.providers.checkboxes[MISTRAL]
     assert "Installed" in box.text()
     assert not box.isEnabled()
     assert dlg._collect_pip_packages() == []
@@ -436,10 +454,10 @@ def test_provider_preselect_is_not_mistaken_for_an_ollama_model(qtbot) -> None:
     When   the dialog opens
     Then   no Ollama model row is added for it
     """
-    dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=["provider:mistral"])
+    dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=[MISTRAL])
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert "provider:mistral" not in dlg.ollama_models._model_items
+    assert MISTRAL.name not in dlg.ollama_models._model_items
     assert dlg.ollama_models._group_items["other"].childCount() == 0
 
 
@@ -457,8 +475,8 @@ def test_the_name_detection_models_are_the_ones_the_app_offers() -> None:
 
 def test_spacy_preselect_ticks_the_model_and_spacy_itself(qtbot) -> None:
     """
-    Given  the page focused on name detection with preselect=["package:spacy",
-           "spacy:de_core_news_sm"], while spaCy is not installed
+    Given  the page focused on name detection with spaCy and the German model
+           preselected, while spaCy is not installed
     When   install detection finishes
     Then   the name detection tab is shown, the model's box and the spaCy box are ticked, and
            the entries are no Ollama models
@@ -466,14 +484,14 @@ def test_spacy_preselect_ticks_the_model_and_spacy_itself(qtbot) -> None:
     from PySide6.QtWidgets import QTabWidget  # noqa: PLC0415
 
     dlg = _make_dialog(qtbot)
-    dlg.focus(FOCUS_NAME_DETECTION, ["package:spacy", "spacy:de_core_news_sm"])
+    dlg.focus(FOCUS_NAME_DETECTION, [SPACY_ITEM, GERMAN_NAMES])
     dlg._on_detection_done(_detection_results(dlg, set()))
 
     assert dlg.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_NAME_DETECTION
-    assert dlg.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert dlg.name_detection.checkboxes["spacy"].isChecked() is True
-    assert "spacy:de_core_news_sm" not in dlg.ollama_models._model_items
-    assert "package:spacy" not in dlg.ollama_models._model_items
+    assert dlg.name_detection.checkboxes[GERMAN_NAMES].isChecked() is True
+    assert dlg.name_detection.checkboxes[SPACY_ITEM].isChecked() is True
+    assert GERMAN_NAMES.name not in dlg.ollama_models._model_items
+    assert SPACY_ITEM not in dlg.ollama_models._model_items
 
 
 def test_a_model_alone_does_not_tick_spacy(qtbot) -> None:
@@ -484,11 +502,11 @@ def test_a_model_alone_does_not_tick_spacy(qtbot) -> None:
     Then   only the model's box is ticked: a tick always means "will be installed"
     """
     dlg = _make_dialog(qtbot)
-    dlg.focus(FOCUS_NAME_DETECTION, ["spacy:de_core_news_sm"])
+    dlg.focus(FOCUS_NAME_DETECTION, [GERMAN_NAMES])
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert dlg.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert dlg.name_detection.checkboxes["spacy"].isChecked() is False
+    assert dlg.name_detection.checkboxes[GERMAN_NAMES].isChecked() is True
+    assert dlg.name_detection.checkboxes[SPACY_ITEM].isChecked() is False
 
 
 def test_an_installed_row_is_disabled_and_unticked(qtbot) -> None:
@@ -499,12 +517,12 @@ def test_an_installed_row_is_disabled_and_unticked(qtbot) -> None:
     """
     dlg = _make_dialog(qtbot)
 
-    dlg._on_detection_done(
-        {**_detection_results(dlg, set()), "spacy": True, "spacy:de_core_news_sm": True}
-    )
+    detected = _detection_results(dlg, set())
+    detected.installed.update({SPACY_ITEM: True, GERMAN_NAMES: True})
+    dlg._on_detection_done(detected)
 
-    for key in ("spacy", "spacy:de_core_news_sm"):
-        box = dlg.name_detection.checkboxes[key]
+    for item in (SPACY_ITEM, GERMAN_NAMES):
+        box = dlg.name_detection.checkboxes[item]
         assert not box.isEnabled()
         assert box.isChecked() is False
         assert "✓" in box.text()
@@ -532,7 +550,7 @@ def test_name_detection_fix_button_ticks_the_boxes_through_the_settings_window(q
         ),
         page=SettingsPage.ADDONS,
         focus=FOCUS_NAME_DETECTION,
-        preselect=["package:spacy", "spacy:de_core_news_sm"],
+        preselect=[SPACY_ITEM, GERMAN_NAMES],
     )
     qtbot.addWidget(window)
     page = window.page(SettingsPage.ADDONS)
@@ -540,36 +558,35 @@ def test_name_detection_fix_button_ticks_the_boxes_through_the_settings_window(q
     qtbot.waitUntil(lambda: page._installed_ready, timeout=5000)
 
     assert page.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_NAME_DETECTION
-    assert page.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert page.name_detection.checkboxes["spacy"].isChecked() is True
+    assert page.name_detection.checkboxes[GERMAN_NAMES].isChecked() is True
+    assert page.name_detection.checkboxes[SPACY_ITEM].isChecked() is True
 
 
 def test_name_detection_boxes_are_ticked_before_the_detection_has_answered(qtbot) -> None:
     """
     Given  a page whose detection is still running (it asks the Ollama server too, which can
            take long when Ollama is not there)
-    When   it is focused on name detection with preselect=["package:spacy",
-           "spacy:de_core_news_sm"]
+    When   it is focused on name detection with spaCy and the German model preselected
     Then   the model's box and spaCy's box are ticked at once, and still are after the
            detection has answered
     """
     dlg = _make_dialog(qtbot)
     assert dlg._installed_ready is False
 
-    dlg.focus(FOCUS_NAME_DETECTION, ["package:spacy", "spacy:de_core_news_sm"])
+    dlg.focus(FOCUS_NAME_DETECTION, [SPACY_ITEM, GERMAN_NAMES])
 
-    assert dlg.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert dlg.name_detection.checkboxes["spacy"].isChecked() is True
+    assert dlg.name_detection.checkboxes[GERMAN_NAMES].isChecked() is True
+    assert dlg.name_detection.checkboxes[SPACY_ITEM].isChecked() is True
 
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert dlg.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert dlg.name_detection.checkboxes["spacy"].isChecked() is True
+    assert dlg.name_detection.checkboxes[GERMAN_NAMES].isChecked() is True
+    assert dlg.name_detection.checkboxes[SPACY_ITEM].isChecked() is True
 
 
 def test_reader_preselect_opens_the_reading_models_tab_and_ticks_the_reader(qtbot) -> None:
     """
-    Given  the page focused on the reading models with preselect=["reader:ppocr"] (the fix
+    Given  the page focused on the reading models with the reader item preselected (the fix
            button of a reader that is not downloaded)
     When   install detection finishes
     Then   the Reading models tab is shown, the reader's box is ticked, and the entry is
@@ -578,12 +595,12 @@ def test_reader_preselect_opens_the_reading_models_tab_and_ticks_the_reader(qtbo
     from PySide6.QtWidgets import QTabWidget  # noqa: PLC0415
 
     dlg = _make_dialog(qtbot)
-    dlg.focus(FOCUS_READING_MODELS, ["reader:ppocr"])
+    dlg.focus(FOCUS_READING_MODELS, [READER_ITEM])
     dlg._on_detection_done(_detection_results(dlg, set()))
 
     assert dlg.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_READING_MODELS
-    assert dlg.reading_models.checkboxes["reader:ppocr"].isChecked() is True
-    assert "reader:ppocr" not in dlg.ollama_models._model_items
+    assert dlg.reading_models.checkboxes[READER_ITEM].isChecked() is True
+    assert READER_ITEM not in dlg.ollama_models._model_items
     assert dlg._collect_pip_packages() == []
 
 
@@ -595,9 +612,11 @@ def test_a_downloaded_reader_shows_downloaded_and_is_not_ticked_again(qtbot) -> 
     """
     dlg = _make_dialog(qtbot)
 
-    dlg._on_detection_done({**_detection_results(dlg, set()), "reader:ppocr": True})
+    detected = _detection_results(dlg, set())
+    detected.installed[READER_ITEM] = True
+    dlg._on_detection_done(detected)
 
-    box = dlg.reading_models.checkboxes["reader:ppocr"]
+    box = dlg.reading_models.checkboxes[READER_ITEM]
     assert "✓ Downloaded" in box.text()
     assert "31 MB" in box.text()
     assert not box.isEnabled()
@@ -618,7 +637,7 @@ def test_the_reader_box_starts_a_round_with_the_reader_only(qtbot) -> None:
         row,
     ) in dlg.ollama_models._iter_model_items():  # undo the pre-ticking of the best models
         row.setCheckState(0, Qt.CheckState.Unchecked)
-    dlg.reading_models.checkboxes["reader:ppocr"].setChecked(True)
+    dlg.reading_models.checkboxes[READER_ITEM].setChecked(True)
     started: list[dict] = []
 
     def start(**kwargs) -> bool:
@@ -643,14 +662,16 @@ def test_the_page_models_have_their_own_box_that_shows_downloaded_when_present(q
     """
     dlg = _make_dialog(qtbot)
 
-    dlg._on_detection_done({**_detection_results(dlg, set()), "page_models:all": True})
+    detected = _detection_results(dlg, set())
+    detected.installed[PAGE_MODELS_ITEM] = True
+    dlg._on_detection_done(detected)
 
-    box = dlg.reading_models.checkboxes["page_models:all"]
+    box = dlg.reading_models.checkboxes[PAGE_MODELS_ITEM]
     assert "Page models" in box.text()
     assert "39 MB" in box.text()
     assert "✓ Downloaded" in box.text()
     assert not box.isEnabled()
-    assert dlg.reading_models.checkboxes["reader:ppocr"].isEnabled()
+    assert dlg.reading_models.checkboxes[READER_ITEM].isEnabled()
 
 
 def test_the_page_models_box_starts_a_round_with_the_page_models_only(qtbot) -> None:
@@ -665,7 +686,7 @@ def test_the_page_models_box_starts_a_round_with_the_page_models_only(qtbot) -> 
     dlg._on_detection_done(_detection_results(dlg, set()))
     for _tag, row in dlg.ollama_models._iter_model_items():
         row.setCheckState(0, Qt.CheckState.Unchecked)
-    dlg.reading_models.checkboxes["page_models:all"].setChecked(True)
+    dlg.reading_models.checkboxes[PAGE_MODELS_ITEM].setChecked(True)
     started: list[dict] = []
 
     def start(**kwargs) -> bool:
@@ -683,17 +704,17 @@ def test_the_page_models_box_starts_a_round_with_the_page_models_only(qtbot) -> 
 
 def test_a_page_models_preselect_opens_the_reading_models_tab_and_ticks_the_box(qtbot) -> None:
     """
-    Given  the Add-ons page asked to focus with the "page_models:all" preselect entry
+    Given  the Add-ons page asked to focus with the PAGE_MODELS_ITEM preselect entry
     When   install detection has finished
     Then   the Reading models tab is shown and the page models' box is ticked
     """
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    dlg.focus("", ["page_models:all"])
+    dlg.focus("", [PAGE_MODELS_ITEM])
 
     assert dlg._tabs.currentIndex() == dlg.TAB_READING_MODELS
-    assert dlg.reading_models.checkboxes["page_models:all"].isChecked()
+    assert dlg.reading_models.checkboxes[PAGE_MODELS_ITEM].isChecked()
 
 
 def test_the_tab_names_where_the_models_are_saved(qtbot) -> None:
@@ -719,13 +740,15 @@ def test_spacy_preselect_leaves_an_installed_spacy_alone(qtbot) -> None:
     Then   the model is ticked and the installed spaCy box stays as it is (disabled, installed)
     """
     dlg = _make_dialog(qtbot)
-    dlg.focus(FOCUS_NAME_DETECTION, ["spacy:de_core_news_sm"])
+    dlg.focus(FOCUS_NAME_DETECTION, [GERMAN_NAMES])
 
-    dlg._on_detection_done({**_detection_results(dlg, set()), "spacy": True})
+    detected = _detection_results(dlg, set())
+    detected.installed[SPACY_ITEM] = True
+    dlg._on_detection_done(detected)
 
-    assert dlg.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert not dlg.name_detection.checkboxes["spacy"].isEnabled()
-    assert "Installed" in dlg.name_detection.checkboxes["spacy"].text()
+    assert dlg.name_detection.checkboxes[GERMAN_NAMES].isChecked() is True
+    assert not dlg.name_detection.checkboxes[SPACY_ITEM].isEnabled()
+    assert "Installed" in dlg.name_detection.checkboxes[SPACY_ITEM].text()
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -937,7 +960,9 @@ def test_failed_installed_check_still_ticks_best_models_and_preselect(qtbot) -> 
     """
     service = _StubService()
     service.status_error = RuntimeError("Ollama is unreachable")
-    dlg = _make_dialog(qtbot, service=service, preselect=["llama3.2:latest"])
+    dlg = _make_dialog(
+        qtbot, service=service, preselect=[InstallItem(InstallKind.OLLAMA, "llama3.2:latest")]
+    )
     dlg.on_shown()
     qtbot.waitUntil(lambda: "Detection failed" in dlg.status._status.text(), timeout=5000)
     assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL, "llama3.2:latest"}
@@ -1012,17 +1037,17 @@ def test_a_model_the_app_carries_itself_says_included(qtbot) -> None:
     Then   both rows say "included" and cannot be ticked: there is nothing to download
     """
     dlg = _make_dialog(qtbot)
-    results = _detection_results(dlg, set())
-    results.update(
+    detected = _detection_results(dlg, set())
+    detected.installed.update(
         {
-            "reader:ppocr": True,
-            "page_models:all": True,
-            "bundled:reader:ppocr": True,
-            "bundled:page_models:all": True,
+            READER_ITEM: True,
+            PAGE_MODELS_ITEM: True,
+            READER_ITEM.bundled: True,
+            PAGE_MODELS_ITEM.bundled: True,
         }
     )
 
-    dlg._on_detection_done(results)
+    dlg._on_detection_done(detected)
 
     for item in (READER_ITEM, PAGE_MODELS_ITEM):
         assert dlg.reading_models.checkboxes[item].text().endswith(txt.INCLUDED)
@@ -1037,30 +1062,24 @@ def test_a_model_that_had_to_be_downloaded_still_says_downloaded(qtbot) -> None:
     Then   the row says "downloaded", not "included"
     """
     dlg = _make_dialog(qtbot)
-    results = _detection_results(dlg, set())
-    results.update({"reader:ppocr": True, "bundled:reader:ppocr": False})
+    detected = _detection_results(dlg, set())
+    detected.installed.update({READER_ITEM: True, READER_ITEM.bundled: False})
 
-    dlg._on_detection_done(results)
+    dlg._on_detection_done(detected)
 
     assert dlg.reading_models.checkboxes[READER_ITEM].text().endswith(txt.READER_DOWNLOADED)
 
 
-def test_the_install_items_are_named_like_the_service_status_keys() -> None:
+def test_the_install_items_keep_their_stored_keys() -> None:
     """
-    Given  the Add-ons rows, which are looked up in the service's status map by their item name
-    When   the item names and the service's keys are compared
-    Then   they are the same strings, and the bundled key is the item's key behind one prefix
+    Given  the items the Add-ons rows are keyed by, in the service's status map and in the log
+    When   their keys are read
+    Then   each key still names its kind and its name, and the bundled item is one kind further
     """
-    from teachers_teammate.application.addons import (  # noqa: PLC0415
-        PAGE_MODELS_STATUS_KEY,
-        READER_STATUS_KEY,
-        bundled_status_key,
-    )
-
-    assert READER_ITEM == READER_STATUS_KEY == "reader:ppocr"
-    assert PAGE_MODELS_ITEM == PAGE_MODELS_STATUS_KEY == "page_models:all"
-    assert bundled_status_key(READER_ITEM) == "bundled:reader:ppocr"
-    assert bundled_status_key(PAGE_MODELS_ITEM) == "bundled:page_models:all"
+    assert READER_ITEM.key == "reader:ppocr"
+    assert PAGE_MODELS_ITEM.key == "page_models:all"
+    assert READER_ITEM.bundled.key == "bundled:reader:ppocr"
+    assert PAGE_MODELS_ITEM.bundled.key == "bundled:page_models:all"
 
 
 # ── deep links and closing ───────────────────────────────────────────────────
@@ -1100,7 +1119,7 @@ def test_a_preselect_after_detection_ticks_at_once(qtbot) -> None:
     dlg._on_detection_done(_detection_results(dlg, set()))
     assert dlg.ollama_models._model_items["mistral:latest"].checkState(0) is Qt.CheckState.Unchecked
 
-    dlg.focus(FOCUS_LOCAL_MODELS, ["mistral:latest"])
+    dlg.focus(FOCUS_LOCAL_MODELS, [InstallItem(InstallKind.OLLAMA, "mistral:latest")])
 
     assert dlg.ollama_models._model_items["mistral:latest"].checkState(0) is Qt.CheckState.Checked
 
@@ -1688,7 +1707,7 @@ def test_update_add_ons_installs_only_after_the_click_and_then_hides_the_banner(
 # ── The status line, the bar and the details ─────────────────────────────────
 
 
-def _start_round(dlg: AddonsPage, steps: list[str]) -> None:
+def _start_round(dlg: AddonsPage, steps: list[InstallItem]) -> None:
     """Put the page into the state a running round leaves it in, without a real install."""
     dlg.status.begin_round(steps)
     dlg._round._running = True
@@ -1702,14 +1721,14 @@ def test_the_status_line_counts_the_steps_of_a_round(qtbot) -> None:
     Then   the line names the item and how many steps there are, in the teacher's words
     """
     dlg = _make_dialog(qtbot)
-    _start_round(dlg, ["package:spacy", "spacy:de_core_news_sm"])
+    _start_round(dlg, [SPACY_ITEM, GERMAN_NAMES])
 
-    dlg._round._phase = "pip"
-    dlg._round.item_started.emit("package:spacy")
+    dlg._round._phase = InstallKind.PACKAGE
+    dlg._round.item_started.emit(SPACY_ITEM)
     assert dlg.status._status.text() == "Installing spaCy (step 1 of 2)…"
 
-    dlg._round._phase = "spacy"
-    dlg._round.item_started.emit("spacy:de_core_news_sm")
+    dlg._round._phase = InstallKind.SPACY
+    dlg._round.item_started.emit(GERMAN_NAMES)
     assert dlg.status._status.text() == "Installing the German model (step 2 of 2)…"
 
 
@@ -1720,16 +1739,16 @@ def test_the_steps_of_a_round_count_pip_once_however_many_packages_it_installs(q
     Then   pip is step 1 of 2 and the model step 2 of 2: no number is skipped
     """
     dlg = _make_dialog(qtbot)
-    _start_round(dlg, ["package:spacy", "package:langchain-openai", "spacy:de_core_news_sm"])
+    _start_round(dlg, [SPACY_ITEM, OPENAI_PACKAGE, GERMAN_NAMES])
 
-    dlg._round._phase = "pip"
-    dlg._round.item_started.emit("package:spacy")
+    dlg._round._phase = InstallKind.PACKAGE
+    dlg._round.item_started.emit(SPACY_ITEM)
     assert dlg.status._status.text() == "Installing spaCy (step 1 of 2)…"
-    dlg._round.item_started.emit("package:langchain-openai")  # the same pip command
+    dlg._round.item_started.emit(OPENAI_PACKAGE)  # the same pip command
     assert dlg.status._status.text() == "Installing spaCy (step 1 of 2)…"
 
-    dlg._round._phase = "spacy"
-    dlg._round.item_started.emit("spacy:de_core_news_sm")
+    dlg._round._phase = InstallKind.SPACY
+    dlg._round.item_started.emit(GERMAN_NAMES)
     assert dlg.status._status.text() == "Installing the German model (step 2 of 2)…"
 
 
@@ -1789,10 +1808,10 @@ def test_a_pip_step_shows_an_indeterminate_bar_and_the_elapsed_time(qtbot) -> No
     Then   the bar is indeterminate and the line shows how long the step has been running
     """
     dlg = _make_dialog(qtbot)
-    _start_round(dlg, ["package:spacy"])
+    _start_round(dlg, [SPACY_ITEM])
 
-    dlg._round._phase = "pip"
-    dlg._round.item_started.emit("package:spacy")
+    dlg._round._phase = InstallKind.PACKAGE
+    dlg._round.item_started.emit(SPACY_ITEM)
 
     assert (dlg.status._dl_progress.minimum(), dlg.status._dl_progress.maximum()) == (0, 0)
     assert dlg.status._status.text() == "Installing spaCy (step 1 of 1)…"
@@ -1810,10 +1829,10 @@ def test_a_model_pull_shows_its_percentage(qtbot) -> None:
     Then   the line and the bar show 45 %
     """
     dlg = _make_dialog(qtbot)
-    _start_round(dlg, [DEFAULT_OCR_MODEL])
+    _start_round(dlg, [InstallItem(InstallKind.OLLAMA, DEFAULT_OCR_MODEL)])
 
-    dlg._round._phase = "pull"
-    dlg._round.item_started.emit(DEFAULT_OCR_MODEL)
+    dlg._round._phase = InstallKind.OLLAMA
+    dlg._round.item_started.emit(InstallItem(InstallKind.OLLAMA, DEFAULT_OCR_MODEL))
     dlg._round.pull_progress.emit("pulling", 45.0, 100.0)
 
     assert dlg.status._status.text() == f"Downloading {DEFAULT_OCR_MODEL} (step 1 of 1), 45 %"
@@ -1827,9 +1846,9 @@ def test_the_status_line_says_what_a_finished_round_installed(qtbot) -> None:
     Then   the line says so, and the button is back to its own label and enabled
     """
     dlg = _make_dialog(qtbot)
-    _start_round(dlg, ["package:spacy", "spacy:de_core_news_sm"])
-    dlg._round.item_done.emit("package:spacy")
-    dlg._round.item_done.emit("spacy:de_core_news_sm")
+    _start_round(dlg, [SPACY_ITEM, GERMAN_NAMES])
+    dlg._round.item_done.emit(SPACY_ITEM)
+    dlg._round.item_done.emit(GERMAN_NAMES)
 
     dlg._round._running = False
     dlg._round.finished.emit(True)
@@ -1846,11 +1865,11 @@ def test_a_failed_step_says_what_failed_and_opens_the_details(qtbot) -> None:
     Then   the line names the item and the reason in one sentence, and the log is open
     """
     dlg = _make_dialog(qtbot)
-    _start_round(dlg, ["spacy:de_core_news_sm"])
-    dlg._round._phase = "spacy"
-    dlg._round.item_started.emit("spacy:de_core_news_sm")
+    _start_round(dlg, [GERMAN_NAMES])
+    dlg._round._phase = InstallKind.SPACY
+    dlg._round.item_started.emit(GERMAN_NAMES)
 
-    dlg._round.failed.emit("spacy:de_core_news_sm", "No space left on the disk.")
+    dlg._round.failed.emit(GERMAN_NAMES, "No space left on the disk.")
 
     assert dlg.status._status.text() == "✗ the German model failed: No space left on the disk."
     assert not dlg.status._dl_log.isHidden()
@@ -1924,7 +1943,7 @@ def test_the_install_button_stays_visible_and_says_installing(qtbot) -> None:
     dlg = _make_dialog(qtbot)
     dlg.show()
 
-    _start_round(dlg, ["package:spacy"])
+    _start_round(dlg, [SPACY_ITEM])
 
     assert not dlg.status._dl_install_btn.isHidden()
     assert not dlg.status._dl_install_btn.isEnabled()

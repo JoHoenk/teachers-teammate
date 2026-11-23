@@ -34,10 +34,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 import re
 import shutil
+
+_logger = logging.getLogger(__name__)
 
 #: The run's own intermediate page images: ``<anything>_page<digits>[_preprocessed].png``.
 #: Matched on the whole file name, so a document whose stem ends in ``_page`` keeps its
@@ -128,8 +131,8 @@ class PreviewImageStore:
                 continue
             try:
                 candidate.unlink(missing_ok=True)
-            except OSError:
-                pass
+            except OSError as exc:
+                _logger.debug("Cannot delete the stale page preview %s: %s", candidate, exc)
 
     def persist_original_image(self, *, stem: str, source_path: Path) -> Path:
         """Store the un-preprocessed page *source_path* next to the preview image.
@@ -205,8 +208,8 @@ class PreviewImageStore:
                 continue
             try:
                 stale.unlink(missing_ok=True)
-            except OSError:
-                pass
+            except OSError as exc:
+                _logger.debug("Cannot delete the stale page image %s: %s", stale, exc)
 
     def delete_preview_artifacts(
         self,

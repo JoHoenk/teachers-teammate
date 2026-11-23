@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QWidget
 
 from ...config import DEFAULTS
 from ...domain.anonymization import AnonymizerConfig
+from ...domain.install_item import InstallItem
 from ...domain.model_catalog import HardwareProfileSetting
 from ...texts.settings import (
     PAGE_ADDONS,
@@ -170,8 +171,8 @@ class SettingsPageBase(QWidget):
 
     # ── navigation and life cycle ─────────────────────────────────────────────
 
-    def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
-        """Bring the part named *focus* into view (and preselect entries where it applies)."""
+    def focus(self, focus: str, preselect: Sequence[InstallItem] = ()) -> None:
+        """Bring the part named *focus* into view (and preselect items where it applies)."""
         _ = focus, preselect
 
     def on_shown(self) -> None:
@@ -197,7 +198,9 @@ class SettingsPageBase(QWidget):
 
     # ── helpers for subclasses ────────────────────────────────────────────────
 
-    def _navigate(self, page: SettingsPage, focus: str = "", preselect: Sequence[str] = ()) -> None:
+    def _navigate(
+        self, page: SettingsPage, focus: str = "", preselect: Sequence[InstallItem] = ()
+    ) -> None:
         """Ask the window to show *page* (focused on *focus*)."""
         self.navigate_requested.emit(page, focus, list(preselect))
 
@@ -225,7 +228,7 @@ class SettingsPageBase(QWidget):
         and the page follows a profile change through the window's shared-state wiring.
         """
 
-        def open_addons(preselect: list[str], _parent: QWidget | None) -> None:
+        def open_addons(preselect: list[InstallItem], _parent: QWidget | None) -> None:
             self._navigate(SettingsPage.ADDONS, focus, preselect)
 
         return open_addons

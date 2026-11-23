@@ -18,7 +18,7 @@ import functools
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..infrastructure import power
+from ..infrastructure import logging_setup, power
 from ..infrastructure.addon_manager import AddonPackages
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.gpu_detector import SystemHardwareProbe
@@ -27,12 +27,13 @@ from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline
 from ..infrastructure.spacy_models import SpacyModels
 from ..infrastructure.speed_store import SampleStore
-from ..infrastructure.stage_builder import PipelineComponentFactory
+from ..infrastructure.stage_builder import LlmBuilderWithKeys, PipelineComponentFactory
 from ..infrastructure.state_repository import StateRepository
 from ..infrastructure.teacher_work_store import TeacherWorkStore
 from ..interfaces import SleepBlocker
 from .addons import AddonService
 from .anonymization import AnonymizationService
+from .api_keys import ApiKeys
 from .commands import DocumentCommands
 from .data_flow import DataFlowService
 from .documents import DocumentQueries
@@ -41,9 +42,10 @@ from .model_recommendations import ModelRecommendationService
 from .ollama_server import OllamaServerService
 from .providers import ProviderService
 from .reader import ReaderService
-from .run import RunService, state_store_for, windows_for
+from .run import RunParts, RunService, RunServices, state_store_for, windows_for
 from .setup_plan import SetupService
 from .speed_estimates import SpeedEstimateService
+from .stored_results import StoredResults
 
 if TYPE_CHECKING:
     from ..infrastructure.diagnostics import Diagnostics
@@ -84,9 +86,32 @@ class AppServices:
     """The Word file, the text file and the text for the clipboard."""
     commands: DocumentCommands
     """The writes: the teacher's texts and decisions."""
+    stored: StoredResults
+    """The results kept for earlier runs: how much they take, and deleting them."""
+    keys: ApiKeys
+    """The API keys of the online AI services: what the app holds for each of them."""
     work_store: TeacherWorkStore
     model_store: ModelStore
     sleep_blocker: SleepBlocker
+
+
+@dataclass(frozen=True)
+class _Parts:
+    """What the services are built from: this process's one store, blocker, server and folders."""
+
+    discovery: FileDiscovery
+    pipeline_factory: Callable[..., OCRPipeline]
+    state_repository_factory: Callable[[Path], StateRepository]
+    component_factory: PipelineComponentFactory
+    keys: ApiKeys
+    work_store: TeacherWorkStore
+    model_store: ModelStore
+    sleep_blocker: SleepBlocker
+    ollama: OllamaServerService
+    hardware: SystemHardwareProbe
+    addon_state: AddonPackages
+    names: SpacyModels
+    samples: SampleStore
 
 
 def build_app_services(
@@ -100,103 +125,31 @@ def build_app_services(
     work_store: TeacherWorkStore | None = None,
 ) -> AppServices:
     """Build the application's services, sharing the parts that must exist once."""
-    discovery = discovery or FileDiscovery()
-    pipeline_factory = pipeline_factory or OCRPipeline
-    state_repository_factory = state_repository_factory or StateRepository
-    component_factory = component_factory or PipelineComponentFactory()
-    work_store = work_store or TeacherWorkStore()
-    model_store = model_store or ModelStore()
-    sleep_blocker = sleep_blocker or power.default_sleep_blocker()
-    ollama = OllamaServerService()
-    # The narrow collaborators the services below branch on: this computer, the add-on packages
-    # folder, the spaCy models.  Each is a Protocol in ``application/ports.py``.
-    hardware = SystemHardwareProbe()
-    addon_state = AddonPackages()
-    names = SpacyModels()
-    providers = ProviderService(ollama=ollama)
-    reader = ReaderService(
-        model_store=model_store, component_factory=component_factory, providers=providers
-    )
-    # One sample store for the process: a run writes what it measured, and the speed estimates
-    # read it.  Two stores would keep two locks on one file.
-    samples = SampleStore()
-    speeds = SpeedEstimateService(
-        effective_model=providers.effective_model,
-        ollama=ollama,
-        client_factory=lambda url, cancel_event: OllamaClient(url, cancel_event=cancel_event),
-        samples=samples,
-    )
-    anonymization = AnonymizationService(names=names)
-    addons = AddonService(
-        model_store=model_store,
-        providers=providers,
-        reader=reader,
-        anonymization=anonymization,
-        state=addon_state,
-    )
-    data_flow = DataFlowService(
-        provider_info=providers.get_provider_info,
-        provider_region=providers.get_provider_data_region,
-        anonymizer_models=anonymization.describe_anonymizer_models,
-    )
-    recommendations = ModelRecommendationService(
-        effective_model=providers.effective_model,
-        invalidate_model_list=providers.forget_ollama_model_list,
-        invalidate_speed_facts=speeds.forget_server_facts,
-        machine_factor=lambda url, task: speeds.machine_factors(url).for_category(task),
-        hardware=hardware,
-        ollama=ollama,
-    )
-    # Refreshing a server's model list also drops what was classified from it.
-    providers.watch_classifications(recommendations.invalidate_classification)
-    setup = SetupService(
-        ollama=ollama,
-        providers=providers,
-        recommendations=recommendations,
-        anonymization=anonymization,
-        reader=reader,
-        addons=addons,
-    )
-    # One store per output folder, and the context windows the run itself uses: the queue, the
-    # Check tab and the run all compute their cache keys with these two.
-    state_store = functools.partial(state_store_for, repository=state_repository_factory)
-    windows = functools.partial(windows_for, recommendations=recommendations)
-    documents = DocumentQueries(
-        state_store_factory=state_store,
-        work_store=work_store,
-        model_store=model_store,
-        windows_for=windows,
-        data_flow=data_flow,
-        anonymization=anonymization,
-    )
-    commands = DocumentCommands(
-        state_store_factory=state_store,
-        windows_for=windows,
-        model_store=model_store,
-        work_store=work_store,
-    )
-    run = RunService(
+    keys = ApiKeys()
+    parts = _parts(
+        keys=keys,
         discovery=discovery,
         pipeline_factory=pipeline_factory,
+        state_repository_factory=state_repository_factory,
         component_factory=component_factory,
         sleep_blocker=sleep_blocker,
         model_store=model_store,
         work_store=work_store,
-        ollama=ollama,
-        hardware=hardware,
-        providers=providers,
-        reader=reader,
-        recommendations=recommendations,
-        anonymization=anonymization,
-        addons=addons,
-        documents=documents,
-        samples=samples,
     )
-    export = ExportService(documents=documents, anonymization=anonymization)
+    providers, reader = _reading(parts)
+    speeds = _speed_estimates(parts, providers)
+    anonymization = AnonymizationService(names=parts.names)
+    addons = _addons(parts, providers, reader, anonymization)
+    data_flow = _data_flow(providers, anonymization)
+    recommendations = _recommendations(parts, providers, speeds)
+    setup = _setup(parts, providers, reader, recommendations, anonymization, addons)
+    documents, commands = _documents(parts, recommendations, data_flow, anonymization)
+    run = _run(parts, providers, reader, recommendations, anonymization, addons, documents)
     return AppServices(
         run=run,
-        ollama=ollama,
+        ollama=parts.ollama,
         providers=providers,
+        keys=keys,
         reader=reader,
         recommendations=recommendations,
         speeds=speeds,
@@ -205,11 +158,187 @@ def build_app_services(
         data_flow=data_flow,
         setup=setup,
         documents=documents,
-        export=export,
+        export=ExportService(documents=documents, anonymization=anonymization),
         commands=commands,
-        work_store=work_store,
-        model_store=model_store,
-        sleep_blocker=sleep_blocker,
+        stored=StoredResults(activity=run, work_store=parts.work_store),
+        work_store=parts.work_store,
+        model_store=parts.model_store,
+        sleep_blocker=parts.sleep_blocker,
+    )
+
+
+def _parts(
+    *,
+    keys: ApiKeys,
+    discovery: FileDiscovery | None,
+    pipeline_factory: Callable[..., OCRPipeline] | None,
+    state_repository_factory: Callable[[Path], StateRepository] | None,
+    component_factory: PipelineComponentFactory | None,
+    sleep_blocker: SleepBlocker | None,
+    model_store: ModelStore | None,
+    work_store: TeacherWorkStore | None,
+) -> _Parts:
+    """Return what the services are built from, each part built here or handed in."""
+    return _Parts(
+        keys=keys,
+        discovery=discovery or FileDiscovery(),
+        pipeline_factory=pipeline_factory or OCRPipeline,
+        state_repository_factory=state_repository_factory or StateRepository,
+        component_factory=component_factory
+        or PipelineComponentFactory(build_llm=LlmBuilderWithKeys(keys.key_for)),
+        work_store=work_store or TeacherWorkStore(),
+        model_store=model_store or ModelStore(),
+        sleep_blocker=sleep_blocker or power.default_sleep_blocker(),
+        ollama=OllamaServerService(),
+        hardware=SystemHardwareProbe(),
+        addon_state=AddonPackages(),
+        names=SpacyModels(),
+        samples=SampleStore(),
+    )
+
+
+def _reading(parts: _Parts) -> tuple[ProviderService, ReaderService]:
+    """Return the providers and the text recognition: what reads a page, and with what."""
+    providers = ProviderService(ollama=parts.ollama, credentials=parts.keys)
+    reader = ReaderService(
+        model_store=parts.model_store,
+        component_factory=parts.component_factory,
+        providers=providers,
+    )
+    return providers, reader
+
+
+def _speed_estimates(parts: _Parts, providers: ProviderService) -> SpeedEstimateService:
+    """Return the speed service, on the one sample store this process keeps."""
+    # A run writes what it measured and the estimates read it; two stores would keep two locks
+    # on one file.
+    return SpeedEstimateService(
+        effective_model=providers.effective_model,
+        ollama=parts.ollama,
+        client_factory=lambda url, cancel_event: OllamaClient(url, cancel_event=cancel_event),
+        samples=parts.samples,
+    )
+
+
+def _addons(
+    parts: _Parts,
+    providers: ProviderService,
+    reader: ReaderService,
+    anonymization: AnonymizationService,
+) -> AddonService:
+    """Return the add-ons: what is installed, and the installs themselves."""
+    return AddonService(
+        model_store=parts.model_store,
+        providers=providers,
+        reader=reader,
+        anonymization=anonymization,
+        state=parts.addon_state,
+    )
+
+
+def _data_flow(providers: ProviderService, anonymization: AnonymizationService) -> DataFlowService:
+    """Return the box that says where a step runs and what it would send."""
+    return DataFlowService(
+        provider_info=providers.get_provider_info,
+        provider_region=providers.get_provider_data_region,
+        anonymizer_models=anonymization.describe_anonymizer_models,
+    )
+
+
+def _recommendations(
+    parts: _Parts, providers: ProviderService, speeds: SpeedEstimateService
+) -> ModelRecommendationService:
+    """Return the model advice, and have it forget a classification when the provider does."""
+    recommendations = ModelRecommendationService(
+        effective_model=providers.effective_model,
+        invalidate_model_list=providers.forget_ollama_model_list,
+        invalidate_speed_facts=speeds.forget_server_facts,
+        machine_factor=lambda url, task: speeds.machine_factors(url).for_category(task),
+        hardware=parts.hardware,
+        ollama=parts.ollama,
+    )
+    # Refreshing a server's model list also drops what was classified from it.
+    providers.watch_classifications(recommendations.invalidate_classification)
+    return recommendations
+
+
+def _setup(
+    parts: _Parts,
+    providers: ProviderService,
+    reader: ReaderService,
+    recommendations: ModelRecommendationService,
+    anonymization: AnonymizationService,
+    addons: AddonService,
+) -> SetupService:
+    """Return the service the Setup Assistant asks its questions of."""
+    return SetupService(
+        ollama=parts.ollama,
+        providers=providers,
+        recommendations=recommendations,
+        anonymization=anonymization,
+        reader=reader,
+        addons=addons,
+    )
+
+
+def _documents(
+    parts: _Parts,
+    recommendations: ModelRecommendationService,
+    data_flow: DataFlowService,
+    anonymization: AnonymizationService,
+) -> tuple[DocumentQueries, DocumentCommands]:
+    """Return what reads a document and what writes it, on the factories the run uses too."""
+    # One store per output folder, and the context windows a run uses: the queue, the Check tab
+    # and the run all compute their cache keys with these two.
+    state_store = functools.partial(state_store_for, repository=parts.state_repository_factory)
+    windows = functools.partial(windows_for, recommendations=recommendations)
+    documents = DocumentQueries(
+        state_store_factory=state_store,
+        work_store=parts.work_store,
+        model_store=parts.model_store,
+        windows_for=windows,
+        data_flow=data_flow,
+        anonymization=anonymization,
+    )
+    commands = DocumentCommands(
+        state_store_factory=state_store,
+        windows_for=windows,
+        model_store=parts.model_store,
+        work_store=parts.work_store,
+    )
+    return documents, commands
+
+
+def _run(
+    parts: _Parts,
+    providers: ProviderService,
+    reader: ReaderService,
+    recommendations: ModelRecommendationService,
+    anonymization: AnonymizationService,
+    addons: AddonService,
+    documents: DocumentQueries,
+) -> RunService:
+    """Return the run itself: the service the adapters start a batch on."""
+    return RunService(
+        parts=RunParts(
+            discovery=parts.discovery,
+            pipeline_factory=parts.pipeline_factory,
+            component_factory=parts.component_factory,
+            sleep_blocker=parts.sleep_blocker,
+            model_store=parts.model_store,
+            work_store=parts.work_store,
+            samples=parts.samples,
+        ),
+        services=RunServices(
+            ollama=parts.ollama,
+            hardware=parts.hardware,
+            providers=providers,
+            reader=reader,
+            recommendations=recommendations,
+            anonymization=anonymization,
+            addons=addons,
+            documents=documents,
+        ),
     )
 
 
@@ -242,3 +371,13 @@ def diagnostics_phase(line: str) -> None:
     from ..infrastructure.diagnostics import phase  # noqa: PLC0415
 
     phase(line)
+
+
+def start_logging() -> Path | None:
+    """Start the log of this process (idempotent); return its path, or ``None`` when unwritable."""
+    return logging_setup.start_logging()
+
+
+def log_folder() -> Path:
+    """Return the folder the log file is written to: what Help → Open Log Folder shows."""
+    return logging_setup.log_folder()

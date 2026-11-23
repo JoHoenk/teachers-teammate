@@ -30,7 +30,7 @@ from statistics import median
 import threading
 
 from ..config import DEFAULTS, Config, OcrConfig
-from ..domain.correction_policy import normalize_output_mode
+from ..domain.correction_policy import CorrectionOutput, normalize_output_mode
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import (
     AnswerLength,
@@ -413,7 +413,7 @@ class SpeedEstimateService:
         ollama: OllamaServer,
         client_factory: OllamaClientFactory,
         store: SpeedStore | None = None,
-        samples: SampleStore | None = None,
+        samples: SampleStore,
         probe_factory: Callable[..., PerformanceProbe] | None = None,
     ) -> None:
         """Create the service.
@@ -427,15 +427,15 @@ class SpeedEstimateService:
                 drives that client, so building one is one of the few things this layer cannot
                 do itself.
             store: Where measurements live; the default store under the storage root.
-            samples: Where the samples of real runs live; the default store under the storage
-                root.
+            samples: Where the samples of real runs live: the one store of the process, so the
+                estimates read what a run wrote.
             probe_factory: Builds the probe; a test replaces it.
         """
         self._effective_model = effective_model
         self._ollama = ollama
         self._client_factory = client_factory
         self._store = store or SpeedStore()
-        self._samples = samples or SampleStore()
+        self._samples = samples
         self._probe_factory: Callable[..., PerformanceProbe] = probe_factory or PerformanceProbe
         self._lock = threading.RLock()
         self._facts: dict[str, ServerFacts] = {}
@@ -634,7 +634,7 @@ class SpeedEstimateService:
                     speed,
                     stored,
                     by_mode,
-                    corrections_only=choices.correction_output == "text",
+                    corrections_only=choices.correction_output == CorrectionOutput.TEXT,
                 )
             )
             rows.note(

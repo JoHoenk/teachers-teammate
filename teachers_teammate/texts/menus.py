@@ -27,6 +27,8 @@ SETUP_ASSISTANT_TIP = "Answer a few questions to set up the AI for this computer
 
 HELP = "Help"
 USER_GUIDE = "User Guide…"
+OPEN_LOG_FOLDER = "Open Log Folder…"
+OPEN_LOG_FOLDER_TIP = "What the app wrote down when something went wrong, for whoever helps you."
 LICENSES = "Third-Party Licenses…"
 ABOUT = f"About {app.NAME_TYPOGRAPHIC}…"
 

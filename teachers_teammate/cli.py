@@ -18,12 +18,11 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Sequence
-import logging
 from pathlib import Path
 import sys
 
 from ._model_defaults import default_model_for_task
-from .application.composition import AppServices, inject_addon_packages_dir
+from .application.composition import AppServices, inject_addon_packages_dir, start_logging
 from .config import Config, load_config_file
 from .domain.data_location import LOCAL_OCR_ENGINES, PROVIDER_OLLAMA, DataFlow
 from .domain.output_files import folder_problem
@@ -504,9 +503,8 @@ def run_cli(
     app_service: AppServices,
 ) -> int:
     """Parse args and execute the CLI flow, returning process exit code."""
-    logging.basicConfig(
-        level=logging.WARNING, stream=sys.stderr, format="%(levelname)s: %(message)s"
-    )
+    # Where a warning or an unexpected error goes: the log file, and stderr for this command.
+    start_logging()
     service = app_service
     providers = service.providers.list_providers()
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 
 from ..config import DEFAULTS, Config
+from ..domain.correction_policy import CorrectionOutput
 from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
 from ..domain.prompt_text import migrate_saved_default
@@ -23,7 +24,7 @@ def proofreading_prompts(config: Config) -> tuple[tuple[str, str], ...]:
 
     return exchange_prompts(
         config.correction_profile,
-        corrections_only=config.correction_output == "text",
+        corrections_only=config.correction_output == CorrectionOutput.TEXT,
     )
 
 

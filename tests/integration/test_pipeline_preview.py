@@ -18,7 +18,7 @@ from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.infrastructure.pipeline import OCRPipeline, preprocess_preview
 from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
 from teachers_teammate.infrastructure.storage_root import document_stem, resolve_artifact_dir
-from tests.conftest import make_config
+from tests.conftest import make_config, pipeline_dependencies
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
@@ -184,7 +184,9 @@ def test_pipeline_run_preview_only_propagates_failure_for_corrupt_image(tmp_path
     corrupt_png = cfg.input_dir / "corrupt.png"
     corrupt_png.write_bytes(b"this is not a valid image file")
 
-    summary = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run_preview_only()
+    summary = OCRPipeline(
+        cfg, FileDiscovery().collect_input_files(cfg), dependencies=pipeline_dependencies(tmp_path)
+    ).run_preview_only()
 
     assert summary.exit_code == 1
     assert summary.failed == ("corrupt.png",)
@@ -214,7 +216,9 @@ def test_a_preview_run_keeps_the_stored_preview_of_a_file_named_page2(
     stored.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(sample_png, stored)
 
-    summary = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run_preview_only()
+    summary = OCRPipeline(
+        cfg, FileDiscovery().collect_input_files(cfg), dependencies=pipeline_dependencies(tmp_path)
+    ).run_preview_only()
 
     assert summary.exit_code == 0
     assert stored.is_file()

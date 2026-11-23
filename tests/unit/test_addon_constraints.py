@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import json
 from pathlib import Path
 import subprocess
 
@@ -207,3 +209,86 @@ def test_main_resolves_every_add_on_against_the_newest_and_the_lock(
     seen.clear()
     assert check_addon_resolution.main(arguments) == 0
     assert seen == [1]
+
+
+def _report_run(
+    installed: list[tuple[str, str]],
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """Return a fake ``subprocess.run`` that writes *installed* into pip's report file."""
+
+    def fake_run(command, **_kwargs):
+        if "--report" in command:
+            path = Path(command[command.index("--report") + 1])
+            path.write_text(
+                json.dumps(
+                    {"install": [{"metadata": {"name": n, "version": v}} for n, v in installed]}
+                ),
+                encoding="utf-8",
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    return fake_run
+
+
+def test_a_report_of_a_package_no_pin_holds_fails_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    Given  a locked dry run that succeeds but reports a package neither file pins
+    When   the check runs with --report
+    Then   the run fails and names that package, so a bundle cannot ship it unpinned
+    """
+    constraints = tmp_path / "c.txt"
+    constraints.write_text("numpy==2.5.4\n", encoding="utf-8")
+    lock = tmp_path / "l.txt"
+    lock.write_text("spacy==3.8.18\n", encoding="utf-8")
+    monkeypatch.setattr(subprocess, "run", _report_run([("pywin32", "311")]))
+    monkeypatch.setattr(check_addon_resolution, "addons_to_check", lambda: {"privacy": ["spacy"]})
+
+    code = check_addon_resolution.main(
+        [
+            "--python",
+            "python",
+            "--constraints",
+            str(constraints),
+            "--lock",
+            str(lock),
+            "--report",
+            str(tmp_path / "reports"),
+        ]
+    )
+
+    assert code == 1
+    assert "privacy [locked]: pywin32==311" in capsys.readouterr().out
+
+
+def test_a_report_the_pins_and_the_bundle_hold_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a locked dry run that reports the bundle's package and the add-on's, both pinned
+    When   the check runs with --report
+    Then   it passes, so a green run means nothing installs unpinned
+    """
+    constraints = tmp_path / "c.txt"
+    constraints.write_text("numpy==2.5.4\n", encoding="utf-8")
+    lock = tmp_path / "l.txt"
+    lock.write_text("spacy==3.8.18\n", encoding="utf-8")
+    installed = [("numpy", "2.5.4"), ("spacy", "3.8.18")]
+    monkeypatch.setattr(subprocess, "run", _report_run(installed))
+    monkeypatch.setattr(check_addon_resolution, "addons_to_check", lambda: {"privacy": ["spacy"]})
+
+    code = check_addon_resolution.main(
+        [
+            "--python",
+            "python",
+            "--constraints",
+            str(constraints),
+            "--lock",
+            str(lock),
+            "--report",
+            str(tmp_path / "reports"),
+        ]
+    )
+
+    assert code == 0

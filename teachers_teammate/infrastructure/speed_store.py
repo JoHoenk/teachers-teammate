@@ -254,6 +254,7 @@ class SampleStore:
         try:
             raw = json.loads(path.read_text(encoding="utf-8") or "{}")
         except FileNotFoundError:
+            _logger.debug("speed store: no samples file at %s yet", path)
             return {}
         except (OSError, ValueError) as exc:
             _logger.warning("speed store: cannot read %s: %s", path, exc)
@@ -389,6 +390,7 @@ class SpeedStore:
         try:
             raw = json.loads(path.read_text(encoding="utf-8") or "{}")
         except FileNotFoundError:
+            _logger.debug("speed store: no measurements file at %s yet", path)
             return []
         except (OSError, ValueError) as exc:
             _logger.warning("speed store: cannot read %s: %s", path, exc)
@@ -435,6 +437,7 @@ def _stamp(path: Path) -> _Stamp | None:
     try:
         info = path.stat()
     except OSError:
+        _logger.debug("speed store: cannot stat %s", path)
         return None
     return info.st_mtime_ns, info.st_size, info.st_ino
 
@@ -449,6 +452,7 @@ def _keep_foreign_file(path: Path) -> None:
     try:
         data = _as_object(json.loads(path.read_text(encoding="utf-8") or "{}"))
     except OSError, ValueError:
+        # Missing or unparsable: no other version's content is in there to keep safe.
         return
     if data is None or data.get("schema") == SCHEMA:
         return
@@ -525,6 +529,7 @@ def _record_from_json(entry: object) -> SpeedRecord | None:
             if record is not None
         )
     except KeyError, TypeError, ValueError:
+        # The caller reports the measurement it cannot use.
         return None
     on_battery = data.get("on_battery")
     return SpeedRecord(
@@ -546,6 +551,7 @@ def _step_from_json(entry: object) -> StepRecord | None:
         step = SpeedStep(str(data["step"]))
         outcome = StepOutcome(str(data["outcome"]))
     except KeyError, ValueError:
+        # A step or an outcome that cannot be read: the record keeps the steps it can.
         return None
     speed = data.get("speed")
     return StepRecord(
@@ -573,6 +579,7 @@ def _speed_from_json(entry: object) -> ModelSpeed | None:
             ),
         )
     except KeyError, TypeError, ValueError:
+        # Unreadable speed numbers: the step keeps its outcome and shows no speed.
         return None
 
 
@@ -603,6 +610,7 @@ def _samples_from_json(entry: object) -> tuple[SampleKey, list[RunSample]] | Non
             mode=str(data.get("mode", "")),
         )
     except KeyError, ValueError:
+        # The caller reports the group of samples it cannot use.
         return None
     entries = data.get("samples")
     if not isinstance(entries, list):
@@ -628,4 +636,5 @@ def _sample_from_json(entry: object) -> RunSample | None:
             at=str(data.get("at", "")),
         )
     except TypeError, ValueError:
+        # One sample with unreadable numbers: dropping it leaves the group's median intact.
         return None

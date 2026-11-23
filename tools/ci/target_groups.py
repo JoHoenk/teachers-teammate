@@ -17,6 +17,9 @@ their Bazel caches warm:
 * ``application``: what depends on the application layer and not on the GUI.
 * ``rest``: everything else, so a new test can only land in a group, never fall between them.
 
+Only ``walkthrough`` and ``gui`` import Qt (the layering keeps it in ``gui/``), so only their
+machines install the Qt system library.
+
 A test is in the first group, in this order, that claims it.
 """
 
@@ -52,6 +55,9 @@ CLAIMS: dict[str, str | None] = {
     "rest": None,
 }
 GROUPS = tuple(CLAIMS)
+
+#: The groups whose machines need the Qt system library.
+QT_GROUPS = ("walkthrough", "gui")
 
 
 def partition(
@@ -105,15 +111,20 @@ def bazel_query(expression: str, *, config: str = "") -> list[str]:
     return done.stdout.split()
 
 
+def matrix() -> dict[str, list[dict[str, object]]]:
+    """Return the Actions matrix: one entry per group, and whether its machine needs Qt."""
+    return {"include": [{"group": group, "qt": group in QT_GROUPS} for group in GROUPS]}
+
+
 def main(argv: Sequence[str] | None = None, *, query: Query | None = None) -> int:
-    """Print the group names as a JSON list (``--matrix``) or the targets of one group."""
+    """Print the Actions matrix as JSON (``--matrix``) or the targets of one group."""
     parser = argparse.ArgumentParser(description="List the test targets of one CI group.")
     parser.add_argument("group", nargs="?", choices=GROUPS)
-    parser.add_argument("--matrix", action="store_true", help="print the group names as JSON")
+    parser.add_argument("--matrix", action="store_true", help="print the Actions matrix as JSON")
     parser.add_argument("--config", default="", help="the Bazel --config to query with")
     options = parser.parse_args(argv)
     if options.matrix:
-        print(json.dumps(list(GROUPS)))
+        print(json.dumps(matrix()))
         return 0
     if options.group is None:
         parser.error("name a group or pass --matrix")

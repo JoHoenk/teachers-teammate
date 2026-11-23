@@ -55,7 +55,8 @@ Bazel gives every test file its own process, which hides a test that changes glo
 | `rest` | are not claimed above |
 
 `tools/ci/target_groups.py` makes the split with `bazel query`; `CLAIMS` in it is the one place
-that names the groups, and the workflow takes their names from `--matrix`. `rest` is the
+that names the groups, and the workflow takes its matrix from `--matrix`. Only `walkthrough` and
+`gui` import Qt, so only their machines install its system library (`libegl1`). `rest` is the
 complement of the others, so a new test cannot be left out. The script stops if a group is
 empty (a lost tag, a layer library no test depends on). A test that plays the whole app gets
 `tags = ["walkthrough"]` in `tests/BUILD`. List or run one group:

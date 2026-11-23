@@ -113,11 +113,24 @@ def test_the_matrix_lists_every_group_for_the_workflow(capsys: pytest.CaptureFix
     """
     Given  the groups the script knows
     When   it is asked for the matrix
-    Then   it prints their names as a JSON list, so the workflow never names a group itself
+    Then   it prints one entry per group as JSON, so the workflow never names a group itself
     """
     target_groups.main(["--matrix"])
 
-    assert json.loads(capsys.readouterr().out) == list(GROUPS)
+    entries = json.loads(capsys.readouterr().out)["include"]
+    assert [entry["group"] for entry in entries] == list(GROUPS)
+
+
+def test_only_the_groups_that_import_qt_ask_for_its_library(capsys: pytest.CaptureFixture) -> None:
+    """
+    Given  the walkthrough and gui groups, which run the GUI layer, and the others, which do not
+    When   the matrix is printed
+    Then   only the first two are marked ``qt``
+    """
+    target_groups.main(["--matrix"])
+
+    entries = json.loads(capsys.readouterr().out)["include"]
+    assert {entry["group"] for entry in entries if entry["qt"]} == {"walkthrough", "gui"}
 
 
 def test_the_main_function_prints_one_group_one_target_per_line(

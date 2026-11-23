@@ -353,25 +353,59 @@ def test_draft_command_creates_the_draft_when_none_exists() -> None:
     assert "--draft" in created
 
 
-def _inventory(tmp_path: Path, qt: str = "6.12.0") -> Path:
-    """Lay out the inventory of a checkout, with the Qt row the sources gate reads."""
+QT, OPENCV, FFMPEG = "6.12.0", "5.1.0.95", "9.0.2"
+MODULES = ("qtbase", "qtsvg", "qtimageformats", "qtwayland")
+
+
+def _inventory(
+    tmp_path: Path, qt: str = QT, opencv: str = OPENCV, notice_opencv: str | None = None
+) -> Path:
+    """Lay out the inventory and NOTICE of a checkout, as the sources gate reads them."""
+    notice_opencv = opencv if notice_opencv is None else notice_opencv
     (tmp_path / "third_party_licenses").mkdir(parents=True)
     (tmp_path / "third_party_licenses" / "inventory.csv").write_text(
         "Component,Version,License,Scope,Kind\n"
-        f"pyside6-essentials,{qt},LGPL-3.0-only,bundle,package\n",
+        f"pyside6-essentials,{qt},LGPL-3.0-only,bundle,package\n"
+        f"opencv-python-headless,{opencv},Apache-2.0,bundle,package\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "NOTICE").write_text(
+        "Teacher's Teammate\n\n"
+        "Source code\n"
+        "-----------\n"
+        f"Qt {qt} and PySide6 {qt}, the versions the bundle carries:\n"
+        f"  https://download.qt.io/archive/qt/6.12/{qt}/submodules/\n"
+        "      (qtbase, qtsvg, qtimageformats, qtwayland)\n"
+        f"  https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-{qt}-src/\n"
+        "\n"
+        f"FFmpeg {FFMPEG}, inside opencv-python-headless {notice_opencv} (Linux and macOS):\n"
+        f"  https://ffmpeg.org/releases/ffmpeg-{FFMPEG}.tar.gz\n",
         encoding="utf-8",
     )
     return tmp_path
 
 
+def _set(qt: str = QT, opencv: str = OPENCV, ffmpeg: str = FFMPEG) -> tuple[str, ...]:
+    """Return the files a sources release of those versions holds."""
+    return (
+        *(f"{module}-everywhere-src-{qt}.tar.xz" for module in MODULES),
+        f"pyside-setup-everywhere-src-{qt}.tar.xz",
+        f"ffmpeg-{ffmpeg}.tar.xz",
+        f"ffmpeg-{ffmpeg}.tar.xz.asc",
+        f"opencv_python_headless-{opencv}.tar.gz",
+        "SHA256SUMS",
+        "README.txt",
+    )
+
+
 def test_missing_sources_release_names_the_release_and_the_tool(tmp_path: Path) -> None:
     """
-    Given  a checkout whose Qt sources no release holds
+    Given  a checkout whose sources no release holds
     When   missing_sources_release() is called
     Then   the message names the release and the command that creates it, so a red validate job
            says what to do
     """
-    with patch.object(release_tag, "_run", return_value=_completed(1, stderr="release not found")):
+    with patch.object(release_tag.mirror_sources, "release_assets", return_value=None):
         problem = release_tag.missing_sources_release("owner/name", _inventory(tmp_path))
 
     assert problem is not None
@@ -379,29 +413,61 @@ def test_missing_sources_release_names_the_release_and_the_tool(tmp_path: Path) 
     assert "mirror_sources.py --upload" in problem
 
 
-def test_missing_sources_release_passes_when_the_release_exists(tmp_path: Path) -> None:
+def test_missing_sources_release_passes_when_the_release_holds_the_set(tmp_path: Path) -> None:
     """
-    Given  a sources release GitHub knows
+    Given  a sources release that holds every file of the shipped versions
     When   missing_sources_release() is called
     Then   there is nothing to report
     """
-    with patch.object(release_tag, "_run", return_value=_completed(0)):
+    with patch.object(release_tag.mirror_sources, "release_assets", return_value=_set()):
         problem = release_tag.missing_sources_release("owner/name", _inventory(tmp_path))
 
     assert problem is None
 
 
-def test_missing_sources_release_exits_when_github_answers_otherwise(tmp_path: Path) -> None:
+def test_missing_sources_release_rejects_a_release_of_an_older_ffmpeg(tmp_path: Path) -> None:
     """
-    Given  a GitHub that answers with a server error
+    Given  a release named after the shipped Qt that still holds the FFmpeg of an earlier OpenCV
     When   missing_sources_release() is called
-    Then   it exits instead of letting the check fail on the wrong side
+    Then   the message names what the release lacks, so a bumped OpenCV cannot pass on the name
+           alone
     """
-    with (
-        patch.object(release_tag, "_run", return_value=_completed(1, stderr="HTTP 502")),
-        pytest.raises(SystemExit, match="could not read the release"),
-    ):
-        release_tag.missing_sources_release("owner/name", _inventory(tmp_path))
+    held = tuple(name for name in _set() if not name.startswith("ffmpeg-"))
+    with patch.object(release_tag.mirror_sources, "release_assets", return_value=held):
+        problem = release_tag.missing_sources_release("owner/name", _inventory(tmp_path))
+
+    assert problem is not None
+    assert "does not hold the sources this commit ships" in problem
+    assert f"it holds no FFmpeg {FFMPEG} source" in problem
+    assert f"it holds no FFmpeg {FFMPEG} signature" in problem
+
+
+def test_missing_sources_release_names_a_qt_archive_the_release_lacks(tmp_path: Path) -> None:
+    """
+    Given  a release that holds every file but one Qt submodule archive
+    When   missing_sources_release() is called
+    Then   the missing module archive is named
+    """
+    held = tuple(name for name in _set() if not name.startswith("qtsvg-"))
+    with patch.object(release_tag.mirror_sources, "release_assets", return_value=held):
+        problem = release_tag.missing_sources_release("owner/name", _inventory(tmp_path))
+
+    assert problem is not None
+    assert f"it holds no qtsvg source of Qt {QT}" in problem
+
+
+def test_missing_sources_release_exits_on_a_notice_the_inventory_contradicts(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a checkout whose NOTICE names another OpenCV than the inventory
+    When   missing_sources_release() is called
+    Then   it exits instead of looking for sources of a version we cannot name
+    """
+    with pytest.raises(SystemExit, match="NOTICE names opencv-python-headless"):
+        release_tag.missing_sources_release(
+            "owner/name", _inventory(tmp_path, opencv="5.2.0.10", notice_opencv=OPENCV)
+        )
 
 
 def test_check_command_rejects_a_tag_without_a_sources_release(

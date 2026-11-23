@@ -16,6 +16,9 @@ _ROOT = (
 )
 _STORE = _ROOT / "third_party_licenses"
 
+#: Archives that carry plugins only, so no ``libQt6<Module>`` library is named after them.
+_PLUGIN_ONLY = {"qtimageformats"}
+
 
 def _committed() -> list[inventory.Row]:
     """Return the rows of the committed inventory."""
@@ -153,14 +156,17 @@ def test_notice_names_the_sources_the_mirror_publishes() -> None:
     """
     Given  NOTICE and the table that says which Qt submodule carries which module
     When   the archives a sources release is built from are held against the notice
-    Then   NOTICE names every one of them and the FFmpeg source set is the notice's version, so
-           a submodule the table gains without a line in NOTICE is red
+    Then   NOTICE names no archive the table cannot place, and the FFmpeg source set is the
+           notice's version.  The table knows archives the set does not hold (qttools); the gate
+           asks for one the moment a bundle carries its module.
     """
     text = _notice()
     section = notice.section(text, notice.SOURCE_CODE)
     ffmpeg, _ = notice.ffmpeg_versions(text)
 
-    assert set(mirror_sources.MODULE_ARCHIVE.values()) <= set(notice.qt_modules(text))
+    assert set(notice.qt_modules(text)) - _PLUGIN_ONLY <= set(
+        mirror_sources.MODULE_ARCHIVE.values()
+    )
     assert f"ffmpeg-{ffmpeg}.tar" in section
     assert "the opencv-python-headless source" in section
 

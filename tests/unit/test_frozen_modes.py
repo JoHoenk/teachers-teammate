@@ -6,6 +6,7 @@ import ast
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -428,6 +429,34 @@ def test_qt_license_check_passes_on_an_lgpl_bundle(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(frozen_modes, "_root", lambda: tmp_path)
 
     assert frozen_modes._check_qt_licenses() is None
+
+
+def test_reported_version_takes_the_wheels_opencv_version() -> None:
+    """
+    Given  a cv2 whose ``__version__`` is OpenCV's own 5.1.0 and whose ``version`` module
+           carries the wheel's 5.1.0.95
+    When   the smoke test asks for the version to report
+    Then   the wheel's comes back, which is the version the inventory names
+    """
+    module = SimpleNamespace(__version__="5.1.0")
+    wheel = SimpleNamespace(opencv_version="5.1.0.95")
+
+    reported = frozen_modes._reported_version("cv2", module, lambda name: wheel)
+
+    assert reported == "5.1.0.95"
+
+
+def test_reported_version_takes_the_dunder_version_of_other_packages() -> None:
+    """
+    Given  a PySide6 module
+    When   the smoke test asks for the version to report
+    Then   its ``__version__`` comes back unchanged
+    """
+    module = SimpleNamespace(__version__="6.12.0")
+
+    reported = frozen_modes._reported_version("PySide6", module, lambda name: None)
+
+    assert reported == "6.12.0"
 
 
 def test_spec_drops_the_same_gpl_only_modules_as_the_smoke_test() -> None:

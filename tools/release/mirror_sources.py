@@ -5,7 +5,11 @@ Nothing in this repository holds the Qt, PySide6 or FFmpeg sources, and the LGPL
 to the download, so every version a release carries gets a sources release of its own:
 ``third-party-sources-qt<version>``.  This tool fetches the files NOTICE names, holds each one to
 the digest its author publishes, writes ``SHA256SUMS`` and a ``README.txt`` into the set, and
-uploads the folder.  It is never marked *Latest*, so the app's update check cannot see it.
+uploads the set.  It is never marked *Latest*, so the app's update check cannot see it.
+
+FFmpeg publishes a signature (``.asc``) and no digest, so that one tarball is signature-only: the
+set carries the signature and neither the tool nor the set verifies it.  Every other file is
+refused when its author publishes no digest, never taken unchecked.
 
 The versions come from ``third_party_licenses/inventory.csv`` and NOTICE, never from an argument:
 the set holds what the download promises.  The file names come from the authors' own directory
@@ -22,7 +26,7 @@ Usage (from the repository root; ``--upload`` needs ``gh`` and ``GH_TOKEN``):
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
 import hashlib
@@ -56,11 +60,17 @@ PYPI = "https://pypi.org/pypi"
 ARCHIVE_SUFFIXES = (".tar.xz", ".tar.bz2", ".tar.gz")
 """What the authors package a source tree in; the first one a listing holds is taken."""
 
+ARCHIVE_PATTERN = r"\.tar\.(xz|bz2|gz)"
+"""How the name of a source archive ends; the asset names add the anchor they need."""
+
 CHECKSUMS_NAME = "SHA256SUMS"
-"""The digest list of the set, in ``sha256sum``'s format."""
+"""The digest list of the set, in ``sha256sum``'s format; it lists every other file of the set."""
 
 README_NAME = "README.txt"
 """What the set holds, which version, and the rule each file satisfies."""
+
+SIGNATURE_SUFFIX = ".asc"
+"""What FFmpeg names the signature of a tarball it publishes, its only authenticity evidence."""
 
 SUMS_NAMES = ("sha256sums.txt", "md5sums.txt")
 """The digest lists Qt publishes next to its tarballs, the stronger one first."""
@@ -90,7 +100,7 @@ MODULE_ARCHIVE: dict[str, str] = {
     "Concurrent": "qtbase",
     "EglFSDeviceIntegration": "qtbase",
     "EglFsKmsSupport": "qtbase",
-    "UiTools": "qtbase",
+    "UiTools": "qttools",
     "XcbQpa": "qtbase",
     "Svg": "qtsvg",
     "SvgWidgets": "qtsvg",
@@ -110,9 +120,30 @@ class Source:
     rule: str
 
 
+@dataclass(frozen=True)
+class SourceSet:
+    """What one run wrote into the folder: the sources, and every file of the set.
+
+    ``files`` is what an upload sends, so a folder that holds another run's tarballs cannot
+    publish them by accident.
+    """
+
+    sources: tuple[Source, ...]
+    files: tuple[str, ...]
+
+
 def sources_release_tag(qt: str) -> str:
     """Return the name of the release that holds the sources of Qt *qt*."""
     return f"third-party-sources-qt{qt}"
+
+
+def qt_version(pyside: str) -> str:
+    """Return the Qt version of a PySide6 release.
+
+    PySide6 may add a hotfix number of its own (``6.8.2.1``) on top of the Qt version it binds
+    (``6.8.2``), and Qt's archive folders are named after the latter.
+    """
+    return ".".join(pyside.split(".")[:3])
 
 
 def tree_versions(tree: Path = ROOT) -> tuple[str, str, str]:
@@ -122,16 +153,16 @@ def tree_versions(tree: Path = ROOT) -> tuple[str, str, str]:
         ValueError: NOTICE and the inventory disagree, or the inventory lacks a row.
     """
     locked = artifacts.locked_versions(tree)
-    qt = locked.get("pyside6-essentials")
+    pyside = locked.get("pyside6-essentials")
     opencv = locked.get("opencv-python-headless")
-    if qt is None or opencv is None:
+    if pyside is None or opencv is None:
         raise ValueError("the inventory lacks a row for PySide6 or opencv-python-headless")
     ffmpeg, notice_opencv = notice.ffmpeg_versions((tree / "NOTICE").read_text(encoding="utf-8"))
     if notice_opencv != opencv:
         raise ValueError(
             f"NOTICE names opencv-python-headless {notice_opencv}, the inventory {opencv}"
         )
-    return qt, opencv, ffmpeg
+    return qt_version(pyside), opencv, ffmpeg
 
 
 def qt_module_archives(tree: Path = ROOT) -> tuple[str, ...]:
@@ -182,12 +213,22 @@ def check_digest(path: Path, expected: str, name: str) -> None:
 
 
 def bundle_modules(lib_dir: Path) -> tuple[str, ...]:
-    """Return the Qt module names of the ``libQt6<Module>.so*`` files in *lib_dir*."""
+    """Return the Qt module names of the ``libQt6<Module>.so*`` files in *lib_dir*.
+
+    Raises:
+        ValueError: the folder holds no Qt module, so it is not the Qt library folder of a Linux
+            bundle and the coverage check would otherwise pass by seeing nothing.
+    """
     modules = {
         match.group(1)
         for path in lib_dir.glob("libQt6*.so*")
         if (match := re.match(r"libQt6(\w+?)\.so", path.name))
     }
+    if not modules:
+        raise ValueError(
+            f"{lib_dir} holds no libQt6*.so* file: --bundle reads the Qt library folder of a "
+            "Linux bundle (_internal/PySide6/Qt/lib), not a macOS or Windows one"
+        )
     return tuple(sorted(modules))
 
 
@@ -203,6 +244,56 @@ def uncovered(modules: tuple[str, ...], archives: tuple[str, ...]) -> list[str]:
     return found
 
 
+def asset_patterns(
+    versions: tuple[str, str, str], modules: tuple[str, ...]
+) -> dict[str, re.Pattern[str]]:
+    """Return what a sources release of *versions* has to hold: what it is -> how its name ends.
+
+    The names are patterns because the authors' own names may differ from the version (Qt for
+    Python drops the patch number) and because a tarball's compression has changed before.
+    """
+    qt, opencv, ffmpeg = versions
+    archive = ARCHIVE_PATTERN
+
+    def pattern(prefix: str) -> re.Pattern[str]:
+        """Return the pattern of a file of the set that starts with *prefix*."""
+        return re.compile(rf"^{re.escape(prefix)}{archive}$")
+
+    patterns = {
+        f"{module} source of Qt {qt}": pattern(f"{module}-everywhere-src-{qt}")
+        for module in modules
+    }
+    series = ".".join(qt.split(".")[:2])
+    patterns[f"PySide6 {qt} source"] = re.compile(
+        rf"^pyside-setup-everywhere-src-({re.escape(qt)}|{re.escape(series)}){archive}$"
+    )
+    patterns[f"FFmpeg {ffmpeg} source"] = pattern(f"ffmpeg-{ffmpeg}")
+    patterns[f"FFmpeg {ffmpeg} signature"] = re.compile(
+        rf"^ffmpeg-{re.escape(ffmpeg)}{archive}{re.escape(SIGNATURE_SUFFIX)}$"
+    )
+    patterns[f"opencv-python-headless {opencv} source"] = pattern(
+        f"opencv_python_headless-{opencv}"
+    )
+    patterns["digest list"] = re.compile(rf"^{re.escape(CHECKSUMS_NAME)}$")
+    patterns["readme"] = re.compile(rf"^{re.escape(README_NAME)}$")
+    return patterns
+
+
+def missing_assets(
+    names: Iterable[str], versions: tuple[str, str, str], modules: tuple[str, ...]
+) -> list[str]:
+    """Return what a release holding *names* lacks of the sources of *versions*.
+
+    A release keeps the name ``third-party-sources-qt<version>`` while the Qt version stays the
+    same, so its name alone says nothing about what is inside it.
+    """
+    return [
+        f"it holds no {what}"
+        for what, pattern in asset_patterns(versions, modules).items()
+        if not any(pattern.search(name) for name in names)
+    ]
+
+
 def readme(versions: tuple[str, str, str], sources: tuple[Source, ...]) -> str:
     """Return the ``README.txt`` of a set: what each file is, its version and its rule."""
     qt, opencv, ffmpeg = versions
@@ -213,6 +304,11 @@ def readme(versions: tuple[str, str, str], sources: tuple[Source, ...]) -> str:
         "every file is unmodified, exactly as its author published it, and SHA256SUMS holds the",
         "digest of each one. The versions are the ones the downloads of this app carry; NOTICE and",
         "third_party_licenses/inventory.csv in the repository name them.",
+        "",
+        "Each file was held to the digest its author publishes: Qt's md5sums.txt next to the",
+        "tarballs, PyPI's sha256 for the opencv-python-headless source. FFmpeg publishes a",
+        "signature (.asc) and no digest, so its tarball travels with that signature unverified:",
+        "check the signature against FFmpeg's release key before you trust the tarball itself.",
         "",
         "| File | Version | The rule it satisfies |",
         "|---|---|---|",
@@ -238,7 +334,7 @@ def release_notes(versions: tuple[str, str, str]) -> str:
 
 
 def write_checksums(folder: Path, names: tuple[str, ...]) -> Path:
-    """Write ``SHA256SUMS`` for *names* in *folder* and return it."""
+    """Write ``SHA256SUMS`` for *names* in *folder* and return it, the list itself left out."""
     lines = [f"{digest_of(folder / name, 'sha256')}  {name}" for name in sorted(names)]
     target = folder / CHECKSUMS_NAME
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -303,11 +399,30 @@ def pyside_file(names: tuple[str, ...], qt: str, where: str) -> str:
 def published_sums(
     read: Callable[[str], str], directory: str, names: tuple[str, ...]
 ) -> dict[str, str]:
-    """Return the digests *directory* publishes, empty when it publishes none."""
+    """Return the digests *directory* publishes for its files.
+
+    Raises:
+        ValueError: the folder publishes no digest list, so none of its files could be checked.
+    """
     for candidate in SUMS_NAMES:
         if candidate in names:
             return sums_entries(read(f"{directory}/{candidate}"))
-    return {}
+    raise ValueError(
+        f"{directory} publishes no {' or '.join(SUMS_NAMES)}, so its files cannot be held to a "
+        "published digest"
+    )
+
+
+def published_digest(sums: Mapping[str, str], name: str, where: str) -> str:
+    """Return the digest *sums* holds for *name*.
+
+    Raises:
+        ValueError: the published list does not name the file.
+    """
+    digest = sums.get(name)
+    if digest is None:
+        raise ValueError(f"{where} publishes no digest for {name}")
+    return digest
 
 
 def pypi_sdist(opencv: str, read: Callable[[str], str]) -> tuple[str, str, str]:
@@ -330,7 +445,7 @@ def collect(
     modules: tuple[str, ...],
     fetch: Callable[[str, Path], Path] = download,
     read: Callable[[str], str] = read_url,
-) -> tuple[Source, ...]:
+) -> SourceSet:
     """Fetch every file of the set into *folder* and hold each one to its published digest.
 
     The file names come from the authors' directory listings rather than from the version, because
@@ -338,45 +453,54 @@ def collect(
     there fails here, before anything is uploaded.
 
     Raises:
-        ValueError: a listing does not carry a file, or a digest does not match.
+        ValueError: a listing does not carry a file, a folder publishes no digest for one, or a
+            digest does not match.
     """
     qt, opencv, ffmpeg = versions
     series = ".".join(qt.split(".")[:2])
     found: list[Source] = []
+    written: list[str] = []
 
-    def take(name: str, url: str, version: str, rule: str, expected: str | None) -> None:
+    def take(name: str, url: str, version: str, rule: str, expected: str) -> None:
+        """Fetch one file, hold it to *expected*, and add it to the set."""
         path = fetch(url, folder / name)
-        if expected is not None:
-            check_digest(path, expected, name)
+        check_digest(path, expected, name)
         found.append(Source(name, url, version, rule))
+        written.append(name)
 
     submodules = f"{QT_ARCHIVE}/{series}/{qt}/submodules"
     qt_files = listing_files(read(f"{submodules}/"))
     qt_sums = published_sums(read, submodules, qt_files)
     for module in modules:
         name = first_present(qt_files, packaged(f"{module}-everywhere-src-{qt}"), submodules)
-        take(name, f"{submodules}/{name}", qt, QT_LICENSE_RULE, qt_sums.get(name))
+        digest = published_digest(qt_sums, name, submodules)
+        take(name, f"{submodules}/{name}", qt, QT_LICENSE_RULE, digest)
 
     pyside_dir = f"{PYSIDE6_SOURCES}/PySide6-{qt}-src"
     pyside_files = listing_files(read(f"{pyside_dir}/"))
     pyside_sums = published_sums(read, pyside_dir, pyside_files)
     name = pyside_file(pyside_files, qt, pyside_dir)
-    take(name, f"{pyside_dir}/{name}", qt, PYSIDE_RULE, pyside_sums.get(name))
+    digest = published_digest(pyside_sums, name, pyside_dir)
+    take(name, f"{pyside_dir}/{name}", qt, PYSIDE_RULE, digest)
 
+    # FFmpeg publishes a signature and no digest, so this tarball is the one file of the set that
+    # is taken unchecked. The README says so; every other file needs a published digest.
     ffmpeg_files = listing_files(read(f"{FFMPEG_RELEASES}/"))
     name = first_present(ffmpeg_files, packaged(f"ffmpeg-{ffmpeg}"), FFMPEG_RELEASES)
-    take(name, f"{FFMPEG_RELEASES}/{name}", ffmpeg, FFMPEG_RULE, None)
-    signature = f"{name}.asc"
+    signature = f"{name}{SIGNATURE_SUFFIX}"
     if signature not in ffmpeg_files:
         raise ValueError(f"{FFMPEG_RELEASES} publishes no signature for {name}")
+    fetch(f"{FFMPEG_RELEASES}/{name}", folder / name)
     fetch(f"{FFMPEG_RELEASES}/{signature}", folder / signature)
+    found.append(Source(name, f"{FFMPEG_RELEASES}/{name}", ffmpeg, FFMPEG_RULE))
+    written += [name, signature]
 
     recipe = pypi_sdist(opencv, read)
     take(recipe[0], recipe[1], opencv, OPENCV_RULE, recipe[2])
 
-    write_checksums(folder, tuple(source.name for source in found))
     (folder / README_NAME).write_text(readme(versions, tuple(found)), encoding="utf-8")
-    return tuple(found)
+    checksums = write_checksums(folder, (*written, README_NAME))
+    return SourceSet(tuple(found), (*written, README_NAME, checksums.name))
 
 
 def _run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -390,35 +514,100 @@ def _run(command: list[str], *, check: bool = True) -> subprocess.CompletedProce
     return result
 
 
-def upload_commands(
-    tag: str, folder: Path, repo: str, *, notes: str, exists: bool
-) -> list[list[str]]:
-    """Return the ``gh`` commands that publish *folder* as *tag*, never as *Latest*."""
-    names = [str(path) for path in sorted(folder.iterdir()) if path.is_file()]
-    if exists:
-        return [["gh", "release", "upload", tag, *names, "--repo", repo, "--clobber"]]
-    return [
+def set_folder_problem(folder: Path) -> str | None:
+    """Return what is wrong with *folder* as the place to write a set, ``None`` when nothing is.
+
+    The set names what it holds, so a folder that already holds files would publish another run's
+    tarballs with this run's ``SHA256SUMS``.
+    """
+    if folder.is_dir() and any(folder.iterdir()):
+        return (
+            f"{folder} is not empty; the set is written into an empty folder, so an upload cannot "
+            "publish another run's files"
+        )
+    return None
+
+
+def release_assets(tag: str, repo: str) -> tuple[str, ...] | None:
+    """Return the files the release *tag* holds, or ``None`` when there is no such release.
+
+    Raises:
+        SystemExit: GitHub answered with anything but the release or a "not found".
+    """
+    result = _run(
         [
             "gh",
             "release",
-            "create",
+            "view",
             tag,
-            *names,
             "--repo",
             repo,
-            "--latest=false",
-            "--title",
-            f"Third-party sources for Qt {tag.removeprefix('third-party-sources-qt')}",
-            "--notes",
-            notes,
-        ]
+            "--json",
+            "assets",
+            "--jq",
+            ".assets[].name",
+        ],
+        check=False,
+    )
+    if result.returncode == 0:
+        return tuple(line.strip() for line in result.stdout.splitlines() if line.strip())
+    if "not found" not in result.stderr.lower() and "not found" not in result.stdout.lower():
+        raise SystemExit(f"could not read the release {tag}: {result.stderr.strip()}")
+    return None
+
+
+def upload_commands(
+    tag: str,
+    folder: Path,
+    files: tuple[str, ...],
+    repo: str,
+    *,
+    notes: str,
+    existing: tuple[str, ...] | None,
+) -> list[list[str]]:
+    """Return the ``gh`` commands that make *tag* hold exactly the files of *folder*.
+
+    *files* are names inside *folder* and the release is never marked *Latest*.  A release of an
+    earlier run keeps the files this set does not have, and its title and notes would still
+    describe them, so an existing release loses them first.
+    """
+    paths = [str(folder / name) for name in files]
+    kept = set(files)
+    title = f"Third-party sources for Qt {tag.removeprefix('third-party-sources-qt')}"
+    commands = [
+        ["gh", "release", "delete-asset", tag, name, "--repo", repo, "--yes"]
+        for name in sorted(existing or ())
+        if name not in kept
     ]
+    if existing is None:
+        commands.append(
+            [
+                "gh",
+                "release",
+                "create",
+                tag,
+                *paths,
+                "--repo",
+                repo,
+                "--latest=false",
+                "--title",
+                title,
+                "--notes",
+                notes,
+            ]
+        )
+        return commands
+    commands.append(["gh", "release", "upload", tag, *paths, "--repo", repo, "--clobber"])
+    commands.append(
+        ["gh", "release", "edit", tag, "--repo", repo, "--title", title, "--notes", notes]
+    )
+    return commands
 
 
-def upload(tag: str, folder: Path, repo: str, *, notes: str) -> None:
-    """Create or fill the release *tag*, then check that GitHub serves the set we wrote."""
-    exists = _run(["gh", "release", "view", tag, "--repo", repo], check=False).returncode == 0
-    for command in upload_commands(tag, folder, repo, notes=notes, exists=exists):
+def upload(tag: str, folder: Path, files: tuple[str, ...], repo: str, *, notes: str) -> None:
+    """Create or fill the release *tag* with *files*, then check that GitHub serves them."""
+    existing = release_assets(tag, repo)
+    for command in upload_commands(tag, folder, files, repo, notes=notes, existing=existing):
         _run(command)
     latest = _run(
         ["gh", "release", "view", tag, "--repo", repo, "--json", "isLatest", "--jq", ".isLatest"]
@@ -454,14 +643,14 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=None,
         metavar="DIR",
-        help="keep the set in DIR instead of a temporary folder",
+        help="keep the set in DIR, which has to be empty, instead of a temporary folder",
     )
     parser.add_argument(
         "--bundle",
         type=Path,
         default=None,
         metavar="DIR",
-        help="the folder build whose Qt modules the set must cover (default: no check)",
+        help="the Linux bundle whose Qt modules the set must cover (default: no check)",
     )
     parser.add_argument(
         "--upload",
@@ -485,7 +674,11 @@ def main(argv: list[str] | None = None) -> int:
         if not lib_dir.is_dir():
             print(f"{lib_dir} is missing; build the bundle first", file=sys.stderr)
             return 1
-        problems = uncovered(bundle_modules(lib_dir), modules)
+        try:
+            problems = uncovered(bundle_modules(lib_dir), modules)
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
         if problems:
             print("\n".join(problems), file=sys.stderr)
             return 1
@@ -494,6 +687,12 @@ def main(argv: list[str] | None = None) -> int:
         print("--upload needs --repo OWNER/NAME", file=sys.stderr)
         return 1
 
+    if args.keep is not None:
+        empty = set_folder_problem(args.keep)
+        if empty is not None:
+            print(empty, file=sys.stderr)
+            return 1
+
     with ExitStack() as stack:
         if args.keep is None:
             folder = Path(stack.enter_context(tempfile.TemporaryDirectory()))
@@ -501,16 +700,21 @@ def main(argv: list[str] | None = None) -> int:
             folder = args.keep
             folder.mkdir(parents=True, exist_ok=True)
         try:
-            files = collect(folder, versions, modules=modules)
+            found = collect(folder, versions, modules=modules)
         except (OSError, ValueError) as exc:
             print(exc, file=sys.stderr)
             return 1
-        for source in files:
+        for source in found.sources:
             print(f"{source.name}\t{source.version}\t{source.rule}")
-        print(f"{len(files)} files with {CHECKSUMS_NAME} and {README_NAME} in {folder}")
+        print(f"{len(found.sources)} sources and {len(found.files)} files in {folder}")
+        print("FFmpeg's signature is fetched but not verified: FFmpeg publishes no digest.")
         if args.upload and args.repo:
             upload(
-                sources_release_tag(versions[0]), folder, args.repo, notes=release_notes(versions)
+                sources_release_tag(versions[0]),
+                folder,
+                found.files,
+                args.repo,
+                notes=release_notes(versions),
             )
     return 0
 

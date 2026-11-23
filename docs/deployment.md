@@ -205,8 +205,8 @@ The bundle carries Qt under the LGPL v3 as separate, replaceable files
 every version we ship gets a release of its own, `third-party-sources-qt<version>`, and
 `tools/release/mirror_sources.py` builds and publishes it. The versions come from the inventory and
 `NOTICE`, never from an argument, and the file names from the authors' own directory listings, so a
-renamed archive fails here instead of on a teacher's download page. Each file is held to the digest
-its author publishes, and the set carries `SHA256SUMS` and a `README.txt`:
+renamed archive fails here instead of on a teacher's download page. The set carries `SHA256SUMS`
+(a digest of every other file of it) and a `README.txt`:
 
 ```bash
 python tools/release/mirror_sources.py                                # fetch and check, discard
@@ -215,14 +215,28 @@ python tools/release/mirror_sources.py --bundle dist/teachers-teammate  # hold: 
 python tools/release/mirror_sources.py --upload --repo <owner>/<name>  # publish it
 ```
 
-Without `--keep` the set goes to a temporary folder. `--bundle` names a folder build the set must
-cover: every Qt module in it needs its submodule archive. `--upload` needs `gh` and `GH_TOKEN`,
-never marks the release *Latest* — so the app's update check cannot see it — and overwrites a
-release of the same name.
+Which files are held to a published digest, and which are not:
+
+| File | Held to |
+|---|---|
+| the Qt submodule archives | `md5sums.txt` next to the tarballs; a folder that publishes none fails the run |
+| the PySide6 source | its folder's digest list; Qt for Python publishes none today, so this stops the run until it does |
+| the `opencv-python-headless` source | the sha256 PyPI publishes |
+| the FFmpeg tarball | nothing: FFmpeg publishes a signature and no digest. Its `.asc` travels in the set, unverified |
+
+Without `--keep` the set goes to a temporary folder; `--keep` needs a folder that is empty, so an
+upload cannot publish an earlier run's tarballs. `--bundle` names a **Linux** folder build the set
+must cover: every `libQt6*.so*` module in it needs its submodule archive, and a folder without any
+of them is refused rather than read as covered. `--upload` needs `gh` and `GH_TOKEN`, never marks
+the release *Latest* — so the app's update check cannot see it — and makes an existing release hold
+this set and nothing else: the assets of an earlier run are deleted and the title and notes are
+rewritten.
 
 Publish the sources **before** the tag: the `validate` job of the release workflow fails a download
-whose sources release is missing. The rehearsal in `release_dry_run.yml` is the one run that passes
-`--skip-sources`.
+whose sources release does not hold the current sources — a release of the right name that still
+carries an older FFmpeg or OpenCV fails as well, which is what a bumped OpenCV (and with it a new
+FFmpeg) without a re-run of the mirror looks like. The rehearsal in `release_dry_run.yml` is the
+one run that passes `--skip-sources`.
 
 A sources release is never deleted while a download that carries its version exists; that download
 promises it.

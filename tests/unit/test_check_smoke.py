@@ -9,12 +9,19 @@ import pytest
 
 from tools.build import check_smoke
 
-_LOCKED = "6.12.0"
+_QT = "6.12.0"
+"""The PySide6 and Qt version the inventory names."""
+
+_OPENCV = "5.1.0.95"
+"""The ``opencv-python-headless`` version the inventory names, the wheel's own."""
+
+_OPENCV_MODULE = "5.1.0"
+"""``cv2.__version__``: OpenCV's own version, which the smoke test must not report."""
 
 
 def _smoke(tmp_path: Path, python: str | None, **versions: str) -> Path:
     reported = {
-        **(dict.fromkeys(("PySide6", "cv2"), _LOCKED) if python else {}),
+        **({"PySide6": _QT, "cv2": _OPENCV} if python else {}),
         **versions,
     }
     if python:
@@ -24,7 +31,7 @@ def _smoke(tmp_path: Path, python: str | None, **versions: str) -> Path:
     return path
 
 
-def _tree(tmp_path: Path, *, qt: str = _LOCKED, opencv: str = _LOCKED) -> Path:
+def _tree(tmp_path: Path, *, qt: str = _QT, opencv: str = _OPENCV) -> Path:
     """Lay out the inventory the bundle's versions are held to."""
     (tmp_path / "third_party_licenses").mkdir(parents=True)
     (tmp_path / "third_party_licenses" / "inventory.csv").write_text(
@@ -134,6 +141,28 @@ def test_a_bundle_that_differs_from_the_inventory_fails(tmp_path: Path) -> None:
     assert code == 1
 
 
+def test_the_opencv_modules_own_version_is_not_the_wheels(tmp_path: Path) -> None:
+    """
+    Given  a bundle that reports ``cv2.__version__`` (OpenCV's own 5.1.0) as its OpenCV
+    When   main() runs against an inventory that names the wheel (5.1.0.95)
+    Then   it returns 1, so a smoke test that reports the wrong number cannot pass a build
+    """
+    smoke = _smoke(tmp_path, "3.14.10", cv2=_OPENCV_MODULE)
+    tree = _tree(tmp_path)
+
+    code = check_smoke.main(
+        [
+            str(smoke),
+            "--python-version-file",
+            str(_version_file(tmp_path, "3.14.10")),
+            "--tree",
+            str(tree),
+        ]
+    )
+
+    assert code == 1
+
+
 def test_check_locked_versions_names_a_version_that_disagrees(tmp_path: Path) -> None:
     """
     Given  a smoke result that reported a newer Qt than the inventory lists
@@ -141,7 +170,7 @@ def test_check_locked_versions_names_a_version_that_disagrees(tmp_path: Path) ->
     Then   the message names the module, its version and the inventory's
     """
     problems = check_smoke.check_locked_versions(
-        {"PySide6": "6.12.1", "cv2": _LOCKED}, _tree(tmp_path)
+        {"PySide6": "6.12.1", "cv2": _OPENCV}, _tree(tmp_path)
     )
 
     assert problems == ["PySide6 is 6.12.1, the inventory says pyside6-essentials 6.12.0"]

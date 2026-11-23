@@ -9,10 +9,11 @@ from tools.licenses import artifacts
 
 def _tree(tmp_path: Path, *, qt: str = "6.12.0", opencv: str = "5.1.0.95") -> Path:
     """Lay the repository's license files and inventory out as a fixture tree."""
-    for name in artifacts.CARRIED:
+    for name in artifacts.PACKAGE_FILES:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(f"content of {name}\n".encode())
+    (tmp_path / "third_party_licenses").mkdir(parents=True, exist_ok=True)
     (tmp_path / artifacts.INVENTORY).write_text(
         "Component,Version,License,Scope,Kind\n"
         f"pyside6-essentials,{qt},LGPL-3.0-only,bundle,package\n"
@@ -24,7 +25,7 @@ def _tree(tmp_path: Path, *, qt: str = "6.12.0", opencv: str = "5.1.0.95") -> Pa
 
 def _carried(tree: Path) -> dict[str, bytes]:
     """Return what a correct artifact carries: the tree's own files, by their repository path."""
-    return {name: (tree / name).read_bytes() for name in artifacts.CARRIED}
+    return {name: (tree / name).read_bytes() for name in artifacts.PACKAGE_FILES}
 
 
 def test_locked_versions_read_the_inventory(tmp_path: Path) -> None:
@@ -54,15 +55,17 @@ def test_a_matching_artifact_reports_nothing(tmp_path: Path) -> None:
 
 def test_a_missing_file_is_named(tmp_path: Path) -> None:
     """
-    Given  an artifact that lacks one of the license files
+    Given  a wheel that lacks one of the license files
     When   problems() is called
     Then   the file is named as missing
     """
     tree = _tree(tmp_path)
     carried = _carried(tree)
-    del carried["NOTICE"]
+    del carried["teachers_teammate/assets/third_party_licenses.md"]
 
-    assert artifacts.problems(carried, tree) == ["NOTICE is missing"]
+    assert artifacts.problems(carried, tree) == [
+        "teachers_teammate/assets/third_party_licenses.md is missing"
+    ]
 
 
 def test_a_changed_file_names_both_sides(tmp_path: Path) -> None:
@@ -83,18 +86,14 @@ def test_a_changed_file_names_both_sides(tmp_path: Path) -> None:
 
 def test_only_the_named_files_are_compared(tmp_path: Path) -> None:
     """
-    Given  a wheel, which carries the package's files and no NOTICE
-    When   problems() is asked for the package files only
-    Then   the files it does not carry are not held against it
+    Given  a wheel that carries one license file and an empty list of names
+    When   problems() is asked for no file at all
+    Then   it compares nothing, so a caller decides which of them an artifact has to carry
     """
     tree = _tree(tmp_path)
-    carried = {
-        name: (tree / name).read_bytes()
-        for name in artifacts.CARRIED
-        if name in artifacts.PACKAGE_FILES
-    }
+    carried = {"teachers_teammate/assets/third_party_licenses.md": b"another text"}
 
-    assert artifacts.problems(carried, tree, artifacts.PACKAGE_FILES) == []
+    assert artifacts.problems(carried, tree, ()) == []
 
 
 def test_a_matching_version_reports_nothing(tmp_path: Path) -> None:

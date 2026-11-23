@@ -30,7 +30,6 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.licenses import artifacts  # noqa: E402
 from tools.release import mirror_sources  # noqa: E402
 from tools.release.stamp_versions import normalize_version  # noqa: E402
 
@@ -230,29 +229,42 @@ def _on_main(sha: str) -> bool:
 
 
 def missing_sources_release(repo: str, tree: Path = ROOT) -> str | None:
-    """Return what is wrong when the sources release of the shipped Qt version does not exist.
+    """Return what is wrong when the sources release does not hold the sources we ship.
 
-    The downloads offer the LGPL sources in a release of their own, so a tag whose Qt sources were
-    never mirrored would ship a dead pointer.  The version comes from the inventory of the tagged
-    commit, which is the checkout this runs in.
+    The downloads offer the LGPL sources in a release of their own, so a tag whose sources were
+    never mirrored would ship a dead pointer.  The release keeps its name while the Qt version
+    stays the same, so a bump of OpenCV (which brings another FFmpeg) leaves the name right and
+    the contents wrong: what is inside it is what counts, not that it exists.  The versions come
+    from the inventory and NOTICE of the tagged commit, which is the checkout this runs in.
 
     Raises:
-        SystemExit: GitHub answered with anything but the release or a "not found".
+        SystemExit: GitHub answered with anything but the release or a "not found", or the tree
+            names no versions to look for.
     """
-    qt = artifacts.locked_versions(tree).get("pyside6-essentials")
-    if qt is None:
-        raise SystemExit("the inventory has no row for pyside6-essentials")
-    name = mirror_sources.sources_release_tag(qt)
-    result = _run(["gh", "release", "view", name, "--repo", repo], check=False)
-    if result.returncode == 0:
-        return None
-    if "not found" not in result.stderr.lower() and "not found" not in result.stdout.lower():
-        raise SystemExit(f"could not read the release {name}: {result.stderr.strip()}")
-    return (
-        f"there is no release '{name}', so the downloads would point at nothing for the source of "
-        f"Qt {qt}.\nCreate it before the tag is pushed: "
-        f"python tools/release/mirror_sources.py --upload --repo {repo}"
-    )
+    try:
+        versions = mirror_sources.tree_versions(tree)
+        modules = mirror_sources.qt_module_archives(tree)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+    name = mirror_sources.sources_release_tag(versions[0])
+    assets = mirror_sources.release_assets(name, repo)
+    if assets is None:
+        return (
+            f"there is no release '{name}', so the downloads would point at nothing for the "
+            f"source of Qt {versions[0]}.\nCreate it before the tag is pushed: "
+            f"python tools/release/mirror_sources.py --upload --repo {repo}"
+        )
+    missing = mirror_sources.missing_assets(assets, versions, modules)
+    if missing:
+        held = ", ".join(sorted(assets)) or "no files"
+        return (
+            f"the release '{name}' does not hold the sources this commit ships:\n  "
+            + "\n  ".join(missing)
+            + f"\nIt holds: {held}"
+            + f"\nFill it before the tag is pushed: "
+            f"python tools/release/mirror_sources.py --upload --repo {repo}"
+        )
+    return None
 
 
 def _command_check(args: argparse.Namespace) -> int:

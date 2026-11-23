@@ -1,11 +1,13 @@
-"""What a finished download carries, held against the repository's license files.
+"""What a finished package carries, held against the repository's license files and inventory.
 
-A wheel, an installer and a bundle each carry the notice and the license list, and the versions
-inside them decide which sources we owe.  Both are read here once, from the artifact and from the
+An installed wheel carries the notice and the license list the app shows, and the versions inside
+an artifact decide which sources we owe.  Both are read here once, from the artifact and from the
 repository, so the checks that run on the real artifacts ask the same questions the tests ask of
 the tree: a bump that updates the lock but leaves the texts behind fails the build, not the
-teacher.  Nothing in this module touches an artifact itself — the callers read their files and
-pass them in, which is what makes it testable with a fixture folder.
+teacher.  The copies a download carries (the installer's ``NOTICE.txt`` and
+``third_party_license.txt``) are checked for presence by ``tools/packaging/test_*_install.*``,
+which run against the installed program.  Nothing in this module touches an artifact itself — the
+callers read their files and pass them in, which is what makes it testable with a fixture folder.
 """
 
 from __future__ import annotations
@@ -17,20 +19,11 @@ from pathlib import Path
 INVENTORY = "third_party_licenses/inventory.csv"
 """The one list of third-party parts, written by ``tools/licenses/inventory.py``."""
 
-ARCHIVE_FILES = (
-    "NOTICE",
-    "third_party_licenses/third_party_license.txt",
-)
-"""What a download that a person unpacks carries next to the program."""
-
 PACKAGE_FILES = (
     "teachers_teammate/assets/third_party_licenses.md",
     "teachers_teammate/assets/third_party_inventory.csv",
 )
-"""What the installed package carries, for **Help → Third-Party Licenses**."""
-
-CARRIED = ARCHIVE_FILES + PACKAGE_FILES
-"""Every license file a download carries, as the path it has in the repository."""
+"""What the installed package carries, for **Help → Third-Party Licenses**, by repository path."""
 
 SMOKE_REPORTED = {"PySide6": "pyside6-essentials", "cv2": "opencv-python-headless"}
 """What a bundle's smoke result reports as a module, and the inventory row it must match."""
@@ -48,7 +41,9 @@ def locked_versions(tree: Path) -> dict[str, str]:
         return {row["Component"]: row["Version"] for row in csv.DictReader(handle)}
 
 
-def problems(carried: Mapping[str, bytes], tree: Path, names: Iterable[str] = CARRIED) -> list[str]:
+def problems(
+    carried: Mapping[str, bytes], tree: Path, names: Iterable[str] = PACKAGE_FILES
+) -> list[str]:
     """Return what the artifact got wrong: a file it lacks, or one that differs from the tree.
 
     *carried* maps the repository path of each file the artifact holds to its bytes.

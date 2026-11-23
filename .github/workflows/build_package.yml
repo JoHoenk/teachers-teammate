@@ -189,10 +189,13 @@ jobs:
           codesign --verify --deep --strict dist/teachers-teammate.app
 
 
-      # `.python-version` is the one place the version is written down: rules_python builds the
-      # Bazel tests with it, setup-python installs it here, and the smoke test reports what
-      # PyInstaller actually froze.  A mismatch means the bundle and the tests disagree.
-      - name: Check the bundle's Python version
+      # `.python-version` is the one place the Python version is written down: rules_python builds
+      # the Bazel tests with it, setup-python installs it here, and the smoke test reports what
+      # PyInstaller actually froze.  The Qt and OpenCV versions it reports are held to
+      # `third_party_licenses/inventory.csv` for the same reason: the bundle carrying another
+      # version than the inventory costs us sources we did not mirror.  A mismatch on either
+      # means the bundle and the repository disagree.
+      - name: Check the bundle's Python and locked versions
         shell: bash
         run: python tools/build/check_smoke.py smoke.json
 

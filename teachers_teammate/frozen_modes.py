@@ -523,6 +523,24 @@ def _checks() -> list[tuple[str, Check]]:
     return checks
 
 
+def _reported_version(
+    name: str, module: object, import_module: Callable[[str], object] = importlib.import_module
+) -> str:
+    """Return the version of the distribution behind *module*, ``""`` when it carries none.
+
+    ``cv2.__version__`` is OpenCV's own version (``5.1.0``); the wheel's build number, which is
+    the version ``third_party_licenses/inventory.csv`` names (``5.1.0.95``), is kept apart in
+    ``cv2.version.opencv_version``.  Reporting the wrong one fails every bundle's smoke check.
+    """
+    if name == "cv2":
+        try:
+            return str(getattr(import_module("cv2.version"), "opencv_version", ""))
+        except ImportError:
+            # A wheel without ``cv2.version`` has no build number to report; the check fails.
+            return ""
+    return str(getattr(module, "__version__", "") or "")
+
+
 def _versions() -> dict[str, str]:
     """Return the versions of the runtime packages, for the result file."""
     versions = {"python": sys.version.split()[0]}
@@ -531,9 +549,9 @@ def _versions() -> dict[str, str]:
             module = importlib.import_module(name)
         except Exception:  # noqa: BLE001 — a missing package is a failed check, not a crash
             continue
-        version = getattr(module, "__version__", "")
+        version = _reported_version(name, module)
         if version:
-            versions[name] = str(version)
+            versions[name] = version
     return versions
 
 

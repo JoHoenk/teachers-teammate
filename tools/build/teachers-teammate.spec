@@ -224,6 +224,9 @@ hiddenimports = [
     "teachers_teammate.gui.setup",
     # Pipeline modules the GUI reaches through a lazy import.
     "cv2",
+    # The smoke test reports the wheel's OpenCV version from here; ``cv2.__version__`` is
+    # OpenCV's own, and nothing else in the app imports this module.
+    "cv2.version",
     "pypdfium2",
     "teachers_teammate.infrastructure.proofreading.chunking",
     "teachers_teammate.infrastructure.proofreading.corrector",

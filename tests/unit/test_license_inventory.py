@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from tools.licenses import inventory
+from tools.licenses import inventory, notice
+from tools.release import mirror_sources
 
 #: The checkout as Bazel's runfiles see it, or the source tree when the test runs directly.
 _ROOT = (
@@ -14,6 +15,9 @@ _ROOT = (
     else Path(__file__).resolve().parents[2]
 )
 _STORE = _ROOT / "third_party_licenses"
+
+#: Archives that carry plugins only, so no ``libQt6<Module>`` library is named after them.
+_PLUGIN_ONLY = {"qtimageformats"}
 
 
 def _committed() -> list[inventory.Row]:
@@ -119,16 +123,9 @@ def test_the_compiled_outputs_are_what_the_store_compiles_to() -> None:
     )
 
 
-def _notice_section(title: str) -> str:
-    """Return the body of NOTICE's *title* section, up to the next heading."""
-    lines = (_ROOT / "NOTICE").read_text(encoding="utf-8").splitlines()
-    # A heading is a line followed by a line of dashes.
-    headings = [
-        index for index, line in enumerate(lines[:-1]) if line and set(lines[index + 1]) == {"-"}
-    ]
-    start = headings[headings.index(lines.index(title))] + 2
-    following = [index for index in headings if index > start]
-    return "\n".join(lines[start : following[0] if following else len(lines)])
+def _notice() -> str:
+    """Return the NOTICE of the checkout."""
+    return (_ROOT / "NOTICE").read_text(encoding="utf-8")
 
 
 def test_notice_names_the_locked_versions_in_its_source_section() -> None:
@@ -143,16 +140,35 @@ def test_notice_names_the_locked_versions_in_its_source_section() -> None:
     opencv = versions["opencv-python-headless"]
     certifi = versions["certifi"]
 
-    section = _notice_section("Source code")
+    section = notice.section(_notice(), notice.SOURCE_CODE)
 
     assert f"Qt {qt}" in section
     assert f"PySide6 {qt}" in section
-    assert f"qt-everywhere-src-{qt}.tar.xz" in section
+    assert f"/archive/qt/{'.'.join(qt.split('.')[:2])}/{qt}/submodules/" in section
     assert f"PySide6-{qt}-src" in section
     assert f"third-party-sources-qt{qt}" in section
     assert f"opencv-python-headless {opencv}" in section
     assert f"certifi {certifi}" in section
     assert f"pypi.org/project/certifi/{certifi}" in section
+
+
+def test_notice_names_the_sources_the_mirror_publishes() -> None:
+    """
+    Given  NOTICE and the table that says which Qt submodule carries which module
+    When   the archives a sources release is built from are held against the notice
+    Then   NOTICE names no archive the table cannot place, and the FFmpeg source set is the
+           notice's version.  The table knows archives the set does not hold (qttools); the gate
+           asks for one the moment a bundle carries its module.
+    """
+    text = _notice()
+    section = notice.section(text, notice.SOURCE_CODE)
+    ffmpeg, _ = notice.ffmpeg_versions(text)
+
+    assert set(notice.qt_modules(text)) - _PLUGIN_ONLY <= set(
+        mirror_sources.MODULE_ARCHIVE.values()
+    )
+    assert f"ffmpeg-{ffmpeg}.tar" in section
+    assert "the opencv-python-headless source" in section
 
 
 def test_notice_carries_the_written_offer() -> None:
@@ -161,7 +177,7 @@ def test_notice_carries_the_written_offer() -> None:
     When   the written offer is read
     Then   it names the three years, the LGPL and GPL sections it rests on, and a contact
     """
-    section = _notice_section("Written offer")
+    section = notice.section(_notice(), "Written offer")
 
     assert "three years" in section
     assert "LGPL-2.1 section 6(c)" in section

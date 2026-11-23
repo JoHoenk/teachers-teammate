@@ -9,7 +9,7 @@ Usage (from the repository root; ``gh`` and ``GH_TOKEN`` are needed for the comm
 to GitHub):
 
     python tools/release/release_tag.py check v0.5.7 --repo OWNER/NAME --sha <commit>
-    python tools/release/release_tag.py check v0.5.7-rc.1 --repo OWNER/NAME --skip-main
+    python tools/release/release_tag.py check v0.5.7-rc.1 --repo OWNER/NAME --skip-main --skip-sources
     python tools/release/release_tag.py forms v0.5.7-rc.1 --github-output "$GITHUB_OUTPUT"
     python tools/release/release_tag.py draft v0.5.7 --repo OWNER/NAME
     python tools/release/release_tag.py collect artifacts release
@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from tools.release import mirror_sources  # noqa: E402
 from tools.release.stamp_versions import normalize_version  # noqa: E402
 
 #: ``vX.Y.Z`` or ``vX.Y.Z-(alpha|beta|rc|pre)[.]N``.  The number is required, and a PEP 440 form
@@ -129,26 +130,26 @@ def draft_arguments(tag: str, repo: str) -> list[str]:
     return arguments
 
 
-def collect_files(artifacts: Path, destination: Path) -> list[Path]:
+def collect_files(folder: Path, destination: Path) -> list[Path]:
     """Copy exactly one file of each kind in :data:`RELEASE_FILE_PATTERNS` into *destination*.
 
     A draft with a missing installer, or with a stray extra file, must never be offered for
     publishing, so anything but exactly those files is an error.
 
     Raises:
-        SystemExit: a pattern matches none or several files, or the artifacts hold other files.
+        SystemExit: a pattern matches none or several files, or *folder* holds other files.
     """
     problems: list[str] = []
     chosen: list[Path] = []
     for pattern in RELEASE_FILE_PATTERNS:
-        found = sorted(path for path in artifacts.rglob(pattern) if path.is_file())
+        found = sorted(path for path in folder.rglob(pattern) if path.is_file())
         if len(found) != 1:
             problems.append(f"expected exactly one '{pattern}', found {len(found)}")
         else:
             chosen.append(found[0])
-    everything = sorted(path for path in artifacts.rglob("*") if path.is_file())
+    everything = sorted(path for path in folder.rglob("*") if path.is_file())
     if len(everything) != len(RELEASE_FILE_PATTERNS):
-        names = ", ".join(str(path.relative_to(artifacts)) for path in everything)
+        names = ", ".join(str(path.relative_to(folder)) for path in everything)
         problems.append(
             f"the artifacts hold {len(everything)} files, expected exactly "
             f"{len(RELEASE_FILE_PATTERNS)}: {names}"
@@ -227,6 +228,45 @@ def _on_main(sha: str) -> bool:
     )
 
 
+def missing_sources_release(repo: str, tree: Path = ROOT) -> str | None:
+    """Return what is wrong when the sources release does not hold the sources we ship.
+
+    The downloads offer the LGPL sources in a release of their own, so a tag whose sources were
+    never mirrored would ship a dead pointer.  The release keeps its name while the Qt version
+    stays the same, so a bump of OpenCV (which brings another FFmpeg) leaves the name right and
+    the contents wrong: what is inside it is what counts, not that it exists.  The versions come
+    from the inventory and NOTICE of the tagged commit, which is the checkout this runs in.
+
+    Raises:
+        SystemExit: GitHub answered with anything but the release or a "not found", or the tree
+            names no versions to look for.
+    """
+    try:
+        versions = mirror_sources.tree_versions(tree)
+        modules = mirror_sources.qt_module_archives(tree)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+    name = mirror_sources.sources_release_tag(versions[0])
+    assets = mirror_sources.release_assets(name, repo)
+    if assets is None:
+        return (
+            f"there is no release '{name}', so the downloads would point at nothing for the "
+            f"source of Qt {versions[0]}.\nCreate it before the tag is pushed: "
+            f"python tools/release/mirror_sources.py --upload --repo {repo}"
+        )
+    missing = mirror_sources.missing_assets(assets, versions, modules)
+    if missing:
+        held = ", ".join(sorted(assets)) or "no files"
+        return (
+            f"the release '{name}' does not hold the sources this commit ships:\n  "
+            + "\n  ".join(missing)
+            + f"\nIt holds: {held}"
+            + f"\nFill it before the tag is pushed: "
+            f"python tools/release/mirror_sources.py --upload --repo {repo}"
+        )
+    return None
+
+
 def _command_check(args: argparse.Namespace) -> int:
     tag = args.tag
     delete_hint = f"Delete it with: git push --delete origin '{tag}'"
@@ -244,6 +284,11 @@ def _command_check(args: argparse.Namespace) -> int:
     if not newer_than_latest(tag, latest):
         print(f"::error::'{tag}' is not newer than the latest release '{latest}'.\n{delete_hint}")
         return 1
+    if not args.skip_sources:
+        problem = missing_sources_release(args.repo)
+        if problem is not None:
+            print(f"::error::{problem}")
+            return 1
     print(f"{tag} is a release tag (latest published: {latest or 'none'})")
     return 0
 
@@ -321,6 +366,11 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--repo", required=True, help="OWNER/NAME, for the latest release")
     check.add_argument("--sha", help="the commit the tag points at (not needed with --skip-main)")
     check.add_argument("--skip-main", action="store_true", help="do not require the commit on main")
+    check.add_argument(
+        "--skip-sources",
+        action="store_true",
+        help="do not require the release that holds the Qt sources (the dry run)",
+    )
     check.set_defaults(handler=_command_check)
 
     forms = commands.add_parser("forms", help="print the version forms the build steps need")

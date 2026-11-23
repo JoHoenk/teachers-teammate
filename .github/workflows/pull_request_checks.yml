@@ -4,9 +4,9 @@
 #
 # Not on tags: release.yml runs lint and tests itself, and a second run per tag only repeats it.
 #
-# The bundle build (build_bundles.yml) is not part of the gate on purpose. It runs only when the
-# packaging files change, and a required check that is skipped by a path filter stays "pending"
-# forever. Making it blocking would mean running three platform builds on every pull request.
+# The bundle build (build_bundles.yml) is not part of the gate on purpose: it runs only for the
+# paths that can break it, and a required check that a path filter skips stays "pending" forever.
+# Making it blocking would mean running three platform builds on every pull request.
 
 name: Pull Request Checks
 

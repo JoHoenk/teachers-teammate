@@ -212,6 +212,20 @@ def test_too_large_text_for_basic_computers() -> None:
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
+@pytest.mark.parametrize("memory_gb", [14.0, None])
+def test_too_large_text_for_a_basic_computer_with_a_known_card(memory_gb: float | None) -> None:
+    """
+    Given  a basic computer (profile cpu) that reports a graphics memory of its own, and no
+           main memory
+    When   the explanation is rendered
+    Then   it names the card's size and does not raise
+    """
+    text = wording.too_large_text(memory_gb, HardwareProfile.CPU, card_gb=4.0)
+    assert "4 GB" in text
+    assert "None" not in text
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
 def test_too_large_text_without_known_size() -> None:
     """
     Given  a model whose memory need is unknown

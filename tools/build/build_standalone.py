@@ -190,8 +190,7 @@ def _license_destination() -> Path | None:
     The Windows installer takes the whole folder, so the files land next to the program. The
     macOS app is already signed when PyInstaller finishes, and a file added to it now would break
     the signature, so ``make_dmg.sh`` puts them into a ``Licenses`` folder beside the app. On
-    Linux ``make_deb.sh`` and ``make_tarball.sh`` put them into the package's documentation
-    folder.
+    Linux ``make_deb.sh`` puts them into the package's documentation folder.
     """
     if sys.platform == "win32":
         return ROOT / "dist" / "teachers-teammate"

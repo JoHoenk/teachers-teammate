@@ -51,7 +51,7 @@ Only the maintainer may create or delete `v*` tags (tag ruleset); a tag cannot b
 | `deploy_docs.yml` | pushes to `main`, manual | builds the Sphinx site and deploys it to GitHub Pages |
 | `release.yml` | a `v*` tag | the release above |
 | `release_dry_run.yml` | manual, with a version | the whole release build without touching a release |
-| `build_bundles.yml` | manual; PRs touching `tools/packaging/`, `tools/build/` or `build_*.yml` | the three bundles as workflow artifacts (2 days) |
+| `build_bundles.yml` | manual; PRs touching the app (`teachers_teammate/`), `tests/e2e/`, `tools/packaging/`, `tools/build/`, the requirement, `pyproject.toml` and Bazel module files, the build-venv action or `build_*.yml` | the three bundles as workflow artifacts (2 days) |
 | `addon_resolution.yml` | weekly | resolves every add-on's requirement against the bundle's versions, so a new `langchain-*` or spaCy release that breaks an add-on shows up before release day |
 | `dependabot.yml` | weekly | dependency bumps, each held back 7 days after its release (security updates are not) |
 
@@ -64,12 +64,14 @@ gh run download <run-id> -n teachers-teammate-linux   # or -windows, -macos
 ```
 
 The wheel is installed the way a teacher would, into a clean venv, and every console script has to
-start. Every bundle build runs the app's smoke test (`--_smoke_test`), installs and uses every add-on
-in it (`--_addon_smoke_test`, needs the network), and installs the result on fresh
-systems (Ubuntu 24.04/26.04 and Debian 13 containers, macOS 15/26, Windows Server 2022/2025),
-including an update from the newest published release. Not covered by CI, so checked by hand on a
-VM before a release: the installer's interactive pages, the UAC prompt, a real desktop (window,
-fonts, icons, Gatekeeper), Windows 10 1809 and macOS 15.0.
+start. Every bundle build runs the app's smoke test (`--_smoke_test`), installs and uses every
+add-on in it (`--_addon_smoke_test`, needs the network), and walks a teacher's work through the
+app's own window (`tests/e2e/walkthrough.py`, see [testing.md](testing.md) → "The app
+walkthrough"). It then installs the result on fresh systems (Ubuntu 24.04/26.04 and Debian 13
+containers, macOS 15/26, Windows Server 2022/2025), including an update from the newest published
+release. Not covered by CI, so checked by hand on a VM before a release: the installer's
+interactive pages, the UAC prompt, a real desktop (fonts, icons, a window manager), Gatekeeper,
+Windows 10 1809 and macOS 15.0.
 
 ### Checksums and provenance
 
@@ -142,10 +144,6 @@ Run these after the standalone build. Each takes the version as its argument.
 
 ```bash
 bash tools/packaging/make_deb.sh 1.2.3       # dist/teachers-teammate_1.2.3_amd64.deb
-```
-
-```bash
-bash tools/packaging/make_tarball.sh 1.2.3   # dist/teachers-teammate-1.2.3-linux-x86_64.tar.xz
 ```
 
 ```bash

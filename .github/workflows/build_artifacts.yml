@@ -26,316 +26,63 @@ permissions:
   contents: read
 
 jobs:
-  build-package:
-    name: Build & Package (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  # One job per platform, so that a platform's install jobs start when its own build is done
+  # and not when the slowest of the three is (a `needs` on a matrix waits for every leg).
+  # The runner images are pinned, not `-latest`: a moving label changes the system the bundle is
+  # built and tested on without a commit saying so.
+  build-linux:
+    # glibc 2.39: Ubuntu 24.04+, Debian 13+, Mint 22+. PyInstaller bundles the libraries
+    # of the machine it builds on, so the floor follows this image on purpose — a newer
+    # runner would silently raise it, which check_linux_bundle.py then catches. The next
+    # move is when 24.04 leaves standard support (2029), and it is a decision, not a
+    # runner default. Users on Ubuntu 22.04, Mint 21 and Debian 12 stay on v0.5.x
+    # (docs/index.md).
+    uses: ./.github/workflows/build_package.yml
+    with:
+      artifact: linux
+      os: ubuntu-24.04
+      artifact_prefix: ${{ inputs.artifact_prefix }}
+      retention_days: ${{ inputs.retention_days }}
+      version: ${{ inputs.version }}
 
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # glibc 2.39: Ubuntu 24.04+, Debian 13+, Mint 22+. PyInstaller bundles the libraries
-          # of the machine it builds on, so the floor follows this image on purpose — a newer
-          # runner would silently raise it, which check_linux_bundle.py then catches. The next
-          # move is when 24.04 leaves standard support (2029), and it is a decision, not a
-          # runner default. Users on Ubuntu 22.04, Mint 21 and Debian 12 stay on v0.5.x
-          # (docs/index.md).
-          - artifact: linux
-            os: ubuntu-24.04
-          # Pinned, not `-latest`: a moving label changes the Windows and macOS the bundle is
-          # built and tested on without a commit saying so.
-          - artifact: windows
-            os: windows-2025
-          - artifact: macos
-            os: macos-26
+  build-windows:
+    uses: ./.github/workflows/build_package.yml
+    with:
+      artifact: windows
+      os: windows-2025
+      artifact_prefix: ${{ inputs.artifact_prefix }}
+      retention_days: ${{ inputs.retention_days }}
+      version: ${{ inputs.version }}
 
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          # The token stays out of .git/config: nothing here pushes, and a build step that
-          # runs third-party code must not find a credential lying around.
-          persist-credentials: false
-
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
-        with:
-          python-version-file: .python-version
-
-      # `value` is the release string without the v (file names, the exe's version resource);
-      # `win` has no pre-release suffix, because VIProductVersion wants X.Y.Z.W.
-      - name: Resolve package version
-        id: version
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
-        run: python tools/release/release_tag.py forms "$VERSION" --github-output "$GITHUB_OUTPUT"
-
-      # Stamp the release version into the source tree so the bundled
-      # __version__ (shown in the About dialog) matches the release tag.
-      # Without this the standalone build ships the hardcoded dev version.
-      - name: Stamp release version into source
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
-        run: python tools/release/stamp_versions.py --version "$VERSION"
-
-      - name: Install Qt system libraries (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -qq
-          # Qt's xcb platform plugin links these; make_deb.sh measures the .deb's Depends: line
-          # from what the bundle needs, which only works when they are installed here.
-          sudo apt-get install -y --no-install-recommends \
-            libxcb-xinerama0 libegl1 libgl1 libglib2.0-0 libxcb-cursor0 libxcb-icccm4 \
-            libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libxcb-util1 \
-            libxcb-xkb1 libxkbcommon-x11-0
-
-      - name: Create the build environment
-        uses: ./.github/actions/build-venv
-
-      - name: Check the pins
-        shell: bash
-        run: |
-          python tools/build/check_pins.py
-          # pip's markers hide Windows-only and macOS-only dependencies of PyInstaller from a
-          # Linux resolver, so check them here, once, instead of on the runner that needs them.
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            python tools/build/check_pins.py --platform win_amd64
-            python tools/build/check_pins.py --platform macosx_15_0_arm64
-          fi
-
-      # check_pins.py proves every installed distribution is pinned; this proves every one of
-      # them is a bundle or build row of the license inventory, at the same version.  A
-      # platform-only dependency the Linux lock cannot show (pywin32-ctypes on Windows,
-      # macholib on macOS) fails here, on the runner that would have shipped it.
-      - name: Check the license inventory against the build environment
-        shell: bash
-        run: python tools/licenses/inventory.py --check-env
-
-      # The model files the app carries itself (the reader and the page models, 70 MB), pinned by
-      # revision and SHA-256 in teachers_teammate/domain/local_models.py.  fetch_models.py skips a
-      # file that is already there and correct, so a hit costs nothing; the key changes when a pin
-      # does.  Per runner, so three jobs never race to save the same key.
-      - name: Cache the bundled model files
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: teachers_teammate/_models
-          key: bundled-models-${{ runner.os }}-${{ hashFiles('teachers_teammate/domain/local_models.py') }}
-
-      - name: Build standalone binaries
-        run: python tools/build/build_standalone.py
-        env:
-          QT_API: pyside6
-          # The release string, not the PEP 440 form: the exe's version resource must carry the
-          # same product version as the setup and the uninstaller (make_version_resource.py).
-          VERSION: ${{ steps.version.outputs.value }}
-
-      - name: Smoke-test the binary (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_smoke_test smoke.json
-
-      - name: Smoke-test the binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $process = Start-Process -FilePath dist/teachers-teammate/teachers-teammate.exe `
-            -ArgumentList '--_smoke_test', 'smoke.json' -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            throw "the smoke test exited with $($process.ExitCode)"
-          }
-
-      - name: Smoke-test the app (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate --_smoke_test smoke.json
-
-      # Installs every add-on from PyPI through the app's own pip and merge, then imports it and
-      # hides a name with spaCy.  The merge keeps the bundle's copy of a shared package
-      # (packaging, pydantic, ...); this is where a bundle that carries only part of one fails.
-      - name: Install and use the add-ons in the binary (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate \
-            --_addon_smoke_test addon_smoke.json || { cat addon_smoke.json; exit 1; }
-
-      - name: Install and use the add-ons in the binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $process = Start-Process -FilePath dist/teachers-teammate/teachers-teammate.exe `
-            -ArgumentList '--_addon_smoke_test', 'addon_smoke.json' -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            Get-Content addon_smoke.json
-            throw "the add-on smoke test exited with $($process.ExitCode)"
-          }
-
-      - name: Install and use the add-ons in the app (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate \
-            --_addon_smoke_test addon_smoke.json || { cat addon_smoke.json; exit 1; }
-
-      # PyInstaller bundles the libraries of the machine it builds on, so a newer macOS runner
-      # silently raises the floor. The check reads the minimum macOS of every Mach-O file in
-      # the .app, every architecture slice of a universal2 one included.
-      #
-      # The floor is 15.0, set by the OpenCV wheel. The PySide6 6.12.0 binding modules
-      # (QtCore.abi3.so, libpyside6, shiboken6, ...) say 26.0 in both slices: upstream built
-      # them without a deployment target, so they are exempt. Drop --ignore when a wheel fixes it.
-      # The floor itself is MACOS_MINIMUM in check_macos_bundle.py, which the spec's
-      # LSMinimumSystemVersion reads too, so the .app and this check cannot disagree.
-      - name: Check the macOS bundle
-        if: runner.os == 'macOS'
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: |
-          python tools/build/check_macos_bundle.py \
-            --ignore '*/PySide6/*.abi3.so' \
-            --ignore '*/PySide6/libpyside6*.dylib' \
-            --ignore '*/shiboken6/*' \
-            ${VERSION:+--version "$VERSION"}
-          # The license files travel beside the app (make_dmg.sh), never inside it: a file added
-          # after PyInstaller signed the bundle would break the signature.
-          codesign --verify --deep --strict dist/teachers-teammate.app
-
-
-      # `.python-version` is the one place the version is written down: rules_python builds the
-      # Bazel tests with it, setup-python installs it here, and the smoke test reports what
-      # PyInstaller actually froze.  A mismatch means the bundle and the tests disagree.
-      - name: Check the bundle's Python version
-        shell: bash
-        run: python tools/build/check_smoke.py smoke.json
-
-      # The add-ons' packages are not in the test lock (on purpose), so this is the only place
-      # their newest releases are held against the bundled numpy, pydantic, ... A conflict shows
-      # here, not as a pip error in a teacher's Add-ons window. Nothing is installed (dry run).
-      - name: Check that the add-ons resolve against the bundle (Linux)
-        if: runner.os == 'Linux'
-        run: python tools/build/check_addon_resolution.py dist/teachers-teammate/teachers-teammate
-
-      - name: Upload the smoke test result
-        if: ${{ always() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}-smoke
-          retention-days: ${{ inputs.retention_days }}
-          path: smoke.json
-          if-no-files-found: warn
-
-      - name: Upload the add-on smoke test result
-        if: ${{ always() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}-addon-smoke
-          retention-days: ${{ inputs.retention_days }}
-          path: addon_smoke.json
-          if-no-files-found: ignore
-
-      - name: Check the Linux bundle
-        if: runner.os == 'Linux'
-        run: |
-          python tools/build/check_linux_bundle.py --max-glibc 2.39
-          python tools/build/check_linux_bundle.py --unused
-          # build_standalone.py strips the debug information setup-python's libpython and
-          # extension modules ship with (about 46 MB); this fails when a new file brings it back.
-          python tools/build/check_linux_bundle.py --debug-info
-          # The libraries the bundle took from the runner image, with their Debian copyright
-          # files.  A denied one, or one no package owns, fails here; the file goes into
-          # _internal/ for the help dialog, and make_deb.sh and make_tarball.sh copy it out.
-          python tools/build/check_linux_bundle.py --host-libs \
-            dist/teachers-teammate/_internal/third_party_host_libraries.txt
-
-      - name: Create .deb package (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: bash tools/packaging/make_deb.sh "$VERSION"
-
-      - name: Create the portable tarball (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: |
-          bash tools/packaging/make_tarball.sh "$VERSION"
-          # The LGPL needs the notice and the license texts in every download.
-          listing=$(tar -tJf dist/teachers-teammate-*-linux-x86_64.tar.xz)
-          grep -E '/NOTICE$' <<<"$listing"
-          grep -E '/third_party_license\.txt$' <<<"$listing"
-
-      - name: Install NSIS and create installer (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-          WIN_VERSION: ${{ steps.version.outputs.win }}
-        run: |
-          # Pinned: Chocolatey's newest NSIS is a moving target, and the installer script is
-          # compiled by it. 3.13.0 is what the last green build installed.
-          choco install nsis --version=3.13.0 --no-progress -y
-          # Chocolatey does not update the current process PATH — prepend NSIS manually
-          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
-          # The two makensis passes (uninstaller, then the setup that packs it) are the script's.
-          pwsh -File tools/packaging/make_windows_installer.ps1 `
-            -Version $env:VERSION -WinVersion $env:WIN_VERSION
-          if ($LASTEXITCODE -ne 0) { throw "make_windows_installer.ps1 failed ($LASTEXITCODE)" }
-
-      - name: Create .dmg installer (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: bash tools/packaging/make_dmg.sh "$VERSION"
-
-      # Platform-specific uploads prevent the macOS onedir intermediate
-      # (dist/teachers-teammate/) from being swept up alongside the .dmg.
-      - name: Upload build artifact (Linux)
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
-          retention-days: ${{ inputs.retention_days }}
-          path: |
-            dist/teachers-teammate-*-linux-x86_64.tar.xz
-            dist/teachers-teammate_*.deb
-
-      - name: Upload build artifact (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
-          retention-days: ${{ inputs.retention_days }}
-          path: dist/teachers-teammate-*-w64-setup.exe
-
-      - name: Upload build artifact (macOS)
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
-          retention-days: ${{ inputs.retention_days }}
-          path: dist/teachers-teammate-*-macos.dmg
+  build-macos:
+    uses: ./.github/workflows/build_package.yml
+    with:
+      artifact: macos
+      os: macos-26
+      artifact_prefix: ${{ inputs.artifact_prefix }}
+      retention_days: ${{ inputs.retention_days }}
+      version: ${{ inputs.version }}
 
   # ── Install the built packages on the systems we support ──────────────────
   # Build once, install in a matrix: the build job makes the file, these jobs prove it
-  # installs, upgrades and starts on each system. Read-only, like the build. All three check
-  # out, because they run the packaging scripts from the repository (test_deb_install.sh,
-  # test_macos_install.sh, test_windows_installer.ps1: everything is in them, so a maintainer can
-  # run the same test on a clean machine) and download the newest published release with `gh` —
-  # the version a teacher has today, which is the one path a fresh install never takes. A missing
-  # release or a failed download fails the job on purpose: a renamed asset must not switch the
-  # test off silently.
+  # installs, upgrades and walks through the app on each system. Read-only, like the build. All
+  # three check out, because they run the packaging scripts from the repository
+  # (test_deb_install.sh, test_macos_install.sh, test_windows_installer.ps1: everything is in
+  # them, so a maintainer can run the same test on a clean machine) and download the newest
+  # published release with `gh` — the version a teacher has today, which is the one path a fresh
+  # install never takes. A missing release or a failed download fails the job on purpose: a
+  # renamed asset must not switch the test off silently.
   #
-  # Each matrix leg uploads its smoke result under a name of its own (`...-<image or os>`):
-  # upload-artifact accepts two artifacts with one name, and they could not be told apart.
+  # Each matrix leg uploads its smoke and walkthrough results under a name of its own
+  # (`...-<image or os>`): upload-artifact accepts two artifacts with one name, and they could
+  # not be told apart.
 
   install-linux:
     name: Install the .deb (${{ matrix.image }})
-    needs: [build-package]
-    # Not skipped when another platform's build fails: each job downloads its own artifact and
-    # fails by itself if that one is missing, so one red build cannot hide the others.
+    needs: [build-linux]
+    # Waits for its own platform's build only. Not skipped when that build is red: the walk runs
+    # after the packages are uploaded, so the install can still run, and a missing artifact fails
+    # the download by itself.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     permissions:
@@ -369,7 +116,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 tools/packaging/latest_release.py download --pattern '*_amd64.deb' --dir old
 
+      # The time limits below cover everything the step does, the walk included: a walk that
+      # hangs is ended by the script's own watchdog, and this bounds the installs around it, so
+      # neither can run into the job's six hours.
       - name: Install, upgrade, remove and purge the .deb in a clean container
+        timeout-minutes: 30
         shell: bash
         env:
           IMAGE: ${{ matrix.image }}
@@ -383,11 +134,23 @@ jobs:
           retention-days: ${{ inputs.retention_days }}
           path: smoke/smoke.json
 
+      - name: Upload the walkthrough result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-linux-installed-e2e-${{ matrix.slug }}
+          retention-days: ${{ inputs.retention_days }}
+          path: |
+            smoke/e2e.json
+            smoke/e2e-shots/
+          if-no-files-found: warn
+
   install-macos:
     name: Install the dmg (${{ matrix.os }})
-    needs: [build-package]
-    # Not skipped when another platform's build fails: each job downloads its own artifact and
-    # fails by itself if that one is missing, so one red build cannot hide the others.
+    needs: [build-macos]
+    # Waits for its own platform's build only. Not skipped when that build is red: the walk runs
+    # after the packages are uploaded, so the install can still run, and a missing artifact fails
+    # the download by itself.
     if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     permissions:
@@ -417,9 +180,10 @@ jobs:
         run: python3 tools/packaging/latest_release.py download --pattern '*-macos.dmg' --dir old
 
       # M2 (a teacher who already has the app drags the new one over it), the licenses in the
-      # dmg, the replaced bundle, M1 (version, identifier, floor, icon) and the installed app's
-      # smoke test: all in the script.
+      # dmg, the replaced bundle, M1 (version, identifier, floor, icon), the installed app's
+      # smoke test and its walkthrough: all in the script.
       - name: Install the newest release, replace it with the new dmg and start it
+        timeout-minutes: 20
         shell: bash
         run: bash tools/packaging/test_macos_install.sh dist/*-macos.dmg old/*-macos.dmg smoke.json
 
@@ -431,11 +195,23 @@ jobs:
           retention-days: ${{ inputs.retention_days }}
           path: smoke.json
 
+      - name: Upload the walkthrough result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-macos-installed-e2e-${{ matrix.os }}
+          retention-days: ${{ inputs.retention_days }}
+          path: |
+            e2e.json
+            e2e-shots/
+          if-no-files-found: warn
+
   install-windows:
     name: Install the setup (${{ matrix.os }})
-    needs: [build-package]
-    # Not skipped when another platform's build fails: each job downloads its own artifact and
-    # fails by itself if that one is missing, so one red build cannot hide the others.
+    needs: [build-windows]
+    # Waits for its own platform's build only. Not skipped when that build is red: the walk runs
+    # after the packages are uploaded, so the install can still run, and a missing artifact fails
+    # the download by itself.
     if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     permissions:
@@ -461,8 +237,11 @@ jobs:
 
       # The runner is elevated, so the per-user runs inside the script pass /SCOPE=user. The
       # script starts the installed app with --_smoke_test, so a missing runtime DLL on a clean
-      # image shows here too, and it keeps the result for the upload below.
+      # image shows here too, and it walks through the installed copy, so this is where the app's
+      # window is built on a Windows that is not the build image. Both results are kept for the
+      # uploads below.
       - name: Test the installer
+        timeout-minutes: 60
         shell: pwsh
         env:
           # Steps 9 and 10 download the shipped v0.5.6 and the newest published release with
@@ -484,3 +263,14 @@ jobs:
           name: ${{ inputs.artifact_prefix }}-windows-installed-smoke-${{ matrix.os }}
           retention-days: ${{ inputs.retention_days }}
           path: smoke.json
+
+      - name: Upload the walkthrough result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-windows-installed-e2e-${{ matrix.os }}
+          retention-days: ${{ inputs.retention_days }}
+          path: |
+            e2e.json
+            e2e-shots/
+          if-no-files-found: warn

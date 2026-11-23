@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -119,6 +121,50 @@ def test_resolve_storage_root_raises_when_no_candidate_is_writable(
     message = str(exc.value)
     assert str(override) in message
     assert str(platform) in message
+
+
+def test_two_threads_probe_one_folder_without_removing_each_others_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  the GUI thread and a worker resolve the same folder at the same time
+    When   the second probe runs to its end while the first has written but not read its file
+    Then   both find the folder writable
+    """
+    real_write = os.write
+    written = threading.Event()
+    finished = threading.Event()
+    results: dict[str, tuple[bool, str | None]] = {}
+
+    def hooked_write(fd: int, data: bytes) -> int:
+        count = real_write(fd, data)
+        if threading.current_thread().name == "patient":
+            written.set()
+            assert finished.wait(10)
+        return count
+
+    monkeypatch.setattr(storage_root.os, "write", hooked_write)
+
+    def patient() -> None:
+        results["patient"] = storage_root._probe_writable(tmp_path)
+
+    def other() -> None:
+        assert written.wait(10)
+        results["other"] = storage_root._probe_writable(tmp_path)
+        finished.set()
+
+    threads = [
+        threading.Thread(target=patient, name="patient"),
+        threading.Thread(target=other, name="other"),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert results["patient"] == (True, None)
+    assert results["other"] == (True, None)
 
 
 # ── settings and history live outside the cache ────────────────────────────

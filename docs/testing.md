@@ -164,14 +164,21 @@ that names the step and what it waited for.
 Guards replace the teacher's eyes: an unexpected dialog is declined and recorded, a window a
 step did not open is closed and recorded with its title and its own sentences (a bundle that
 lost a model file says so in the result), an exception in a slot is recorded and fails its step,
-and warnings are collected. A wait that runs out names what the guards caught, so a broken
-bundle says why it broke, and a watchdog ends a hung walk with a result instead of running into
-the CI job's limit.
+and warnings and Qt's own messages are collected. A wait that runs out names what the guards
+caught, so a broken bundle says why it broke, and a watchdog ends a hung walk with a result
+instead of running into the CI job's limit: the result then carries every thread's stack and what
+the app was running (`hang`).
 Every guard lives in the script, so a bundle run reports the same way a test run does.
 
-The walk writes one JSON file (steps, dialogs, modals, exceptions, warnings, screenshots,
-platform and versions) and exits 0 only when every step passed. It writes that file on failure
-too, because a windowed build has no console.
+A run is over only when the summary has arrived and the window has taken it in (Run enabled, no
+worker running); a stop is clicked at a fixed point of the worker, not on a timer. The words
+the reader made of the drawn pages are compared with a slack of a character in eight, because the
+reader's runtime picks its kernels by CPU; what the walk types and the text file hold are compared
+exactly, and `readings` in the result shows what the reader made of the pages.
+
+The walk writes one JSON file (steps, dialogs, modals, exceptions, warnings, Qt messages, readings,
+screenshots, platform and versions) and exits 0 only when every step passed. It writes that file
+on failure too, because a windowed build has no console.
 
 ### From source
 
@@ -181,9 +188,23 @@ bazel test //tests:test_gui_main_walkthrough --test_output=errors
 
 The test links the real reader and page models into one root via `models_store(tmp_path)` and
 runs `walkthrough.main`, the same entry point the bundle runner calls, on the three documents.
-It also replaces one thing per test and checks the report: a reader that raises, an unexpected
-dialog, an unexpected window, a raising slot, a saved config, and that no thread is left running.
-The target is `large` (about three and a half minutes on a fast machine).
+Every walk is a process of its own (`tests/e2e/walk_checked.py`): a walk leaves windows and
+queued signals behind, and a hung walk ends only its own process. One thing is broken per test and
+the report is checked: a reader that raises, an unexpected dialog, an unexpected window, a raising
+slot, a reader that never returns (the watchdog) and a saved config; the plain walk also checks
+that no thread is left running. The target is `large` (about a minute).
+
+One walk is the app with proofreading on (`walkthrough.main(..., proofreading=...)`): the settings
+file turns it on and names a model on `127.0.0.1`, and `FakeOllama` answers the exchange's three
+steps (`ProofreadingAnswers`, which replaces the last word of every text). The walk then reads the items
+the model left in the Check tab, ticks them as checked, finds the model's word in the Word file a
+run writes, and spoils a stored review so that the app has to drop it. That last step is what
+`application/merged_view.py` does for any stored document: a review that no longer quotes the
+words it points at is dropped with a logged warning, and the walk requires that warning and the
+changes without explanations.
+
+The bundle walk never has proofreading on: the stand-in is test code, and the import list below
+keeps it out of the script.
 
 ### Against a bundle
 
@@ -202,16 +223,35 @@ process before the script's first line, so there is no `e2e.json` to read.
 On a Wayland desktop the window opens on the `wayland` platform, even under `xvfb-run`:
 `WAYLAND_DISPLAY` is what Qt follows. `QT_QPA_PLATFORM=xcb` puts it on the display `DISPLAY`
 names instead; the Qt xcb plugin needs `libxcb-cursor0` and the other `libxcb-*` packages that
-`.github/workflows/build_artifacts.yml` installs; the `.deb` depends on them and a bare checkout
+`.github/workflows/build_package.yml` installs; the `.deb` depends on them and a bare checkout
 does not have them.
+
+### In CI
+
+Every bundle build runs the walkthrough on the build machine — on `xvfb-run` on Linux, in the
+app's own window on Windows and macOS — and every install job runs it on the installed copy:
+the `.deb` in the ubuntu:24.04, ubuntu:26.04 and debian:13 containers, the `.app` on macOS 15 and
+26, the setup on Windows Server 2022 and 2025. This is the only place a platform's own plugin,
+fonts and window server meet the app.
+
+Each job uploads `e2e.json` and the screenshots even when the step failed
+(`<prefix>-<platform>-e2e` for a build machine, `<prefix>-<platform>-installed-e2e-<image or os>`
+for an install): the file says which step broke and what the guards caught. Every one of those
+steps has a time limit, and the script's own watchdog — armed before the app services are built —
+ends a hung app with a result before that limit is reached.
+
+The build job walks after it has uploaded the packages: a failed walk never costs a platform its
+installers, and nothing the app writes while it runs can land in one of them.
 
 ### Adding a step
 
-One method on `Walk`, one row in `STEPS` (`tests/e2e/walkthrough.py`). The step clicks what a
-teacher clicks through `_handles`, and declares the dialogs it expects with `self._answers.expect`
-before it triggers them — any other dialog fails the step. Waits are conditions with a deadline
-(`_settle`), never sleeps. New settings go into `write_settings`; new input files into
-`write_inputs`.
+One method on `Walk`, one row in `STEPS` (`tests/e2e/walkthrough.py`) — or in `PROOFREADING_STEPS`
+with the step it follows, for one that needs a model behind it: those run only when the walk is
+given a `ProofreadingSetup`. The step clicks what a teacher clicks through `_handles`, and declares
+the dialogs it expects with `self._answers.expect` before it triggers them — any other dialog fails
+the step. A menu or a window the step opens itself goes through `_in_modal`. Waits are conditions
+with a deadline (`_settle`), never sleeps; a run is waited for with `_wait_run`. New settings go
+into `write_settings`; new input files into `write_inputs`.
 
 ### What the script may import
 

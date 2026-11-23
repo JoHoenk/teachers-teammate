@@ -2828,7 +2828,10 @@ anything stores them:
 Both are checked with `fits(review, raw_plain)`: every part's `original` must be
 `raw_plain[start:end]`.  A review that does not fit is dropped with a correction warning
 (`REVIEW_UNMATCHED` for names, `MISSING_REVIEW_WARNING` for pieces) instead of being stored: a
-half-right review would show AI corrections as the teacher's own.
+half-right review would show AI corrections as the teacher's own.  A stored review is checked
+again when it is read (`application/merged_view.py`): one that no longer fits the stored
+transcription — a restored backup, a text the teacher rewrote while the review stayed — is dropped
+with a logged warning, and the changes are shown without explanations.
 
 **Align** (`domain/proofreading/review.py:align`) is how a reader shows the review.  It diffs raw
 against corrected (`word_diff`, the one diff of the app) and attaches each note to the hunk it

@@ -66,6 +66,7 @@ from ...application.check_items import (
 from ...domain.proofreading.review import CHANGE_CATEGORIES
 from ...texts import check as check_txt
 from ...texts import review as txt
+from .._handles import ITEM_LIST
 from . import _style
 from ._flow import FlowLayout
 from ._masking import Masking
@@ -718,6 +719,7 @@ class SidePanel(QWidget):
 
         self._card = _Card()
         self._list = QListWidget()
+        self._list.setObjectName(ITEM_LIST)
         self._delegate = _ItemDelegate(self._list)
         self._list.setItemDelegate(self._delegate)
         self._list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)

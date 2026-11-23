@@ -10,7 +10,7 @@
     resource.
 
     Run from the repository root, after tools/build/build_standalone.py, with makensis on the
-    PATH (choco install nsis --version=3.13.0). CI runs this script (build_artifacts.yml);
+    PATH (choco install nsis --version=3.13.0). CI runs this script (build_package.yml);
     docs/deployment.md describes it.
 
 .PARAMETER Version

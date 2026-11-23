@@ -99,7 +99,8 @@ jobs:
     with:
       version: ${{ github.ref_name }}
       retention_days: 3
-      # Same reason: `release-linux`, `release-windows`, `release-macos` (+ `-smoke`).
+      # Same reason: the installers are `release-linux`, `release-windows`, `release-macos`, and
+      # only those three are fetched (`-smoke`, `-e2e` and `-installed-…` are reports).
       artifact_prefix: release
 
   # ── Attach the assets to the draft ────────────────────────────────────────

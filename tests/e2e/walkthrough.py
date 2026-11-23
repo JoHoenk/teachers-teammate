@@ -13,6 +13,11 @@ asked: the boxes and pickers are answered
 (:func:`~teachers_teammate.gui._dialogs.answering`), one temporary folder holds the cache, the
 settings and the data root, and no API key is read or written.
 
+Given a :class:`ProofreadingSetup`, the run proofreads too, and the walk reads what that left: the
+items of the Check tab, a ticked item, the model's word in the Word file, and a review the app has
+to drop because it no longer fits its text.  The bundle walk never does: the stand-in server is
+test code (:class:`~tests.fakes.fake_ollama.ProofreadingAnswers`) and stays outside this file.
+
 The result is one JSON file, written when a step fails too, because a windowed build on Windows
 has no console.  The exit code is 0 only when every step passed.
 
@@ -27,6 +32,7 @@ import argparse
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 import dataclasses
+import faulthandler
 import json
 import logging
 import os
@@ -41,37 +47,61 @@ from typing import Any
 
 from docx import Document
 from PIL import Image, ImageDraw, ImageFont
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, qVersion
-from PySide6.QtGui import QAction, QKeyEvent, QPixmap, QTextCursor, QTextDocumentFragment
+from PySide6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QObject,
+    Qt,
+    QtMsgType,
+    QTimer,
+    qInstallMessageHandler,
+    qVersion,
+)
+from PySide6.QtGui import (
+    QAction,
+    QContextMenuEvent,
+    QKeyEvent,
+    QPixmap,
+    QTextCursor,
+    QTextDocumentFragment,
+)
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
     QDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QMenu,
     QTabWidget,
     QTextEdit,
     QWidget,
 )
 
 from teachers_teammate import __version__
+from teachers_teammate.application.check_items import ItemKind
 from teachers_teammate.application.composition import AppServices, build_app_services
 from teachers_teammate.application.queue import StageState
+from teachers_teammate.application.run import state_store_for
 from teachers_teammate.config import Config, load_config_file
 from teachers_teammate.domain.output_files import DOCX_SUFFIX, output_path
+from teachers_teammate.domain.proofreading.review import CorrectionReview
 from teachers_teammate.domain.run_summary import FileStatus, RunStatus, RunSummary
-from teachers_teammate.domain.stages import ProgressStage, Stage
+from teachers_teammate.domain.stages import ProgressStage
 from teachers_teammate.gui import _handles
 from teachers_teammate.gui._app_bootstrap import create_app
-from teachers_teammate.gui._background import wait_for_background_tasks
+from teachers_teammate.gui._background import background_activity, wait_for_background_tasks
 from teachers_teammate.gui._dialogs import Asked, answering
 from teachers_teammate.gui._export_menu import ExportKind
-from teachers_teammate.gui._main_window import MainWindow
+from teachers_teammate.gui._main_window import MainWindow, _app_icon
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._worker import OCRWorker, detached_workers_running
 from teachers_teammate.gui.composition import build_main_window
 from teachers_teammate.gui.settings import SettingsPage, SettingsWindow
+from teachers_teammate.infrastructure.proofreading.schemas import Category
+from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.texts import dialogs as dlg
+from teachers_teammate.texts import main_window as win
 from teachers_teammate.texts._types import Answer
 
 # ── what the walk waits for ──────────────────────────────────────────────────
@@ -82,6 +112,11 @@ RUN_S = 180.0
 #: The whole walk; the watchdog ends the process at this point, so a deadlock cannot run into
 #: the CI job's own limit.  Well under the Bazel target's timeout, so the result is written first.
 WALK_S = 600.0
+#: How long the walk waits for the app's background tasks after a window closed.  A hardware probe
+#: is a subprocess with a 5 s limit of its own, and a cold machine is slower than that.
+BACKGROUND_MS = 30_000
+#: How many Qt warnings the result keeps.
+QT_MESSAGES_KEPT = 200
 #: How often the modal guard looks for a window the step did not open.
 MODAL_POLL_MS = 200
 #: ``EDIT_COMMIT_DELAY_MS``: the Check tab stores 400 ms after the last key.
@@ -89,8 +124,10 @@ EDIT_COMMIT_S = 0.4
 
 # ── the inputs ───────────────────────────────────────────────────────────────
 #: The folder's name carries a space, and two of the three names carry a non-ASCII character:
-#: a path the app mishandles shows here.  The words drawn on the pages are ASCII, so a reader
-#: slip cannot fail the walk.
+#: a path the app mishandles shows here.  The words drawn on the pages are ASCII, and what the
+#: reader made of them is compared with a slack of a few characters (``_reads``): which CPU
+#: instructions the reader's runtime picks can differ from one machine to the next.  What the walk
+#: types and the text file hold are compared exactly.
 INPUT_FOLDER = "Eingang mit Leerzeichen"
 OUTPUT_FOLDER = "Ausgabe"
 EXPORT_FOLDER = "Export"
@@ -103,6 +140,16 @@ TXT_TEXT = "Notizen für Montag"
 #: What the walk types into the transcription in the Check tab.
 TYPED = " Walkthrough"
 TYPED_WORD = TYPED.strip()
+
+# ── the proofreading ─────────────────────────────────────────────────────────
+#: What the model writes in place of the last word of every text, and what it answers when the app
+#: asks why.  The last word, whatever the reader made of it: the stand-in cannot know what a page
+#: was read as, and one change per document is what the walk needs, the same on every machine.
+PROOFREADING_WORD = "Zielwort"
+PROOFREADING_EXPLANATION = "The student chose the wrong word."
+#: The category the stand-in files its change under; ``word_choice`` is not a minor one, so the
+#: list counts the item on its own.
+PROOFREADING_CATEGORY: Category = "word_choice"
 
 #: The steps, in order; the first failure ends the walk.
 STEPS: tuple[tuple[str, str], ...] = (
@@ -121,6 +168,41 @@ STEPS: tuple[tuple[str, str], ...] = (
     ("shut-down", "_step_shut_down"),
 )
 
+#: The steps only a walk with a proofreading runs, each right after the step it names.
+PROOFREADING_STEPS: tuple[tuple[str, str, str], ...] = (
+    ("proofreading-items", "open", "_step_proofreading_items"),
+    ("proofreading-checked", "correct", "_step_proofreading_checked"),
+    ("review-dropped", "restart", "_step_review_dropped"),
+)
+
+
+def walk_steps(*, proofreading: bool) -> tuple[tuple[str, str], ...]:
+    """Return the steps a walk runs: its own, and the proofreading ones when it proofreads."""
+    plan = list(STEPS)
+    if not proofreading:
+        return tuple(plan)
+    for name, after, method in PROOFREADING_STEPS:
+        plan.insert(
+            next(i for i, (step, _m) in enumerate(plan) if step == after) + 1, (name, method)
+        )
+    return tuple(plan)
+
+
+@dataclasses.dataclass(frozen=True)
+class ProofreadingSetup:
+    """A proofreading server and the model the walk asks: the stand-in's address, tag and words.
+
+    The walk knows nothing else about the stand-in: it names what the run is pointed at and what
+    the model answers — the word it writes in place of the last word of every text, and the
+    sentence and category it explains each change with.
+    """
+
+    url: str
+    model: str
+    word: str = PROOFREADING_WORD
+    explanation: str = PROOFREADING_EXPLANATION
+    category: Category = PROOFREADING_CATEGORY
+
 
 class _Failed(Exception):
     """One condition of a step did not hold; the message says which."""
@@ -129,36 +211,41 @@ class _Failed(Exception):
 # ── the settings file and the inputs ─────────────────────────────────────────
 
 
-def write_settings(root: Path) -> Path:
+def write_settings(root: Path, *, proofreading: ProofreadingSetup | None = None) -> Path:
     """Write the settings the walk runs with, and return the file's path.
 
     ``input`` is left out on purpose: step 2 chooses the folder the teacher's way.  Preprocessing
     stays at its default (automatic), so the walk takes the same path through the page models as
     a teacher would.  Nothing here may be a key the schema drops or corrects — a notice at load
     is a box, and step 1 fails on it.
+
+    With *proofreading* the run proofreads against that server.  Its address is on this computer,
+    so no run asks whether the documents may leave it.
     """
     path = root / "ocr.toml"
-    text = "\n".join(
-        (
-            "check_for_updates = false",
-            # Nothing listens here: the requirements check finds a stopped server and says so
-            # instead of contacting whatever runs on this computer.
-            'ollama_url = "http://127.0.0.1:9"',
-            'ocr_engine = "ppocr"',
-            'language = "English"',
-            "correction_enabled = false",
-            "evaluation_enabled = false",
-            "anonymization_enabled = false",
-            "docx_enabled = true",
-            # A text file would be refused in an input folder, which is where the walk's
-            # output folder would end up if it were the same one.
-            "text_enabled = false",
-            "text_anonymized_enabled = false",
-            f'output = "{(root / OUTPUT_FOLDER).as_posix()}"',
-            "",
-        )
-    )
-    path.write_text(text, encoding="utf-8")
+    lines = [
+        "check_for_updates = false",
+        # Nothing listens here without a proofreading: the requirements check finds a stopped
+        # server and says so instead of contacting whatever runs on this computer.
+        f'ollama_url = "{proofreading.url if proofreading is not None else "http://127.0.0.1:9"}"',
+        'ocr_engine = "ppocr"',
+        'language = "English"',
+    ]
+    if proofreading is not None:
+        lines.append(f'correction_model = "{proofreading.model}"')
+    lines += [
+        f"correction_enabled = {str(proofreading is not None).lower()}",
+        "evaluation_enabled = false",
+        "anonymization_enabled = false",
+        "docx_enabled = true",
+        # A text file would be refused in an input folder, which is where the walk's
+        # output folder would end up if it were the same one.
+        "text_enabled = false",
+        "text_anonymized_enabled = false",
+        f'output = "{(root / OUTPUT_FOLDER).as_posix()}"',
+        "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
     return path
 
 
@@ -194,6 +281,29 @@ def _page(words: str) -> Image.Image:
     return image
 
 
+def _shifted(review: CorrectionReview) -> CorrectionReview:
+    """Return *review* with every offset moved by one, as a review carried over wrongly is."""
+    return dataclasses.replace(
+        review,
+        edits=tuple(
+            dataclasses.replace(
+                note,
+                parts=tuple(
+                    dataclasses.replace(
+                        part, raw_start=part.raw_start - 1, raw_end=part.raw_end - 1
+                    )
+                    for part in note.parts
+                ),
+            )
+            for note in review.edits
+        ),
+        unclear=tuple(
+            dataclasses.replace(note, raw_start=note.raw_start - 1, raw_end=note.raw_end - 1)
+            for note in review.unclear
+        ),
+    )
+
+
 def docx_text(path: Path) -> str:
     """Return every line of *path*, paragraphs and table cells alike.
 
@@ -212,6 +322,41 @@ def docx_text(path: Path) -> str:
     return "\n".join(of(Document(str(path))))
 
 
+def _squeezed(text: str) -> str:
+    """Return *text* in lower case with every run of white space as one space."""
+    return " ".join(text.casefold().split())
+
+
+def _reads(text: str, words: str) -> bool:
+    """Whether *text* holds *words*, give or take a character or two (case and spacing aside).
+
+    The reader's runtime picks its kernels by CPU, so the same page can read a letter differently
+    on two machines; what is checked is that the page was read, not that it was read to the letter.
+    The slack is one edit per eight characters, at least one.  What the walk typed itself or took
+    from a text file is not read by anything and is compared exactly, not with this.
+    """
+    needle, hay = _squeezed(words), _squeezed(text)
+    if needle in hay:
+        return True
+    slack = max(1, len(needle) // 8)
+    # Sellers' variant of the edit distance: a match may start anywhere in *hay*.
+    previous = list(range(len(needle) + 1))
+    for character in hay:
+        current = [0]
+        for index, expected in enumerate(needle, start=1):
+            current.append(
+                min(
+                    previous[index] + 1,
+                    current[index - 1] + 1,
+                    previous[index - 1] + (expected != character),
+                )
+            )
+        if current[-1] <= slack:
+            return True
+        previous = current
+    return False
+
+
 @contextmanager
 def isolated() -> Iterator[Path]:
     """Run with one temporary folder for the cache, the config root and the data root.
@@ -224,7 +369,9 @@ def isolated() -> Iterator[Path]:
     """
     names = ("TEACHERS_TEAMMATE_TMPDIR",)
     previous = {name: os.environ.get(name) for name in names}
-    folder = tempfile.mkdtemp(prefix="teachers-teammate-walk-")
+    # The real path: macOS keeps its temporary folder behind a link (/var -> /private/var) and
+    # Windows may hand out an 8.3 short name, and the app resolves every source id it is given.
+    folder = str(Path(tempfile.mkdtemp(prefix="teachers-teammate-walk-")).resolve())
     os.environ["TEACHERS_TEAMMATE_TMPDIR"] = folder
     try:
         yield Path(folder)
@@ -394,9 +541,27 @@ class Modals:
         return lines
 
     @staticmethod
-    def _plain(text: str) -> str:
+    def _tagged(text: str) -> bool:
+        """Whether *text* holds a tag (``<b>``, ``</b>``, ``<br>``), not just a ``<`` sign.
+
+        ``Qt.mightBeRichText`` is not always there: PySide6 attaches the QtGui half of the ``Qt``
+        namespace only after something has used it.
+        """
+        start = text.find("<")
+        while start != -1:
+            end = text.find(">", start)
+            if end == -1:
+                return False
+            first = text[start + 1 : start + 2]
+            if first.isalpha() or first in ("/", "!"):
+                return True
+            start = text.find("<", start + 1)
+        return False
+
+    @classmethod
+    def _plain(cls, text: str) -> str:
         """Return *text* without Qt's markup: a dialog bolds its title and the walk keeps words."""
-        if Qt.mightBeRichText(text):
+        if cls._tagged(text):
             text = QTextDocumentFragment.fromHtml(text).toPlainText()
         return " ".join(text.split())
 
@@ -513,6 +678,72 @@ class Recorder(QObject):
             self._on_stop()
 
 
+class Watchdog:
+    """Writes the result so far and ends the process when the walk stops making progress.
+
+    ``main`` arms it before the app services are built, because building them can hang too: a
+    deadlock must end with a file and an exit code, never with the CI job's own limit.
+    """
+
+    def __init__(self, out: Path | None) -> None:
+        self._out = out
+        self._walk: Walk | None = None
+        self._started = False
+        self._timer = threading.Timer(WALK_S, self._fire)
+        self._timer.daemon = True
+
+    def start(self) -> None:
+        """Arm the timer; ``main`` arms it, and the walk arms it again when it runs alone."""
+        if not self._started:
+            self._started = True
+            self._timer.start()
+
+    def stop(self) -> None:
+        """Disarm it and wait for a fire that is already running; unarmed is nothing to do."""
+        if not self._started:
+            return
+        self._timer.cancel()
+        self._timer.join()
+
+    def follow(self, walk: Walk) -> None:
+        """Take the current step and the result from *walk*."""
+        self._walk = walk
+
+    def _fire(self) -> None:
+        walk = self._walk
+        result = walk.result() if walk is not None else empty_result()
+        step = walk.current if walk is not None else "before the first step"
+        result["ok"] = False
+        result["failed"] = [*result["failed"], f"timed out in step {step}"]
+        result["hang"] = hang_report(walk)
+        if self._out is not None:
+            write_result(self._out, result)
+        os._exit(1)
+
+
+def hang_report(walk: Walk | None) -> dict[str, Any]:
+    """Return what the process was doing when the watchdog fired.
+
+    Every thread's stack, then the app's own counters: a walk that stops making progress says where
+    it stands, not only which step it was in.  Nothing here may raise, or the result is never
+    written.
+    """
+    report: dict[str, Any] = {}
+    try:
+        with tempfile.TemporaryFile("w+", encoding="utf-8") as sink:
+            faulthandler.dump_traceback(file=sink, all_threads=True)
+            sink.seek(0)
+            report["stacks"] = sink.read()
+    except Exception as exc:  # noqa: BLE001 - a report that cannot be made is said, not raised
+        report["stacks"] = f"unavailable: {type(exc).__name__}: {exc}"
+    if walk is not None:
+        try:
+            report.update(walk.snapshot())
+        except Exception as exc:  # noqa: BLE001
+            report["snapshot"] = f"unavailable: {type(exc).__name__}: {exc}"
+    return report
+
+
 # ── the walk ─────────────────────────────────────────────────────────────────
 
 
@@ -521,7 +752,9 @@ class Walk:
 
     ``root`` is the isolated folder the settings, the documents and the results live in;
     ``screenshots`` a folder for one picture per window state (left empty under Bazel);
-    ``out`` where the watchdog writes the result if the walk hangs (``None``: it only exits).
+    ``out`` where the watchdog writes the result if the walk hangs (``None``: it only exits);
+    ``watchdog`` the one ``main`` armed before the app services, or ``None`` for one of its own;
+    ``proofreading`` the server the run proofreads with, or ``None`` for a walk without one.
     """
 
     def __init__(
@@ -531,11 +764,14 @@ class Walk:
         service: AppServices,
         screenshots: Path | None = None,
         out: Path | None = None,
+        watchdog: Watchdog | None = None,
+        proofreading: ProofreadingSetup | None = None,
     ) -> None:
         self._root = root
         self._service = service
         self._screenshots = screenshots
-        self._out = out
+        self._proofreading = proofreading
+        self._watchdog = watchdog if watchdog is not None else Watchdog(out)
         self._current = "before the first step"
         self._app: QApplication | None = None
         self._window: MainWindow | None = None
@@ -546,6 +782,10 @@ class Walk:
         #: How many of ``_exceptions`` a guard has already reported.
         self._reported = 0
         self._warnings: list[str] = []
+        #: What Qt itself said at warning level and above.
+        self._qt_messages: list[str] = []
+        #: What the reader made of the pages, by Word file: the walk compares it with a slack.
+        self._readings: dict[str, str] = {}
         self._pictures: list[str] = []
         self._failed: list[str] = []
         self._steps: list[dict[str, Any]] = []
@@ -555,24 +795,46 @@ class Walk:
 
     # ── running it ────────────────────────────────────────────────────────
 
+    @property
+    def current(self) -> str:
+        """The step the walk is in, which the watchdog names when it fires."""
+        return self._current
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return what is running now, for the watchdog's report."""
+        worker = self._recorder.worker
+        return {
+            "step": self._current,
+            "worker_running": bool(worker is not None and worker.isRunning()),
+            "run_summary_seen": self._recorder.summary is not None,
+            "detached_workers_running": detached_workers_running(),
+            "background_tasks": background_activity(),
+            "python_threads": sorted(thread.name for thread in threading.enumerate()),
+        }
+
     def run(self) -> dict[str, Any]:
         """Walk every step and return the result; the first failure ends the walk."""
+        self._watchdog.follow(self)
+        self._watchdog.start()
         try:
-            self._app = create_app()  # before the guards: the modal poll's timer needs it
+            return self._walk()
+        finally:
+            self._watchdog.stop()
+
+    def _walk(self) -> dict[str, Any]:
+        """The steps, with the watchdog armed around them."""
+        try:
+            # Before the guards: the modal poll's timer needs it.  The icon is the app's own.
+            self._app = create_app(icon_factory=_app_icon)
         except Exception as exc:  # noqa: BLE001 - the result says what happened
             self._failed.append(f"no QApplication: {type(exc).__name__}: {exc}")
             return self.result()
-        watchdog = threading.Timer(WALK_S, self._timed_out)
-        watchdog.daemon = True
         with self._guards():
-            watchdog.start()
             try:
-                for name, method in STEPS:
+                for name, method in walk_steps(proofreading=self._proofreading is not None):
                     if not self._run_step(name, getattr(self, method)):
                         break
             finally:
-                watchdog.cancel()
-                watchdog.join()
                 try:
                     self._shut_down()
                 except Exception as exc:  # noqa: BLE001 - the result is written all the same
@@ -582,6 +844,7 @@ class Walk:
     def result(self) -> dict[str, Any]:
         """Return what the walk found, in the shape the CI job uploads."""
         return {
+            **empty_result(),
             "ok": not self._failed,
             "platform": self.platform,
             "screen": self.screen,
@@ -592,6 +855,8 @@ class Walk:
             "modals": list(self._modals.record),
             "exceptions": list(self._exceptions),
             "warnings": list(self._warnings),
+            "qt_messages": list(self._qt_messages),
+            "readings": dict(self._readings),
             "screenshots": list(self._pictures),
         }
 
@@ -623,21 +888,13 @@ class Walk:
         self._answers.clear()
         return passed
 
-    def _timed_out(self) -> None:
-        """Write what the walk found and end the process: a deadlock is not a six-hour job."""
-        result = self.result()
-        result["failed"] = [*result["failed"], f"timed out in step {self._current}"]
-        result["ok"] = False
-        if self._out is not None:
-            write_result(self._out, result)
-        os._exit(1)
-
     @contextmanager
     def _guards(self) -> Iterator[None]:
         """Install the guards for the whole walk and put every one of them back."""
         previous_hook = sys.excepthook
         handler = Warnings(self._warnings)
         logging.getLogger().addHandler(handler)
+        previous_qt = qInstallMessageHandler(self._on_qt_message)
         timer = QTimer()
         timer.setInterval(MODAL_POLL_MS)
         timer.timeout.connect(self._poll_modals)
@@ -651,7 +908,23 @@ class Walk:
                     timer.stop()
         finally:
             sys.excepthook = previous_hook
+            qInstallMessageHandler(previous_qt)
             logging.getLogger().removeHandler(handler)
+
+    def _on_qt_message(self, kind: QtMsgType, _context: Any, message: str) -> None:
+        """Keep what Qt itself complains about (a plugin, a font, a surface); it is reported only.
+
+        Qt calls this from any thread, and a handler that raises would be a slot's exception, so
+        nothing here may.
+        """
+        try:
+            if kind not in (QtMsgType.QtDebugMsg, QtMsgType.QtInfoMsg):
+                if len(self._qt_messages) < QT_MESSAGES_KEPT:
+                    self._qt_messages.append(f"{kind.name}: {message}")
+            if sys.stderr is not None:  # a windowed build on Windows has none
+                print(message, file=sys.stderr)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _on_exception(self, kind: type[BaseException], exc: BaseException, tb: Any) -> None:
         """A slot raised: PySide6 hands it here and carries on, so the walk records it."""
@@ -708,7 +981,7 @@ class Walk:
         if window is not None:
             window.close()
             self._settle(lambda: not window.isVisible(), "the window to close", UI_S)
-        wait_for_background_tasks()
+        wait_for_background_tasks(BACKGROUND_MS)
 
     # ── what every step uses ──────────────────────────────────────────────
 
@@ -720,27 +993,44 @@ class Walk:
             raise _Failed("no QApplication was built")
         return app
 
+    @staticmethod
+    def _pump() -> None:
+        """Run the app's events for a moment, deferred deletes included.
+
+        ``deleteLater`` is how the app lets go of a dialog or a round of downloads, and
+        ``processEvents`` alone never delivers it: the app's own event loop does, so this does too.
+        """
+        QApplication.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        time.sleep(0.01)
+
     def _settle(self, condition: Callable[[], bool], what: str, deadline_s: float) -> None:
         """Pump the event loop until *condition* holds; raise :class:`_Failed` when it does not."""
-        app = self._app
         deadline = time.monotonic() + deadline_s
+        raised: RuntimeError | None = None
         while True:
-            if app is not None:
-                app.processEvents()
+            self._pump()
             try:
                 if condition():
                     return
-            except RuntimeError:
-                pass  # a widget that went away: the condition does not hold yet
+                raised = None
+            except RuntimeError as exc:
+                raised = exc  # a widget that went away: the condition does not hold yet
             if time.monotonic() > deadline:
                 # What no step expected is why the wait never ends, and a slot that raised says
                 # it too: the message carries them, not only the wait.
-                found = "; ".join(self._unexpected())
+                notes = [
+                    *self._unexpected(),
+                    *(
+                        [f"the last check raised {type(raised).__name__}: {raised}"]
+                        if raised
+                        else []
+                    ),
+                ]
                 raise _Failed(
                     f"{what} did not happen within {deadline_s:g} s"
-                    + (f" ({found})" if found else "")
+                    + (f" ({'; '.join(notes)})" if notes else "")
                 )
-            time.sleep(0.01)
 
     def _child(self, kind: type[QObject], name: str) -> Any:
         """Return the widget named *name* under the window, or fail the step naming it."""
@@ -763,6 +1053,13 @@ class Walk:
     def _tabs(self) -> QTabWidget:
         """Return the window's tabs."""
         return self._child(QTabWidget, _handles.MAIN_TABS)
+
+    def _check_tab(self) -> int:
+        """Return the index of the Check tab, found by its page and not by its place."""
+        index = self._tabs().indexOf(self._child(QWidget, _handles.CHECK_PAGE))
+        if index < 0:
+            raise _Failed("the Check page is not one of the window's tabs")
+        return index
 
     def _table(self) -> ResultsTable:
         """Return the queue's table."""
@@ -813,9 +1110,24 @@ class Walk:
         if picture.save(str(path)):
             self._pictures.append(path.name)
 
+    def _run_idle(self) -> bool:
+        """Whether the window is ready for the next run: Run enabled and no worker running.
+
+        The summary reaches the recorder and the window as two queued events, so a wait that
+        stopped at the summary could click Run, or start a stage, before the window had finished
+        the last run.
+        """
+        worker = self._recorder.worker
+        try:
+            running = worker is not None and worker.isRunning()
+        except RuntimeError:  # the worker is gone: nothing runs
+            running = False
+        return not running and self._button(_handles.RUN_BUTTON).isEnabled()
+
     def _wait_run(self, what: str) -> RunSummary:
-        """Wait for the run to end and return its summary."""
+        """Wait for the run to end and the window to take it in; return the run's summary."""
         self._settle(lambda: self._recorder.summary is not None, f"{what} to end", RUN_S)
+        self._settle(self._run_idle, f"the window to be ready again after {what}", UI_S)
         summary = self._recorder.summary
         if summary is None:  # pragma: no cover - the wait above raises first
             raise _Failed(f"{what} ended without a summary")
@@ -832,45 +1144,96 @@ class Walk:
         """Click Stop once."""
         self._button(_handles.STOP_BUTTON).click()
 
-    def _in_modal(self, trigger: Callable[[], None], inside: Callable[[QDialog], None]) -> None:
-        """Run *inside* on the window *trigger* opens, then close it.
+    def _in_modal(
+        self, trigger: Callable[[], object], inside: Callable[[Any], None], *, popup: bool = False
+    ) -> None:
+        """Run *inside* on the window (or, with *popup*, the menu) *trigger* opens, then close it.
 
         The callback runs inside ``exec()``; PySide6 would swallow what it raises, so the
-        exception is carried out and raised after *trigger* returned.
+        exception is carried out and raised after *trigger* returned.  The guard is told the
+        window is expected before *trigger* runs, not when the callback does: its timer may be due
+        the moment the window opens.
         """
         problems: list[BaseException] = []
         opened: list[bool] = []
 
         def handle() -> None:
             opened.append(True)
-            modal = QApplication.activeModalWidget()
+            modal = QApplication.activePopupWidget() if popup else QApplication.activeModalWidget()
             if modal is None:
                 problems.append(_Failed("no window opened"))
                 return
-            self._modals.expected += 1
             try:
-                if not isinstance(modal, QDialog):  # pragma: no cover - type check of the app
+                if not popup and not isinstance(modal, QDialog):  # pragma: no cover - app type
                     problems.append(_Failed(f"not a dialog but {type(modal).__name__}"))
                     return
                 inside(modal)
             except BaseException as exc:  # noqa: BLE001 - carried out of the slot
                 problems.append(exc)
             finally:
-                self._modals.expected -= 1
                 modal.close()
 
         starter = QTimer()
         starter.setSingleShot(True)
         starter.timeout.connect(handle)
         starter.start(0)
+        self._modals.expected += 1
         try:
             trigger()
         finally:
+            self._modals.expected -= 1
             starter.stop()  # a trigger that opened nothing must not leave *handle* for later
         if problems:
             raise problems[0]
         if not opened:
             raise _Failed("no window opened")
+
+    def _rerun_recognition(self, only: str | None = None) -> None:
+        """Choose "Re-run Text Recognition" in the queue's right-click menu.
+
+        With *only* that document's row is selected, otherwise every row; the menu opens on a
+        context-menu event sent to the table's viewport, and the entry is chosen with the keys.
+        """
+        table = self._table()
+        if only is None:
+            table.selectAll()
+        else:
+            table.select_source(only)
+        wanted = only if only is not None else table.source_id_for_row(0)
+        row = next(
+            (
+                index
+                for index in range(table.rowCount())
+                if table.source_id_for_row(index) == wanted
+            ),
+            None,
+        )
+        if row is None:
+            raise _Failed(f"the queue has no row for {Path(wanted).name}")
+        viewport = table.viewport()
+        position = table.visualRect(table.model().index(row, 0)).center()
+        event = QContextMenuEvent(
+            QContextMenuEvent.Reason.Mouse, position, viewport.mapToGlobal(position)
+        )
+
+        def choose(menu: Any) -> None:
+            if not isinstance(menu, QMenu):
+                raise _Failed(f"the right-click opened a {type(menu).__name__}, not a menu")
+            entry = next(
+                (one for one in menu.actions() if one.text() == win.MENU_RERUN_RECOGNITION), None
+            )
+            if entry is None:
+                raise _Failed(
+                    f"the queue's menu has no {win.MENU_RERUN_RECOGNITION!r}: "
+                    f"{[one.text() for one in menu.actions()]}"
+                )
+            menu.setActiveAction(entry)
+            QApplication.sendEvent(
+                menu,
+                QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier),
+            )
+
+        self._in_modal(lambda: QApplication.sendEvent(viewport, event), choose, popup=True)
 
     def _shown(self, name: str) -> QWidget | None:
         """Return the *shown* window named *name*.
@@ -888,26 +1251,90 @@ class Walk:
             None,
         )
 
-    def _assert_docx(self, path: Path, words: Sequence[str]) -> None:
-        """Fail the step unless the Word file at *path* holds every one of *words*."""
+    def _assert_docx(self, path: Path, words: Sequence[str], *, read: bool = False) -> None:
+        """Fail the step unless the Word file at *path* holds every one of *words*.
+
+        *read* says the words were on a page the reader had to read: they are compared with the
+        reader's slack (:func:`_reads`) and what it made of them goes into the result.
+        """
         if not path.is_file():
             raise _Failed(f"no Word file at {path}")
         found = docx_text(path)
-        missing = [word for word in words if word not in found]
+        if read:
+            self._readings[path.name] = found
+            missing = [word for word in words if not _reads(found, word)]
+        else:
+            missing = [word for word in words if word not in found]
         if missing:
             raise _Failed(f"{path.name} does not hold {', '.join(missing)}: {found[:200]!r}")
 
-    def _stored_transcription(self, source_id: str) -> bool:
-        """Whether the store has the walk's typed word in *source_id*'s transcription."""
+    def _typed_view(self) -> QTextEdit:
+        """Return the text the teacher types into, and fail the step while it is read-only.
+
+        Once a text is proofread the read view is the student's text and stays as it is: the
+        teacher types in the corrected one.
+        """
+        name = _handles.FINAL_VIEW if self._proofreading is not None else _handles.READ_VIEW
+        view = self._child(QTextEdit, name)
+        if self._proofreading is not None:
+            # A proofread document opens on its marked text: the teacher switches first.
+            self._button(_handles.FINAL_VIEW_BUTTON).click()
+            self._settle(view.isVisible, "the corrected text to be in front", UI_S)
+        if view.isReadOnly():
+            raise _Failed(f"{name} is read-only, so nothing can be typed into it")
+        return view
+
+    def _stored(self, source_id: str) -> Any:
+        """Return what the store holds about *source_id*, or fail the step naming it."""
         document = self._service.documents.check_document(self._config(), Path(source_id))
-        return document is not None and TYPED_WORD in document.raw_text
+        if document is None:
+            raise _Failed(f"the store has no document for {Path(source_id).name}")
+        return document
+
+    def _checked_text(self, source_id: str) -> str:
+        """Return the stored text the walk's typed word goes into: the corrected one if proofread."""
+        document = self._stored(source_id)
+        return document.corrected_text if self._proofreading is not None else document.raw_text
+
+    def _run_words(self, *words: str) -> tuple[str, ...]:
+        """Return *words*, the pieces of one document's text, as a run's Word file holds them.
+
+        With a proofreading the model's word stands in place of the document's last word.
+        """
+        if self._proofreading is None:
+            return words
+        *kept, last = words
+        head = " ".join(last.split()[:-1])
+        return (*kept, *([head] if head else []), self._proofreading.word)
+
+    def _assert_proofread(self) -> None:
+        """Check what a proofreading run left: every document sent, the model's word stored."""
+        setup = self._proofreading
+        if setup is None:
+            return
+        for source_id in self._table().queued_source_ids():
+            stages = self._recorder.stages.get(source_id, [])
+            if ProgressStage.CORRECTION not in stages:
+                raise _Failed(f"{Path(source_id).name} was not proofread: {stages}")
+        stored = self._stored(self._source(PNG_NAME)).corrected_plain
+        if setup.word not in stored:
+            raise _Failed(f"the stored text of {PNG_NAME} has no {setup.word!r}: {stored[:200]!r}")
+
+    def _stored_transcription(self, source_id: str) -> bool:
+        """Whether the store has the walk's typed word in the text the teacher typed into."""
+        return TYPED_WORD in self._checked_text(source_id)
 
     def _transcription_worked_on(self, source_id: str) -> bool:
-        """Whether the store says the teacher worked on *source_id*'s transcription."""
+        """Whether the store says the teacher worked on *source_id*'s text."""
         worked = self._service.documents.worked_on_documents(
-            self._config(), [Path(source_id)], run_proofreads=False
+            self._config(), [Path(source_id)], run_proofreads=self._proofreading is not None
         )
-        return Path(source_id) in worked.transcribed
+        names = worked.worked_on if self._proofreading is not None else worked.transcribed
+        return Path(source_id) in names
+
+    def _items(self) -> QListWidget:
+        """Return the list of the proofreading's items."""
+        return self._child(QListWidget, _handles.ITEM_LIST)
 
     # ── the steps ─────────────────────────────────────────────────────────
 
@@ -918,10 +1345,13 @@ class Walk:
         )
         self._window.show()
         self._settle(lambda: self._window.isVisible(), "the window to be shown", UI_S)
-        if self._tabs().isTabEnabled(1):
+        if self._tabs().isTabEnabled(self._check_tab()):
             raise _Failed("the Check tab is enabled before a document was read")
         if self._button(_handles.EXPORT_BUTTON).isEnabled():
             raise _Failed("Export is enabled before there is a result")
+        # Under Bazel the assets folder is not next to the code; a bundle carries it.
+        if getattr(sys, "frozen", False) and QApplication.windowIcon().isNull():
+            raise _Failed("the app has no window icon: the bundle lacks its assets")
         screen = QApplication.primaryScreen()
         self.platform = QApplication.platformName()
         self.screen = "" if screen is None else f"{screen.size().width()}x{screen.size().height()}"
@@ -972,18 +1402,19 @@ class Walk:
         for source_id in (image, pdf):
             if ProgressStage.OCR not in self._recorder.stages.get(source_id, []):
                 raise _Failed(f"{Path(source_id).name} was not read")
-        if self._recorder.stages.get(text):
-            raise _Failed(f"the text file went through {self._recorder.stages[text]}")
+        if ProgressStage.OCR in self._recorder.stages.get(text, []):
+            raise _Failed(f"the text file was read: {self._recorder.stages[text]}")
         for source_id in table.queued_source_ids():
             if not table.has_text(source_id):
                 raise _Failed(f"{Path(source_id).name} has no text after the run")
-        self._assert_docx(self._run_docx(PNG_NAME), (PNG_WORDS,))
-        self._assert_docx(self._run_docx(PDF_NAME), PDF_PAGES)
-        self._assert_docx(self._run_docx(TXT_NAME), (TXT_TEXT,))
+        self._assert_docx(self._run_docx(PNG_NAME), self._run_words(PNG_WORDS), read=True)
+        self._assert_docx(self._run_docx(PDF_NAME), self._run_words(*PDF_PAGES), read=True)
+        self._assert_docx(self._run_docx(TXT_NAME), self._run_words(TXT_TEXT))
+        self._assert_proofread()
         self._settle(
             lambda: self._button(_handles.EXPORT_BUTTON).isEnabled(), "Export to be enabled", UI_S
         )
-        if not self._tabs().isTabEnabled(1):
+        if not self._tabs().isTabEnabled(self._check_tab()):
             raise _Failed("the Check tab stays disabled after a run")
         self._screenshot("run")
 
@@ -998,7 +1429,9 @@ class Walk:
         if opener is None:
             raise _Failed(f"the row of {PNG_NAME} has no Open button")
         opener.click()
-        self._settle(lambda: self._tabs().currentIndex() == 1, "the Check tab", UI_S)
+        self._settle(
+            lambda: self._tabs().currentIndex() == self._check_tab(), "the Check tab", UI_S
+        )
         document = self._service.documents.check_document(self._config(), Path(image))
         if document is None:
             raise _Failed("the store has no document for the image")
@@ -1008,7 +1441,7 @@ class Walk:
             "the transcription in the Check tab",
             UI_S,
         )
-        if PNG_WORDS not in view.toPlainText():
+        if not _reads(view.toPlainText(), PNG_WORDS):
             raise _Failed(f"the Check tab does not show {PNG_WORDS!r}")
         if self._table().selected_source_ids() != [image]:
             raise _Failed(f"the selection is {self._table().selected_source_ids()}")
@@ -1017,7 +1450,7 @@ class Walk:
     def _step_correct(self) -> None:
         """Type into the transcription and wait for the store to carry it."""
         image = self._source(PNG_NAME)
-        view = self._child(QTextEdit, _handles.READ_VIEW)
+        view = self._typed_view()
         cursor = view.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         view.setTextCursor(cursor)
@@ -1039,6 +1472,108 @@ class Walk:
             "the store to know the transcription was worked on",
             UI_S,
         )
+
+    def _step_proofreading_items(self) -> None:
+        """Read the Check tab's list: one item per thing the model changed, with its reason."""
+        setup = self._proofreading
+        if setup is None:  # pragma: no cover - the step only runs with one
+            raise _Failed("the walk runs no proofreading")
+        image = self._source(PNG_NAME)
+        document = self._stored(image)
+        finished = self._child(QTextEdit, _handles.FINAL_VIEW)
+        self._settle(
+            lambda: finished.toPlainText().rstrip("\n") == document.corrected_plain.rstrip("\n"),
+            "the corrected text in the Check tab",
+            UI_S,
+        )
+        if setup.word not in finished.toPlainText():
+            raise _Failed(f"the Check tab does not show {setup.word!r}")
+        explained = [item for item in document.items if item.kind is ItemKind.CORRECTION]
+        if len(explained) != 1:
+            raise _Failed(
+                f"the store has {len(explained)} explained corrections for {PNG_NAME}: "
+                f"{[(item.kind.value, item.key) for item in document.items]}"
+            )
+        item = explained[0]
+        if (item.category, item.explanation) != (setup.category, setup.explanation):
+            raise _Failed(f"the item says {item.category}/{item.explanation!r}")
+        listed = self._items()
+        self._settle(
+            lambda: listed.count() == len(document.items),
+            f"the {len(document.items)} items of {PNG_NAME} in the list",
+            UI_S,
+        )
+
+    def _step_proofreading_checked(self) -> None:
+        """Look at the first item and tick the corrections as checked; the store must say both."""
+        image = self._source(PNG_NAME)
+        document = self._stored(image)
+        if not document.items:
+            raise _Failed(f"the store has no item for {PNG_NAME}")
+        key = document.items[0].key
+        listed = self._items()
+        self._settle(
+            lambda: listed.count() == len(document.items),
+            f"the {len(document.items)} items of {PNG_NAME} in the list",
+            UI_S,
+        )
+        listed.setCurrentRow(0)
+        self._settle(
+            lambda: key in self._stored(image).work.looked_at,
+            f"the store to know item {key} was looked at",
+            UI_S,
+        )
+        self._button(_handles.CHECKED_BUTTON).click()
+        self._settle(
+            lambda: self._stored(image).work.corrections_checked,
+            "the store to know the corrections were checked",
+            UI_S,
+        )
+
+    def _step_review_dropped(self) -> None:
+        """Spoil a stored review, open the document again, and watch the app drop the review.
+
+        A review whose offsets no longer point at the words it quotes must never be shown: the
+        explanations would sit on other words than the ones the model changed.  The app drops it
+        and says so in the log, and the changes stay as corrections without an explanation.
+        """
+        pdf = self._source(PDF_NAME)
+        config = self._config()
+        store = state_store_for(config, repository=StateRepository)
+        state = store.load(Path(pdf))
+        review = None if state is None else CorrectionReview.from_dict(state.correction_review)
+        if state is None or review is None or not review.edits:
+            raise _Failed(f"the store holds no review for {PDF_NAME}")
+        if any(not note.parts for note in review.edits):
+            raise _Failed(f"the review of {PDF_NAME} quotes no words to move")
+        # The app says so once per document, on the first read: the mark comes before it.
+        before = len(self._warnings)
+        store.save(
+            Path(pdf),
+            dataclasses.replace(state, correction_review=_shifted(review).to_dict()),
+        )
+        if self._stored(pdf).review is not None:
+            raise _Failed("the app kept a review that no longer fits its text")
+        buttons = self._window.findChildren(QAbstractButton, _handles.OPEN_DOCUMENT)
+        opener = next(
+            (button for button in buttons if button.property(_handles.SOURCE_ID_PROPERTY) == pdf),
+            None,
+        )
+        if opener is None:
+            raise _Failed(f"the row of {PDF_NAME} has no Open button")
+        opener.click()
+        self._settle(
+            lambda: self._items().count() == len(self._stored(pdf).items),
+            f"the items of {PDF_NAME} in the list",
+            UI_S,
+        )
+        kinds = {item.kind for item in self._stored(pdf).items}
+        if kinds != {ItemKind.UNEXPLAINED}:
+            raise _Failed(f"the changes of {PDF_NAME} are {sorted(kind.value for kind in kinds)}")
+        said = [line for line in self._warnings[before:] if "Dropped the review" in line]
+        if not any(PDF_NAME in line for line in said):
+            raise _Failed(f"no warning about the dropped review of {PDF_NAME}: {said}")
+        self._screenshot("dropped-review")
 
     def _step_export(self) -> None:
         """Export the open document as a Word file, the way a teacher saves one."""
@@ -1092,7 +1627,6 @@ class Walk:
         order = table.queued_source_ids()
         if len(order) != 3:
             raise _Failed(f"the queue holds {len(order)} rows")
-        table.selectAll()
         self._answers.expect(
             "choose",
             title=dlg.read_again([]).title,
@@ -1103,7 +1637,7 @@ class Walk:
         self._recorder.arm_stop_point(
             "file_started", when=lambda args, second=order[1]: args[0] == second, clicks=1
         )
-        table.stage_run_requested.emit(order, Stage.OCR)
+        self._rerun_recognition()
         summary = self._wait_run("the stopped run")
         if summary.status is not RunStatus.STOPPED:
             raise _Failed(f"the run ended {summary.status}")
@@ -1124,15 +1658,13 @@ class Walk:
         """Stop a run at once, and check that the file it cut short left nothing behind."""
         table = self._table()
         pdf = self._source(PDF_NAME)
-        table.clearSelection()
-        table.select_source(pdf)
         self._recorder.begin()
         self._recorder.arm_stop_point(
             "stage_started",
             when=lambda args: args[0] == pdf and str(args[2]) == ProgressStage.PREPROCESSING,
             clicks=2,
         )
-        table.stage_run_requested.emit([pdf], Stage.OCR)
+        self._rerun_recognition(pdf)
         summary = self._wait_run("the second stopped run")
         if summary.error or summary.failed:
             raise _Failed(f"the run failed: {summary.error or list(summary.failed)}")
@@ -1166,7 +1698,7 @@ class Walk:
         """Close the window, open a new one on the same folder, and check what it shows."""
         self._window.close()
         self._settle(lambda: not self._window.isVisible(), "the window to close", UI_S)
-        if not wait_for_background_tasks():
+        if not wait_for_background_tasks(BACKGROUND_MS):
             raise _Failed("a background task is still running after the window closed")
         if detached_workers_running():
             raise _Failed("a worker is still running after the window closed")
@@ -1256,7 +1788,7 @@ class Walk:
         """Close the window and check that nothing of the app is left running."""
         self._window.close()
         self._settle(lambda: not self._window.isVisible(), "the window to close", UI_S)
-        if not wait_for_background_tasks():
+        if not wait_for_background_tasks(BACKGROUND_MS):
             raise _Failed("a background task is still running after the window closed")
         if detached_workers_running():
             raise _Failed("a worker is still running after the window closed")
@@ -1266,15 +1798,48 @@ class Walk:
 # ── the entry point ──────────────────────────────────────────────────────────
 
 
+def empty_result() -> dict[str, Any]:
+    """A result with no step in it yet: the file's shape, and ``"ok": false``."""
+    return {
+        "ok": False,
+        "platform": "",
+        "screen": "",
+        "versions": {},
+        "failed": [],
+        "steps": [],
+        "dialogs": [],
+        "modals": [],
+        "exceptions": [],
+        "warnings": [],
+        "qt_messages": [],
+        "readings": {},
+        "hang": {},
+        "screenshots": [],
+    }
+
+
 def walk_main_window(
     root: Path,
     service: AppServices,
     *,
     screenshots: Path | None = None,
     out: Path | None = None,
+    watchdog: Watchdog | None = None,
+    proofreading: ProofreadingSetup | None = None,
 ) -> dict[str, Any]:
-    """Play teacher in a real main window on *root* and return the result."""
-    return Walk(root=root, service=service, screenshots=screenshots, out=out).run()
+    """Play teacher in a real main window on *root* and return the result.
+
+    With *proofreading* the run proofreads against that server, and the walk reads the items it
+    left, ticks one as checked, and spoils a stored review to see it dropped.
+    """
+    return Walk(
+        root=root,
+        service=service,
+        screenshots=screenshots,
+        out=out,
+        watchdog=watchdog,
+        proofreading=proofreading,
+    ).run()
 
 
 def write_result(path: Path, result: dict[str, Any]) -> None:
@@ -1283,7 +1848,7 @@ def write_result(path: Path, result: dict[str, Any]) -> None:
     path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], *, proofreading: ProofreadingSetup | None = None) -> int:
     """Walk the app in this process and write the result; 0 when every step passed."""
     parser = argparse.ArgumentParser(
         prog="walkthrough", description="Play teacher in the opened app and report what it did."
@@ -1298,8 +1863,22 @@ def main(argv: list[str]) -> int:
     # The pictures are written while the walk runs, so their folder must not be the one the
     # walk's isolation removes at the end.
     with isolated() as root:
-        write_settings(root)
-        result = walk_main_window(root, build_app_services(), screenshots=screenshots, out=out)
+        write_settings(root, proofreading=proofreading)
+        # Armed before the services are built: a hang there leaves a file to read instead of a
+        # job that runs to its limit.
+        watchdog = Watchdog(out)
+        watchdog.start()
+        try:
+            result = walk_main_window(
+                root,
+                build_app_services(),
+                screenshots=screenshots,
+                out=out,
+                watchdog=watchdog,
+                proofreading=proofreading,
+            )
+        finally:
+            watchdog.stop()
     write_result(out, result)
     return 0 if result["ok"] else 1
 

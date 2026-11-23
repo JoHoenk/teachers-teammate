@@ -13,7 +13,7 @@ where the files come from, who may ask for a signature, and what the app does wi
 | `Uninstall.exe` (installed next to the app) | Windows | yes, once the certificate is in place |
 | `teachers-teammate.exe` (the program) | Windows | yes, once the certificate is in place |
 | `teachers-teammate-<version>-macos.dmg` | macOS | no — not signed or notarized |
-| `teachers-teammate_<version>_amd64.deb`, `teachers-teammate-<version>-linux-x86_64.tar.xz` | Linux | no — see below |
+| `teachers-teammate_<version>_amd64.deb` | Linux | no — see below |
 
 **Windows — not signed yet.** The certificate for open-source projects has not been applied for;
 until it is granted, Windows shows the "Windows protected your PC"

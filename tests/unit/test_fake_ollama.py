@@ -14,21 +14,31 @@ from __future__ import annotations
 import ollama
 from collections.abc import Iterator
 import json
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import pytest
 
+from teachers_teammate.domain.correction_prompts import correct_user, explain_user, unclear_user
 from teachers_teammate.domain.ollama_discovery import WaitKind
 from teachers_teammate.infrastructure import ollama_utils
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.infrastructure.proofreading.schemas import (
+    UnclearAnswer,
+    explain_schema,
+    parse_explain,
+    parse_unclear,
+)
 
 from ..fakes.fake_ollama import (
     CHAT_ANSWER,
     MODEL_SIZE,
+    PROOFREADING_CATEGORY,
     PULL_FAILED,
     PULL_MANIFEST,
     PULL_SUCCESS,
     FakeOllama,
+    ProofreadingAnswers,
 )
 
 
@@ -299,3 +309,117 @@ def test_a_model_that_is_loading_is_reported_as_loading(fake: FakeOllama, quick_
     assert first.model == "b:1b"
     assert client.last_stats is not None
     assert not client.last_stats.waited
+
+
+def test_a_proofreading_answer_passes_the_apps_client(fake: FakeOllama) -> None:
+    """
+    Given  a fake that proofreads, answering all three steps of the exchange
+    When   the app's client sends them, framed by the exchange's own prompt code
+    Then   the corrected text, one note per edit and no unclear item come back, so the
+           walkthrough can let a teacher proofread against this server
+    """
+    fake.answer_chats(
+        ProofreadingAnswers(edits=(("habe", "hat"),), explanation="The verb was corrected.")
+    )
+    client = OllamaClient(fake.url)
+    schema = explain_schema([1, 2])
+
+    corrected = client.chat("m:1b", correct_user("Ich habe Hunger.", language="German", level="A2"))
+    explained = client.chat(
+        "m:1b",
+        explain_user("1. habe → hat", language="German", level="A2"),
+        format=schema.model_json_schema(),
+    )
+    unclear = client.chat(
+        "m:1b",
+        unclear_user("Ich hat Hunger.", language="German", level="A2"),
+        format=UnclearAnswer.model_json_schema(),
+    )
+
+    assert corrected == "Ich hat Hunger."
+    answer, error = parse_explain(explained)
+    assert error == ""
+    assert answer is not None
+    assert [(note.id, note.category, note.explanation) for note in answer.edits] == [
+        (1, PROOFREADING_CATEGORY, "The verb was corrected."),
+        (2, PROOFREADING_CATEGORY, "The verb was corrected."),
+    ]
+    assert parse_unclear(unclear)[0] == UnclearAnswer(unclear=[])
+
+
+def test_a_batch_of_one_edit_is_explained_too(fake: FakeOllama) -> None:
+    """
+    Given  a fake that proofreads, and a batch of one edit as the exchange sends it
+    When   the app's client asks for the explanation of that one edit
+    Then   the note comes back for that edit, so a document with a single change is explained
+    """
+    fake.answer_chats(
+        ProofreadingAnswers(
+            edits=(("habe", "hat"),), explanation="The verb was corrected.", category="grammar"
+        )
+    )
+    client = OllamaClient(fake.url)
+
+    explained = client.chat(
+        "m:1b",
+        explain_user("1. habe → hat", language="German", level="A2"),
+        format=explain_schema([7]).model_json_schema(),
+    )
+
+    answer, error = parse_explain(explained)
+    assert error == ""
+    assert answer is not None
+    assert [(note.id, note.category) for note in answer.edits] == [(7, "grammar")]
+
+
+def test_a_request_without_a_text_is_refused(fake: FakeOllama) -> None:
+    """
+    Given  a fake that proofreads
+    When   a message arrives that the exchange's framing does not appear in
+    Then   the stand-in raises instead of answering with a text it did not read, so a changed
+           framing is caught here and not as a wrong correction in the walk
+    """
+    fake.answer_chats(ProofreadingAnswers(edits=(("habe", "hat"),)))
+
+    with pytest.raises(ValueError, match="carries no text"):
+        fake.chat_answer({"messages": [{"role": "user", "content": "Correct this, please."}]})
+
+
+def test_the_last_word_of_every_text_is_replaced_whatever_it_is(fake: FakeOllama) -> None:
+    """
+    Given  a fake that replaces the last word of a text, and texts a reader may have misread
+    When   the exchange's step ① asks for them
+    Then   each comes back with its last word replaced and the white space after it kept
+    """
+    fake.answer_chats(ProofreadingAnswers(last_word="Zielwort"))
+    client = OllamaClient(fake.url)
+
+    one = client.chat("m:1b", correct_user("Hello Wor1d", language="English", level="A2"))
+    two = client.chat(
+        "m:1b", correct_user("First Page\n\nSecond Page\n", language="English", level="A2")
+    )
+
+    assert one == "Hello Zielwort"
+    assert two == "First Page\n\nSecond Zielwort\n"
+
+
+def test_a_stand_in_that_cannot_answer_says_why_over_http(fake: FakeOllama) -> None:
+    """
+    Given  a fake that proofreads and a chat request without any text to proofread
+    When   the request is sent
+    Then   the answer is a 500 that carries the reason, not a connection that drops
+    """
+    fake.answer_chats(ProofreadingAnswers(last_word="Zielwort"))
+    request = Request(
+        f"{fake.url}/api/chat",
+        data=json.dumps(
+            {"model": "m:1b", "messages": [{"role": "user", "content": "Hi"}]}
+        ).encode(),
+        method="POST",
+    )
+
+    with pytest.raises(HTTPError) as caught:
+        urlopen(request, timeout=5)  # the fake answers on loopback
+
+    assert caught.value.code == 500
+    assert "carries no text" in caught.value.read().decode()

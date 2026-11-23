@@ -8,8 +8,15 @@ without a network or an installed package.
 load("@rules_python//python:defs.bzl", "py_library")
 load("@rules_shell//shell:sh_library.bzl", "sh_library")
 
+# windows.nsi for the static tests of the installer; the three install tests for the test that
+# they walk through the installed app after its smoke test.
 exports_files(
-    ["windows.nsi"],
+    [
+        "test_deb_install.sh",
+        "test_macos_install.sh",
+        "test_windows_installer.ps1",
+        "windows.nsi",
+    ],
     visibility = ["//tests:__pkg__"],
 )
 

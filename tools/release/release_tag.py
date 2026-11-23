@@ -41,7 +41,6 @@ TAG_PATTERN = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(-(alpha|beta|rc|pre)\.?\d+)?$")
 RELEASE_FILE_PATTERNS = (
     "*.whl",
     "*.deb",
-    "*-linux-x86_64.tar.xz",
     "*-w64-setup.exe",
     "*-macos.dmg",
 )

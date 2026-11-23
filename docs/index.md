@@ -48,7 +48,7 @@ For detailed guidance on choosing the best settings for your documents, see the 
 2. Run the installer like any other program. On Windows its last page offers **Start Teacher's Teammate**; leave it ticked and the app opens right away, with the Setup Assistant on the first start.
 3. Launch **Teacher's Teammate** from the Start menu (Windows), the Applications folder (macOS), or your application launcher (Linux).
 
-> **Linux — two downloads:** `teachers-teammate_<version>_amd64.deb` installs the app and adds a launcher entry; install it with `sudo apt install ./teachers-teammate_<version>_amd64.deb`. `teachers-teammate-<version>-linux-x86_64.tar.xz` is the portable build: unpack it anywhere and run `./teachers-teammate`.
+> **Linux:** `teachers-teammate_<version>_amd64.deb` installs the app and adds a launcher entry; install it with `sudo apt install ./teachers-teammate_<version>_amd64.deb`.
 
 > **Windows — security notice:** Windows may show a "Windows protected your PC" message when running the installer. Click **More info**, then **Run anyway**. This warning appears only because the installer does not carry a paid security certificate — not because anything is wrong with the app. What is signed, where the files come from and what the app does with your data is written down in the [code signing policy](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/code_signing_policy.md).
 
@@ -64,9 +64,9 @@ Every release also ships a `SHA256SUMS` file and a build attestation, so you or 
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
-| **Version** | 10 (version 1809 or newer) or 11 | 15 Sequoia or newer | Ubuntu 24.04+, Debian 13+, Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.xz` |
+| **Version** | 10 (version 1809 or newer) or 11 | 15 Sequoia or newer | Ubuntu 24.04+, Debian 13+, Mint 22+ (glibc 2.39 or newer) |
 | **Processor** | x64 (Windows 11 on ARM: x64 emulation, not tested) | Apple Silicon (M1 or newer) | x86_64 |
-| **Download** | setup `.exe` | `.dmg` | `.deb`, `.tar.xz` |
+| **Download** | setup `.exe` | `.dmg` | `.deb` |
 
 **Main memory:** 8 GB. A recommended model needs 2.5 to 9.5 GB while it runs; with a graphics card it runs
 there instead, and the app shows what fits your computer before anything is downloaded.

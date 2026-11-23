@@ -44,7 +44,6 @@ red until the entry and the sources release below name the new one.
 Qt 6.12.0 and PySide6 6.12.0, the versions the bundle carries:
   https://download.qt.io/archive/qt/6.12/6.12.0/submodules/
       (qtbase, qtsvg, qtimageformats, qtwayland)
-  https://download.qt.io/archive/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz
   https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/
 
 FFmpeg 9.0.2, inside opencv-python-headless 5.1.0.95 (Linux and macOS):
@@ -57,8 +56,9 @@ certifi 2026.10.23 (MPL-2.0):
 
 The same sources, as one download, are published with this release:
   https://github.com/JoHoenk/teachers-teammate/releases/tag/third-party-sources-qt6.12.0
-It holds the Qt modules above, pyside-setup at the matching tag and the FFmpeg tarball. It is
-never the "latest" release, so the app's update check does not see it.
+It holds the four Qt modules above, pyside-setup at the matching tag, the FFmpeg tarball with its
+signature and the opencv-python-headless source. It is never the "latest" release, so the app's
+update check does not see it.
 
 Written offer
 -------------

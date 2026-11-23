@@ -13,6 +13,19 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# The modules a build or release check imports: they read NOTICE and the inventory and compare
+# them with what a download carries, so they take standard library imports only and run in a bare
+# CI job.
+py_library(
+    name = "artifact_checks_lib",
+    srcs = [
+        "__init__.py",
+        "artifacts.py",
+        "notice.py",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 py_library(
     name = "licenses_lib",
     srcs = [

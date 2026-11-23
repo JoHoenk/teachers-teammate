@@ -201,17 +201,31 @@ and commit the result; the diff shows any license change. A license that
 | `NOTICE` | hand | attributions and source pointers; a test checks its versions |
 
 The bundle carries Qt under the LGPL v3 as separate, replaceable files
-(`_internal/PySide6/Qt/lib`). The LGPL requires passing on the Qt and FFmpeg sources: they live in
-a separate release, created by hand once per Qt or OpenCV bump. It must never be marked latest,
-or the app would offer it as an update:
+(`_internal/PySide6/Qt/lib`). The LGPL requires passing on the Qt, PySide6 and FFmpeg sources:
+every version we ship gets a release of its own, `third-party-sources-qt<version>`, and
+`tools/release/mirror_sources.py` builds and publishes it. The versions come from the inventory and
+`NOTICE`, never from an argument, and the file names from the authors' own directory listings, so a
+renamed archive fails here instead of on a teacher's download page. Each file is held to the digest
+its author publishes, and the set carries `SHA256SUMS` and a `README.txt`:
 
 ```bash
-gh release create third-party-sources-qt<version> --latest=false --notes "<what it holds>"
+python tools/release/mirror_sources.py                                # fetch and check, discard
+python tools/release/mirror_sources.py --keep dist/sources            # keep the set
+python tools/release/mirror_sources.py --bundle dist/teachers-teammate  # hold: Qt modules
+python tools/release/mirror_sources.py --upload --repo <owner>/<name>  # publish it
 ```
 
-```bash
-gh release upload third-party-sources-qt<version> <archives>
-```
+Without `--keep` the set goes to a temporary folder. `--bundle` names a folder build the set must
+cover: every Qt module in it needs its submodule archive. `--upload` needs `gh` and `GH_TOKEN`,
+never marks the release *Latest* — so the app's update check cannot see it — and overwrites a
+release of the same name.
+
+Publish the sources **before** the tag: the `validate` job of the release workflow fails a download
+whose sources release is missing. The rehearsal in `release_dry_run.yml` is the one run that passes
+`--skip-sources`.
+
+A sources release is never deleted while a download that carries its version exists; that download
+promises it.
 
 ---
 

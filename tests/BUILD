@@ -1157,7 +1157,11 @@ py_test(
     ],
     env = {"LICENSE_PYPROJECT": "$(rlocationpath //:pyproject.toml)"},
     main = "run_test.py",
-    deps = _COMMON_DEPS + ["//tools/licenses:licenses_lib"] + _INFRASTRUCTURE_LIB,
+    deps = _COMMON_DEPS + [
+        "//tools/licenses:artifact_checks_lib",
+        "//tools/licenses:licenses_lib",
+        "//tools/release:release_tools_lib",
+    ] + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1241,6 +1245,17 @@ py_test(
     args = ["unit/test_check_smoke.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"] + _PKG_LIB,
+)
+
+# What a finished download carries, held against the tree: the test drives the comparison with a
+# fixture folder, so the rule the build checks is the rule the test pins.
+py_test(
+    name = "test_artifact_licenses",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_artifact_licenses.py"],
+    args = ["unit/test_artifact_licenses.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/licenses:artifact_checks_lib"],
 )
 
 py_test(
@@ -2119,6 +2134,16 @@ py_test(
     deps = _COMMON_DEPS,
 )
 
+# The sources mirror, without the network: the listings, the digests, the set and the gh commands.
+py_test(
+    name = "test_mirror_sources",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_mirror_sources.py"],
+    args = ["tools/test_mirror_sources.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/release:release_tools_lib"],
+)
+
 # The records live in a repository of their own: no run file, manifest, size record, machine or
 # marks file is in this one, because they hold the corpora's text.
 py_test(
@@ -2162,6 +2187,7 @@ test_suite(
         ":test_evaluation_app_corrector",
         ":test_evaluation_layers",
         ":test_evaluation_shared_names",
+        ":test_mirror_sources",
         ":test_no_eval_records",
         ":test_no_plan_references",
         ":test_no_retired_engines",
@@ -3058,6 +3084,7 @@ test_suite(
         ":test_anonymization_service",
         ":test_anonymizer",
         ":test_api_keys",
+        ":test_artifact_licenses",
         ":test_benchmark_domain",
         ":test_benchmark_run_store",
         ":test_benchmark_runner",

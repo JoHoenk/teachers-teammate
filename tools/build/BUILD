@@ -38,7 +38,10 @@ py_library(
         "platform_lock.py",
     ],
     visibility = ["//visibility:public"],
-    deps = ["@ocr_test_dependencies//packaging:pkg"],
+    deps = [
+        "//tools/licenses:artifact_checks_lib",
+        "@ocr_test_dependencies//packaging:pkg",
+    ],
 )
 
 # Every script of this folder, for //:py_ruff and //:py_ty: build_tools_lib above holds only the
@@ -48,7 +51,10 @@ py_library(
     srcs = glob(["*.py"]),
     tags = ["manual"],
     visibility = ["//visibility:public"],
-    deps = ["@ocr_test_dependencies//packaging:pkg"],
+    deps = [
+        "//tools/licenses:artifact_checks_lib",
+        "@ocr_test_dependencies//packaging:pkg",
+    ],
 )
 
 # The scripts here run as programs, so nothing imports them; this keeps them in the lint set.

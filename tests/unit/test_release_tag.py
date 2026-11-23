@@ -294,6 +294,7 @@ def test_check_command_passes_a_new_tag_on_main() -> None:
     with (
         patch.object(release_tag, "_on_main", return_value=True),
         patch.object(release_tag, "published_latest", return_value="v0.5.6"),
+        patch.object(release_tag, "missing_sources_release", return_value=None),
     ):
         assert release_tag.main(["check", "v0.5.7", "--repo", "owner/name", "--sha", "abc"]) == 0
 
@@ -350,3 +351,93 @@ def test_draft_command_creates_the_draft_when_none_exists() -> None:
     created = run.call_args_list[1].args[0]
     assert created[:5] == ["gh", "release", "create", "v0.5.7", "--repo"]
     assert "--draft" in created
+
+
+def _inventory(tmp_path: Path, qt: str = "6.12.0") -> Path:
+    """Lay out the inventory of a checkout, with the Qt row the sources gate reads."""
+    (tmp_path / "third_party_licenses").mkdir(parents=True)
+    (tmp_path / "third_party_licenses" / "inventory.csv").write_text(
+        "Component,Version,License,Scope,Kind\n"
+        f"pyside6-essentials,{qt},LGPL-3.0-only,bundle,package\n",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def test_missing_sources_release_names_the_release_and_the_tool(tmp_path: Path) -> None:
+    """
+    Given  a checkout whose Qt sources no release holds
+    When   missing_sources_release() is called
+    Then   the message names the release and the command that creates it, so a red validate job
+           says what to do
+    """
+    with patch.object(release_tag, "_run", return_value=_completed(1, stderr="release not found")):
+        problem = release_tag.missing_sources_release("owner/name", _inventory(tmp_path))
+
+    assert problem is not None
+    assert "third-party-sources-qt6.12.0" in problem
+    assert "mirror_sources.py --upload" in problem
+
+
+def test_missing_sources_release_passes_when_the_release_exists(tmp_path: Path) -> None:
+    """
+    Given  a sources release GitHub knows
+    When   missing_sources_release() is called
+    Then   there is nothing to report
+    """
+    with patch.object(release_tag, "_run", return_value=_completed(0)):
+        problem = release_tag.missing_sources_release("owner/name", _inventory(tmp_path))
+
+    assert problem is None
+
+
+def test_missing_sources_release_exits_when_github_answers_otherwise(tmp_path: Path) -> None:
+    """
+    Given  a GitHub that answers with a server error
+    When   missing_sources_release() is called
+    Then   it exits instead of letting the check fail on the wrong side
+    """
+    with (
+        patch.object(release_tag, "_run", return_value=_completed(1, stderr="HTTP 502")),
+        pytest.raises(SystemExit, match="could not read the release"),
+    ):
+        release_tag.missing_sources_release("owner/name", _inventory(tmp_path))
+
+
+def test_check_command_rejects_a_tag_without_a_sources_release(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """
+    Given  a well-formed, newer tag whose Qt sources were never mirrored
+    When   the check command runs
+    Then   it exits 1 and prints the reason as a workflow error
+    """
+    with (
+        patch.object(release_tag, "published_latest", return_value="v0.5.6"),
+        patch.object(
+            release_tag,
+            "missing_sources_release",
+            return_value="there is no release 'third-party-sources-qt6.12.0'",
+        ),
+    ):
+        code = release_tag.main(["check", "v0.5.7", "--repo", "owner/name", "--skip-main"])
+
+    assert code == 1
+    assert "::error::there is no release" in capsys.readouterr().out
+
+
+def test_check_command_skips_the_sources_release_in_a_dry_run() -> None:
+    """
+    Given  a rehearsal of a version whose sources are not mirrored yet
+    When   the check command runs with --skip-sources
+    Then   it passes and never asks GitHub for the release
+    """
+    with (
+        patch.object(release_tag, "published_latest", return_value="v0.5.6"),
+        patch.object(release_tag, "missing_sources_release") as sources,
+    ):
+        code = release_tag.main(
+            ["check", "v0.5.7", "--repo", "owner/name", "--skip-main", "--skip-sources"]
+        )
+
+    assert (code, sources.call_count) == (0, 0)

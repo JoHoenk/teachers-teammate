@@ -29,7 +29,11 @@ jobs:
           VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-        run: python3 tools/release/release_tag.py check "$VERSION" --repo "$REPO" --skip-main
+        # The sources release is the dry run's one difference: a rehearsal is exactly the run of a
+        # version whose sources have not been mirrored yet. The tag itself is never that forgiving.
+        run: |
+          python3 tools/release/release_tag.py check "$VERSION" --repo "$REPO" --skip-main \
+            --skip-sources
 
   lint:
     needs: [validate]

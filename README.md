@@ -95,7 +95,6 @@ Every file comes from the [releases page](https://github.com/JoHoenk/teachers-te
 | Windows | `teachers-teammate-<version>-w64-setup.exe` | Installer |
 | macOS | `teachers-teammate-<version>-macos.dmg` | Disk image with the app |
 | Linux | `teachers-teammate_<version>_amd64.deb` | Installs into `/opt/teachers-teammate` and adds a launcher entry |
-| Linux | `teachers-teammate-<version>-linux-x86_64.tar.xz` | Portable build |
 | Any | `teachers_teammate-<version>-py3-none-any.whl` | Python wheel with the command-line tool and the windows (see [Python and command line](#python-and-command-line)) |
 
 The app brings the built-in reader's model files (31 MB) and the page models (39 MB). Everything
@@ -106,7 +105,7 @@ else is downloaded from inside the app, on request, after it names the size: pri
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
-| **System** | 10 (version 1809 or newer) or 11 | 15 Sequoia or newer | Ubuntu 24.04+, Debian 13+ or Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.xz` |
+| **System** | 10 (version 1809 or newer) or 11 | 15 Sequoia or newer | Ubuntu 24.04+, Debian 13+ or Mint 22+ (glibc 2.39 or newer) |
 | **Processor** | x64 | Apple Silicon (M1 or newer) | x86_64 |
 | **Main memory** | 8 GB | 8 GB | 8 GB |
 | **Free disk space** | about 700 MB | about 700 MB | about 700 MB |
@@ -129,7 +128,6 @@ refuses to open it, see [Code signing](#code-signing).
 
 - `.deb`: `sudo apt install ./teachers-teammate_<version>_amd64.deb`, then start **Teacher's
   Teammate** from your application launcher.
-- `.tar.xz`: unpack it anywhere (`tar -xJf <file>`) and run `./teachers-teammate`.
 
 ### Python and command line
 

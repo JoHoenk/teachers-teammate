@@ -241,7 +241,7 @@ def debian_packages(sonames: list[str]) -> list[str]:
             "The Depends: line cannot be measured:\n  "
             + "\n  ".join(problems)
             + "\nInstall the libraries the bundle links against on the build machine first "
-            "(see the Qt system libraries step in .github/workflows/build_artifacts.yml)."
+            "(see the Qt system libraries step in .github/workflows/build_package.yml)."
         )
     return sorted(packages)
 

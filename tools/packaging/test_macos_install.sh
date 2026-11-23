@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Install the built dmg over the newest published release, the way a teacher does, and start it.
+# Install the built dmg over the newest published release, the way a teacher does, and walk
+# through the installed app.
 #
 # Usage (from the repo root, on macOS):
-#   bash tools/packaging/test_macos_install.sh <new.dmg> <old.dmg> <smoke.json>
+#   bash tools/packaging/test_macos_install.sh <new.dmg> <old.dmg> <smoke.json> [<e2e.json>]
 #
 # CAUTION: it replaces /Applications/teachers-teammate.app. Run it on a CI runner or a
 # throwaway Mac, not on a machine where the app is in use.
@@ -17,11 +18,14 @@
 
 set -euo pipefail
 
-NEW_DMG="${1:?usage: test_macos_install.sh <new.dmg> <old.dmg> <smoke.json>}"
-OLD_DMG="${2:?usage: test_macos_install.sh <new.dmg> <old.dmg> <smoke.json>}"
-SMOKE_OUT="${3:?usage: test_macos_install.sh <new.dmg> <old.dmg> <smoke.json>}"
+NEW_DMG="${1:?usage: test_macos_install.sh <new.dmg> <old.dmg> <smoke.json> [<e2e.json>]}"
+OLD_DMG="${2:?usage: test_macos_install.sh <new.dmg> <old.dmg> <smoke.json> [<e2e.json>]}"
+SMOKE_OUT="${3:?usage: test_macos_install.sh <new.dmg> <old.dmg> <smoke.json> [<e2e.json>]}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 APP="/Applications/teachers-teammate.app"
+# Where the walkthrough writes its result and its pictures; both are uploaded by CI.
+E2E_OUT="${4:-$(pwd)/e2e.json}"
+E2E_SHOTS="$(dirname "${E2E_OUT}")/e2e-shots"
 
 WORK="$(mktemp -d)"
 MOUNT=""
@@ -64,3 +68,13 @@ python3 "${ROOT}/tools/build/check_macos_bundle.py" --plist --version "${version
 
 # ── The installed app starts ──
 "${APP}/Contents/MacOS/teachers-teammate" --_smoke_test "${SMOKE_OUT}"
+
+# ── The installed app does what a teacher does, in the real window and with the bundle's own
+#    models. The script sits outside the .app, so this cannot change anything in the bundle;
+#    the build job verifies the signature of the one the dmg carries. ──
+if ! "${APP}/Contents/MacOS/teachers-teammate" --_run_script "${ROOT}/tests/e2e/walkthrough.py" \
+    "${E2E_OUT}" --screenshots "${E2E_SHOTS}"; then
+    cat "${E2E_OUT}" || true
+    exit 1
+fi
+cat "${E2E_OUT}"

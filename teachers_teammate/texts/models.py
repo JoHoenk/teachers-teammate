@@ -288,7 +288,14 @@ def too_large_text(
             )
     if card <= 0:
         return "This model is too large to run quickly without a graphics card."
-    tier = _TIER_MEMORY_GB[profile]
+    tier = _TIER_MEMORY_GB.get(profile)
+    if tier is None:  # a basic computer whose card is known: the card's own size
+        if memory_gb is None:
+            return f"This model may need more graphics memory than this computer has ({_gb(card)})."
+        return (
+            f"This model needs about {memory_gb:g} GB of graphics memory; "
+            f"this computer has about {_gb(card)}."
+        )
     if memory_gb is None:
         return f"This model may need more memory than the {tier} GB of computers of this type."
     return (

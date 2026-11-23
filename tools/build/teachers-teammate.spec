@@ -315,9 +315,9 @@ if sys.platform == "win32":
             "(or run tools/build/make_version_resource.py first)"
         )
 
-# A folder on every platform, never a single file: the .deb installs it under /opt, the
-# portable tarball unpacks it, and the Qt libraries stay replaceable files instead of being
-# packed into an archive that unpacks to a temporary directory on every start.
+# A folder on every platform, never a single file: the .deb installs it under /opt, and the Qt
+# libraries stay replaceable files instead of being packed into an archive that unpacks to a
+# temporary directory on every start.
 exe = EXE(
     pyz,
     a.scripts,

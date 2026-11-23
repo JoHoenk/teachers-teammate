@@ -269,4 +269,12 @@ def wait_for_background_tasks(timeout_ms: int = _DEFAULT_WAIT_MS) -> bool:
     return _get_pool(True).waitForDone(left_ms) and local_done
 
 
+def background_activity() -> dict[str, int]:
+    """Return how many background tasks run right now, on each of the two pools."""
+    return {
+        "local": _get_pool(False).activeThreadCount(),
+        "network": _get_pool(True).activeThreadCount(),
+    }
+
+
 atexit.register(wait_for_background_tasks, 2000)

@@ -2,9 +2,9 @@
 
 The app talks to Ollama through the ``ollama`` client, so a test that wants to see the real
 client, the real threads and the real pull stream needs a server that answers like one.  This
-fake answers the five requests the app makes — ``/api/version``, ``/api/tags``, ``/api/ps``,
-``/api/show`` and ``/api/pull`` — on ``127.0.0.1:0``, so it never clashes with an Ollama running
-on the developer's computer.
+fake answers the six requests the app makes — ``/api/version``, ``/api/tags``, ``/api/ps``,
+``/api/show``, ``/api/pull`` and ``/api/chat`` — on ``127.0.0.1:0``, so it never clashes with an
+Ollama running on the developer's computer.
 
 It is threaded on purpose: the GUI lists the models while a pull is streaming, and a
 single-threaded server would answer the second request only after the first had finished.
@@ -14,6 +14,8 @@ order) and :attr:`FakeOllama.pulled` (the tags a pull really installed, in order
 
 It is the one Ollama stand-in of the test suite: a test that needs a server over HTTP uses this,
 a test that needs another answer teaches this one a switch instead of writing a second server.
+``answer_chats()`` is that switch: :data:`CHAT_ANSWER` unless a test says otherwise, and
+:class:`ProofreadingAnswers` for a test that wants a model which really proofreads.
 
 It is not Ollama.  ``tests/unit/test_fake_ollama.py`` keeps it honest against the ``ollama``
 client the app is locked to.  The shapes it sends were read off Ollama's own source (``api/types.go``,
@@ -24,14 +26,23 @@ client the app is locked to.  The shapes it sends were read off Ollama's own sou
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import re
 import threading
 import time
 from typing import Any
+
+from teachers_teammate.domain.correction_prompts import correct_user, parameters
+from teachers_teammate.infrastructure.proofreading.schemas import (
+    Category,
+    ExplainAnswer,
+    ExplainNote,
+    UnclearAnswer,
+)
 
 #: The version the fake reports; the app only shows it.
 VERSION = "0.12.3"
@@ -60,8 +71,99 @@ MODEL_FORMAT = "gguf"
 IDLE_EXPIRY = "2026-01-01T00:00:00+00:00"
 #: The answer a chat request gives, so a test can read a whole request back.
 CHAT_ANSWER = "ok"
+#: The category a proofreading answer gives an edit it does not explain by itself.
+PROOFREADING_CATEGORY: Category = "spelling"
 #: The second the moving expiry of a busy model starts from (a fixed point, so it is readable).
 _MOVING_EXPIRY_BASE = 1_800_000_000
+#: What a chat request answers: the request body, and the assistant's content for it.
+ChatAnswer = Callable[[dict[str, Any]], str]
+
+
+def _text_marker() -> str:
+    """Return what the exchange writes in front of a text, from the exchange's own format code."""
+    # Without language, level and notes the parameter lines are the request's whole head, so what
+    # is left of the message is exactly the framing that stands before the text.
+    empty_head = parameters("", level="")
+    framed = correct_user("", language="", level="")
+    return framed[len(empty_head) :]
+
+
+#: Where the text of a step ① request begins.  Built from
+#: :func:`~teachers_teammate.domain.correction_prompts.correct_user`, so a request framed
+#: differently no longer yields a text here and the tests that rely on it fail.
+TEXT_MARKER = _text_marker()
+assert TEXT_MARKER, "the proofreading exchange writes nothing in front of the text"
+
+
+@dataclass(frozen=True)
+class ProofreadingAnswers:
+    """A model that corrects the text it is sent, explains every edit the same way, and doubts none.
+
+    ``edits`` are the word pairs it changes (``{"have": "has"}``), and ``last_word`` replaces the
+    last word of every text it is sent, whatever that word is: a test that cannot know what a
+    reader made of a page still gets exactly one change per document.  A document with neither
+    comes back as it was sent.  ``category`` and ``explanation`` are what it says about every
+    change.  The two
+    structured steps answer in the app's own answer shapes, so a renamed field or a new required
+    one raises here instead of somewhere in the walk.
+    """
+
+    edits: tuple[tuple[str, str], ...] = ()
+    last_word: str = ""
+    explanation: str = "The spelling was corrected."
+    category: Category = PROOFREADING_CATEGORY
+
+    def __call__(self, body: dict[str, Any]) -> str:
+        """Answer one chat request of the proofreading exchange."""
+        schema = body.get("format") or {}
+        properties = schema.get("properties") or {}
+        if "edits" in properties:
+            return self._explained(schema)
+        if "unclear" in properties:
+            return UnclearAnswer(unclear=[]).model_dump_json()
+        return self._corrected(_asked_text(body))
+
+    def _explained(self, schema: dict[str, Any]) -> str:
+        """Answer step ②: one note per edit number the request pinned."""
+        answer = ExplainAnswer(
+            edits=[
+                ExplainNote(id=number, category=self.category, explanation=self.explanation)
+                for number in _edit_numbers(schema)
+            ]
+        )
+        return answer.model_dump_json()
+
+    def _corrected(self, text: str) -> str:
+        """Answer step ①/③: the text the request carried, with the words it changes."""
+        for original, corrected in self.edits:
+            text = text.replace(original, corrected)
+        if self.last_word:
+            text = re.sub(r"\S+(\s*)$", lambda found: self.last_word + found.group(1), text)
+        return text
+
+
+def _asked_text(body: dict[str, Any]) -> str:
+    """Return the text a proofreading request carries, read with the exchange's own framing."""
+    user = "".join(str(message.get("content") or "") for message in body.get("messages") or ())
+    _framing, marker, text = user.rpartition(TEXT_MARKER)
+    if not marker:
+        raise ValueError(f"this request carries no text to proofread: {user[:200]!r}")
+    return text
+
+
+def _edit_numbers(schema: dict[str, Any]) -> list[int]:
+    """Return the edit numbers step ② pinned, in the order the schema lists them."""
+    note = (schema.get("properties") or {}).get("edits", {}).get("items") or {}
+    # A single-use model is written inline; one that is used twice is a ``$ref`` into ``$defs``.
+    reference = str(note.get("$ref") or "")
+    if reference:
+        note = (schema.get("$defs") or {}).get(reference.rsplit("/", 1)[-1]) or {}
+    pinned = (note.get("properties") or {}).get("id") or {}
+    # One id is a ``Literal`` of one value, which a schema writes as ``const``, not as an enum.
+    numbers = pinned.get("enum") or ([pinned["const"]] if "const" in pinned else [])
+    if not numbers:
+        raise ValueError(f"this explain request pins no edit numbers: {schema!r}")
+    return [int(number) for number in numbers]
 
 
 @dataclass(frozen=True)
@@ -111,6 +213,8 @@ class FakeOllama:
         self._loading: tuple[str, float] | None = None
         #: How often ``/api/ps`` was asked, which is what moves the expiry of a busy model.
         self._ps_calls = 0
+        #: What ``/api/chat`` answers; ``None`` is :data:`CHAT_ANSWER`.
+        self._chat_answer: ChatAnswer | None = None
         self._lock = threading.Lock()
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _handler_for(self))
         self._thread = threading.Thread(
@@ -171,6 +275,22 @@ class FakeOllama:
         """
         with self._lock:
             self._loading = (tag, time.monotonic() + seconds)
+
+    def answer_chats(self, answer: ChatAnswer) -> None:
+        """Answer every ``/api/chat`` request with *answer* instead of :data:`CHAT_ANSWER`.
+
+        *answer* gets the request body and returns the assistant's content, so a test that needs
+        the proofreading exchange's three steps answers all of them from one place
+        (:class:`ProofreadingAnswers`).
+        """
+        with self._lock:
+            self._chat_answer = answer
+
+    def chat_answer(self, body: dict[str, Any]) -> str:
+        """Return the assistant's content for one chat request."""
+        with self._lock:
+            answer = self._chat_answer
+        return CHAT_ANSWER if answer is None else answer(body)
 
     def ps(self) -> list[dict[str, Any]]:
         """Return the ``/api/ps`` answer: what is in memory, and when it will be dropped."""
@@ -298,7 +418,7 @@ def _handler_for(fake: FakeOllama) -> type[BaseHTTPRequestHandler]:
     """Return a handler class that answers for *fake*."""
 
     class _Handler(BaseHTTPRequestHandler):
-        """Answers the five requests the app makes of an Ollama server."""
+        """Answers the six requests the app makes of an Ollama server."""
 
         def do_GET(self) -> None:  # BaseHTTPRequestHandler's spelling
             self._dispatch("GET")
@@ -366,6 +486,12 @@ def _handler_for(fake: FakeOllama) -> type[BaseHTTPRequestHandler]:
         def _chat(self, body: dict[str, Any]) -> None:
             """Stream one answer, after the server is free and the model is loaded."""
             tag = str(body.get("model") or "")
+            try:
+                answer = fake.chat_answer(body)
+            except Exception as exc:  # noqa: BLE001  # a stand-in that cannot answer says why
+                # The caller sees this as the model's error, not as a connection that dropped.
+                self._json({"error": f"the stand-in cannot answer: {exc}"}, status=500)
+                return
             fake.wait_for_turn(tag)
             self.send_response(200)
             self.send_header("Content-Type", "application/x-ndjson")
@@ -374,7 +500,7 @@ def _handler_for(fake: FakeOllama) -> type[BaseHTTPRequestHandler]:
                 {
                     "model": tag,
                     "created_at": MODIFIED_AT,
-                    "message": {"role": "assistant", "content": CHAT_ANSWER},
+                    "message": {"role": "assistant", "content": answer},
                     "done": False,
                 }
             )

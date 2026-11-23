@@ -473,6 +473,15 @@ py_test(
 )
 
 py_test(
+    name = "test_merged_view",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_merged_view.py"],
+    args = ["unit/test_merged_view.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _APPLICATION_LIB,
+)
+
+py_test(
     name = "test_check_document",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_check_document.py"],
@@ -952,6 +961,25 @@ py_test(
     env = {
         "CODE_SIGNING_POLICY": "$(rlocationpath //docs:code_signing_policy.md)",
         "WINDOWS_NSI": "$(rlocationpath //tools/packaging:windows.nsi)",
+    },
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_packaging_walkthrough",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_packaging_walkthrough.py"],
+    args = ["unit/test_packaging_walkthrough.py"],
+    data = [
+        "//tools/packaging:test_deb_install.sh",
+        "//tools/packaging:test_macos_install.sh",
+        "//tools/packaging:test_windows_installer.ps1",
+    ],
+    env = {
+        "DEB_INSTALL_SCRIPT": "$(rlocationpath //tools/packaging:test_deb_install.sh)",
+        "MACOS_INSTALL_SCRIPT": "$(rlocationpath //tools/packaging:test_macos_install.sh)",
+        "WINDOWS_INSTALLER_SCRIPT": "$(rlocationpath //tools/packaging:test_windows_installer.ps1)",
     },
     main = "run_test.py",
     deps = _COMMON_DEPS,
@@ -2889,10 +2917,11 @@ py_test(
 py_test(
     name = "test_gui_main_walkthrough",
     size = "large",
-    timeout = "eternal",  # several walks in one process, each ended by its own watchdog
     srcs = _COMMON_SRCS + [
         "e2e/__init__.py",
+        "e2e/walk_checked.py",
         "e2e/walkthrough.py",
+        "fakes/fake_ollama.py",
         "gui/test_gui_main_walkthrough.py",
     ],
     args = ["gui/test_gui_main_walkthrough.py"],
@@ -2900,7 +2929,11 @@ py_test(
     env = _MODEL_ENV,
     main = "run_test.py",
     tags = ["walkthrough"],
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
+        "//teachers_teammate:gui_layer_lib",
+        # The proofreading walk talks to the real ``ollama`` client.
+        "@ocr_test_dependencies//ollama:pkg",
+    ],
 )
 
 # What that script may import: it also runs inside the shipped bundle, which carries no tests.
@@ -3019,6 +3052,7 @@ test_suite(
         ":test_make_constraints",
         ":test_make_version_resource",
         ":test_markdown_shield",
+        ":test_merged_view",
         ":test_messages",
         ":test_model_catalog",
         ":test_model_listing",
@@ -3033,6 +3067,7 @@ test_suite(
         ":test_ollama_discovery",
         ":test_ollama_install",
         ":test_ollama_utils",
+        ":test_packaging_walkthrough",
         ":test_performance_estimate",
         ":test_performance_probe",
         ":test_pipeline_txt_integration",

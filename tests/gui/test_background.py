@@ -10,6 +10,7 @@ from teachers_teammate.gui._background import (
     LatestTask,
     _MAX_NETWORK_THREADS,
     _owner_alive,
+    background_activity,
     run_in_background,
     run_streaming,
     wait_for_background_tasks,
@@ -282,3 +283,25 @@ def test_wait_for_background_tasks_waits_for_the_network_pool_too(qtbot) -> None
     assert wait_for_background_tasks(50) is False
     gate.set()
     assert wait_for_background_tasks(5000) is True
+
+
+def test_background_activity_counts_the_tasks_running_on_each_pool(qtbot) -> None:
+    """
+    Given  one task that waits on the local pool
+    When   the activity is read
+    Then   the local pool counts it, the network pool counts none, and both drop to 0 after
+    """
+    release = threading.Event()
+    started = threading.Event()
+
+    def work() -> None:
+        started.set()
+        release.wait(timeout=5)
+
+    run_in_background(work, lambda _result, _error: None)
+    assert started.wait(timeout=5)
+    busy = background_activity()
+    release.set()
+    qtbot.waitUntil(lambda: background_activity() == {"local": 0, "network": 0}, timeout=5000)
+
+    assert busy == {"local": 1, "network": 0}

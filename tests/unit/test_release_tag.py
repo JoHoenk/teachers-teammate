@@ -14,7 +14,6 @@ from tools.release import release_tag
 _RELEASE_NAMES = (
     "teachers_teammate-0.5.7-py3-none-any.whl",
     "teachers-teammate_0.5.7_amd64.deb",
-    "teachers-teammate-0.5.7-linux-x86_64.tar.xz",
     "teachers-teammate-0.5.7-w64-setup.exe",
     "teachers-teammate-0.5.7-macos.dmg",
 )
@@ -128,9 +127,9 @@ def test_draft_arguments_mark_a_prerelease_and_link_the_signing_policy() -> None
 
 def test_collect_files_copies_one_file_of_each_kind(tmp_path: Path) -> None:
     """
-    Given  the five release files, each in its own artifact folder
+    Given  the four release files, each in its own artifact folder
     When   collect_files() is called
-    Then   all five are copied flat into the destination
+    Then   all four are copied flat into the destination
     """
     copied = release_tag.collect_files(_artifacts(tmp_path), tmp_path / "release")
 
@@ -154,7 +153,7 @@ def test_collect_files_refuses_a_missing_installer(tmp_path: Path) -> None:
 
 def test_collect_files_refuses_a_stray_file(tmp_path: Path) -> None:
     """
-    Given  artifacts that hold the five files and a smoke report
+    Given  artifacts that hold the four files and a smoke report
     When   collect_files() is called
     Then   it exits with an error: nothing else may reach the release
     """
@@ -162,7 +161,7 @@ def test_collect_files_refuses_a_stray_file(tmp_path: Path) -> None:
     (artifacts / "release-linux-smoke").mkdir()
     (artifacts / "release-linux-smoke" / "smoke.json").write_text("{}")
 
-    with pytest.raises(SystemExit, match="hold 6 files, expected exactly 5"):
+    with pytest.raises(SystemExit, match="hold 5 files, expected exactly 4"):
         release_tag.collect_files(artifacts, tmp_path / "release")
 
 

@@ -12,6 +12,9 @@ import teachers_teammate as _pkg
 from ._background import run_in_background
 
 _RELEASES_API = "https://api.github.com/repos/JoHoenk/teachers-teammate/releases/latest"
+#: Every release page of this project is under this prefix.  The banner is a link, and the
+# answer comes from the network: what points elsewhere is not opened.
+_RELEASE_URL_PREFIX = "https://github.com/JoHoenk/teachers-teammate/"
 
 # A release version, either as the app writes it (0.5.7rc1, PEP 440) or as a tag reads
 # (v0.5.7-rc.1): the pre-release label sits right after the release part or behind a dash.
@@ -43,6 +46,11 @@ def _version_tuple(tag: str) -> tuple[int, ...]:
     return (*release, -1 if is_prerelease else 0)
 
 
+def _is_release_url(url: str) -> bool:
+    """Whether *url* names a page of this project's own releases."""
+    return url.startswith(_RELEASE_URL_PREFIX) and len(url) > len(_RELEASE_URL_PREFIX)
+
+
 def fetch_newer_release() -> tuple[str, str] | None:
     """Return the release ``(version, url)`` that is newer than this one, or ``None``.
 
@@ -65,7 +73,7 @@ def fetch_newer_release() -> tuple[str, str] | None:
         url = data.get("html_url", "")
         latest = _version_tuple(tag)
         installed = _version_tuple(_pkg.__version__)
-        if tag and url and latest and installed and latest > installed:
+        if tag and _is_release_url(url) and latest and installed and latest > installed:
             return tag.lstrip("v"), url
     except Exception:  # noqa: BLE001  # update check is best-effort; network/parse errors are silently ignored
         pass

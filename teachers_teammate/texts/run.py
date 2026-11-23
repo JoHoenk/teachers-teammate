@@ -76,16 +76,6 @@ def input_without_units(name: str) -> str:
     return f"Input '{name}' produced no units."
 
 
-def image_unit_without_path(name: str) -> str:
-    """Return what a run says about a unit that came out of a provider without its image."""
-    return f"Input '{name}' contains an image unit without image_path."
-
-
-def unsupported_unit_kind(kind: str, name: str) -> str:
-    """Return what a run says about a unit whose kind no stage of the pipeline knows."""
-    return f"Unsupported input unit kind '{kind}' for '{name}'."
-
-
 def input_without_content(name: str) -> str:
     """Return what a run says about an input file that had neither an image nor text."""
     return f"Input '{name}' produced no usable image or text content."
@@ -171,6 +161,11 @@ def personal_info_removal_failed(reason: BaseException) -> str:
 def personal_info_restore_failed(reason: BaseException) -> str:
     """Return what a run says about a file whose personal data could not be put back."""
     return f"PII restore failed: {reason}"
+
+
+def personal_info_pattern_invalid(tag: str, reason: BaseException) -> str:
+    """Return what a run says about a pattern of the personal-info list that does not compile."""
+    return f"Personal info pattern '{tag}' is not valid: {reason}"
 
 
 def output_not_saved(reason: BaseException) -> str:

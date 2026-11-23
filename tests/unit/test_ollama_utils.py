@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,7 +14,6 @@ from teachers_teammate.exceptions import (
     OCRDeadlineError,
     OCRError,
     OCRTimeoutError,
-    OllamaConnectionError,
     OllamaUnreachableError,
     ResponseTruncatedError,
     RunStoppedError,
@@ -1122,7 +1122,7 @@ def test_model_capabilities_raises_when_the_server_is_unreachable(monkeypatch, e
     """
     Given  show() fails because the server cannot be reached or does not answer in time
     When   model_capabilities is called
-    Then   OllamaConnectionError is raised, so callers can stop asking a dead server
+    Then   OllamaUnreachableError is raised, so callers can stop asking a dead server
            (unlike "model unknown", which stays None)
     """
     mock_client = MagicMock()
@@ -1131,7 +1131,7 @@ def test_model_capabilities_raises_when_the_server_is_unreachable(monkeypatch, e
     mock_ollama.Client.return_value = mock_client
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
-    with pytest.raises(OllamaConnectionError):
+    with pytest.raises(OllamaUnreachableError):
         OllamaClient("http://127.0.0.1:11434").model_capabilities("x")
 
 
@@ -1659,17 +1659,31 @@ def test_a_failing_on_abandon_does_not_hide_the_stop() -> None:
         )
 
 
-def test_cut_connection_closes_the_http_client_of_the_request() -> None:
+def test_cut_connection_closes_the_client_of_the_request() -> None:
     """
-    Given  an ollama client with an httpx client inside
+    Given  an ollama client
     When   its connection is cut
-    Then   the httpx client is closed (a blocked read fails and the server sees the drop)
+    Then   the client is closed (a blocked read fails and the server sees the drop)
     """
     client = MagicMock()
 
     ollama_utils._cut_connection(client)
 
-    client._client.close.assert_called_once_with()
+    client.close.assert_called_once_with()
+
+
+def test_cut_connection_falls_back_to_the_http_client_of_an_older_client() -> None:
+    """
+    Given  a client without the public close
+    When   its connection is cut
+    Then   the httpx client under it is closed instead
+    """
+    http = MagicMock()
+    older_client: Any = SimpleNamespace(_client=http)  # a client from before `close()`
+
+    ollama_utils._cut_connection(older_client)
+
+    http.close.assert_called_once_with()
 
 
 def test_the_ollama_wrappers_let_a_stop_through_instead_of_degrading_to_a_warning() -> None:

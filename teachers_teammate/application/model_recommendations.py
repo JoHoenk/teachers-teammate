@@ -50,7 +50,7 @@ from ..domain.model_catalog import (
 )
 from ..domain.ollama_address import normalize_ollama_url
 from ..domain.stages import Stage
-from ..exceptions import OllamaConnectionError
+from ..exceptions import OllamaUnreachableError
 from .context_choice import ContextChoice, context_choice
 from .ports import HardwareProbe, OllamaServer
 
@@ -352,7 +352,7 @@ class ModelRecommendationService:
                     capabilities = self._ollama.model_capabilities(
                         url, normalize_tag(tag), timeout=_CLASSIFY_TIMEOUT_S
                     )
-                except OllamaConnectionError:
+                except OllamaUnreachableError:
                     reachable = False
                 else:
                     if capabilities is not None:

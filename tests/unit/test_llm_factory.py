@@ -140,6 +140,17 @@ def test_each_named_provider_is_discoverable(name: str) -> None:
     assert name in providers
 
 
+@pytest.mark.parametrize("name", ["_helpers", "_mistral_common", "..config", "no_such_provider"])
+def test_a_name_that_is_no_provider_imports_nothing(name: str) -> None:
+    """
+    Given  a name that is a private module of the package, a path or no provider at all
+    When   its metadata and its models are asked for
+    Then   nothing is imported and nothing is promised
+    """
+    assert get_provider_info(name) is None
+    assert list_provider_models(name) == []
+
+
 def test_build_llm_raises_value_error_for_unknown_provider() -> None:
     """
     Given  a provider name that does not match any module
@@ -148,6 +159,18 @@ def test_build_llm_raises_value_error_for_unknown_provider() -> None:
     """
     with pytest.raises(ValueError, match="Unknown correction provider"):
         build_llm("nonexistent_provider_xyz", "some-model", base_url="")
+
+
+def test_build_llm_says_so_when_a_listed_provider_cannot_be_imported(mocker) -> None:
+    """
+    Given  a provider that is listed but whose module fails to import (a package is missing)
+    When   build_llm() is called
+    Then   it is not called an unknown provider: the error says the provider could not be loaded
+    """
+    mocker.patch("teachers_teammate.infrastructure.llm_factory._load_provider", return_value=None)
+
+    with pytest.raises(RuntimeError, match="could not be loaded"):
+        build_llm("openai", "gpt-4o", base_url="")
 
 
 def test_build_llm_catches_system_exit_from_provider(mocker) -> None:
@@ -400,7 +423,7 @@ def test_a_provider_without_the_key_counts_as_unknown(mocker) -> None:
     """
     module = mocker.Mock(spec=["create"])
     mocker.patch(
-        "teachers_teammate.infrastructure.llm_factory._import_provider_module",
+        "teachers_teammate.infrastructure.llm_factory._load_provider",
         return_value=module,
     )
     assert get_provider_data_region("old") == "unknown"
@@ -416,7 +439,7 @@ def test_a_provider_function_decides_the_region_from_the_settings(mocker) -> Non
     module.PROVIDER = ProviderInfo(name="acme", display_name="Acme")
     module.data_region = lambda **settings: "eu" if settings.get("eu") else "non_eu"
     mocker.patch(
-        "teachers_teammate.infrastructure.llm_factory._import_provider_module",
+        "teachers_teammate.infrastructure.llm_factory._load_provider",
         return_value=module,
     )
 
@@ -437,7 +460,7 @@ def test_a_region_function_that_raises_counts_as_unknown(mocker) -> None:
 
     module.data_region = broken
     mocker.patch(
-        "teachers_teammate.infrastructure.llm_factory._import_provider_module",
+        "teachers_teammate.infrastructure.llm_factory._load_provider",
         return_value=module,
     )
     assert get_provider_data_region("custom") == "unknown"
@@ -452,7 +475,7 @@ def test_an_unrecognised_region_string_counts_as_unknown(mocker) -> None:
     module = mocker.Mock(spec=["PROVIDER"])
     module.PROVIDER = mocker.Mock(data_region="europe-ish")
     mocker.patch(
-        "teachers_teammate.infrastructure.llm_factory._import_provider_module",
+        "teachers_teammate.infrastructure.llm_factory._load_provider",
         return_value=module,
     )
     assert get_provider_data_region("odd") == "unknown"

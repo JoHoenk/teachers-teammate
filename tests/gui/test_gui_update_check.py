@@ -14,6 +14,9 @@ from teachers_teammate.gui._update_check import (
     check_for_update,
     fetch_newer_release,
 )
+from teachers_teammate.texts.app import update_available
+
+_RELEASE_PAGE = "https://github.com/JoHoenk/teachers-teammate/releases/tag/v1.0.0"
 
 
 # ── _version_tuple ────────────────────────────────────────────────────────────
@@ -121,7 +124,9 @@ def test_version_tuple_empty_string_returns_empty() -> None:
     assert _version_tuple("") == ()
 
 
-def _fake_response(tag: str, url: str = "https://example.com/rel") -> MagicMock:
+def _fake_response(
+    tag: str, url: str = "https://github.com/JoHoenk/teachers-teammate/releases/tag/v1.0.0"
+) -> MagicMock:
     body = json.dumps({"tag_name": tag, "html_url": url}).encode()
     resp = MagicMock()
     resp.read.return_value = body
@@ -140,7 +145,7 @@ def test_a_newer_release_is_offered() -> None:
         patch("teachers_teammate.__version__", "0.9.0"),
         patch("urllib.request.urlopen", return_value=_fake_response("v1.0.0")),
     ):
-        assert fetch_newer_release() == ("1.0.0", "https://example.com/rel")
+        assert fetch_newer_release() == ("1.0.0", _RELEASE_PAGE)
 
 
 def test_the_same_version_is_not_offered() -> None:
@@ -192,7 +197,7 @@ def test_an_rc_build_is_offered_the_final_release() -> None:
         patch("teachers_teammate.__version__", "0.5.7rc1"),
         patch("urllib.request.urlopen", return_value=_fake_response("v0.5.7")),
     ):
-        assert fetch_newer_release() == ("0.5.7", "https://example.com/rel")
+        assert fetch_newer_release() == ("0.5.7", _RELEASE_PAGE)
 
 
 def test_a_final_build_is_offered_the_next_release() -> None:
@@ -205,7 +210,7 @@ def test_a_final_build_is_offered_the_next_release() -> None:
         patch("teachers_teammate.__version__", "0.5.6"),
         patch("urllib.request.urlopen", return_value=_fake_response("v0.5.7")),
     ):
-        assert fetch_newer_release() == ("0.5.7", "https://example.com/rel")
+        assert fetch_newer_release() == ("0.5.7", _RELEASE_PAGE)
 
 
 def test_a_tag_that_is_not_a_version_is_not_offered() -> None:
@@ -233,6 +238,41 @@ def test_a_build_of_the_latest_release_is_not_offered_it(installed: str) -> None
         patch("urllib.request.urlopen", return_value=_fake_response("v0.5.7")),
     ):
         assert fetch_newer_release() is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/rel",
+        "https://github.com/someone-else/teachers-teammate/releases/tag/v1.0.0",
+        "http://github.com/JoHoenk/teachers-teammate/releases/tag/v1.0.0",
+        "https://github.com/JoHoenk/teachers-teammate/",
+    ],
+)
+def test_a_release_page_that_is_not_this_projects_is_not_offered(url: str) -> None:
+    """
+    Given  the release feed names a newer version but points outside this project's releases
+    When   the release is fetched
+    Then   nothing is offered: the banner opens only a page of this repository
+    """
+    with (
+        patch("teachers_teammate.__version__", "0.9.0"),
+        patch("urllib.request.urlopen", return_value=_fake_response("v1.0.0", url)),
+    ):
+        assert fetch_newer_release() is None
+
+
+def test_the_banner_escape_offer_stays_a_plain_text() -> None:
+    """
+    Given  a version and a URL that carry markup
+    When   the banner text is built
+    Then   both are escaped, so the answer from the network cannot shape the banner
+    """
+    banner = update_available("<b>1.0</b>", "https://github.com/x?a=1&b=<script>")
+
+    assert "<b>1.0</b>" not in banner
+    assert "&lt;b&gt;1.0&lt;/b&gt;" in banner
+    assert "&amp;b=&lt;script&gt;" in banner
 
 
 def test_a_network_failure_is_silent() -> None:
@@ -277,14 +317,14 @@ def test_the_answer_arrives_on_the_gui_thread(qtbot) -> None:
     def on_available(version: str, url: str) -> None:
         offered.append((version, url, threading.get_ident()))
 
-    newer = ("1.0.0", "https://example.com/rel")
+    newer = ("1.0.0", _RELEASE_PAGE)
     with patch.object(_update_check, "fetch_newer_release", lambda: newer):
         check_for_update(on_available)
         assert wait_for_background_tasks(5000)
         qtbot.waitUntil(lambda: bool(offered), timeout=5000)
 
     version, url, thread = offered[0]
-    assert (version, url) == ("1.0.0", "https://example.com/rel")
+    assert (version, url) == ("1.0.0", _RELEASE_PAGE)
     assert thread == threading.get_ident()
 
 

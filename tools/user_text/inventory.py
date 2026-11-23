@@ -222,6 +222,28 @@ INVARIANT_MESSAGES: frozenset[tuple[str, str]] = frozenset(
             "teachers_teammate/infrastructure/proofreading/port.py",
             "a structured request needs a schema",
         ),
+        (
+            "teachers_teammate/gui/_preprocess_preview.py",
+            "a preview that did not fail has both pages and its steps",
+        ),
+        ("teachers_teammate/gui/_qt.py", "f'Qt returned no {what}'"),
+        (
+            "teachers_teammate/gui/setup/_assistant.py",
+            "f'{page_id} is not a {kind.__name__}'",
+        ),
+        (
+            "teachers_teammate/infrastructure/addon_manager.py",
+            "the pip process opened no output stream",
+        ),
+        (
+            "teachers_teammate/infrastructure/input_provider_factory.py",
+            "f'_SUFFIX_TO_BUILDER keys {set(_SUFFIX_TO_BUILDER)} do not match "
+            "SUPPORTED_SUFFIXES {SUPPORTED_SUFFIXES} — update both together'",
+        ),
+        (
+            "teachers_teammate/infrastructure/proofreading/schemas.py",
+            "Category names other categories than CHANGE_CATEGORIES does",
+        ),
     }
 )
 

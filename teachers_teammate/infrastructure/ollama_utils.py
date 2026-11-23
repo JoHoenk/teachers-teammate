@@ -29,7 +29,7 @@ from ..domain.ollama_address import (
     ollama_host,
 )
 from ..domain.ollama_discovery import WaitDetail, WaitKind, is_private_host
-from ..exceptions import OllamaConnectionError, RunStoppedError, stop_requested
+from ..exceptions import OllamaUnreachableError, RunStoppedError, stop_requested
 from ..interfaces import Reporter
 from ..texts.addons import model_pull_failed
 from ..texts.servers import (
@@ -199,7 +199,7 @@ def _mapped_stream[T](stream: Iterator[T], base_url: str) -> Iterator[T]:
     import httpx  # noqa: PLC0415  # comes with ollama, a core dependency
     import ollama  # noqa: PLC0415
 
-    from ..exceptions import OCRError, OllamaUnreachableError  # noqa: PLC0415
+    from ..exceptions import OCRError  # noqa: PLC0415
 
     started = False
     try:
@@ -230,8 +230,10 @@ def _cut_connection(client: ollama.Client) -> None:
     from another thread makes the blocked read fail at once and the server see the dropped
     connection, which is what stops it working on an answer nobody waits for.
     """
-    http = getattr(client, "_client", None)  # httpx.Client; ollama has no public close()
-    close = getattr(http, "close", None)
+    close = getattr(client, "close", None)
+    if close is None:
+        # A version without the public close still has its httpx client under ``_client``.
+        close = getattr(getattr(client, "_client", None), "close", None)
     if close is not None:
         close()
 
@@ -435,7 +437,9 @@ def _consume_iterator_with_first_token_timeout[T](
             )
         except queue.Empty:
             _abandon(abandoned, on_abandon)
-            assert total_timeout is not None  # the queue only times out under a deadline
+            if total_timeout is None:
+                # Only a deadline makes the queue time out; without one an empty queue stays.
+                raise
             raise OCRDeadlineError(answer_abandoned(total_timeout)) from None
         except RunStoppedError:
             _abandon(abandoned, on_abandon)
@@ -779,14 +783,14 @@ class OllamaClient:
             to the server or the server reports neither capabilities nor families.
 
         Raises:
-            :exc:`~teachers_teammate.exceptions.OllamaConnectionError`: The server
+            :exc:`~teachers_teammate.exceptions.OllamaUnreachableError`: The server
                 is unreachable or timed out, so callers can stop asking it.
         """
         try:
             resp = self._client().show(tag)
         except Exception as exc:  # the Ollama client may raise anything; classified below
             if _is_transport_error(exc):
-                raise OllamaConnectionError(cannot_reach(self.base_url, exc)) from exc
+                raise OllamaUnreachableError(cannot_reach(self.base_url, exc)) from exc
             return None  # the server answered but cannot describe the model
 
         try:
@@ -813,7 +817,7 @@ class OllamaClient:
         stderr) so adapters can route them to a log pane.
 
         Raises:
-            :exc:`~teachers_teammate.exceptions.OllamaConnectionError`: Server
+            :exc:`~teachers_teammate.exceptions.OllamaUnreachableError`: Server
                 is unreachable, or the model is not available.
         """
         import ollama  # noqa: PLC0415
@@ -827,21 +831,21 @@ class OllamaClient:
         except Exception as exc:
             exc_str = str(exc).lower()
             if any(w in exc_str for w in ("connect", "refused", "network", "unreachable")):
-                raise OllamaConnectionError(cannot_connect(self.base_url)) from exc
+                raise OllamaUnreachableError(cannot_connect(self.base_url)) from exc
             if "timeout" in exc_str:
-                raise OllamaConnectionError(connection_timed_out(self.base_url)) from exc
-            raise OllamaConnectionError(contact_failed(self.base_url, exc)) from exc
+                raise OllamaUnreachableError(connection_timed_out(self.base_url)) from exc
+            raise OllamaUnreachableError(contact_failed(self.base_url, exc)) from exc
 
         if not available:
-            raise OllamaConnectionError(no_models_installed(self.base_url))
+            raise OllamaUnreachableError(no_models_installed(self.base_url))
 
         if not models_include(model_name, available):
             avail_str = ", ".join(available)
-            raise OllamaConnectionError(model_not_found(model_name, avail_str))
+            raise OllamaUnreachableError(model_not_found(model_name, avail_str))
 
         try:
             capabilities = self.model_capabilities(model_name)
-        except OllamaConnectionError:
+        except OllamaUnreachableError:
             capabilities = None  # introspection is best-effort; skip the advisory
         if capabilities is not None and "vision" not in capabilities:
             reporter.warn(vision_not_supported(model_name))
@@ -960,7 +964,7 @@ class OllamaClient:
         """
         import ollama  # noqa: PLC0415
 
-        from ..exceptions import OCRError, OllamaUnreachableError  # noqa: PLC0415
+        from ..exceptions import OCRError  # noqa: PLC0415
 
         if stop_requested(self._cancel_event):
             raise RunStoppedError

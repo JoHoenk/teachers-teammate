@@ -6,10 +6,9 @@ module is the one place that reads and writes those answers, so the question, th
 Settings → Privacy and the reset all agree.
 
 An answer is stored as the fingerprint of what was agreed to, nothing else: the list says
-what that means ("Proofreading: Online service (Mistral) -- receives text, names sent as
-written") by reading the fingerprint back
-(:func:`~teachers_teammate.texts.privacy.describe_fingerprint`), so a changed wording changes
-every line and no English is kept in the settings file.  A line may carry a tab and further
+what that means ("Proofreading: Online service (Mistral) — names sent as written") by reading
+the fingerprint back (:func:`~teachers_teammate.texts.privacy.describe_fingerprint`), so a
+changed wording changes every line and no English is kept in the settings file.  A line may carry a tab and further
 text; only the part before the tab is the fingerprint.
 """
 

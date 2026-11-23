@@ -40,7 +40,7 @@ from teachers_teammate.exceptions import (
 from teachers_teammate.infrastructure.workflow.file_processor import (
     REVIEW_UNMATCHED,
     FileProcessor,
-    FileProcessorConfig,
+    FileProcessorDeps,
 )
 from teachers_teammate.interfaces import Corrector
 from teachers_teammate.infrastructure.proofreading.port import PortAnswer, StepRequest
@@ -48,6 +48,11 @@ from tests.fakes.fake_port import FakePort, answer
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _steps_per_page(steps: list[str], pages: int) -> list[tuple[str, ...]]:
+    """The steps of a whole input as the first page's, which is what the stubs report."""
+    return ([(tuple(steps)), *[() for _ in range(pages - 1)]]) if pages else []
 
 
 @dataclass
@@ -183,12 +188,14 @@ def _make_processor(
         prepared = preprocess_return
     else:
         ocr_inputs, steps, source_image, text_hint = preprocess_return
-        prepared = PreparedInput(ocr_inputs, steps, source_image, text_hint, None)
+        prepared = PreparedInput(
+            ocr_inputs, _steps_per_page(steps, len(ocr_inputs)), source_image, text_hint, None
+        )
     preprocess_service.preprocess_input.return_value = prepared
 
     ocr_stage_service.run_pages.return_value = returns.ocr_return
 
-    cfg = FileProcessorConfig(
+    cfg = FileProcessorDeps(
         output_dir=tmp_path / "output",
         language="English",
         cache_service=cache_service,
@@ -926,6 +933,65 @@ def test_cached_correction_replays_its_stored_warning(tmp_path: Path) -> None:
     assert result.correction_warning == "no explanations"
 
 
+def test_personal_data_left_hidden_is_stored_with_the_correction(tmp_path: Path) -> None:
+    """
+    Given  a proofreading that gave back a stand-in the run could not put back
+    When   process() is called
+    Then   the warning is shown now and handed to the cache, so a later run replays it
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("Hallo PERSON_1.")
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = lambda text: (text, {"[PERSON_1]": "Anna"})
+    anonymizer.restore.side_effect = lambda text, mapping: text
+    fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector, anonymizer=anonymizer)
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text="Hallo PERSON_1.")
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert "[PERSON_1]" in result.correction_warning
+    assert (
+        cache_svc.record_correction.call_args.kwargs["correction_warning"]
+        == result.correction_warning
+    )
+
+
+def test_cached_evaluation_replays_its_stored_warning(tmp_path: Path) -> None:
+    """
+    Given  a cached content review that stored a warning
+    When   process() is called again
+    Then   the evaluator is not asked again and the warning still reaches the result
+    """
+    state = dataclasses.replace(
+        _make_state(
+            ocr_done=True,
+            raw_text="raw",
+            correction_done=True,
+            correction_text="corrected",
+            evaluation_done=True,
+            evaluation_text="eval cached",
+            preview_img="p.png",
+        ),
+        evaluation_warning="still hidden",
+    )
+    evaluator = MagicMock()
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("corrected")
+    fp, _, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(cache_ctx=_make_ctx(state)),
+        corrector=corrector,
+        evaluator=evaluator,
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    evaluator.evaluate.assert_not_called()
+    assert "still hidden" in result.warnings
+
+
 # ── Evaluation ─────────────────────────────────────────────────────────────
 
 
@@ -1184,7 +1250,7 @@ def test_evaluation_skipped_when_no_evaluator(tmp_path: Path) -> None:
 
     fp, _, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=None)
 
-    fp2_cfg = FileProcessorConfig(
+    fp2_cfg = FileProcessorDeps(
         output_dir=tmp_path / "output",
         language="English",
         cache_service=fp._cache_service,
@@ -1314,7 +1380,7 @@ def test_no_doc_creator_returns_results_cached_message(tmp_path: Path) -> None:
     ocr_svc.run_pages.return_value = ["text"]
 
     (tmp_path / "output").mkdir(parents=True, exist_ok=True)
-    cfg = FileProcessorConfig(
+    cfg = FileProcessorDeps(
         output_dir=tmp_path / "output",
         language="English",
         cache_service=cache_svc,
@@ -1593,7 +1659,7 @@ def _image_returns(
     originals = [raw, *(tmp_path / f"raw{i}.png" for i in range(1, pages))]
     return _StubReturns(
         preprocess_return=PreparedInput(
-            page_paths, steps, raw, None, None, None, (), tuple(originals)
+            page_paths, _steps_per_page(steps, pages), raw, None, None, None, (), tuple(originals)
         ),
         ocr_return=ocr_pages or ["text"] * pages,
     )
@@ -1789,14 +1855,14 @@ def test_process_persists_original_when_preprocessing_changed_the_page(tmp_path:
 
     kwargs = cache_svc.persist_preview_artifact.call_args.kwargs
     assert kwargs["original_paths"] == (raw,)
-    assert kwargs["preprocess_steps"] == ["grayscale", "deskew"]
+    assert kwargs["preprocess_steps"] == ("grayscale", "deskew")
 
 
 def test_process_keeps_no_original_when_no_steps_applied(tmp_path: Path) -> None:
     """
     Given  an image input with preprocessing method none (no steps)
     When   process() is called
-    Then   no original copy is requested and the recorded steps are an empty list
+    Then   no original copy is requested and no step is recorded
     """
     (tmp_path / "raw.png").write_bytes(b"raw")
     fp, cache_svc, *_ = _make_processor(tmp_path, returns=_image_returns(tmp_path, []))
@@ -1805,7 +1871,7 @@ def test_process_keeps_no_original_when_no_steps_applied(tmp_path: Path) -> None
 
     kwargs = cache_svc.persist_preview_artifact.call_args.kwargs
     assert kwargs["original_paths"] == ()
-    assert kwargs["preprocess_steps"] == []
+    assert kwargs["preprocess_steps"] == ()
 
 
 def test_process_stores_the_pages_of_a_text_layer_pdf(tmp_path: Path) -> None:
@@ -2667,3 +2733,15 @@ def test_a_stop_during_step_two_leaves_the_file_stopped_and_stores_nothing(tmp_p
     assert result.ok is False
     assert [request.step for request in port.requests] == ["correct"]
     cache_svc.record_correction.assert_not_called()
+
+
+def test_personal_data_left_hidden_becomes_a_warning() -> None:
+    """
+    Given  a text a proofreading gave back with a stand-in still in it, and one without
+    When   the run looks for what stayed hidden
+    Then   the first gives a warning naming the token, the second gives none
+    """
+    mapping = {"[PERSON_1]": "Anna"}
+
+    assert "[PERSON_1]" in FileProcessor._left_hidden("Hallo [PERSON_1].", mapping)
+    assert FileProcessor._left_hidden("Hallo Anna.", mapping) == ""

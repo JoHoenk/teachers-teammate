@@ -337,7 +337,7 @@ def test_the_eye_button_says_while_the_names_are_being_hidden(
         release.wait(5)
         return ANONYMIZED, MAPPING
 
-    monkeypatch.setattr(AnonymizationService, "anonymize_preview", _slow_anonymize)
+    monkeypatch.setattr(AnonymizationService, "anonymize_text", _slow_anonymize)
     main_window.show()
     _open_document(main_window, monkeypatch, tmp_path, RAW)
     box = main_window._check_controller.page._hide_names_box
@@ -365,7 +365,7 @@ def test_the_eye_button_makes_the_texts_editable(
     """
     monkeypatch.setattr(
         AnonymizationService,
-        "anonymize_preview",
+        "anonymize_text",
         lambda _self, _text, _language, _config=None: (ANONYMIZED, MAPPING),
     )
     main_window.show()
@@ -477,7 +477,7 @@ def test_the_placeholders_arrive_from_the_service(main_window, monkeypatch, tmp_
         calls.append((text, language))
         return ANONYMIZED, MAPPING
 
-    monkeypatch.setattr(AnonymizationService, "anonymize_preview", _fake_anonymize)
+    monkeypatch.setattr(AnonymizationService, "anonymize_text", _fake_anonymize)
     _open_document(main_window, monkeypatch, tmp_path, RAW, CORRECTED)
     main_window._privacy_controller.apply_display_anonymized(True)
 
@@ -594,7 +594,7 @@ def test_only_the_newest_anonymization_reaches_the_page(
             return ANONYMIZED, MAPPING
         return "[PERSON_1] ist hier.", {"[PERSON_1]": "Clara West"}
 
-    monkeypatch.setattr(AnonymizationService, "anonymize_preview", _fake_anonymize)
+    monkeypatch.setattr(AnonymizationService, "anonymize_text", _fake_anonymize)
     _open_document(main_window, monkeypatch, tmp_path, RAW)
     main_window._privacy_controller.apply_display_anonymized(True)
     _open_document(main_window, monkeypatch, tmp_path, "Clara West ist hier.")

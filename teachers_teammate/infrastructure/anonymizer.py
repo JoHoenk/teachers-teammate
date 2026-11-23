@@ -3,41 +3,30 @@
 Implements :class:`~teachers_teammate.interfaces.Anonymizer` using spacy NER for
 person names and regex patterns for structural PII (email, phone, IBAN, street, postcode, dates).
 
-Install the optional dependency group to use this module::
-
-    pip install "teachers_teammate[privacy]"
-
-Then download a spacy model for your language, e.g.::
-
-    python -m spacy download en_core_web_sm
+spaCy and the model for a language are add-ons: the Add-ons page installs both, and
+:class:`~teachers_teammate.infrastructure.spacy_models.SpacyModels` hands the loaded models in.
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Callable, Collection
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import hashlib
-import importlib.util
-import logging
 import re
 import threading
 from typing import TYPE_CHECKING
 
-from ..domain.anonymization import AnonymizerConfig, resolve_patterns, restore
+from ..domain.anonymization import AnonymizerConfig, resolve_patterns, restore, surface_pattern
 from ..domain.formatted_text import INLINE_TAG_ALTERNATION
 from ..domain.name_models import spacy_model_for
+from ..exceptions import AnonymizerError
 from ..interfaces import AnonymizationMap, Anonymizer
 from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
-from ..texts.addons import (
-    SPACY_REQUIRED,
-    extra_model_language_unknown,
-    extra_model_missing,
-    spacy_not_loadable,
-)
+from ..texts.addons import extra_model_language_unknown, extra_model_missing
+from ..texts.run import personal_info_pattern_invalid
 from . import system_locale
-
-_logger = logging.getLogger(__name__)
+from .spacy_models import SpacyModels
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -278,6 +267,137 @@ class CachedAnonymizer(Anonymizer):
         return self._inner.restore(text, mapping)
 
 
+# ── Spans: what is replaced, and where ─────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class _Span:
+    """One stretch of the text to replace: where it is, what stands there and under which tag."""
+
+    start: int
+    end: int
+    surface: str
+    tag: str
+
+
+def _compiled_pattern(tag: str, pattern: str) -> re.Pattern[str]:
+    """Return *pattern* compiled, or fail the file rather than send what it should have hidden."""
+    try:
+        return re.compile(pattern)
+    except re.error as exc:
+        raise AnonymizerError(personal_info_pattern_invalid(tag, exc)) from exc
+
+
+def _without_overlaps(text: str, ordered: list[_Span]) -> list[_Span]:
+    """Return *ordered* with every part another span already covers taken out.
+
+    *ordered* is the priority order — person names first, then the patterns as they are
+    configured.  A span that loses a part to a person name keeps the rest: a street the NER
+    model half swallowed is still replaced as a street.  A pattern span another pattern
+    overlaps is dropped whole, so a stray fragment never becomes a placeholder of its own.
+    """
+    accepted: list[_Span] = []
+    for candidate in ordered:
+        pieces = [(candidate.start, candidate.end)]
+        for taken in accepted:
+            pieces = [
+                piece for start, end in pieces for piece in _cut(start, end, taken.start, taken.end)
+            ]
+        if pieces == [(candidate.start, candidate.end)]:
+            accepted.append(candidate)
+            continue
+        if candidate.tag != "PERSON" and any(
+            taken.tag != "PERSON" and taken.start < candidate.end and candidate.start < taken.end
+            for taken in accepted
+        ):
+            continue
+        for start, end in pieces:
+            piece = text[start:end]
+            trimmed = piece.strip()
+            if trimmed:
+                offset = start + len(piece) - len(piece.lstrip())
+                accepted.append(_Span(offset, offset + len(trimmed), trimmed, candidate.tag))
+    return accepted
+
+
+def _cut(start: int, end: int, taken_start: int, taken_end: int) -> list[tuple[int, int]]:
+    """Return *start:end* without the part *taken_start:taken_end* already covers."""
+    if taken_end <= start or taken_start >= end:
+        return [(start, end)]
+    pieces = []
+    if taken_start > start:
+        pieces.append((start, min(taken_start, end)))
+    if taken_end < end:
+        pieces.append((max(taken_end, start), end))
+    return pieces
+
+
+def _assign_placeholders(spans: list[_Span], text: str) -> dict[str, str]:
+    """Return ``{surface: placeholder}`` for *spans*, one counter per tag.
+
+    The same surface keeps one placeholder wherever it stands, so the model sees a consistent
+    token and coreference is preserved.  A token the text already holds would be restored into
+    the wrong place, so such a placeholder gets a letter suffix instead.
+    """
+    counters: dict[str, int] = {}
+    placeholders: dict[str, str] = {}
+    for span in spans:
+        if span.surface in placeholders:
+            continue
+        counters[span.tag] = counters.get(span.tag, 0) + 1
+        placeholders[span.surface] = _free_placeholder(span.tag, counters[span.tag], text)
+    return placeholders
+
+
+def _free_placeholder(tag: str, number: int, text: str) -> str:
+    """Return ``[TAG_<number>]``, lettered further while the text already holds that token."""
+    candidate = f"[{tag}_{number}]"
+    suffix = 0
+    while candidate in text:
+        suffix += 1
+        candidate = f"[{tag}_{number}{_letters(suffix)}]"
+    return candidate
+
+
+def _letters(number: int) -> str:
+    """Return *number* as a letter label: 1 → ``"a"``, 26 → ``"z"``, 27 → ``"aa"``."""
+    label = ""
+    while number:
+        number, rest = divmod(number - 1, 26)
+        label = chr(ord("a") + rest) + label
+    return label
+
+
+def _further_surfaces(text: str, spans: list[_Span], placeholders: dict[str, str]) -> list[_Span]:
+    """Return the further occurrences of the surfaces already in *placeholders*.
+
+    A name the model found in one sentence is replaced in all of them, so a run never sends a
+    name just because the NER pass was unsure about the second mention.
+    """
+    pattern = surface_pattern(placeholders)
+    if pattern is None:
+        return []
+    return [
+        _Span(match.start(), match.end(), match.group(0), "")
+        for match in pattern.finditer(text)
+        if not any(max(span.start, match.start()) < min(span.end, match.end()) for span in spans)
+    ]
+
+
+def _replace(text: str, spans: list[_Span], placeholders: dict[str, str]) -> str:
+    """Return *text* with every span replaced by its placeholder, in one pass."""
+    pieces: list[str] = []
+    position = 0
+    for span in sorted(spans, key=lambda span: span.start):
+        if span.start < position:
+            continue
+        pieces.append(text[position : span.start])
+        pieces.append(placeholders[span.surface])
+        position = span.end
+    pieces.append(text[position:])
+    return "".join(pieces)
+
+
 # ── SpacyAnonymizer ────────────────────────────────────────────────────────
 
 
@@ -307,60 +427,45 @@ class SpacyAnonymizer(Anonymizer):
         OSError: If a required spacy model is not downloaded.
     """
 
-    def __init__(self, language: str = "English", config: AnonymizerConfig | None = None) -> None:
+    def __init__(
+        self,
+        language: str = "English",
+        config: AnonymizerConfig | None = None,
+        *,
+        models: SpacyModels | None = None,
+    ) -> None:
         self._config = resolve_anonymizer_config(
             config if config is not None else AnonymizerConfig(),
             document_language=language,
             system_language=system_locale.system_language(),
         )
         primary_model = self._config.primary_model or spacy_model_for(language)
-        try:
-            import spacy  # noqa: PLC0415
-        except ImportError as exc:
-            if importlib.util.find_spec("spacy") is not None:
-                # Installed but broken: say what failed, not that it is missing.
-                raise ImportError(spacy_not_loadable(exc)) from exc
-            _logger.error(
-                "spacy is not installed. "
-                "Install the privacy extras: pip install 'teachers_teammate[privacy]'"
-            )
-            raise ImportError(SPACY_REQUIRED) from exc
-        try:
-            spacy.prefer_gpu()
-            self._nlp = spacy.load(primary_model)
-        except OSError:
-            _logger.error(
-                "spacy model '%s' is not downloaded. Run: python -m spacy download %s",
-                primary_model,
-                primary_model,
-            )
-            raise
-
-        self._nlp_secondary = None
-        if self._config.secondary_model:
-            try:
-                self._nlp_secondary = spacy.load(self._config.secondary_model)
-            except OSError:
-                _logger.error(
-                    "secondary spacy model '%s' is not downloaded. "
-                    "Run: python -m spacy download %s",
-                    self._config.secondary_model,
-                    self._config.secondary_model,
-                )
-                raise
+        self._nlp, self._nlp_secondary = (models or SpacyModels()).load(
+            primary_model, self._config.secondary_model
+        )
 
     def anonymize(self, text: str) -> tuple[str, AnonymizationMap]:
         """Replace PII in *text* with stable placeholders.
+
+        Two passes, both over the text as it was given: the NER models find person names, the
+        configured patterns find the rest.  Their spans are resolved against each other and
+        replaced in one go, so no pattern ever runs over a placeholder; the tag that comes
+        first in the settings wins an overlap, a person name before all of them.  A surface
+        that was found once is also replaced where a pass missed it, with its own placeholder.
 
         Returns:
             Tuple of *(anonymized_text, mapping)* where mapping is
             ``{placeholder: original_surface_text}``.
         """
-        mapping: AnonymizationMap = {}
-        seen: dict[str, str] = {}  # original surface → assigned placeholder
-        result = text
+        spans = _without_overlaps(text, [*self._person_spans(text), *self._pattern_spans(text)])
+        placeholders = _assign_placeholders(spans, text)
+        spans = [*spans, *_further_surfaces(text, spans, placeholders)]
+        return _replace(text, spans, placeholders), {
+            placeholder: surface for surface, placeholder in placeholders.items()
+        }
 
-        # ── NER: collect person spans ──────────────────────────────────────
+    def _person_spans(self, text: str) -> list[_Span]:
+        """Return the person names the NER models find in *text*."""
         markup = [match.span() for match in _MARKUP_RE.finditer(text)]
         ner_text = _ner_view(text, markup)
 
@@ -374,58 +479,29 @@ class SpacyAnonymizer(Anonymizer):
             return [span for piece in pieces if (span := _trim_street(*piece)) is not None]
 
         primary_spans = person_spans(self._nlp)
+        spans = [_Span(start, end, surface, "PERSON") for start, end, surface in primary_spans]
+        if self._nlp_secondary is None:
+            return spans
+        covered = [(s, e) for s, e, _ in primary_spans]
+        return [
+            *spans,
+            *(
+                _Span(start, end, surface, "PERSON")
+                for start, end, surface in person_spans(self._nlp_secondary)
+                if not any(max(s, start) < min(e, end) for s, e in covered)
+            ),
+        ]
 
-        if self._nlp_secondary is not None:
-            secondary_spans = person_spans(self._nlp_secondary)
-            # Union: add secondary spans that don't overlap any primary span.
-            covered = [(s, e) for s, e, _ in primary_spans]
-            extra = [
-                span
-                for span in secondary_spans
-                if not any(max(s, span[0]) < min(e, span[1]) for s, e in covered)
-            ]
-            ner_spans = primary_spans + extra
-        else:
-            ner_spans = primary_spans
-
-        person_counter = 0
-        ner_replacements: list[tuple[int, int, str]] = []
-        for start, end, surface in ner_spans:
-            if surface in seen:
-                placeholder = seen[surface]
-            else:
-                person_counter += 1
-                placeholder = f"[PERSON_{person_counter}]"
-                seen[surface] = placeholder
-                mapping[placeholder] = surface
-            ner_replacements.append((start, end, placeholder))
-
-        for start, end, placeholder in sorted(ner_replacements, key=lambda x: x[0], reverse=True):
-            result = result[:start] + placeholder + result[end:]
-
-        # ── Regex: configured patterns ─────────────────────────────────────
-        for tag, pattern_str in self._config.patterns:
-            try:
-                compiled = re.compile(pattern_str)
-            except re.error:
-                continue
-            matches = list(compiled.finditer(result))
-            tag_counter = 0
-            replacements: list[tuple[int, int, str]] = []
-            for m in matches:
-                surface = m.group(0)
-                if surface in seen:
-                    placeholder = seen[surface]
-                else:
-                    tag_counter += 1
-                    placeholder = f"[{tag}_{tag_counter}]"
-                    seen[surface] = placeholder
-                    mapping[placeholder] = surface
-                replacements.append((m.start(), m.end(), placeholder))
-            for start, end, placeholder in reversed(replacements):
-                result = result[:start] + placeholder + result[end:]
-
-        return result, mapping
+    def _pattern_spans(self, text: str) -> list[_Span]:
+        """Return what the configured patterns find in *text*, pattern by pattern."""
+        spans: list[_Span] = []
+        for tag, pattern in self._config.patterns:
+            compiled = _compiled_pattern(tag, pattern)
+            spans.extend(
+                _Span(match.start(), match.end(), match.group(0), tag)
+                for match in compiled.finditer(text)
+            )
+        return spans
 
     def restore(self, text: str, mapping: AnonymizationMap) -> str:
         """Replace all placeholder tokens in *text* with their original values."""

@@ -184,8 +184,11 @@ _CLI_LIB = ["//teachers_teammate:cli_lib"]
 
 # The proofreading steps' schemas (infrastructure/proofreading/schemas.py) are pydantic models,
 # which every stage that reads a proofreading result imports (directly or through cache_service).
+# platformdirs: the app reads its folders from it (``infrastructure/storage_root.py``), so a
+# test that imports the app has it.
 _COMMON_DEPS = [
     "@ocr_test_dependencies//pydantic:pkg",
+    "@ocr_test_dependencies//platformdirs:pkg",
     "@ocr_test_dependencies//pytest:pkg",
     "@ocr_test_dependencies//pytest_mock:pkg",
 ]
@@ -800,6 +803,19 @@ py_test(
     deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
+# The library internals the app reaches into, against the versions it is locked to.
+py_test(
+    name = "test_library_internals",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_library_internals.py"],
+    args = ["unit/test_library_internals.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + [
+        "@ocr_test_dependencies//ollama:pkg",
+        "@ocr_test_dependencies//python_docx:pkg",
+    ],
+)
+
 py_test(
     name = "test_pipeline_run_integration",
     size = "small",
@@ -937,15 +953,13 @@ py_test(
     deps = _COMMON_DEPS + _TEXTS_LIB,
 )
 
-# The ratchet that keeps teacher-facing text in ``teachers_teammate/texts``: no literal at a
-# call site that is not on the allowlist, no stale allowlist entry, and no ``Notice`` built
-# outside the package.  The sources come in as data because the test parses them with ``ast``.
-# The import direction between the layers of //teachers_teammate (see the libraries there).
+# The ratchet on class and function size over every layer: the sources come in as data because
+# the test parses them with ``ast``.
 py_test(
-    name = "test_gui_class_size",
+    name = "test_class_size",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_gui_class_size.py"],
-    args = ["unit/test_gui_class_size.py"],
+    srcs = _COMMON_SRCS + ["unit/test_class_size.py"],
+    args = ["unit/test_class_size.py"],
     data = ["//teachers_teammate:all_sources"],
     main = "run_test.py",
     deps = _COMMON_DEPS,
@@ -959,6 +973,16 @@ py_test(
     data = ["//teachers_teammate:all_sources"],
     main = "run_test.py",
     deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_subprocess_env",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_subprocess_env.py"],
+    args = ["unit/test_subprocess_env.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1296,7 +1320,7 @@ py_test(
 )
 
 # The smoke test imports every lazily loaded module of the app, so it needs the whole runtime
-# set — including the packages no other unit test imports (ollama, platformdirs, keyring).
+# set — including the packages no other unit test imports (ollama, keyring).
 # ``medium``: the smoke test now also builds the Setup Assistant and waits for its plan, which
 # has a 30 s timeout of its own, so the 60 s of ``small`` is too tight on a loaded runner.
 py_test(
@@ -1314,7 +1338,6 @@ py_test(
         "//teachers_teammate:gui_layer_lib",
         "@ocr_test_dependencies//keyring:pkg",
         "@ocr_test_dependencies//ollama:pkg",
-        "@ocr_test_dependencies//platformdirs:pkg",
     ],
 )
 
@@ -2895,6 +2918,7 @@ test_suite(
         ":test_check_pins",
         ":test_check_smoke",
         ":test_chunking_corrector",
+        ":test_class_size",
         ":test_cli",
         ":test_cli_composition",
         ":test_collect_files",
@@ -2956,6 +2980,7 @@ test_suite(
         ":test_latest_release",
         ":test_layer_imports",
         ":test_lazy_import_budget",
+        ":test_library_internals",
         ":test_license_inventory",
         ":test_llm_factory",
         ":test_llm_invoke",
@@ -3016,6 +3041,7 @@ test_suite(
         ":test_state_repository",
         ":test_step_runner",
         ":test_storage_policy",
+        ":test_subprocess_env",
         ":test_teacher_work",
         ":test_teacher_work_readers",
         ":test_text_chunks",
@@ -3049,7 +3075,6 @@ test_suite(
         ":test_gui_check_body",
         ":test_gui_check_page",
         ":test_gui_check_style",
-        ":test_gui_class_size",
         ":test_gui_config_panel",
         ":test_gui_dialogs",
         ":test_gui_formatted_text",

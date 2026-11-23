@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -287,7 +287,7 @@ def test_export_text_anonymizes_with_the_given_language_and_config(tmp_path: Pat
             anonymizer_config=config,
         )
 
-    ctor.assert_called_once_with("German", config)
+    ctor.assert_called_once_with("German", config, models=ANY)
     anonymizer.anonymize.assert_called_once_with("Dear Anna")
     assert out.read_text(encoding="utf-8") == "Dear [PERSON_1]"
     assert "Anna" not in out.read_text(encoding="utf-8")

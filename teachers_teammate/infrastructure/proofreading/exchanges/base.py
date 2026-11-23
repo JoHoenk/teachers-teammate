@@ -11,8 +11,9 @@ warnings and the reports of every request.  Nothing above this layer knows which
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Protocol
 
 from ....domain.formatted_text import TextFormat
@@ -96,12 +97,20 @@ class Exchange(Protocol):
 ExchangeFactory = Callable[..., Exchange]
 """Builds an exchange from a port and its options; see :func:`build_exchange`."""
 
-EXCHANGES: dict[ExchangeKind, ExchangeFactory] = {}
+_EXCHANGES: dict[ExchangeKind, ExchangeFactory] = {}
+
+EXCHANGES: Mapping[ExchangeKind, ExchangeFactory] = MappingProxyType(_EXCHANGES)
 """The exchanges the app can run, by the name a profile uses.
 
-Filled by :mod:`teachers_teammate.infrastructure.proofreading.exchanges`, so a new exchange is
-one module and one entry here.
+:mod:`teachers_teammate.infrastructure.proofreading.exchanges` registers them through
+:func:`register_exchange`, so a new exchange is one module and one call here.  The table is
+read-only: no caller can drop an exchange a profile points at.
 """
+
+
+def register_exchange(kind: ExchangeKind, factory: ExchangeFactory) -> None:
+    """Make *factory* the exchange *kind* names."""
+    _EXCHANGES[kind] = factory
 
 
 def build_exchange(

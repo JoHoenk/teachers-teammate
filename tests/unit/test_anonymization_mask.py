@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from teachers_teammate.domain.anonymization import (
+    leftover_placeholders,
     mask,
     mask_with_offsets,
     restore,
     restore_with_offsets,
+    surface_pattern,
 )
 
 ANNA = {"[PERSON_1]": "Anna Müller"}
@@ -210,3 +212,42 @@ def test_mask_with_offsets_without_a_map_changes_nothing() -> None:
 
     assert masked == "Anna Müller"
     assert offsets.runs == ()
+
+
+def test_leftover_placeholders_finds_what_was_not_put_back() -> None:
+    """
+    Given  a text that still holds a placeholder of the map, and one written without brackets
+    When   leftover_placeholders() is called
+    Then   both stand-ins are reported once, sorted, and a clean text reports nothing
+    """
+    mapping = {"[PERSON_1]": "Anna", "[PERSON_2]": "Ben"}
+
+    assert leftover_placeholders("Hallo [PERSON_1], hier ist PERSON_2.", mapping) == (
+        "[PERSON_1]",
+        "[PERSON_2]",
+    )
+    assert leftover_placeholders("Hallo Anna, hier ist Ben.", mapping) == ()
+
+
+def test_a_surface_pattern_finds_a_name_as_a_whole_word() -> None:
+    """
+    Given  two names of different length
+    When   surface_pattern() is used to find them in a text
+    Then   each is found whole, the longer one first, and inside a longer word is not found
+    """
+    pattern = surface_pattern(["Anna", "Anna Müller"])
+
+    assert pattern is not None
+    assert pattern.findall("Anna Müller und Anna, nicht Annabel") == ["Anna Müller", "Anna"]
+
+
+def test_leftover_placeholders_ignores_a_longer_token_that_holds_the_same_letters() -> None:
+    """
+    Given  a text with [PERSON_12] and UPDATE_1, and a map whose placeholders are [PERSON_1] and
+           [DATE_1]
+    When   leftover_placeholders() is called
+    Then   neither is reported: a stand-in without brackets only counts as a whole word
+    """
+    mapping = {"[PERSON_1]": "Anna", "[DATE_1]": "1.2.2010"}
+
+    assert leftover_placeholders("[PERSON_12] and UPDATE_1", mapping) == ()

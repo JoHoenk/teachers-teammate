@@ -53,7 +53,11 @@ from ..domain.pdf_text_layer import (
     normalize_pdf_text_layer,
 )
 from ..domain.setting_values import PreprocessMethod
-from ..settings_schema import PREPROCESS_METHODS, normalize_preprocess_method
+from ..settings_schema import (
+    PDF_RENDER_DPI_RANGE,
+    PREPROCESS_METHODS,
+    normalize_preprocess_method,
+)
 from ..texts import addons
 from ..texts import review as txt
 from ..texts.models import (
@@ -459,7 +463,7 @@ class ScanQualityControls(QWidget):
         form.addRow(self._page_models_row)
 
         self._pdf_dpi = QSpinBox()
-        self._pdf_dpi.setRange(72, 600)
+        self._pdf_dpi.setRange(*PDF_RENDER_DPI_RANGE)
         self._pdf_dpi.setSingleStep(72)
         self._pdf_dpi.setSuffix(DPI_SUFFIX)
         self._pdf_dpi.setToolTip(PDF_DPI_TIP)

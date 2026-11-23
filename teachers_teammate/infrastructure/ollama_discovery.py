@@ -185,7 +185,6 @@ def scan_network(
     targets = targets[:MAX_SCAN_TARGETS]
     total = len(targets)
     found: list[DiscoveredServer] = []
-    lock = threading.Lock()
     asked = 0
 
     def ask(host: str) -> DiscoveredServer | None:
@@ -210,11 +209,10 @@ def scan_network(
             if future.cancelled():
                 continue
             hit = future.result()
-            with lock:
-                asked += 1
-                done = asked
-                if hit is not None:
-                    found.append(hit)
+            asked += 1
+            done = asked
+            if hit is not None:
+                found.append(hit)
             if hit is not None and on_found is not None:
                 on_found(hit)
             if on_progress is not None:

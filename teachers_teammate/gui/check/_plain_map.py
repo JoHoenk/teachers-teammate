@@ -169,13 +169,13 @@ def _table_pieces(table: QTextTable) -> list[_Piece]:
     return pieces
 
 
-def _items(document: QTextDocument) -> list[tuple[bool, QTextBlock | QTextTable]]:
+def _items(document: QTextDocument) -> list[QTextBlock | QTextTable]:
     """Return the blocks and tables of *document* in document order.
 
     The walk mirrors ``document_from_qt``: a table is one block of the plain text, and a frame
     that is not a table is entered.
     """
-    found: list[tuple[bool, QTextBlock | QTextTable]] = []
+    found: list[QTextBlock | QTextTable] = []
 
     def walk(frame: QTextFrame) -> None:
         iterator = frame.begin()
@@ -183,11 +183,11 @@ def _items(document: QTextDocument) -> list[tuple[bool, QTextBlock | QTextTable]
             child_frame = iterator.currentFrame()
             child_block = iterator.currentBlock()
             if isinstance(child_frame, QTextTable):
-                found.append((True, child_frame))
+                found.append(child_frame)
             elif child_frame is not None:
                 walk(child_frame)
             elif child_block.isValid():
-                found.append((False, child_block))
+                found.append(child_block)
             iterator += 1
 
     walk(document.rootFrame())
@@ -199,12 +199,10 @@ def _pieces(document: QTextDocument) -> list[_Piece]:
     pieces: list[_Piece] = []
     previous_was_item = False
     emitted = False
-    for is_table, item in _items(document):
-        if is_table:
-            assert isinstance(item, QTextTable)
+    for item in _items(document):
+        if isinstance(item, QTextTable):
             block_pieces, is_item = _table_pieces(item), False
         else:
-            assert isinstance(item, QTextBlock)
             block_pieces, is_item = _block_pieces(item)
         if not "".join(piece.text for piece in block_pieces).strip():
             continue  # a blank block is in neither text

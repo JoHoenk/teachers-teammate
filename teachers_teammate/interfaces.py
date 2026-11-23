@@ -23,7 +23,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
 
@@ -85,26 +85,22 @@ class InputProvider(ABC):
         """
 
 
-InputUnitKind = Literal["image", "text"]
+@dataclass(frozen=True)
+class ImageUnit:
+    """One page of a scan, as the file the provider rendered or found."""
+
+    path: Path
 
 
 @dataclass(frozen=True)
-class InputUnit:
-    """A single ingestion unit produced by an :class:`InputProvider`."""
+class TextUnit:
+    """Text that replaces text recognition: a text file, or a PDF's embedded text."""
 
-    kind: InputUnitKind
-    image_path: Path | None = None
-    text: str | None = None
+    text: str
 
-    @staticmethod
-    def image(path: Path) -> InputUnit:
-        """Create an image unit from *path*."""
-        return InputUnit(kind="image", image_path=path)
 
-    @staticmethod
-    def text_content(value: str) -> InputUnit:
-        """Create a text unit from *value*."""
-        return InputUnit(kind="text", text=value)
+#: What an :class:`InputProvider` reads a document into.
+InputUnit = ImageUnit | TextUnit
 
 
 TextOrigin = Literal["file", "pdf_text_layer"]
@@ -115,13 +111,13 @@ TextOrigin = Literal["file", "pdf_text_layer"]
 class InputPayload:
     """Provider output: ingestion units plus optional source image for document preview."""
 
-    units: list[InputUnit]
+    units: tuple[InputUnit, ...]
     source_image: Path | None = None
     text_origin: TextOrigin | None = None
     """Set when the units hold text that replaces OCR; ``None`` for image payloads."""
     text_layer_note: str | None = None
     """For a PDF that fell back to OCR: why its text layer was not used (for the status log)."""
-    page_images: list[Path] = field(default_factory=list)
+    page_images: tuple[Path, ...] = ()
     """Every page rendered for the scan, in page order, when the units are not images.
 
     A PDF whose text layer is used has no image units, but the teacher still wants to see its

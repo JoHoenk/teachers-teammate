@@ -103,7 +103,7 @@ def _process_one(process_file: ProcessFileFn, file: Path) -> ProcessingResult:
         return process_file(file)
     except Exception:
         _logger.exception("Unexpected error while processing %s", file.name)
-        return ProcessingResult(False, UNEXPECTED_ERROR_MESSAGE)
+        return ProcessingResult.failure(UNEXPECTED_ERROR_MESSAGE)
 
 
 def _outcome(source_id: str, name: str, result: ProcessingResult) -> FileOutcome:

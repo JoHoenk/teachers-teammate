@@ -33,7 +33,7 @@ import sys
 from typing import Any
 
 from ..domain.model_catalog import GpuInfo, GpuUsage
-from .subprocess_utils import no_console_window_kwargs
+from .subprocess_utils import child_env, no_console_window_kwargs
 
 _logger = logging.getLogger(__name__)
 
@@ -64,6 +64,7 @@ def _run(cmd: list[str], timeout: int = 5) -> str | None:
             text=True,
             timeout=timeout,
             check=False,
+            env=child_env(),
             **no_console_window_kwargs(),
         )
         return result.stdout.strip() if result.returncode == 0 else None

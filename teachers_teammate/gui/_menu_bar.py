@@ -20,6 +20,7 @@ from ._config_panel import ConfigPanel
 from ._export_controller import ExportController
 from ._export_menu import build_export_menu
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
+from ._qt import present
 from .settings import PAGE_TITLES, SettingsPage, last_page
 from .settings._window import SUB_PAGES
 
@@ -59,8 +60,7 @@ class MenuBar(QObject):
         self.benchmark_action: QAction
         self.monitor_action: QAction
         self.setup_action: QAction
-        bar = window.menuBar()
-        assert bar is not None
+        bar = present(window.menuBar(), "menu bar")
         self._build_file_menu(bar)
         self._build_settings_menu(bar)
         self._build_tools_menu(bar)
@@ -68,8 +68,7 @@ class MenuBar(QObject):
 
     def _build_file_menu(self, bar: QMenuBar) -> None:
         """File: open documents, export results, quit."""
-        file_menu = bar.addMenu(menus.FILE)
-        assert file_menu is not None
+        file_menu = present(bar.addMenu(menus.FILE), "File menu")
         open_folder_act = QAction(menus.OPEN_FOLDER, self)
         open_folder_act.triggered.connect(self._panel.select_folder)
         file_menu.addAction(open_folder_act)
@@ -90,8 +89,7 @@ class MenuBar(QObject):
 
     def _build_settings_menu(self, bar: QMenuBar) -> None:
         """Settings: one entry per main page of the Settings window, and "All settings…"."""
-        settings_menu = bar.addMenu(menus.SETTINGS)
-        assert settings_menu is not None
+        settings_menu = present(bar.addMenu(menus.SETTINGS), "Settings menu")
         tooltips = {
             SettingsPage.GENERAL: st.PAGE_TIP_GENERAL,
             SettingsPage.AI_MODELS: st.PAGE_TIP_AI_MODELS,
@@ -120,8 +118,7 @@ class MenuBar(QObject):
 
     def _build_tools_menu(self, bar: QMenuBar) -> None:
         """Tools: things that are not part of a batch (Benchmark, System Monitor, Setup)."""
-        tools_menu = bar.addMenu(menus.TOOLS)
-        assert tools_menu is not None
+        tools_menu = present(bar.addMenu(menus.TOOLS), "Tools menu")
         benchmark_act = QAction(menus.BENCHMARK, self)
         benchmark_act.setObjectName(_handles.BENCHMARK)
         benchmark_act.setToolTip(menus.BENCHMARK_TIP)
@@ -145,8 +142,7 @@ class MenuBar(QObject):
 
     def _build_help_menu(self, bar: QMenuBar) -> None:
         """Help: the guide, the licences of what ships with the app, and the version."""
-        help_menu = bar.addMenu(menus.HELP)
-        assert help_menu is not None
+        help_menu = present(bar.addMenu(menus.HELP), "Help menu")
         guide_act = QAction(menus.USER_GUIDE, self)
         guide_act.setObjectName(_handles.USER_GUIDE)
         guide_act.triggered.connect(lambda: HelpDialog(self._window).exec())

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import DEFAULTS
+from ...domain.anonymization import AnonymizerConfig
 from ...texts import privacy as priv
 from ...texts import review as txt
 from ...texts import settings as st
@@ -185,7 +186,7 @@ class PrivacyPage(SettingsPageBase):
 
     # ── public API ────────────────────────────────────────────────────────────
 
-    def anonymizer_config(self) -> object:
+    def anonymizer_config(self) -> AnonymizerConfig | None:
         """Return the ``AnonymizerConfig`` as currently shown."""
         return self._rules.anonymizer_config
 
@@ -215,10 +216,7 @@ class PrivacyPage(SettingsPageBase):
 
         The remembered answers are kept: they have their own "Ask again" buttons.
         """
-        from ...domain.anonymization import (  # noqa: PLC0415
-            DEFAULT_PATTERNS,
-            AnonymizerConfig,
-        )
+        from ...domain.anonymization import DEFAULT_PATTERNS  # noqa: PLC0415
 
         self._rules.set_config(
             AnonymizerConfig(

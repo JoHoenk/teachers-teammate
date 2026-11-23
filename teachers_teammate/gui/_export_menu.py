@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QMenu, QWidget
 
 from ..domain.output_files import ANONYMIZED_TEXT_SUFFIX, DOCX_SUFFIX, TEXT_SUFFIX
 from ..texts import main_window as txt
+from ._qt import present
 
 
 class ExportKind(Enum):
@@ -53,7 +54,6 @@ def build_export_menu(
     menu = QMenu(txt.EXPORT_BUTTON, parent)
     kinds: dict[QAction, ExportKind] = {}
     for kind in ExportKind:
-        action = menu.addAction(kind.label)
-        assert action is not None
+        action = present(menu.addAction(kind.label), "export entry")
         kinds[action] = kind
     return menu, kinds

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tomllib
 from typing import Any
 from unittest.mock import patch
 
@@ -12,18 +13,22 @@ from teachers_teammate.config import (
     DEFAULTS,
     Config,
     OcrConfig,
+    broken_settings_copy,
     dump_config_file,
     load_config_file,
+    save_settings_file,
 )
 from teachers_teammate.domain.settings_notice import SettingNoticeKind
 from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL, HardwareProfileSetting
 from teachers_teammate.exceptions import ConfigFileNotFoundError, ConfigFileParseError
+from teachers_teammate.settings_schema import SETTINGS
 from teachers_teammate.infrastructure.storage_root import (
     compute_cache_key,
     default_config_path,
     resolve_artifact_dir,
     resolve_config_path,
 )
+from tests.conftest import make_config
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -776,3 +781,178 @@ def test_load_config_file_gives_unknown_correction_settings_their_defaults(
     assert _load(bad)["correction_output"] == DEFAULTS["correction_output"]
     assert _load(good)["correction_level"] == "C1"
     assert _load(good)["correction_output"] == "text"
+
+
+# ── The settings file round-trips ──────────────────────────────────────────
+
+#: Values a TOML basic string cannot hold as they are.
+HOSTILE_TEXT = [
+    "",
+    "   ",
+    "plain",
+    "two\nlines",
+    "two\nlines\n",
+    "\nleading newline",
+    'a quote " inside',
+    'ends with a quote"',
+    'has """ triple',
+    "a back\\slash",
+    "a carriage\rreturn",
+    "a carriage return\r\npair",
+    "control \x07 here",
+    "nul \x00 here",
+    "delete \x7f here",
+    "tab\there",
+    "emoji 😀 on two\nlines",
+]
+
+
+@pytest.mark.parametrize("text", HOSTILE_TEXT)
+def test_dump_config_file_round_trips_hostile_text(text: str, tmp_path: Path) -> None:
+    """
+    Given  a value with characters a TOML basic string cannot hold as they are
+    When   dump_config_file() writes it and it is read back with tomllib
+    Then   the value is unchanged
+    """
+    path = tmp_path / "ocr.toml"
+    path.write_text(dump_config_file({"evaluate_prompt": text}), encoding="utf-8")
+
+    with path.open("rb") as handle:
+        assert tomllib.load(handle)["evaluate_prompt"] == text
+
+
+def test_dump_config_file_keeps_a_multiline_prompt_readable() -> None:
+    """
+    Given  a prompt of several lines that a block string can carry
+    When   dump_config_file() writes it
+    Then   it uses the block form and adds no newline of its own
+    """
+    text = "First line.\nSecond line."
+
+    written = dump_config_file({"evaluate_prompt": text})
+
+    assert '"""' in written
+    assert tomllib.loads(written)["evaluate_prompt"] == text
+
+
+def test_dump_config_file_writes_switches_inside_a_list() -> None:
+    """
+    Given  a list that holds a switch, a whole number and a fraction
+    When   dump_config_file() serialises it
+    Then   the file reads back as the same list
+    """
+    written = dump_config_file({"k": [True, "a", 2, 1.5]})
+
+    assert tomllib.loads(written)["k"] == [True, "a", 2, 1.5]
+
+
+@pytest.mark.parametrize("value", [Path("/tmp"), {"a": 1}, b"bytes", object()])
+def test_dump_config_file_refuses_a_value_the_file_cannot_hold(value: object) -> None:
+    """
+    Given  a value of a type no key of the schema produces
+    When   dump_config_file() serialises it
+    Then   it raises TypeError naming the key
+    """
+    with pytest.raises(TypeError, match="input"):
+        dump_config_file({"input": value})
+
+
+def test_every_schema_key_survives_a_save_and_load(tmp_path: Path) -> None:
+    """
+    Given  a settings file holding a value for every key of the schema
+    When   it is loaded and written again, twice
+    Then   the file stops changing and no key was lost
+    """
+    values = {setting.key: setting.default for setting in SETTINGS if setting.default is not None}
+    path = tmp_path / "ocr.toml"
+
+    save_settings_file(path, values)
+    save_settings_file(path, dict(load_config_file(path).values))
+    settled = path.read_text(encoding="utf-8")
+    save_settings_file(path, dict(load_config_file(path).values))
+
+    assert path.read_text(encoding="utf-8") == settled
+    assert set(load_config_file(path).values) == set(values)
+
+
+def test_a_prompt_keeps_its_text_across_saves(tmp_path: Path) -> None:
+    """
+    Given  a settings file with a prompt of the teacher's own
+    When   it is saved and read back three times
+    Then   the prompt is the same text every time, so the content review's fingerprint holds
+    """
+    path = tmp_path / "ocr.toml"
+    prompt = "Review this text in two sentences."
+    save_settings_file(path, {"evaluate_prompt": prompt})
+
+    seen = set()
+    for _ in range(3):
+        values = load_config_file(path).values
+        seen.add(values["evaluate_prompt"])
+        save_settings_file(path, dict(values))
+
+    assert seen == {prompt}
+    assert make_config(tmp_path, evaluate_prompt=prompt).evaluate_prompt == prompt
+
+
+def test_a_prompt_that_grew_a_newline_per_save_reads_as_it_was(tmp_path: Path) -> None:
+    """
+    Given  a settings file whose prompt gained a newline on every save
+    When   load_config_file() reads it
+    Then   the trailing whitespace is gone
+    """
+    path = tmp_path / "ocr.toml"
+    path.write_text('evaluate_prompt = """\nReview this text.\n\n"""\n', encoding="utf-8")
+
+    assert load_config_file(path).values["evaluate_prompt"] == "Review this text."
+
+
+def test_a_settings_file_that_is_not_utf8_is_a_parse_error(tmp_path: Path) -> None:
+    """
+    Given  a settings file an older Windows editor saved in a code page rather than UTF-8
+    When   load_config_file() reads it
+    Then   the failure is a ConfigFileParseError, so a caller keeps the file instead of writing
+           over it
+    """
+    path = tmp_path / "ocr.toml"
+    path.write_bytes('language = "Français"\n'.encode("cp1252"))
+
+    with pytest.raises(ConfigFileParseError, match="not UTF-8"):
+        load_config_file(path)
+
+
+def test_broken_settings_copy_keeps_the_first_copy(tmp_path: Path) -> None:
+    """
+    Given  a settings file that cannot be read
+    When   a copy is asked for twice
+    Then   both copies are kept, and the file itself is unchanged
+    """
+    path = tmp_path / "ocr.toml"
+    path.write_text("not toml at all", encoding="utf-8")
+
+    first = broken_settings_copy(path)
+    second = broken_settings_copy(path)
+
+    assert first is not None and second is not None
+    assert (first.name, second.name) == ("ocr.toml.broken", "ocr.toml.broken.1")
+    assert path.read_text(encoding="utf-8") == "not toml at all"
+
+
+def test_broken_settings_copy_of_a_missing_file_is_none(tmp_path: Path) -> None:
+    """
+    Given  no settings file
+    When   a copy is asked for
+    Then   there is nothing to copy
+    """
+    assert broken_settings_copy(tmp_path / "ocr.toml") is None
+
+
+def test_save_settings_file_leaves_no_temporary_file(tmp_path: Path) -> None:
+    """
+    Given  settings written in one step
+    When   the folder is listed afterwards
+    Then   only the settings file is there
+    """
+    save_settings_file(tmp_path / "ocr.toml", {"language": "German"})
+
+    assert [path.name for path in tmp_path.iterdir()] == ["ocr.toml"]

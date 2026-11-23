@@ -8,13 +8,17 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-from typing import TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, Any
 
 from ..domain.name_models import SPACY_MODEL_DOWNLOAD_URL, SPACY_MODEL_PINS
+from ..texts.addons import SPACY_REQUIRED, spacy_not_loadable
 
 if TYPE_CHECKING:
     from ..domain.anonymization import AnonymizerConfig
     from ..interfaces import Anonymizer
+
+_logger = logging.getLogger(__name__)
 
 
 def spacy_model_url(model: str) -> str:
@@ -51,6 +55,43 @@ def installed_spacy_models() -> list[str]:
     return sorted(model for model in SPACY_MODEL_PINS if _importable(model))
 
 
+def load_pipelines(primary_model: str, secondary_model: str | None) -> tuple[Any, Any | None]:
+    """Import spaCy, switch it to the GPU and load the two name detection models.
+
+    The one place spaCy is imported and a model is loaded: what a missing library or a model
+    that was never downloaded means for the teacher is said here.
+
+    Raises:
+        ImportError: spaCy is not installed, or installed but cannot be loaded.
+        OSError: a model the settings name is not downloaded.
+    """
+    try:
+        import spacy  # noqa: PLC0415  # spaCy is an add-on
+    except ImportError as exc:
+        if importlib.util.find_spec("spacy") is not None:
+            raise ImportError(spacy_not_loadable(exc)) from exc
+        _logger.error("spacy is not installed: %s", SPACY_REQUIRED)
+        raise ImportError(SPACY_REQUIRED) from exc
+    try:
+        spacy.prefer_gpu()
+        primary = spacy.load(primary_model)
+    except OSError:
+        _logger.error(
+            "spacy model '%s' is not downloaded; the Add-ons page downloads it", primary_model
+        )
+        raise
+    if secondary_model is None:
+        return primary, None
+    try:
+        return primary, spacy.load(secondary_model)
+    except OSError:
+        _logger.error(
+            "secondary spacy model '%s' is not downloaded; the Add-ons page downloads it",
+            secondary_model,
+        )
+        raise
+
+
 class SpacyModels:
     """The spaCy models name detection loads, asked through this module.
 
@@ -63,6 +104,10 @@ class SpacyModels:
         """Return the sorted names of the installed spaCy models, or ``[]`` without spaCy."""
         return installed_spacy_models()
 
+    def load(self, primary_model: str, secondary_model: str | None) -> tuple[Any, Any | None]:
+        """Return the two pipelines, loaded by :func:`load_pipelines`."""
+        return load_pipelines(primary_model, secondary_model)
+
     def anonymizer(self, language: str, config: AnonymizerConfig | None = None) -> Anonymizer:
         """Return an anonymizer for *language*, loaded from the models *config* names.
 
@@ -72,4 +117,4 @@ class SpacyModels:
         """
         from .anonymizer import SpacyAnonymizer  # noqa: PLC0415  # spaCy is an add-on
 
-        return SpacyAnonymizer(language, config)
+        return SpacyAnonymizer(language, config, models=self)

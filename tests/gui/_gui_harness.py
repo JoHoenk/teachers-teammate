@@ -35,6 +35,7 @@ from teachers_teammate.application.ollama_server import OllamaServerService
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.application.run import RunPreflight, RunService
+from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.benchmark import PairComparison, compare_pair
 from teachers_teammate.domain.model_catalog import (
     OLLAMA_CATALOG,
@@ -211,7 +212,7 @@ class FakeGuiService(LocalDataFlowStub):
         _ = addon
         return True
 
-    def anonymize_preview(self, text: str, language: str, config: object | None = None):
+    def anonymize_text(self, text: str, language: str, config: AnonymizerConfig | None = None):
         _ = (language, config)
         return text, {}
 

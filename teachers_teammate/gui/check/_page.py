@@ -55,6 +55,7 @@ from ...texts import check as check_text
 from ...texts import review as txt
 from .._export_menu import ExportKind
 from .._handles import READ_VIEW
+from .._qt import present
 from ._masking import Masking
 from ._run_strip import PRIMARY_STYLE, NextStepStrip, RunState, RunStrip
 from ._scan_view import ScanPane
@@ -970,8 +971,7 @@ class CheckPage(QWidget):
 
     def _build_more_menu(self) -> QMenu:
         menu = QMenu(self)
-        self._source_action = menu.addAction(txt.SHOW_MARKDOWN_SOURCE)
-        assert self._source_action is not None
+        self._source_action = present(menu.addAction(txt.SHOW_MARKDOWN_SOURCE), "source entry")
         self._source_action.triggered.connect(self._show_source)
         return menu
 
@@ -981,14 +981,12 @@ class CheckPage(QWidget):
         # Settings → Add-ons, so the teacher knows where names could be hidden.
         menu.setToolTipsVisible(True)
         for kind in CopyKind:
-            action = menu.addAction(kind.label)
-            assert action is not None
+            action = present(menu.addAction(kind.label), "copy entry")
             action.triggered.connect(lambda _checked=False, k=kind: self.copy_requested.emit(k))
             self._copy_actions[kind] = action
         menu.addSeparator()
         for kind in _SAVE_KINDS:
-            action = menu.addAction(_SAVE_LABELS[kind])
-            assert action is not None
+            action = present(menu.addAction(_SAVE_LABELS[kind]), "save entry")
             action.triggered.connect(lambda _checked=False, k=kind: self.save_requested.emit(k))
             self._save_actions[kind] = action
         return menu

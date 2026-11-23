@@ -23,9 +23,9 @@ import json
 from pathlib import Path
 import threading
 
+from ..atomic_file import write_text_atomic
 from ..domain.teacher_work import TeacherWork, WorkTooNewError
 from ..texts.review import work_saved_by_newer_version
-from .atomic_file import write_text_atomic
 from .storage_root import resolve_data_folder
 
 __all__ = [

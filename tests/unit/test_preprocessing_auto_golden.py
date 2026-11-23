@@ -29,6 +29,7 @@ from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.preprocessing.identity import AUTO_VERSION
 from teachers_teammate.infrastructure.preprocessing.recipes import steps_for
 from teachers_teammate.infrastructure.preprocessing.steps import StepPipeline
+from teachers_teammate.interfaces import ImageUnit
 
 from . import preprocessing_auto_golden_data as pictures
 
@@ -80,9 +81,7 @@ def _sample_pdf_page(sample_pdf: Path, folder: Path) -> Path:
         ".pdf", tmp_dir=folder, options=InputOptions(pdf_dpi=150, pdf_text_layer="never")
     )
     payload = provider.load(sample_pdf)
-    page = next(u.image_path for u in payload.units if u.image_path is not None)
-    assert page is not None
-    return page
+    return next(u.path for u in payload.units if isinstance(u, ImageUnit))
 
 
 needs_linux = pytest.mark.skipif(

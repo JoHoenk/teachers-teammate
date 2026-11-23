@@ -98,6 +98,14 @@ def download_damaged(name: str) -> str:
     )
 
 
+def download_too_large(name: str) -> str:
+    """Return what a download says when the answer is bigger than the file it should be."""
+    return (
+        f"The download of {name} sent more data than the file holds, so it was stopped. "
+        "Please try again."
+    )
+
+
 def model_pull_failed(reason: BaseException) -> str:
     """Return what a download of a model from the AI server says when it breaks off."""
     return f"Download failed: {reason}"
@@ -126,8 +134,11 @@ def unknown_provider_error(provider: str, available: str) -> str:
 
 # ── Name detection: spaCy ─────────────────────────────────────────────────────
 
-#: What the app says about anonymization without spaCy: the library is required for it.
-SPACY_REQUIRED = "spacy is required for anonymization"
+#: What the app says about anonymization without spaCy: it is one of the add-ons.
+SPACY_REQUIRED = (
+    "Removing personal info needs spaCy, which the Add-ons page installs (and the name "
+    "detection model for the language of the text)"
+)
 
 
 def spacy_not_loadable(reason: BaseException) -> str:

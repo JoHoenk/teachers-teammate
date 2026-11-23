@@ -11,6 +11,7 @@ import pytest
 
 from teachers_teammate.exceptions import OCRError, RunStoppedError, StageError, StageErrorKind
 from teachers_teammate.infrastructure.workflow.ocr_service import OCRStageService
+from teachers_teammate.messages import MessageKey
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -130,7 +131,8 @@ def test_run_pages_ocr_error_single_page_returns_image_label(tmp_path: Path) -> 
     """
     Given  process_image raises OCRError on the only page
     When   run_pages is called
-    Then   a StageError of the reader says 'OCR failed (image): ...' and no page text comes back
+    Then   a StageError of the reader carries the OCR-failed message without a page number —
+           the error is about the image — and the reason, and no page text comes back
     """
     img = tmp_path / "doc.png"
     svc, _ = _make_svc(process_side_effect=OCRError("timeout"))
@@ -140,15 +142,17 @@ def test_run_pages_ocr_error_single_page_returns_image_label(tmp_path: Path) -> 
 
     assert raised.value.kind is StageErrorKind.ENGINE
     assert raised.value.stage == "ocr"
-    assert "OCR failed (image)" in str(raised.value)
-    assert "timeout" in str(raised.value)
+    message = raised.value.args[0]
+    assert message.key is MessageKey.OCR_FAILED
+    assert message.args["page"] is None
+    assert message.args["reason"].args["text"] == "timeout"
 
 
 def test_run_pages_ocr_error_multi_page_returns_page_label(tmp_path: Path) -> None:
     """
     Given  two pages and process_image raises OCRError on the second page
     When   run_pages is called
-    Then   the StageError carries 'page 2' in its label
+    Then   the StageError's message names page 2
     """
     p1 = tmp_path / "p1.png"
     p2 = tmp_path / "p2.png"
@@ -159,7 +163,9 @@ def test_run_pages_ocr_error_multi_page_returns_page_label(tmp_path: Path) -> No
     with pytest.raises(StageError) as raised:
         svc.run_pages([p1, p2], "English")
 
-    assert "page 2" in str(raised.value)
+    message = raised.value.args[0]
+    assert message.key is MessageKey.OCR_FAILED
+    assert message.args["page"] == 2
 
 
 # ── Stop event ─────────────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ..domain.name_models import SPACY_MODEL_DOWNLOAD_URL, SPACY_MODEL_PINS
-from ..texts.addons import SPACY_REQUIRED, spacy_not_loadable
+from ..messages import message_of, spacy_not_loadable, spacy_required
 
 if TYPE_CHECKING:
     from ..domain.anonymization import AnonymizerConfig
@@ -69,9 +69,10 @@ def load_pipelines(primary_model: str, secondary_model: str | None) -> tuple[Any
         import spacy  # noqa: PLC0415  # spaCy is an add-on
     except ImportError as exc:
         if importlib.util.find_spec("spacy") is not None:
-            raise ImportError(spacy_not_loadable(exc)) from exc
-        _logger.error("spacy is not installed: %s", SPACY_REQUIRED)
-        raise ImportError(SPACY_REQUIRED) from exc
+            raise ImportError(spacy_not_loadable(message_of(exc))) from exc
+        required = spacy_required()
+        _logger.error("spacy is not installed: %s", required)
+        raise ImportError(required) from exc
     try:
         spacy.prefer_gpu()
         primary = spacy.load(primary_model)

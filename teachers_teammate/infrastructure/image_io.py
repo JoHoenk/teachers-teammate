@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from ..exceptions import PipelineInputError
-from ..texts.run import image_not_encoded, image_not_written
+from ..messages import image_not_encoded, image_not_written, message_of
 
 
 def read_image(path: Path, flags: int = cv2.IMREAD_COLOR) -> Any:
@@ -41,4 +41,4 @@ def write_image(path: Path, image: Any) -> None:
     try:
         encoded.tofile(path)
     except OSError as exc:
-        raise PipelineInputError(image_not_written(path, exc)) from exc
+        raise PipelineInputError(image_not_written(path, message_of(exc))) from exc

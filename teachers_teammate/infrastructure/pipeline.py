@@ -49,8 +49,8 @@ from ..domain.output_files import output_folder_refusal
 from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..exceptions import OllamaUnreachableError, ProviderNotAvailableError
 from ..interfaces import ImageUnit, ProgressCallbacks, Reporter
+from ..messages import preview_needs_images
 from ..texts import report as report_text
-from ..texts.run import preview_needs_images
 from . import run_report
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
 from .ollama_utils import OllamaClient

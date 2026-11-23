@@ -26,12 +26,8 @@ from typing import Any
 from ... import __version__
 from ...domain.local_models import HUGGING_FACE_HOST, LocalModel, ModelFile
 from ...exceptions import ModelDownloadCancelledError, ModelDownloadError, ModelMissingError
-from ...texts.addons import (
-    DOWNLOAD_CANCELLED,
-    download_damaged,
-    download_too_large,
-    models_not_downloaded,
-)
+from ...messages import download_cancelled, download_damaged, models_not_downloaded
+from ...texts.addons import download_too_large
 from ..storage_root import app_data_folder
 
 _logger = logging.getLogger(__name__)
@@ -56,7 +52,7 @@ def _one_download_at_a_time(cancel: threading.Event | None) -> Iterator[None]:
     """Hold the download lock; a download that waits for it can still be cancelled."""
     while not _DOWNLOAD_LOCK.acquire(timeout=_LOCK_POLL_S):
         if cancel is not None and cancel.is_set():
-            raise ModelDownloadCancelledError(DOWNLOAD_CANCELLED)
+            raise ModelDownloadCancelledError(download_cancelled())
     try:
         yield
     finally:
@@ -284,7 +280,7 @@ class ModelStore:
                     with part.open("wb") as out:
                         for chunk in response.iter_content(chunk_size=_CHUNK):
                             if cancel is not None and cancel.is_set():
-                                raise ModelDownloadCancelledError(DOWNLOAD_CANCELLED)
+                                raise ModelDownloadCancelledError(download_cancelled())
                             if not chunk:
                                 continue
                             out.write(chunk)

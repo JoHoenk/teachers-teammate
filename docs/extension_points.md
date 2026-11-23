@@ -185,6 +185,12 @@ allowlist in `tools/user_text/allowlist.py` is empty and stays empty. A constant
 text but whose value no teacher reads is listed in `inventory.NON_TEXT_CONSTANTS`. See
 {doc}`development` → "Where text lives"
 
+A failure raised in `infrastructure` is a `Message`, not a `texts` call: add the `MessageKey`, its
+factory in `messages.py` (the name and parameters of the `texts` function), the line in
+`_RENDERERS` of `texts/messages.py` and the key to the golden list in
+`tests/unit/test_messages.py`. A released key's value never changes. A test of the raise site
+checks `raised.value.args[0].key`, not the wording.
+
 ## The window's tabs
 
 `MainWindow._tabs`: 0 *Documents* (`_main_splitter`), 1 *Check* (`gui/check/_page.py:CheckPage`;

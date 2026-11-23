@@ -22,7 +22,7 @@ from PIL import Image as _PILImage
 
 from ...exceptions import PipelineInputError
 from ...interfaces import ImagePreprocessor
-from ...texts.run import image_unreadable
+from ...messages import image_unreadable
 from ..image_io import read_image, write_image
 
 _logger = logging.getLogger(__name__)

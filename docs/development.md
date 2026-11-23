@@ -187,6 +187,7 @@ reference everywhere else. The package is Qt-free, so `gui/`, `cli.py` and
 | `texts/review.py` | The review and the unclear expressions, the warnings of the proofreading and review requests, the prompt dialogs, the image-preparation caption, the settings wording that is not a page name, what is sent for a file, how a stored result was sent, the speed test, and the Check tab's panels and marks. |
 | `texts/models.py` | This computer, the suitability of a model, the download warnings, the model list, the labels of the recognition and model fields and the status line under a model field. |
 | `texts/addons.py` | The reading engines, the downloads of the built-in reader and the page models, and what the Add-ons page says during an install. |
+| `texts/messages.py` | The English wording of every `MessageKey`: one renderer per key, installed when `texts` is imported. |
 
 `texts/__init__.py` is the map — a docstring naming which module owns what, no logic.
 
@@ -198,9 +199,17 @@ So `texts` imports `domain` and `pkg`, nothing else.
 Rules:
 
 - **Dependencies point inward.** `texts` may import `domain` ids and enums; `domain` and
-  `application` never import `texts`. `infrastructure` does, for the sentences it reports — a
-  failure it raises, a warning or reason it puts into a result, a line it prints; every other
-  layer returns an id and the caller asks `texts` for the words.
+  `application` never import `texts`. `infrastructure` does, for the warnings and reasons it
+  puts into a result and the lines it prints; every other layer returns an id and the caller asks
+  `texts` for the words.
+- **A failure carries a `Message`, not a sentence.** `teachers_teammate/messages.py` holds the
+  `MessageKey` (the name of a sentence, never changed once released), the `Message` (a key and
+  plain data: text, numbers, other messages), `message_of(exc)` and one factory per key, named
+  and parameterised like the `texts` function that words it. `infrastructure` raises
+  `OCRError(download_damaged(name))` and passes a caught error on as `message_of(exc)`.
+  `str(message)` gives the sentence once `texts` is imported, and `"key: args"` before.
+  `tests/unit/test_messages.py` holds the factories, the renderers and the golden key list
+  together and fails on a caught error handed to a factory as text.
 - **Dynamic parts are functions**, never `%`-formatting at the call site:
   `dlg.no_files_found(folder)`, not `"No files found in %s" % folder`.
 - **One helper shows them.** `gui/_dialogs.py` is the only module that touches
@@ -3021,7 +3030,8 @@ The codebase follows three principles for error handling:
 ### Exception hierarchy
 
 All custom exceptions live in `teachers_teammate/exceptions.py` and are
-re-exported from the package root for convenience.
+re-exported from the package root for convenience. A stage error is raised with a text or with a
+`Message` (see "Where text lives"); `str(exc)` gives the sentence either way.
 
 ```{uml} assets/error_handling.puml
 :align: center

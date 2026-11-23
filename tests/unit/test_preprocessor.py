@@ -18,6 +18,7 @@ from teachers_teammate.infrastructure.preprocessing.steps import (
     StepPipeline,
     StepResult,
 )
+from teachers_teammate.messages import MessageKey
 
 
 def _pipeline(
@@ -211,13 +212,15 @@ def test_preprocessor_raises_for_unreadable_file(tmp_path: Path) -> None:
     """
     Given  a file that is not a valid image (a plain text file)
     When   preprocess() is called with the automatic preparation
-    Then   a ValueError is raised mentioning 'Cannot read image'
+    Then   PipelineInputError carrying the unreadable-image key is raised
     """
     bad_file = tmp_path / "not_an_image.txt"
     bad_file.write_text("this is not an image")
 
-    with pytest.raises(ValueError, match="Cannot read image"):
+    with pytest.raises(PipelineInputError) as raised:
         _pipeline(tmp_dir=tmp_path).preprocess(bad_file)
+
+    assert raised.value.args[0].key is MessageKey.IMAGE_UNREADABLE
 
 
 def test_preprocessor_writes_output_alongside_source_when_no_tmp_dir(sample_png: Path) -> None:
@@ -291,22 +294,26 @@ def test_unreadable_image_raises_pipeline_input_error(tmp_path: Path) -> None:
     """
     Given  a file with a non-ASCII name that is not a decodable image
     When   preprocess() is called
-    Then   PipelineInputError("Cannot read image") is raised
+    Then   PipelineInputError with the unreadable-image key is raised
     """
     bad = tmp_path / "märz.png"
     bad.write_bytes(b"not an image")
-    with pytest.raises(PipelineInputError, match="Cannot read image"):
+    with pytest.raises(PipelineInputError) as raised:
         _pipeline(tmp_dir=tmp_path).preprocess(bad)
+
+    assert raised.value.args[0].key is MessageKey.IMAGE_UNREADABLE
 
 
 def test_missing_image_raises_pipeline_input_error(tmp_path: Path) -> None:
     """
     Given  a path that does not exist
     When   preprocess() is called
-    Then   PipelineInputError("Cannot read image") is raised
+    Then   PipelineInputError with the unreadable-image key is raised
     """
-    with pytest.raises(PipelineInputError, match="Cannot read image"):
+    with pytest.raises(PipelineInputError) as raised:
         _pipeline(tmp_dir=tmp_path).preprocess(tmp_path / "x.png")
+
+    assert raised.value.args[0].key is MessageKey.IMAGE_UNREADABLE
 
 
 # ── steps and the pipeline ───────────────────────────────────────────────────

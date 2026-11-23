@@ -13,6 +13,7 @@ from teachers_teammate.infrastructure.ppocr.detect import (
     detect,
     detector_input,
 )
+from teachers_teammate.messages import MessageKey
 
 _NO_PAD = DetectorSettings(line_end_pad=0.0)
 
@@ -140,7 +141,7 @@ def test_a_detector_output_of_the_wrong_shape_says_the_model_files_do_not_match(
     """
     Given  a net that answers with a map of three dimensions
     When   detect is called
-    Then   an OCRError states what a teacher can act on, not the shape of the array
+    Then   an OCRError carries the reader-model-mismatch key, not the shape of the array
     """
     page = np.full((64, 64, 3), 255, np.uint8)
 
@@ -149,8 +150,10 @@ def test_a_detector_output_of_the_wrong_shape_says_the_model_files_do_not_match(
             """Return an output that has no batch and channel axes."""
             return np.zeros((1, 64, 64), np.float32)
 
-    with pytest.raises(OCRError, match="don't match this version"):
+    with pytest.raises(OCRError) as raised:
         detect(_ThreeDimensional(), page, _NO_PAD)
+
+    assert raised.value.args[0].key is MessageKey.READER_MODEL_MISMATCH
 
 
 def test_rotated_box_from_points_round_trips() -> None:

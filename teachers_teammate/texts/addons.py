@@ -80,9 +80,9 @@ PAGE_MODELS_DOWNLOADED = DOWNLOADED_MARK
 READER_MODEL_MISMATCH = "The built-in reader's model files don't match this version of the app."
 
 
-def reader_model_mismatch(reason: BaseException) -> str:
-    """Return the same sentence for a reader that failed as it loaded, naming *reason*."""
-    return f"{READER_MODEL_MISMATCH} ({reason})"
+def reader_model_mismatch(reason: str | None = None) -> str:
+    """Return the same sentence, naming *reason* when the reader failed as it loaded."""
+    return READER_MODEL_MISMATCH if reason is None else f"{READER_MODEL_MISMATCH} ({reason})"
 
 
 def models_not_downloaded(repo: str) -> str:
@@ -106,7 +106,7 @@ def download_too_large(name: str) -> str:
     )
 
 
-def model_pull_failed(reason: BaseException) -> str:
+def model_pull_failed(reason: str) -> str:
     """Return what a download of a model from the AI server says when it breaks off."""
     return f"Download failed: {reason}"
 
@@ -141,7 +141,7 @@ SPACY_REQUIRED = (
 )
 
 
-def spacy_not_loadable(reason: BaseException) -> str:
+def spacy_not_loadable(reason: str) -> str:
     """Return what the app says about a spaCy that is installed but cannot be imported."""
     return f"spacy is installed but cannot be loaded: {reason}"
 

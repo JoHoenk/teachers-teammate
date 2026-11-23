@@ -47,6 +47,29 @@ def test_the_deb_container_walks_through_the_installed_app() -> None:
     assert "--screenshots /smoke/e2e-shots" in script[walk:]
 
 
+def test_the_deb_container_walks_on_wayland_when_the_bundle_carries_it() -> None:
+    """
+    Given  the .deb install test, which walks the installed app on the xcb platform plugin
+    When   its Wayland part is read
+    Then   a second walk runs under a headless compositor, after the xcb one, with its own
+           result, and only when the bundle carries the Wayland platform plugin
+    """
+    script = _script("DEB_INSTALL_SCRIPT", "test_deb_install.sh")
+
+    xcb_walk = script.index("--_run_script /walkthrough.py /smoke/e2e.json")
+    wayland_walk = script.index("--_run_script /walkthrough.py /smoke/e2e-wayland.json")
+    assert xcb_walk < wayland_walk
+    assert "--screenshots /smoke/e2e-wayland-shots" in script[wayland_walk:]
+    # The plugin is what the .deb claims by carrying it; without it there is nothing to walk.
+    claim = script.index("libqwayland")
+    assert claim < wayland_walk
+    assert "the Wayland walk is skipped" in script
+    assert "weston" in script
+    assert "QT_QPA_PLATFORM=wayland" in script
+    # The window must have been on Wayland, not on a plugin Qt fell back to.
+    assert r"result[\"platform\"] == \"wayland\"" in script[wayland_walk:]
+
+
 def test_the_macos_install_walks_through_the_replaced_bundle() -> None:
     """
     Given  the dmg install test, which replaces the installed bundle with the built one

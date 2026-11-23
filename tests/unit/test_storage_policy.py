@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
 import threading
+import types
 
 import pytest
 
@@ -332,3 +334,59 @@ def test_a_folder_probed_by_many_threads_at_once_stays_writable(tmp_path: Path) 
 
     assert all(ok for ok, _reason in answers), [r for ok, r in answers if not ok][:3]
     assert list(folder.iterdir()) == []
+
+
+def _macos_volume(monkeypatch, spelling: bytes) -> None:
+    """Make the volume answer ``F_GETPATH`` with *spelling*, for whatever spelling it is given.
+
+    The calls the volume is asked through are replaced, not the modules themselves: here the
+    file system is case-sensitive, and the point of the test is what macOS answers.
+    """
+    answered = types.ModuleType("fcntl")
+    answered.F_GETPATH = 50  # what macOS calls it; nothing here reaches the real call
+    answered.fcntl = lambda _handle, _command, _buffer: spelling
+    monkeypatch.setitem(sys.modules, "fcntl", answered)
+    monkeypatch.setattr(
+        storage_root,
+        "sys",
+        types.SimpleNamespace(platform="darwin", getfilesystemencoding=sys.getfilesystemencoding),
+    )
+    monkeypatch.setattr(
+        storage_root,
+        "os",
+        types.SimpleNamespace(O_RDONLY=0, open=lambda _path, _flags: 3, close=lambda _handle: None),
+    )
+
+
+def test_macos_keys_a_document_by_the_spelling_its_folder_is_stored_with(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a file system that ignores case, holding one document under one spelling of its folder
+    When   the stored name of that document is asked for through either spelling
+    Then   it is one name, so a second spelling cannot keep a second answer
+    """
+    stored = tmp_path / "Eingang mit Leerzeichen" / "tafel.png"
+    _macos_volume(monkeypatch, str(stored).encode())
+
+    same = storage_root.document_stem(tmp_path / "EINGANG MIT LEERZEICHEN" / "tafel.png")
+    original = storage_root.document_stem(stored)
+
+    assert same == original
+    assert original == f"tafel_{storage_root.compute_cache_key(str(stored))}"
+
+
+def test_a_volume_that_cannot_name_the_path_keeps_the_resolved_one(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a macOS whose volume answers with nothing for a path
+    When   the stored name of a document is asked for
+    Then   the resolved path is used, as on every other system, and nothing raises
+    """
+    stored = tmp_path / "Eingang" / "tafel.png"
+    _macos_volume(monkeypatch, b"")
+
+    assert storage_root.document_stem(stored) == (
+        f"tafel_{storage_root.compute_cache_key(str(stored.resolve()))}"
+    )

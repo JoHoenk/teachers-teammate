@@ -98,6 +98,7 @@ class ResultsStep(QObject):
         self._output_browse = self._output_row.add_button(
             txt.RESULTS_BUTTON, txt.RESULTS_BUTTON_TOOLTIP, self.choose
         )
+        self._output_browse.setObjectName(_handles.OUTPUT_FOLDER_BUTTON)
         form.addRow(self._output_row)
 
         docx_row = QWidget()

@@ -116,11 +116,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 tools/packaging/latest_release.py download --pattern '*_amd64.deb' --dir old
 
-      # The time limits below cover everything the step does, the walk included: a walk that
-      # hangs is ended by the script's own watchdog, and this bounds the installs around it, so
-      # neither can run into the job's six hours.
+      # The limits below cover everything the step does, the walks included (xcb, and Wayland
+      # when the bundle carries that plugin): a walk that hangs is ended by the script's own
+      # watchdog after 600 s, so two walks and the installs around them fit, and neither can run
+      # into the job's six hours.
       - name: Install, upgrade, remove and purge the .deb in a clean container
-        timeout-minutes: 30
+        timeout-minutes: 40
         shell: bash
         env:
           IMAGE: ${{ matrix.image }}
@@ -143,6 +144,9 @@ jobs:
           path: |
             smoke/e2e.json
             smoke/e2e-shots/
+            smoke/e2e-wayland.json
+            smoke/e2e-wayland-shots/
+            smoke/weston.log
           if-no-files-found: warn
 
   install-macos:

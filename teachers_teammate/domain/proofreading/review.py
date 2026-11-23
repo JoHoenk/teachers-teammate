@@ -389,6 +389,19 @@ def fits(review: CorrectionReview, raw_plain: str) -> bool:
     return all(0 <= note.raw_start <= note.raw_end <= length for note in review.unclear)
 
 
+def fitted_review(review: CorrectionReview | None, raw_plain: str) -> CorrectionReview | None:
+    """Return *review*, or ``None`` when it no longer points at the words it quotes.
+
+    The one rule for showing a stored review — the readers of a stored document and a run that
+    serves one both apply it here.  A review that does not fit the text still has its
+    corrections in the corrected text, so dropping the explanations loses nothing but the words
+    with them.
+    """
+    if review is None:
+        return None
+    return review if fits(review, raw_plain) else None
+
+
 def merge_reviews(
     pieces: Sequence[tuple[int, CorrectionReview]], whole_plain: str
 ) -> CorrectionReview:

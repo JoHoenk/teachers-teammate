@@ -22,6 +22,7 @@ STDLIB = frozenset(
         "argparse",
         "collections.abc",
         "contextlib",
+        "ctypes",
         "dataclasses",
         "faulthandler",
         "json",
@@ -35,6 +36,7 @@ STDLIB = frozenset(
         "time",
         "traceback",
         "typing",
+        "winreg",
     }
 )
 

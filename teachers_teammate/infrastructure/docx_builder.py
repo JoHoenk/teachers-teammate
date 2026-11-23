@@ -38,6 +38,7 @@ from ..domain.formatted_text import (
     list_markers,
     normalize_text_format,
 )
+from ..domain.plain_text import xml_safe_text
 from ..domain.proofreading.review import (
     CorrectionReview,
     EditNote,
@@ -328,7 +329,7 @@ class DocxDocumentCreator(DocumentCreator):
         section.orientation = WD_ORIENT.LANDSCAPE
         section.page_width, section.page_height = section.page_height, section.page_width
 
-        heading = doc.add_heading(title, level=1)
+        heading = doc.add_heading(xml_safe_text(title), level=1)
         for run in heading.runs:
             run.font.color.rgb = _HEADING_COLOUR
 
@@ -411,7 +412,7 @@ class DocxDocumentCreator(DocumentCreator):
         section.orientation = WD_ORIENT.LANDSCAPE
         section.page_width, section.page_height = section.page_height, section.page_width
 
-        heading = doc.add_heading(title, level=1)
+        heading = doc.add_heading(xml_safe_text(title), level=1)
         for run in heading.runs:
             run.font.color.rgb = _HEADING_COLOUR
 
@@ -481,7 +482,7 @@ class DocxDocumentCreator(DocumentCreator):
     ) -> None:
         paragraph = cell.paragraphs[0]
         paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        run = paragraph.add_run(text)
+        run = paragraph.add_run(xml_safe_text(text))
         run.bold = bold
         run.italic = italic
         run.font.size = Pt(10)
@@ -510,7 +511,7 @@ class DocxDocumentCreator(DocumentCreator):
                 para.paragraph_format.left_indent = Pt(_LIST_INDENT_PT * (block.level + 1))
                 self._add_run(para, marker)
             if block.kind == "figure":
-                run = para.add_run(f"[{block.text.strip() or 'image'}]")
+                run = para.add_run(xml_safe_text(f"[{block.text.strip() or 'image'}]"))
                 run.italic = True
                 run.font.size = Pt(_BODY_PT)
                 run.font.color.rgb = _MUTED_COLOUR
@@ -539,7 +540,7 @@ class DocxDocumentCreator(DocumentCreator):
         bold: bool = False,
         size: int = _BODY_PT,
     ) -> Any:
-        run = para.add_run(text)
+        run = para.add_run(xml_safe_text(text))
         run.font.size = Pt(size)
         _apply_style(run, style)
         if bold:
@@ -593,7 +594,7 @@ class DocxDocumentCreator(DocumentCreator):
             bold = para.add_run(f"{number}. ")
             bold.bold = True
             bold.font.size = Pt(_BODY_PT)
-            corrected = para.add_run(sentence.text)
+            corrected = para.add_run(xml_safe_text(sentence.text))
             corrected.italic = True
             corrected.font.size = Pt(_BODY_PT)
             for note in sentence.notes:
@@ -613,7 +614,7 @@ class DocxDocumentCreator(DocumentCreator):
             para_el = etree.SubElement(comment_el, f"{{{_W_NS}}}p")
             run_el = etree.SubElement(para_el, f"{{{_W_NS}}}r")
             t_el = etree.SubElement(run_el, f"{{{_W_NS}}}t")
-            t_el.text = ctext
+            t_el.text = xml_safe_text(ctext)
             t_el.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
         xml_bytes = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
         part = Part(_COMMENTS_URI, _COMMENTS_CT, xml_bytes, doc.part.package)

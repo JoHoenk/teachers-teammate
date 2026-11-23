@@ -44,6 +44,9 @@ import shutil
 #: stored pages (``week_page_preprocessed.png`` has no digits after ``_page``).
 _INTERMEDIATE_PAGE = re.compile(r".*_page\d+(_preprocessed)?\.png")
 
+#: Only the rendered pages, before preparation: ``<anything>_page<digits>.png``.
+_RENDERED_PAGE = re.compile(r".*_page\d+\.png")
+
 
 @dataclass(frozen=True)
 class PreviewImagePaths:
@@ -55,8 +58,9 @@ class PreviewImagePaths:
 class PreviewImageStore:
     """Filesystem service for stable preview image paths and I/O."""
 
-    def __init__(self, artifact_root: Path) -> None:
+    def __init__(self, artifact_root: Path, *, keep_debug: bool = False) -> None:
         self._root = artifact_root
+        self._keep_debug = keep_debug
         self._root.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -221,12 +225,17 @@ class PreviewImageStore:
             if file_path:
                 Path(file_path).unlink(missing_ok=True)
 
-    def cleanup_intermediate_images(self, *, keep_debug: bool) -> None:
-        """Delete step snapshots and intermediate PDF page images unless *keep_debug* is set."""
-        if keep_debug:
+    def cleanup_intermediate_images(self, *, keep_prepared_pages: bool = False) -> None:
+        """Delete step snapshots and intermediate PDF page images unless debug mode keeps them.
+
+        A preview run has no later step: the prepared pages it wrote are its result, so with
+        *keep_prepared_pages* only the pages as they were rendered go.
+        """
+        if self._keep_debug:
             return
+        intermediate = _RENDERED_PAGE if keep_prepared_pages else _INTERMEDIATE_PAGE
         for file in self._root.glob("*_step*.jpg"):
             file.unlink(missing_ok=True)
         for file in self._root.iterdir():
-            if _INTERMEDIATE_PAGE.fullmatch(file.name):
+            if intermediate.fullmatch(file.name):
                 file.unlink(missing_ok=True)

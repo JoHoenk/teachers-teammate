@@ -47,8 +47,8 @@ from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import output_folder_refusal
 from ..domain.run_summary import KeepAwakeState, RunSummary
-from ..exceptions import OllamaConnectionError, ProviderNotAvailableError
-from ..interfaces import ProgressCallbacks, Reporter
+from ..exceptions import OllamaUnreachableError, ProviderNotAvailableError
+from ..interfaces import ImageUnit, ProgressCallbacks, Reporter
 from ..texts import report as report_text
 from ..texts.run import preview_needs_images
 from . import run_report
@@ -66,7 +66,7 @@ from .storage_root import resolve_artifact_dir, resolve_storage_root
 from .teacher_work_store import TeacherWorkStore
 from .workflow.cache_service import CacheReconciliationService
 from .workflow.coordinator import run_files as _run_files_coordinator
-from .workflow.file_processor import FileProcessor, FileProcessorConfig
+from .workflow.file_processor import FileProcessor, FileProcessorDeps
 from .workflow.ocr_service import OCRStageService
 from .workflow.preprocess_service import PreprocessService
 
@@ -99,6 +99,9 @@ class PipelineDependencies:
     # Where the teacher's work is.  The application layer passes the store the window writes
     # to, so a run reads the corrections the teacher made; ``None`` builds the default one.
     work_store: TeacherWorkStore | None = None
+    # Where the speed samples of this run go.  One store per process writes the file, so the
+    # application layer passes the store its speed estimates also write to.
+    samples: SampleStore | None = None
 
 
 # ── Public helpers ─────────────────────────────────────────────────────────
@@ -141,11 +144,7 @@ def preprocess_preview(
     provider = get_input_provider(source_path.suffix, tmp_dir=tmp_dir, options=options)
     payload = provider.load(source_path)
     image_path = next(
-        (
-            unit.image_path
-            for unit in payload.units
-            if unit.kind == "image" and unit.image_path is not None
-        ),
+        (unit.path for unit in payload.units if isinstance(unit, ImageUnit)),
         None,
     )
     if image_path is None:
@@ -216,6 +215,7 @@ class OCRPipeline:
         self._hardware: HardwareDetection | None = deps.hardware
         self._model_store: ModelStore | None = deps.model_store
         self._work_store: TeacherWorkStore | None = deps.work_store
+        self._samples: SampleStore = deps.samples or SampleStore()
         self._artifact_store: PreviewImageStore | None = deps.artifact_store
         self._state_repo: StateRepository | None = deps.state_repo
         self._cache_service: CacheReconciliationService | None = deps.cache_service
@@ -245,7 +245,7 @@ class OCRPipeline:
         cfg.output_dir.mkdir(parents=True, exist_ok=True)
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        artifact_store = self._artifact_store or PreviewImageStore(tmp_dir)
+        artifact_store = self._artifact_store or PreviewImageStore(tmp_dir, keep_debug=cfg.debug)
         state_repo = self._state_repo or StateRepository(tmp_dir / "state")
 
         storage = resolve_storage_root()
@@ -264,7 +264,7 @@ class OCRPipeline:
                     url=cfg.ollama_url, model=cfg.ocr.model, reporter=reporter
                 )
                 reporter.status(report_text.OLLAMA_CHECKED)
-            except (RuntimeError, OllamaConnectionError) as exc:
+            except (RuntimeError, OllamaUnreachableError) as exc:
                 reporter.error(str(exc))
                 return RunSummary(error=str(exc))
         try:
@@ -338,24 +338,26 @@ class OCRPipeline:
                 break
             reporter.status(report_text.processing(idx, total, file.name))
             try:
-                ok = self._preview_file(file, preprocess_service)
-                if ok:
-                    succeeded.append(file.name)
-                else:
-                    failed.append(file.name)
+                self._preview_file(file, preprocess_service)
             except Exception as exc:  # noqa: BLE001  # preprocessing errors (OpenCV, PIL) skip the file; the pipeline must continue
                 reporter.error(f"{file.name}: {exc}")
                 failed.append(file.name)
+            else:
+                succeeded.append(file.name)
         return succeeded, failed
 
-    @staticmethod
-    def _cleanup_preview_intermediates(tmp_dir: Path) -> None:
-        for pattern in ("*_page*.png", "*_step*.jpg"):
-            for path in tmp_dir.glob(pattern):
-                try:
-                    path.unlink()
-                except OSError as exc:
-                    _logger.warning("Could not remove %s: %s", path.name, exc)
+    def _cleanup_preview_intermediates(self, tmp_dir: Path) -> None:
+        """Delete what the preview run wrote besides its result, in the folder it wrote to.
+
+        The stored previews of a file live in the same folder and are named after it, and the
+        prepared pages are what the run was for, so only the step snapshots and the pages as
+        they were rendered go.
+        """
+        store = PreviewImageStore(tmp_dir, keep_debug=self._config.debug)
+        try:
+            store.cleanup_intermediate_images(keep_prepared_pages=True)
+        except OSError as exc:
+            _logger.warning("Could not remove preview images: %s", exc)
 
     # ── private ───────────────────────────────────────────────────────────
 
@@ -393,16 +395,17 @@ class OCRPipeline:
         if self._progress.on_first_token is not None:
             self._progress.on_first_token(self._current_source_id)
 
-    def _preview_file(self, file: Path, preprocess_service: PreprocessService) -> bool:
+    def _preview_file(self, file: Path, preprocess_service: PreprocessService) -> None:
         prepared = preprocess_service.preprocess_input(file)
         if prepared.raw_text_hint is not None:
             self._reporter.status(report_text.PREPROCESSING_SKIPPED_TEXT)
         else:
-            for out_path in prepared.ocr_inputs:
+            for out_path, page_steps in zip(
+                prepared.ocr_inputs, prepared.steps_per_page, strict=False
+            ):
                 self._reporter.status(
-                    report_text.prepared_page(out_path.name, ", ".join(prepared.steps))
+                    report_text.prepared_page(out_path.name, ", ".join(page_steps))
                 )
-        return True
 
     def _setup_services(
         self,
@@ -421,7 +424,7 @@ class OCRPipeline:
         # normalisation happens once and injection is explicit.
         # The same client reports every request's statistics to the collector, so one sink sees
         # the whole run and can turn each step into a sample of how fast this machine is.
-        run_stats = RunStatsCollector(cfg.ollama_url, SampleStore().add)
+        run_stats = RunStatsCollector(cfg.ollama_url, self._samples.add)
         ollama_client = (
             OllamaClient(cfg.ollama_url, cancel_event=self._stop_event, stats_sink=run_stats.record)
             if (cfg.recognition_enabled and cfg.ocr.engine == ENGINE_OLLAMA)
@@ -464,7 +467,7 @@ class OCRPipeline:
             stop_event=self._stop_event,
         )
         return FileProcessor(
-            FileProcessorConfig(
+            FileProcessorDeps(
                 output_dir=cfg.output_dir,
                 input_dir=cfg.input_dir,
                 recursive=cfg.recursive,
@@ -495,6 +498,6 @@ class OCRPipeline:
             self._reporter.status(report_text.debug_files_kept(tmp_dir))
             return
         try:
-            artifact_store.cleanup_intermediate_images(keep_debug=self._config.debug)
+            artifact_store.cleanup_intermediate_images()
         except OSError as exc:
             _logger.warning("Could not remove temporary images: %s", exc)

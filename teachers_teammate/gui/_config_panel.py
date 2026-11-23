@@ -37,6 +37,7 @@ from ..application.correction_options import (
 )
 from ..application.data_flow import ticked_steps
 from ..config import DEFAULTS, Config
+from ..domain.anonymization import AnonymizerConfig
 from ..domain.correction_policy import LEVELS
 from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import (
@@ -757,7 +758,7 @@ class ConfigPanel(QScrollArea):
         if checked:
             self._guard_stage("anonymizer")
 
-    def build_anonymizer_config(self) -> object:
+    def build_anonymizer_config(self) -> AnonymizerConfig | None:
         """Build an :class:`AnonymizerConfig` from the current settings dict.
 
         Centralised here so callers (this panel and the main window's privacy
@@ -769,7 +770,7 @@ class ConfigPanel(QScrollArea):
         language = self._language.currentText().strip()
         self.anonymizer_configure_requested.emit(language, self.build_anonymizer_config())
 
-    def anonymizer_context(self) -> tuple[str, object]:
+    def anonymizer_context(self) -> tuple[str, AnonymizerConfig | None]:
         """Return ``(document language, current AnonymizerConfig)`` for the privacy dialog."""
         return self._language.currentText().strip(), self.build_anonymizer_config()
 
@@ -898,8 +899,8 @@ class ConfigPanel(QScrollArea):
         elif combo.isEditable():
             combo.setCurrentText(value)  # a language typed in by hand
 
-    def load_from_dict(self, values: dict) -> None:
-        """Populate fields from a dict (e.g. loaded from ocr.toml).
+    def load_from_dict(self, values: Mapping[str, object]) -> None:
+        """Populate fields from a mapping (e.g. loaded from ocr.toml).
 
         Requirement guards are suspended meanwhile: restoring saved settings must not
         contact Ollama or open dialogs (this runs inside the window constructor).
@@ -911,7 +912,7 @@ class ConfigPanel(QScrollArea):
             self._loading = False
         self.refresh_data_flow()
 
-    def _load_from_dict(self, values: dict) -> None:
+    def _load_from_dict(self, values: Mapping[str, object]) -> None:
         loaded = normalize_settings(values).values
         if "input" in loaded:
             path = Path(str(loaded["input"]))
@@ -938,7 +939,7 @@ class ConfigPanel(QScrollArea):
         self._update_correction_visibility(self._correction_enabled.isChecked())
         self._sync_review_enabled()
 
-    def _load_prompts_and_language(self, values: dict) -> None:
+    def _load_prompts_and_language(self, values: dict[str, Any]) -> None:
         """Apply the notes, the content review's prompt and the language combo from *values*.
 
         Sets them BEFORE the language so that when the language combo fires

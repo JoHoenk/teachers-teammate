@@ -288,7 +288,7 @@ class DocumentQueries:
             return None
         anon_config = anonymizer_config_from(config)
         language = config.language
-        return lambda text: self._anonymization.anonymize_preview(text, language, anon_config)
+        return lambda text: self._anonymization.anonymize_text(text, language, anon_config)
 
     def _sent_correction(self, config: Config) -> CorrectionInstructions:
         """Return what the proofreading requests are told: their prompts and the notes.

@@ -507,7 +507,7 @@ def test_dialog_run_preview_populates_output_and_mapping(qtbot) -> None:
     """
     svc = MagicMock()
     svc.anonymization = svc
-    svc.anonymize_preview.return_value = ("Dear <NAME_0>", {"<NAME_0>": "Alice"})
+    svc.anonymize_text.return_value = ("Dear <NAME_0>", {"<NAME_0>": "Alice"})
     dlg = _make_dialog(qtbot, app_service=svc)
     dlg._sample_input.setPlainText("Dear Alice")
 
@@ -529,19 +529,19 @@ def test_dialog_run_preview_empty_input_is_noop(qtbot) -> None:
 
     dlg._run_preview()
 
-    svc.anonymize_preview.assert_not_called()
+    svc.anonymize_text.assert_not_called()
 
 
 @pytest.mark.gui
 def test_dialog_run_preview_shows_spacy_missing_on_import_error(qtbot) -> None:
     """
-    Given  anonymize_preview raises ImportError
+    Given  anonymize_text raises ImportError
     When   previewing
     Then   the shared spaCy-missing message is shown
     """
     svc = MagicMock()
     svc.anonymization = svc
-    svc.anonymize_preview.side_effect = ImportError("no spacy")
+    svc.anonymize_text.side_effect = ImportError("no spacy")
     dlg = _make_dialog(qtbot, app_service=svc)
     dlg._sample_input.setPlainText("Dear Alice")
 
@@ -553,13 +553,13 @@ def test_dialog_run_preview_shows_spacy_missing_on_import_error(qtbot) -> None:
 @pytest.mark.gui
 def test_dialog_run_preview_auto_opens_download_on_oserror(qtbot) -> None:
     """
-    Given  anonymize_preview raises OSError (model missing) and download is available
+    Given  anonymize_text raises OSError (model missing) and download is available
     When   _run_preview is called
     Then   _open_download_dialog is called with the needed model name
     """
     svc = MagicMock()
     svc.anonymization = svc
-    svc.anonymize_preview.side_effect = OSError("model missing")
+    svc.anonymize_text.side_effect = OSError("model missing")
     svc.spacy_model_for_language.return_value = "en_core_web_sm"
     dlg = _make_dialog(qtbot, app_service=svc)
     dlg._sample_input.setPlainText("Dear Alice")
@@ -579,13 +579,13 @@ def test_dialog_run_preview_auto_opens_download_on_oserror(qtbot) -> None:
 @pytest.mark.gui
 def test_dialog_run_preview_shows_text_error_when_not_available(qtbot) -> None:
     """
-    Given  anonymize_preview raises OSError and SpacyModelDownloadDialog is not available
+    Given  anonymize_text raises OSError and SpacyModelDownloadDialog is not available
     When   _run_preview is called
     Then   a text error is shown (no dialog opened)
     """
     svc = MagicMock()
     svc.anonymization = svc
-    svc.anonymize_preview.side_effect = OSError("model missing")
+    svc.anonymize_text.side_effect = OSError("model missing")
     svc.spacy_model_for_language.return_value = "en_core_web_sm"
     dlg = _make_dialog(qtbot, app_service=svc)
     dlg._sample_input.setPlainText("Dear Alice")
@@ -722,6 +722,40 @@ def test_validity_changed_is_emitted_only_when_validity_flips(qtbot) -> None:
     dlg._table.item(0, 1).setText(r"\d+")
 
     assert validity == [False, True]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("tag", ["SCHÜLER_ID", "PLZ-ORT", "1X"])
+def test_a_tag_the_settings_file_would_refuse_cannot_be_saved(qtbot, tag: str) -> None:
+    """
+    Given  a rules widget with one valid pattern
+    When   its tag is edited to one that is not a plain word (umlaut, hyphen, leading digit)
+    Then   the rules cannot be saved, and they can again once the tag is fixed
+    """
+    dlg = _make_dialog(qtbot, config=AnonymizerConfig(patterns=(("ID", r"\d+"),)))
+
+    dlg._table.item(0, 0).setText(tag)
+    assert not dlg.is_valid()
+
+    dlg._table.item(0, 0).setText("ID")
+    assert dlg.is_valid()
+
+
+@pytest.mark.gui
+def test_a_tag_used_twice_cannot_be_saved(qtbot) -> None:
+    """
+    Given  a rules widget with two valid patterns
+    When   the second takes the tag of the first
+    Then   the rules cannot be saved until the tags differ
+    """
+    cfg = AnonymizerConfig(patterns=(("ID", r"\d+"), ("NR", r"[A-Z]\d+")))
+    dlg = _make_dialog(qtbot, config=cfg)
+
+    dlg._table.item(1, 0).setText("ID")
+    assert not dlg.is_valid()
+
+    dlg._table.item(1, 0).setText("NR")
+    assert dlg.is_valid()
 
 
 @pytest.mark.gui

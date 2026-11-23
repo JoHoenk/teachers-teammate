@@ -35,7 +35,7 @@ _COMPOSITION_MODULES: frozenset[str] = frozenset(
 )
 
 _PACKAGE = "teachers_teammate"
-_CORE_MODULES = {"config", "interfaces", "settings_schema", "_model_defaults"}
+_CORE_MODULES = {"atomic_file", "config", "interfaces", "settings_schema", "_model_defaults"}
 _CLI_MODULES = {"cli", "cli_composition", "__main__"}
 
 

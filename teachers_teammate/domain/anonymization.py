@@ -11,8 +11,9 @@ The map is the one an anonymizer produces: placeholder → original surface text
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 import re
 import unicodedata
 
@@ -150,6 +151,45 @@ def _is_word_char(char: str) -> bool:
     return char == "_" or unicodedata.category(char)[0] in ("L", "N")
 
 
+def surface_pattern(values: Iterable[str]) -> re.Pattern[str] | None:
+    """Return a regex that finds any of *values* as a whole word, the longest one first.
+
+    ``None`` when there is nothing to look for.  This is what :func:`mask` matches with, and
+    what an anonymizer uses to find a further occurrence of a name it has already replaced.
+    """
+    surfaces = sorted({value for value in values if value}, key=len, reverse=True)
+    if not surfaces:
+        return None
+    return re.compile("|".join(_word_bounded(surface) for surface in surfaces))
+
+
+def leftover_placeholders(text: str, mapping: PlaceholderMap) -> tuple[str, ...]:
+    """Return the placeholders of *mapping* that still stand in *text*.
+
+    A placeholder that is still there was never restored, and so stands in the text a teacher
+    reads; one written without its brackets (``PERSON_1``) is a placeholder the model has
+    mangled.  Both are reported, sorted, so a caller can name them in a warning.
+    """
+    if not mapping or not text:
+        return ()
+    shapes: dict[str, str] = {}
+    for placeholder in mapping:
+        if not placeholder:
+            continue
+        shapes[placeholder] = placeholder
+        if placeholder.startswith("[") and placeholder.endswith("]"):
+            shapes.setdefault(placeholder[1:-1], placeholder)
+    shapes_in_order = sorted(shapes, key=len, reverse=True)
+    pattern = re.compile(
+        "|".join(
+            re.escape(shape) if shape.startswith("[") else _word_bounded(shape)
+            for shape in shapes_in_order
+        )
+    )
+    found = {shapes[match.group(0)] for match in pattern.finditer(text)}
+    return tuple(sorted(found))
+
+
 # ── Default regex patterns ─────────────────────────────────────────────────
 
 # Street and postcode patterns are German formats. They stay on one line and never span more
@@ -178,10 +218,73 @@ _NOT_CITY = (
     r"(?:Euro|Dollar|Menschen|Einwohner|Einwohnern|Jahre|Jahren|Meter|Metern|"
     r"Kilometer|Kilometern|Tonnen|Soldaten|Mal)\b"
 )
-# A postcode starts a line, follows a comma, "in ", "D-" or a placeholder (a street just replaced).
-_POSTCODE_START = r"(?:(?<![^\n])|(?<=,)|(?<=,[ ])|(?<=\bin[ ])|(?<=\][ ])|(?<=\bD-))"
+# A postcode starts a line, follows a comma, "in ", "D-" or the house number of a street on the
+# same line.  A lookbehind has a fixed width, so each street ending ("straße", "weg", ...) and each
+# house-number shape ("5", "5a", "5 a", "12", ...) is one alternative; a number after any other
+# word ("Aufgabe 3 10115 Berlin") is not a house number.
+_STREET_ENDINGS = (
+    "[Ss]traße",
+    "[Ss]trasse",
+    r"[Ss]tr\.",
+    "[Ww]eg",
+    "[Pp]latz",
+    "[Aa]llee",
+    "[Gg]asse",
+    "[Rr]ing",
+    "[Dd]amm",
+    "[Uu]fer",
+)
+_AFTER_HOUSE_NO = "|".join(
+    rf"(?<={ending}[ ]{digits}{letter}[ ])"
+    for ending in _STREET_ENDINGS
+    for digits in (r"\d", r"\d\d", r"\d\d\d")
+    for letter in ("", "[a-z]", "[ ][a-z]")
+)
+# The lookahead keeps the many lookbehinds from being tried where no postcode follows.
+_POSTCODE_START = (
+    r"(?=\d{5})(?:(?<![^\n])|(?<=,)|(?<=,[ ])|(?<=\bin[ ])|(?<=\bD-)|" + _AFTER_HOUSE_NO + ")"
+)
 
-DEFAULT_PATTERNS: list[tuple[str, str]] = [
+#: What a pattern tag may look like: it becomes part of the placeholder ``[TAG_1]``.
+_PATTERN_TAG = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+
+
+class PatternProblemKind(StrEnum):
+    """Why a ``(tag, pattern)`` pair cannot be an anonymizer pattern."""
+
+    TAG_INVALID = "tag_invalid"
+    TAG_TWICE = "tag_twice"
+    DOES_NOT_COMPILE = "does_not_compile"
+
+
+@dataclass(frozen=True)
+class PatternProblem:
+    """What is wrong with one anonymizer pattern; ``texts`` turns it into a sentence."""
+
+    kind: PatternProblemKind
+    tag: str
+    detail: str = ""
+    """The compiler's reason, for :attr:`PatternProblemKind.DOES_NOT_COMPILE`."""
+
+
+def pattern_problem(tag: str, pattern: str, taken_tags: Collection[str]) -> PatternProblem | None:
+    """Return why ``(tag, pattern)`` cannot be an anonymizer pattern, or ``None`` if it can.
+
+    The tag becomes part of the placeholder ``[TAG_1]``, so it must be a plain word and
+    unique among *taken_tags*; the pattern must compile.
+    """
+    if not _PATTERN_TAG.fullmatch(tag):
+        return PatternProblem(PatternProblemKind.TAG_INVALID, tag)
+    if tag in taken_tags:
+        return PatternProblem(PatternProblemKind.TAG_TWICE, tag)
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        return PatternProblem(PatternProblemKind.DOES_NOT_COMPILE, tag, str(exc))
+    return None
+
+
+DEFAULT_PATTERNS: tuple[tuple[str, str], ...] = (
     ("IBAN", r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}[A-Z0-9]{0,16}\b"),
     ("EMAIL", r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"),
     # German street + house number: "Hauptstraße 12", "Berliner Straße 5a",
@@ -230,7 +333,7 @@ DEFAULT_PATTERNS: list[tuple[str, str]] = [
         "PHONE",
         r"(?<!\d)(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{3,6}(?!\d)",
     ),
-]
+)
 
 # The patterns saved by versions that only knew IBAN, EMAIL and PHONE.  A configuration that still
 # holds exactly this list never customised the patterns, so it follows the current defaults.

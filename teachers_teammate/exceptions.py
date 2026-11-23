@@ -133,11 +133,11 @@ class OCRTimeoutError(OCRError):
 
 
 class OllamaUnreachableError(OCRError):
-    """Raised by a chat request when the Ollama server cannot be reached at all.
+    """Raised when the Ollama server cannot be used: unreachable, an HTTP error, an unknown model.
 
     A subclass of :exc:`OCRError`, so every caller that handles a failed request keeps working,
-    and a caller that must tell an unreachable server from a model that failed (the evaluation
-    tools: an outage says nothing about a model) can.
+    and a caller that must tell an outage from a model that failed (the evaluation tools: an
+    outage says nothing about a model) can.  ``str(exc)`` is the sentence a teacher reads.
     """
 
 
@@ -195,14 +195,6 @@ class OnlineOcrNotAllowedError(ValueError):
 
     Reading a page needs the whole page — names, grades, handwriting — so it must stay on a
     computer the user controls.  ``str(exc)`` explains what to choose instead.
-    """
-
-
-class OllamaConnectionError(RuntimeError):
-    """Raised when the Ollama service cannot be reached or returns an error.
-
-    Covers: connection refused, timeout, HTTP error, model not found.
-    ``str(exc)`` contains a human-readable description suitable for display.
     """
 
 

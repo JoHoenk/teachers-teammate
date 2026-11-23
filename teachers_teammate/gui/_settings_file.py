@@ -15,10 +15,11 @@ from PySide6.QtCore import QObject, QSettings, QTimer
 from PySide6.QtWidgets import QMainWindow, QSplitter
 
 from ..application.composition import AppServices
-from ..config import dump_config_file, load_config_file
+from ..config import broken_settings_copy, load_config_file, save_settings_file
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..texts import dialogs as dlg
 from ..texts import main_window as win
+from ..texts._types import Notice
 from . import _dialogs
 from ._config_panel import ConfigPanel
 from ._log_widget import LogWidget
@@ -58,6 +59,11 @@ class SettingsFile(QObject):
         self._settings_store = settings_store
         self._hooks = hooks
         self._config_path: Path | None = None
+        # A file that could not be read is written over only after a copy of it is kept.
+        self._load_failed = False
+        self._backup: Path | None = None
+        # The teacher hears about the unreadable file once, not on every save.
+        self._notice_shown = False
 
     @property
     def config_path(self) -> Path | None:
@@ -117,8 +123,40 @@ class SettingsFile(QObject):
             self._log.append_text(win.log_settings_loaded(config_path))
             for notice in loaded.notices:
                 self.show_notice(notice)
-        except Exception as exc:  # noqa: BLE001  # config file may be missing, malformed, or use an unexpected type; log the warning and continue
-            self._log.append_text(win.log_settings_not_loaded(config_path, exc))
+        except Exception as exc:  # noqa: BLE001  # a file that does not load is kept, not written over
+            self._keep_unreadable_file(config_path, exc)
+
+    def _keep_unreadable_file(self, path: Path, exc: BaseException) -> None:
+        """Keep a settings file that cannot be read, say so, and hold the save back.
+
+        A teacher's setup is worth more than the start-up that failed: a copy beside the file
+        says what it held, and the file itself is replaced by a later save only once that copy
+        exists.
+        """
+        self._load_failed = True
+        self._log.append_text(win.log_settings_not_loaded(path, exc))
+        backup = self._copy_broken_file(path)
+        if backup is not None:
+            self._announce_once(lambda: dlg.settings_file_broken(path.name, backup.name))
+
+    def _copy_broken_file(self, path: Path) -> Path | None:
+        """Copy a settings file that cannot be read; ``None`` when there is no copy."""
+        try:
+            backup = broken_settings_copy(path)
+        except OSError as exc:
+            self._log.append_text(win.log_settings_backup_failed(path, exc))
+            return None
+        if backup is not None:
+            self._backup = backup
+            self._log.append_text(win.log_settings_backup(backup))
+        return backup
+
+    def _announce_once(self, notice: Callable[[], Notice], *, silent: bool = False) -> None:
+        """Show this session's one notice about the unreadable settings file."""
+        if silent or self._notice_shown:
+            return
+        self._notice_shown = True
+        _dialogs.notify(self._window, notice())
 
     def show_notice(self, setting_notice: SettingNotice) -> None:
         """Say what the app changed about a saved setting instead of changing it silently.
@@ -143,10 +181,35 @@ class SettingsFile(QObject):
             if self._config_path is not None
             else self._services.setup.default_config_path()
         )
+        if not self._may_replace(out, silent=silent_on_error):
+            self._log.append_text(win.log_settings_save_refused(out))
+            self._announce_once(
+                lambda: dlg.settings_file_not_replaced(out.name), silent=silent_on_error
+            )
+            return
         try:
-            out.write_text(dump_config_file(values), encoding="utf-8")
+            save_settings_file(out, values)
+            self._load_failed = False
+            self._backup = None
             if notify:
                 self._log.append_text(win.log_settings_saved(out.resolve()))
         except OSError as exc:
             if not silent_on_error:
                 _dialogs.notify(self._window, dlg.save_failed(str(exc)))
+
+    def _may_replace(self, out: Path, *, silent: bool = False) -> bool:
+        """Return whether the settings may be written to *out*.
+
+        A file that could not be read is written over only while a copy of it is kept.  The copy
+        is tried again here: what blocked it at start-up may be gone by now, and a file that is
+        gone takes nothing with it.
+        """
+        if not self._load_failed or not out.exists():
+            return True
+        if self._backup is not None and self._backup.exists():
+            return True
+        backup = self._copy_broken_file(out)
+        if backup is None:
+            return False
+        self._announce_once(lambda: dlg.settings_file_broken(out.name, backup.name), silent=silent)
+        return True

@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib
 import logging
 from pathlib import Path
+import re
 from types import ModuleType
 from typing import TYPE_CHECKING, cast
 
@@ -40,6 +41,9 @@ from ..texts.addons import (
 )
 
 _logger = logging.getLogger(__name__)
+
+#: What a provider name may look like: it is the file name in the providers folder.
+_PROVIDER_NAME = re.compile(r"[a-z][a-z0-9_]*")
 
 # Providers are discovered at runtime from the
 # teachers_teammate/infrastructure/providers/ directory. Drop a new <name>.py
@@ -65,7 +69,7 @@ def get_provider_info(provider: str) -> ProviderInfo | None:
     The module is imported lazily; the heavy LangChain dependency inside each
     provider's ``create()`` function is **not** triggered here.
     """
-    module = _import_provider_module(provider)
+    module = _load_provider(provider)
     return getattr(module, "PROVIDER", None) if module is not None else None
 
 
@@ -80,37 +84,54 @@ def get_provider_data_region(provider: str, **settings: object) -> str:
     Anything missing, unrecognised or broken is ``"unknown"``: a school can only rely on
     what a vendor actually declares, so "not declared" must never read as "EU".
     """
-    module = _import_provider_module(provider)
-    info = getattr(module, "PROVIDER", None) if module is not None else None
-    declared: object = getattr(module, "data_region", None)
-    if callable(declared):
-        try:
-            declared = declared(**settings)
-        except Exception:  # noqa: BLE001  # a provider helper may raise anything
-            return DataRegion.UNKNOWN.value
-    else:
-        declared = info.data_region if info is not None else DataRegion.UNKNOWN
     try:
-        return DataRegion(str(declared)).value
+        return DataRegion(_declared_region(_load_provider(provider), settings)).value
     except ValueError:
         return DataRegion.UNKNOWN.value
 
 
-def _import_provider_module(provider: str) -> ModuleType | None:
-    """Import a provider module, or return ``None`` when it (or its package) is missing."""
+def _declared_region(module: ModuleType | None, settings: dict[str, object]) -> str:
+    """Return what *module* declares as its region: its helper's answer, or its metadata."""
+    helper = getattr(module, "data_region", None)
+    if callable(helper):
+        try:
+            return str(helper(**settings))
+        except Exception:  # noqa: BLE001  # a provider helper may raise anything
+            return DataRegion.UNKNOWN.value
+    info = getattr(module, "PROVIDER", None)
+    return str(getattr(info, "data_region", DataRegion.UNKNOWN))
+
+
+def _load_provider(provider: str) -> ModuleType | None:
+    """Import the module of *provider*, or return ``None`` when there is none.
+
+    The one place a provider is imported.  Only a plain provider name gets here: a name with a
+    dot, a slash or a leading underscore would import something that is no provider.  A
+    provider whose package is not installed gives ``None`` instead of an error.
+    """
+    if not _PROVIDER_NAME.fullmatch(provider):
+        return None
     try:
         return importlib.import_module(f".providers.{provider}", package=__package__)
     except ImportError:
         return None
 
 
-def _load_provider(provider: str) -> LLMProviderModule:
-    """Import and return ``teachers_teammate.infrastructure.providers.<provider>``, or raise."""
+def _provider_module(provider: str) -> LLMProviderModule:
+    """Return the module of *provider*.
+
+    Raises:
+        ValueError: *provider* is none of the listed providers.
+        ProviderNotAvailableError: the provider is listed, but its module cannot be imported
+            (a package it needs is not installed).
+    """
     available = list_providers()
     if provider not in available:
         raise ValueError(unknown_provider_error(provider, ", ".join(available)))
-    mod = importlib.import_module(f".providers.{provider}", package=__package__)
-    return cast(LLMProviderModule, mod)
+    module = _load_provider(provider)
+    if module is None:
+        raise ProviderNotAvailableError(provider_not_loaded(provider))
+    return cast(LLMProviderModule, module)
 
 
 def list_provider_models(provider: str, **kwargs: object) -> list[str]:
@@ -126,8 +147,10 @@ def list_provider_models(provider: str, **kwargs: object) -> list[str]:
     Returns:
         List of model name strings; empty list on import error.
     """
+    mod = _load_provider(provider)
+    if mod is None:
+        return []
     try:
-        mod = importlib.import_module(f".providers.{provider}", package=__package__)
         fn = getattr(mod, "list_models", None)
         if fn is not None:
             return fn(**kwargs)
@@ -146,8 +169,10 @@ def list_provider_models_checked(provider: str, **kwargs: object) -> ModelListin
     (``can_list_models`` false) has a built-in list by design, one that can be asked is
     live, and an empty live answer simply means "nothing to list yet".
     """
+    mod = _load_provider(provider)
+    if mod is None:
+        return ModelListing([], "failed", MODEL_LIST_UNREADABLE)
     try:
-        mod = importlib.import_module(f".providers.{provider}", package=__package__)
         checked = getattr(mod, "list_models_checked", None)
         if checked is not None:
             return checked(**kwargs)
@@ -192,8 +217,10 @@ def check_provider_connection(provider: str, **kwargs: object) -> tuple[bool, st
     Returns:
         Tuple of ``(ok, human-readable status message)``.
     """
+    mod = _load_provider(provider)
+    if mod is None:
+        return False, provider_check_failed(provider, ValueError("no such provider"))
     try:
-        mod = importlib.import_module(f".providers.{provider}", package=__package__)
         fn = getattr(mod, "check_connection", None)
         if fn is not None:
             return fn(**kwargs)
@@ -224,7 +251,7 @@ def build_llm(
     Raises:
         RuntimeError: On unknown provider or missing dependency.
     """
-    module = _load_provider(provider.lower())
+    module = _provider_module(provider.lower())
     try:
         if module.PROVIDER.needs_base_url:
             return module.create(model, base_url=base_url, temperature=temperature)

@@ -1090,3 +1090,62 @@ def test_a_stretch_the_model_left_out_is_not_in_the_word_files_unclear_table(
         assert "left this passage out" not in _all_table_text(out)
         if layout == "comments":
             assert "left this passage out" not in _comments_xml(out)
+
+
+@pytest.mark.parametrize("fmt", ["table", "comments"])
+def test_a_control_character_in_the_text_does_not_stop_the_document(
+    tmp_path: Path, fmt: str
+) -> None:
+    """
+    Given  a transcription that carries a control character (a .txt file, a model answer)
+    When   create() is called in either layout
+    Then   the document is written, and the character is not in its text
+    """
+    out = tmp_path / f"control-{fmt}.docx"
+    creator = DocxDocumentCreator(fmt=fmt)
+    creator.create(
+        raw_text="Seite eins\x0cSeite zwei",
+        corrected_text="Seite eins\x0cSeite zwei",
+        out_path=out,
+        title="Kontrolle",
+    )
+
+    from docx import Document  # noqa: PLC0415
+
+    written = "\n".join(paragraph.text for paragraph in Document(str(out)).paragraphs) + "\n".join(
+        cell.text for table in Document(str(out)).tables for row in table.rows for cell in row.cells
+    )
+    assert "\x0c" not in written
+    assert "Seite eins" in written
+
+
+def test_a_control_character_in_the_title_does_not_stop_the_document(tmp_path: Path) -> None:
+    """
+    Given  a title (the file's name) that carries a control character
+    When   create() is called
+    Then   the document is written and its heading holds the title without the character
+    """
+    out = tmp_path / "title.docx"
+    DocxDocumentCreator(fmt="table").create(
+        raw_text="Text", corrected_text="Text", out_path=out, title="Auf\x0bgabe"
+    )
+
+    from docx import Document  # noqa: PLC0415
+
+    headings = [p.text for p in Document(str(out)).paragraphs if p.style.name.startswith("Heading")]
+    assert headings[0] == "Aufgabe"
+
+
+def test_a_control_character_in_a_comment_does_not_stop_the_document() -> None:
+    """
+    Given  a comment text from a model answer that carries a control character
+    When   the comments part is built
+    Then   no error is raised and the comment holds the text without the character
+    """
+    from docx import Document  # noqa: PLC0415
+
+    doc = Document()
+    DocxDocumentCreator._attach_comments_part(doc, [(0, "Er\x1bklärung")])
+
+    part = next(rel.target_part for rel in doc.part.rels.values() if "comments" in rel.reltype)
+    assert "Erklärung" in part.blob.decode("utf-8")

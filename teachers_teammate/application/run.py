@@ -39,6 +39,7 @@ from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline
 from ..infrastructure.power import KEEP_AWAKE_REASON, NullSleepBlocker, on_battery
+from ..infrastructure.speed_store import SampleStore
 from ..infrastructure.stage_builder import (
     PipelineComponentFactory,
     resolve_run_windows,
@@ -184,6 +185,7 @@ class RunService:
         anonymization: AnonymizationService,
         addons: AddonService,
         documents: DocumentQueries,
+        samples: SampleStore,
     ) -> None:
         self._discovery = discovery
         self._pipeline_factory = pipeline_factory
@@ -206,6 +208,8 @@ class RunService:
         self._addons = addons
         # What the store says about a file: what a run would replace, and what needs no reading.
         self._documents = documents
+        # The one sample store of this process: the speed estimates read what a run writes.
+        self._samples = samples
         # Whether a PDF has a usable text layer, by (path, size, mtime, mode): the readiness
         # check asks again after every settings change, and opening a PDF is not free.
         self._pdf_text_cache: dict[tuple[str, int, int, str], bool] = {}
@@ -259,6 +263,7 @@ class RunService:
                     battery_warning=battery_warning,
                     model_store=self._model_store,
                     work_store=self._work_store,
+                    samples=self._samples,
                 ),
                 progress=progress,
             )

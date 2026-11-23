@@ -23,6 +23,7 @@ from ._background import run_in_background
 from ._config_panel import ConfigPanel
 from ._error_text import spacy_problem
 from ._export_menu import ExportKind, build_export_menu
+from ._qt import present
 from ._results_table import ResultsTable
 
 
@@ -71,8 +72,7 @@ class ExportController(QObject):
 
     def create_button(self) -> QPushButton:
         """Return the Export button; its menu offers Word, text and anonymized text."""
-        style = self._window.style()
-        assert style is not None
+        style = present(self._window.style(), "style")
         button = QPushButton(txt.EXPORT_BUTTON)
         button.setObjectName(_handles.EXPORT_BUTTON)
         button.setIcon(

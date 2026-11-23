@@ -1204,3 +1204,17 @@ def test_main_injects_the_add_on_folder_before_it_runs(monkeypatch) -> None:
     cli.main(exit_fn=calls.append)
 
     assert calls == ["inject", "run", 7]
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+@pytest.mark.parametrize("bad", ["0", "-5", "86401", "soon"])
+def test_parse_args_ocr_timeout_out_of_range_exits(bad: str) -> None:
+    """
+    Given  --ocr-timeout outside the range the settings file takes, or no number
+    When   _parse_args() is called
+    Then   argparse rejects it with SystemExit
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    with pytest.raises(SystemExit):
+        _parse_args(argv=["--ocr-timeout", bad])

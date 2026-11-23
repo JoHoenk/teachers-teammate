@@ -26,6 +26,7 @@ from ..infrastructure.ollama_utils import OllamaClient
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline
 from ..infrastructure.spacy_models import SpacyModels
+from ..infrastructure.speed_store import SampleStore
 from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.state_repository import StateRepository
 from ..infrastructure.teacher_work_store import TeacherWorkStore
@@ -116,10 +117,14 @@ def build_app_services(
     reader = ReaderService(
         model_store=model_store, component_factory=component_factory, providers=providers
     )
+    # One sample store for the process: a run writes what it measured, and the speed estimates
+    # read it.  Two stores would keep two locks on one file.
+    samples = SampleStore()
     speeds = SpeedEstimateService(
         effective_model=providers.effective_model,
         ollama=ollama,
         client_factory=lambda url, cancel_event: OllamaClient(url, cancel_event=cancel_event),
+        samples=samples,
     )
     anonymization = AnonymizationService(names=names)
     addons = AddonService(
@@ -185,6 +190,7 @@ def build_app_services(
         anonymization=anonymization,
         addons=addons,
         documents=documents,
+        samples=samples,
     )
     export = ExportService(documents=documents, anonymization=anonymization)
     return AppServices(
@@ -208,14 +214,19 @@ def build_app_services(
 
 
 def inject_addon_packages_dir() -> None:
-    """Prepend the addon packages directory to ``sys.path`` (idempotent).
+    """Clean up the addon packages directory and prepend it to ``sys.path`` (idempotent).
 
     Every entry point calls this first, so packages installed under Add-ons are importable after
-    a restart however the app was started.  A folder left by an older app version is not added
+    a restart however the app was started, and retired add-ons and an interrupted install are
+    dealt with once per process.  A folder left by an older app version is not added
     (see ``AddonService.addons_outdated``).
     """
-    from ..infrastructure.addon_manager import inject_packages_dir  # noqa: PLC0415
+    from ..infrastructure.addon_manager import (  # noqa: PLC0415
+        inject_packages_dir,
+        prepare_packages_dir_once,
+    )
 
+    prepare_packages_dir_once()
     inject_packages_dir()
 
 

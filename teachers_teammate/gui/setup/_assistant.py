@@ -110,7 +110,8 @@ class SetupAssistant(QWizard):
     def _page(self, page_id: SetupPageId, kind: type[_PageT]) -> _PageT:
         """Return the page of *page_id*, typed as *kind* (the wizard built it from PAGE_CLASSES)."""
         page = self._pages[page_id]
-        assert isinstance(page, kind)  # the class comes from PAGE_CLASSES
+        if not isinstance(page, kind):  # the class comes from PAGE_CLASSES
+            raise RuntimeError(f"{page_id} is not a {kind.__name__}")
         return page
 
     def key_drafts(self) -> ApiKeyDrafts:

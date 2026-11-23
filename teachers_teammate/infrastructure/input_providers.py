@@ -12,8 +12,8 @@ from collections.abc import Iterator
 import ctypes
 import dataclasses
 import logging
+import math
 from pathlib import Path
-import unicodedata
 
 import pypdfium2 as pdfium
 import pypdfium2.raw as pdfium_c
@@ -27,12 +27,11 @@ from ..domain.pdf_text_layer import (
     unusable_text_reason,
     use_text_layer,
 )
-from ..interfaces import InputPayload, InputProvider, InputUnit
+from ..domain.plain_text import decode_text, is_printable, printable_text, xml_safe_text
+from ..interfaces import ImageUnit, InputPayload, InputProvider, TextUnit
 from ..texts.run import PDF_NO_PAGES, text_layer_page_note
 
 _logger = logging.getLogger(__name__)
-
-_UNPRINTABLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})
 
 # Annotations that only mark up what is already on the page.  Every other subtype (ink,
 # free text, stamps, shapes, form widgets, sticky notes) can carry content that
@@ -48,24 +47,14 @@ _MARKUP_ONLY_ANNOT_SUBTYPES = frozenset(
     }
 )
 
+#: A4 at 300 dpi is 8.7 megapixels; a page four times as wide and high is a poster, and
+#: rendering it at the full resolution would need gigabytes for an image the reader then
+#: shrinks again.  Such a page is rendered at a lower scale instead of failing.
+_MAX_PAGE_PIXELS = 50_000_000
+
 _MAX_FORM_DEPTH = 15
 _AXIS_TOLERANCE = 0.01
 """Points; a line segment moving less than this along one axis counts as axis-aligned."""
-
-
-def _is_printable(char: str) -> bool:
-    """Return False for control, unassigned, private-use and replacement characters."""
-    return char != "\ufffd" and unicodedata.category(char) not in _UNPRINTABLE_CATEGORIES
-
-
-def _clean_text(text: str) -> str:
-    """Drop unprintable characters, keeping line breaks and tabs.
-
-    pdfium can emit control codes or U+FFFE (e.g. at hyphenation points).  They would
-    otherwise be stored as ``raw_text`` and make the DOCX writer reject the document
-    ("All strings must be XML compatible").
-    """
-    return "".join(char for char in text if char in "\n\t" or _is_printable(char))
 
 
 def _object_bounds(obj: pdfium.PdfObject) -> tuple[float, float, float, float]:
@@ -180,14 +169,14 @@ def _measure_page(page: pdfium.PdfPage, *, check_layout: bool) -> tuple[str, Pag
     finally:
         textpage.close()
     visible = [char for char in text if not char.isspace()]
-    printable = sum(1 for char in visible if _is_printable(char))
+    printable = sum(1 for char in visible if is_printable(char))
     # char_count is what survives cleaning, so a page of only control codes has no text.
     stats = PageTextStats(
         char_count=printable,
         printable_ratio=printable / len(visible) if visible else 0.0,
         image_coverage=0.0,
     )
-    text = _clean_text(text).strip()
+    text = printable_text(text).strip()
     if check_layout and page_has_usable_text(stats):
         stats = dataclasses.replace(
             stats,
@@ -296,10 +285,10 @@ class PdfInputProvider(InputProvider):
                 if use_text_layer(self._text_layer, measure_pages()):
                     pages = self._render_pages(pdf, page_count, file_path)
                     return InputPayload(
-                        units=[InputUnit.text_content(join_labelled_pages(texts))],
+                        units=(TextUnit(join_labelled_pages(texts)),),
                         source_image=pages[0] if pages else None,
                         text_origin="pdf_text_layer",
-                        page_images=pages,
+                        page_images=tuple(pages),
                     )
                 # The scan stops at the first page that rules the text layer out: the last one.
                 text_layer_note = (
@@ -310,22 +299,45 @@ class PdfInputProvider(InputProvider):
                     )
                 )
 
-            units: list[InputUnit] = []
+            units: list[ImageUnit] = []
             source_image: Path | None = None
             for page_num in range(page_count):
                 raw_path = self._render_page(pdf, page_num, file_path)
-                units.append(InputUnit.image(raw_path))
+                units.append(ImageUnit(raw_path))
                 if page_num == 0:
                     source_image = raw_path
         finally:
             pdf.close()
-        return InputPayload(units=units, source_image=source_image, text_layer_note=text_layer_note)
+        return InputPayload(
+            units=tuple(units), source_image=source_image, text_layer_note=text_layer_note
+        )
+
+    def _render_scale(self, page: pdfium.PdfPage, page_num: int, file_path: Path) -> float:
+        """Return the scale to render *page* at, lowered so the image stays under the pixel cap."""
+        scale = self._pdf_dpi / 72.0
+        width, height = page.get_size()
+        pixels = width * height * scale * scale
+        if pixels <= _MAX_PAGE_PIXELS:
+            return scale
+        capped = scale * math.sqrt(_MAX_PAGE_PIXELS / pixels)
+        _logger.warning(
+            "Page %d of %s is very large (%.0f x %.0f pt); rendering it at %d dpi instead of %d "
+            "so the image stays below %d megapixels",
+            page_num + 1,
+            file_path,
+            width,
+            height,
+            round(72 * capped),
+            self._pdf_dpi,
+            _MAX_PAGE_PIXELS // 1_000_000,
+        )
+        return capped
 
     def _render_page(self, pdf: pdfium.PdfDocument, page_num: int, file_path: Path) -> Path:
         """Render page *page_num* of *pdf* to a PNG in the temp dir and return its path."""
         page = pdf[page_num]
         try:
-            bitmap = page.render(scale=self._pdf_dpi / 72.0)
+            bitmap = page.render(scale=self._render_scale(page, page_num, file_path))
             raw_path = self._tmp_dir / f"{file_path.stem}_page{page_num}.png"
             bitmap.to_pil().save(str(raw_path))
         finally:
@@ -369,7 +381,7 @@ class ImageInputProvider(InputProvider):
         Returns:
             :class:`InputPayload` with a single image unit and source image.
         """
-        return InputPayload(units=[InputUnit.image(file_path)], source_image=file_path)
+        return InputPayload(units=(ImageUnit(file_path),), source_image=file_path)
 
 
 class TextInputProvider(InputProvider):
@@ -377,10 +389,5 @@ class TextInputProvider(InputProvider):
 
     def load(self, file_path: Path) -> InputPayload:
         """Return file contents as a single text unit."""
-        try:
-            text = file_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            text = file_path.read_text(encoding="latin-1")
-        return InputPayload(
-            units=[InputUnit.text_content(text)], source_image=None, text_origin="file"
-        )
+        text = xml_safe_text(decode_text(file_path.read_bytes()))
+        return InputPayload(units=(TextUnit(text),), source_image=None, text_origin="file")

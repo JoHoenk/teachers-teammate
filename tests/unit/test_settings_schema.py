@@ -188,19 +188,42 @@ def test_every_default_is_taken_as_it_is() -> None:
     }
 
 
+def test_the_defaults_cannot_be_changed_by_a_caller() -> None:
+    """
+    Given  the defaults of the schema
+    When   a caller writes a key into them
+    Then   the write fails: every reader of a default sees the same value all run long
+    """
+    with pytest.raises(TypeError):
+        DEFAULTS["ocr_timeout"] = 5  # ty: ignore[invalid-assignment]
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     [
         ("debug", "false"),
         ("keep_awake", 0),
         ("ocr_timeout", "soon"),
+        # A timeout of no seconds and a page rendered at 0 dpi are numbers, but no run can
+        # work with them.
+        ("ocr_timeout", 0),
+        ("ocr_timeout", -5),
         ("pdf_render_dpi", 3.5),
+        ("pdf_render_dpi", 71),
+        ("pdf_render_dpi", 3000),
         ("correction_provider", None),
         ("docx_format", "pdf"),
         ("proofreading_context", "4096"),
         ("hardware_profile", "gpu"),
         ("pdf_text_layer", "sometimes"),
         ("anonymizer_patterns", ["EMAIL"]),
+        # A pattern that does not compile, a tag used twice and a tag that is no tag: the
+        # anonymizer would skip each of them and send what it was meant to hide.
+        ("anonymizer_patterns", [["EMAIL", "("]]),
+        ("anonymizer_patterns", [["EMAIL", "a@b"], ["EMAIL", "c@d"]]),
+        ("anonymizer_patterns", [["1X", "a@b"]]),
+        ("anonymizer_patterns", [["SCHÜLER_ID", "a@b"]]),
+        ("anonymizer_patterns", [["PLZ-ORT", "a@b"]]),
     ],
 )
 def test_a_value_a_key_does_not_accept_is_left_out_and_reported_as_written(
@@ -221,6 +244,28 @@ def test_a_value_a_key_does_not_accept_is_left_out_and_reported_as_written(
         key,
         str(value),
     )
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("ocr_timeout", 1),
+        ("ocr_timeout", 7200),
+        ("ocr_timeout", 86400),
+        ("pdf_render_dpi", 72),
+        ("pdf_render_dpi", 600),
+    ],
+)
+def test_the_ends_of_a_range_are_still_a_value_the_key_takes(key: str, value: int) -> None:
+    """
+    Given  the lowest or the highest number a bounded key accepts
+    When   the settings are normalised
+    Then   it is taken as it is, with no notice
+    """
+    loaded = normalize_settings({key: value})
+
+    assert loaded.values == {key: value}
+    assert loaded.notices == ()
 
 
 def test_a_missing_folder_is_no_folder() -> None:

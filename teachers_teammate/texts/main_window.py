@@ -273,6 +273,21 @@ def log_settings_saved(path: object) -> str:
     return f"Settings saved to {path}\n"
 
 
+def log_settings_backup(path: object) -> str:
+    """Return the log line naming the copy of a settings file that could not be read."""
+    return f"A copy of the unreadable settings file is at {path}\n"
+
+
+def log_settings_backup_failed(path: object, reason: BaseException) -> str:
+    """Return the log line for a settings file that could not be copied either."""
+    return f"WARNING: Could not keep a copy of {path}: {reason}\n"
+
+
+def log_settings_save_refused(path: object) -> str:
+    """Return the log line for a save refused because the file could not be read."""
+    return f"The settings were not saved over {path}, which could not be read\n"
+
+
 def export_would_overwrite(source_name: str, out_name: str) -> str:
     """Return why an export is refused: *out_name* is also the file of another document."""
     return f"{source_name}: {out_name} would overwrite another file of this export."

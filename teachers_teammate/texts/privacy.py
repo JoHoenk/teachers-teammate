@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from ..domain.anonymization import PatternProblem, PatternProblemKind
 from ..domain.data_location import (
     Advice,
     DataFlow,
@@ -159,13 +160,20 @@ def spacy_model_not_downloaded(model: str) -> str:
     return f"spaCy model '{model}' is not downloaded.\nRun: python -m spacy download {model}"
 
 
-def invalid_regex(reason: str) -> str:
-    """Return the tooltip of a pattern row: why its regex does not compile."""
-    return f"Invalid regex: {reason}"
+def invalid_pattern_row(problem: PatternProblem) -> str:
+    """Return the tooltip of a pattern row: why it cannot be saved."""
+    tag = problem.tag
+    if problem.kind is PatternProblemKind.TAG_INVALID:
+        reason = f"'{tag}' is not a tag: letters, digits and '_', starting with a letter"
+    elif problem.kind is PatternProblemKind.TAG_TWICE:
+        reason = f"the tag '{tag}' is used twice"
+    else:
+        reason = f"the pattern of '{tag}' does not compile: {problem.detail}"
+    return f"Invalid pattern: {reason}"
 
 
 def invalid_patterns(count: int) -> str:
-    """Return the line above the patterns table: how many rows do not compile."""
+    """Return the line above the patterns table: how many rows cannot be saved."""
     plural = "s" if count > 1 else ""
     verb = "have" if count > 1 else "has"
     return f"{count} pattern{plural} {verb} errors — fix before saving."

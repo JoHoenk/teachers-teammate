@@ -43,7 +43,7 @@ def test_clear_anonymizer_cache_empties_dict() -> None:
 def test_warm_up_anonymizer_builds_it_once_for_later_exports() -> None:
     """
     Given  a service whose anonymizer was warmed up
-    When   anonymize_preview() is called with the same language and config
+    When   anonymize_text() is called with the same language and config
     Then   the cached anonymizer is reused instead of being built again
     """
     anonymizer = MagicMock()
@@ -54,7 +54,7 @@ def test_warm_up_anonymizer_builds_it_once_for_later_exports() -> None:
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ) as ctor:
         svc.warm_up_anonymizer("English")
-        svc.anonymize_preview("text", "English")
+        svc.anonymize_text("text", "English")
 
     ctor.assert_called_once()
 
@@ -88,8 +88,7 @@ def test_anonymizer_is_never_used_by_two_threads_at_once() -> None:
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ) as ctor:
         threads = [
-            threading.Thread(target=svc.anonymize_preview, args=("text", "English"))
-            for _ in range(6)
+            threading.Thread(target=svc.anonymize_text, args=("text", "English")) for _ in range(6)
         ]
         for t in threads:
             t.start()
@@ -104,7 +103,7 @@ def test_anonymizer_is_never_used_by_two_threads_at_once() -> None:
 def test_build_cached_anonymizer_shares_one_result_between_run_and_preview() -> None:
     """
     Given  a service whose anonymizer is built once
-    When   the cached anonymizer and anonymize_preview() are asked about the same text
+    When   the cached anonymizer and anonymize_text() are asked about the same text
     Then   spaCy runs once, so a run and the "What is sent" view agree
     """
     anonymizer = MagicMock()
@@ -116,7 +115,7 @@ def test_build_cached_anonymizer_shares_one_result_between_run_and_preview() -> 
     ):
         from_run = svc.build_cached_anonymizer("English", AnonymizerConfig())
         from_run.anonymize("Anna wrote")
-        from_view = svc.anonymize_preview("Anna wrote", "English")
+        from_view = svc.anonymize_text("Anna wrote", "English")
 
     anonymizer.anonymize.assert_called_once_with("Anna wrote")
     assert from_view == ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
@@ -136,8 +135,8 @@ def test_changed_anonymizer_settings_analyse_the_text_again() -> None:
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ):
-        svc.anonymize_preview("text", "English", AnonymizerConfig(patterns=()))
-        svc.anonymize_preview("text", "English", AnonymizerConfig(patterns=(("ID", r"\d+"),)))
+        svc.anonymize_text("text", "English", AnonymizerConfig(patterns=()))
+        svc.anonymize_text("text", "English", AnonymizerConfig(patterns=(("ID", r"\d+"),)))
 
     assert anonymizer.anonymize.call_count == 2
 
@@ -156,8 +155,8 @@ def test_changed_language_analyses_the_text_again() -> None:
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ) as ctor:
-        svc.anonymize_preview("text", "English")
-        svc.anonymize_preview("text", "German")
+        svc.anonymize_text("text", "English")
+        svc.anonymize_text("text", "German")
 
     assert ctor.call_count == 2
     assert anonymizer.anonymize.call_count == 2
@@ -177,7 +176,7 @@ def test_clear_anonymizer_cache_forgets_the_anonymized_texts() -> None:
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ):
-        svc.anonymize_preview("text", "English")
+        svc.anonymize_text("text", "English")
         assert len(svc._anonymization_cache) == 1
 
         svc.clear_anonymizer_cache()

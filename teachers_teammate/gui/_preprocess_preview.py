@@ -142,9 +142,8 @@ class PreprocessPreview(QObject):
             shutil.rmtree(tmp_dir, ignore_errors=True)
             _dialogs.notify(owner, dlg.preprocessing_preview_failed(error))
             return
-        assert orig_path is not None
-        assert proc_path is not None
-        assert steps is not None
+        if orig_path is None or proc_path is None or steps is None:
+            raise RuntimeError("a preview that did not fail has both pages and its steps")
 
         orig_pix = load_pixmap(orig_path)
         proc_pix = load_pixmap(proc_path)

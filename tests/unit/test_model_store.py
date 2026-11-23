@@ -125,6 +125,23 @@ def test_short_body_is_refused(tmp_path: Path) -> None:
     assert not store.is_installed(model)
 
 
+def test_a_body_longer_than_the_file_stops_the_download(tmp_path: Path) -> None:
+    """
+    Given  a server that keeps sending after the file it should deliver
+    When   the model is downloaded
+    Then   it stops instead of filling the disk, and nothing is installed
+    """
+    model = _model()
+    oversized = dict(_BODIES, **{"a.bin": _BODIES["a.bin"] + b"more" * 3000})
+    store = ModelStore(tmp_path, http_get=_getter(oversized))
+
+    with pytest.raises(ModelDownloadError, match="more data than the file holds"):
+        store.download([model])
+
+    assert not store.is_installed(model)
+    assert not list(store.folder(model).glob("*.part"))
+
+
 def test_part_file_is_never_reported_installed(tmp_path: Path) -> None:
     """
     Given  a folder with only a half-written .part file

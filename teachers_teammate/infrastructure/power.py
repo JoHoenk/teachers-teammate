@@ -34,7 +34,7 @@ import threading
 from typing import Any
 
 from ..interfaces import SleepBlocker
-from .subprocess_utils import no_console_window_kwargs
+from .subprocess_utils import child_env, no_console_window_kwargs
 from .wsl import running_in_wsl
 
 _logger = logging.getLogger(__name__)
@@ -181,6 +181,7 @@ class _HelperProcessBlocker(SleepBlocker):
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL if self.ready_line is None else subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                env=child_env(),
                 **no_console_window_kwargs(),
             )
             held = self._accepted(proc)

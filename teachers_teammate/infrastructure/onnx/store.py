@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import closing, contextmanager
+import errno
 import hashlib
 import logging
 import os
@@ -28,8 +29,10 @@ from ...exceptions import ModelDownloadCancelledError, ModelDownloadError, Model
 from ...texts.addons import (
     DOWNLOAD_CANCELLED,
     download_damaged,
+    download_too_large,
     models_not_downloaded,
 )
+from ..storage_root import app_data_folder
 
 _logger = logging.getLogger(__name__)
 
@@ -65,12 +68,7 @@ def default_models_dir() -> Path:
     override = os.environ.get(MODELS_DIR_ENV)
     if override:
         return Path(override)
-    try:
-        from platformdirs import user_data_dir  # noqa: PLC0415
-
-        return Path(user_data_dir("teachers_teammate", appauthor=False)) / "models"
-    except ImportError:
-        return Path.home() / ".local" / "share" / "teachers_teammate" / "models"
+    return app_data_folder() / "models"
 
 
 def default_bundled_models_dir() -> Path | None:
@@ -292,6 +290,10 @@ class ModelStore:
                             out.write(chunk)
                             digest.update(chunk)
                             size += len(chunk)
+                            if size > file.size:
+                                # The answer outgrew the file it should be: reading on would
+                                # fill the disk for a download that cannot pass the check.
+                                raise ModelDownloadError(download_too_large(file.name))
                             report(size)
                 except requests.RequestException as exc:
                     raise ModelDownloadError(_network_message(exc)) from exc
@@ -315,7 +317,7 @@ def _network_message(exc: Exception) -> str:
 
 
 def _disk_message(path: Path, exc: OSError) -> str:
-    if getattr(exc, "errno", None) == 28:  # ENOSPC
+    if getattr(exc, "errno", None) == errno.ENOSPC:
         return f"There is no space left on the disk to save the model files in {path.parent}."
     return _not_writable(path.parent, exc)
 

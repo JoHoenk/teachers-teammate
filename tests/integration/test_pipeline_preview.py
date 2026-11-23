@@ -7,6 +7,7 @@ OpenCV / Pillow preprocessing stack is exercised.
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -15,6 +16,8 @@ from teachers_teammate.config import OcrConfig
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.infrastructure.pipeline import OCRPipeline, preprocess_preview
+from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
+from teachers_teammate.infrastructure.storage_root import document_stem, resolve_artifact_dir
 from tests.conftest import make_config
 
 
@@ -185,3 +188,33 @@ def test_pipeline_run_preview_only_propagates_failure_for_corrupt_image(tmp_path
 
     assert summary.exit_code == 1
     assert summary.failed == ("corrupt.png",)
+
+
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_a_preview_run_keeps_the_stored_preview_of_a_file_named_page2(
+    tmp_path: Path, sample_png: Path
+) -> None:
+    """
+    Given  a stored preview of a file called "Scan_page2.png" in the output folder
+    When   a preview-only run over that file cleans up after itself
+    Then   the stored preview is still there — its name is the file's, so only the run's own
+           images may go
+    """
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="ppocr",
+        correction_enabled=False,
+        docx_enabled=False,
+        preprocess_method="grayscale",
+    )
+    source = cfg.input_dir / "Scan_page2.png"
+    shutil.copy2(sample_png, source)
+    tmp_dir = resolve_artifact_dir(cfg.output_dir)
+    stored = PreviewImageStore(tmp_dir).paths_for_stem(document_stem(source)).preview_img
+    stored.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(sample_png, stored)
+
+    summary = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run_preview_only()
+
+    assert summary.exit_code == 0
+    assert stored.is_file()

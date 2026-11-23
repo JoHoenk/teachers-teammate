@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from functools import cache
+import os
 import sys
 from typing import Any
+
+from .llm_factory import get_provider_info, list_providers
 
 _CREATE_NO_WINDOW = 0x08000000
 
@@ -17,3 +21,25 @@ def no_console_window_kwargs() -> dict[str, Any]:
     if sys.platform == "win32":
         return {"creationflags": _CREATE_NO_WINDOW}
     return {}
+
+
+@cache
+def _provider_env_keys() -> frozenset[str]:
+    """Return the environment variables the providers read their API keys from."""
+    return frozenset(
+        info.env_key
+        for provider in list_providers()
+        if (info := get_provider_info(provider)) is not None and info.env_key
+    )
+
+
+def child_env() -> dict[str, str]:
+    """Return this process's environment without the providers' API keys.
+
+    The window puts the teacher's stored keys into its own environment, where the provider
+    libraries read them.  Every child would inherit them — including the detached
+    ``ollama serve`` that outlives the run — so a child is given a copy without them.  Nothing
+    a child does asks a provider on the teacher's account.
+    """
+    keys = _provider_env_keys()
+    return {name: value for name, value in os.environ.items() if name not in keys}

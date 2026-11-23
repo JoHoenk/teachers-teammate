@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 from ..domain.language import language_from_locale
+from .subprocess_utils import child_env
 
 
 def system_locale_code() -> str:
@@ -48,6 +49,7 @@ def _macos_locale() -> str:
             text=True,
             timeout=2,
             check=False,
+            env=child_env(),
         )
     except OSError, subprocess.SubprocessError:
         return ""

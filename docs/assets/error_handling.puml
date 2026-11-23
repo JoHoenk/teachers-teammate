@@ -75,7 +75,7 @@ package "teachers_teammate.exceptions" {
     package is not installed
   }
 
-  class OllamaConnectionError {
+  class OllamaUnreachableError {
     Raised on connection refused,
     timeout, HTTP error,
     or model-not-found
@@ -102,7 +102,7 @@ ValueError         <|-- ConfigFileParseError
 ValueError         <|-- PipelineInputError
 RuntimeError       <|-- StorageResolutionError
 RuntimeError       <|-- ProviderNotAvailableError
-RuntimeError       <|-- OllamaConnectionError
+OCRError           <|-- OllamaUnreachableError
 
 ' ── raising sites ─────────────────────────────────────────────────
 note right of OCRError
@@ -124,10 +124,10 @@ note right of ProviderNotAvailableError
   stage_builder.py (anonymizer)
 end note
 
-note right of OllamaConnectionError
+note right of OllamaUnreachableError
   Raised by:
-  OllamaClient.check_connection(),
-  OllamaClient.check_model()
+  OllamaClient.chat, .check_connection(),
+  .check_model(), .model_capabilities()
 end note
 
 note right of PipelineInputError

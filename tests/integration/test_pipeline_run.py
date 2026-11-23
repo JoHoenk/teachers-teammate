@@ -30,6 +30,7 @@ from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.exceptions import OCRError, RunStoppedError, StageError, StageErrorKind
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.interfaces import AnonymizationMap, Anonymizer, Corrector, ProgressCallbacks
+from teachers_teammate.infrastructure.speed_store import SampleStore
 from teachers_teammate.infrastructure.pipeline import (
     OCRPipeline,
     PipelineDependencies,
@@ -844,7 +845,7 @@ def test_pipeline_run_returns_1_when_ollama_unreachable(tmp_path: Path) -> None:
     Then   returns 1 (Ollama connection check fails before processing begins)
     """
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-    from teachers_teammate.exceptions import OllamaConnectionError  # noqa: PLC0415
+    from teachers_teammate.exceptions import OllamaUnreachableError  # noqa: PLC0415
 
     cfg = make_config(
         tmp_path,
@@ -858,7 +859,7 @@ def test_pipeline_run_returns_1_when_ollama_unreachable(tmp_path: Path) -> None:
     with patch.object(
         OllamaClient,
         "check_model",
-        side_effect=OllamaConnectionError("Cannot connect to Ollama at http://127.0.0.1:11434"),
+        side_effect=OllamaUnreachableError("Cannot connect to Ollama at http://127.0.0.1:11434"),
     ):
         rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
@@ -882,12 +883,12 @@ def test_pipeline_run_returns_1_when_ocr_model_not_in_ollama(tmp_path: Path) -> 
     _place_image(cfg.input_dir)
 
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-    from teachers_teammate.exceptions import OllamaConnectionError  # noqa: PLC0415
+    from teachers_teammate.exceptions import OllamaUnreachableError  # noqa: PLC0415
 
     with patch.object(
         OllamaClient,
         "check_model",
-        side_effect=OllamaConnectionError("Model 'my-model' not found in Ollama"),
+        side_effect=OllamaUnreachableError("Model 'my-model' not found in Ollama"),
     ):
         rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
@@ -1532,9 +1533,9 @@ def test_preview_file_text_unit_prints_and_returns_true(tmp_path: Path) -> None:
 
     mock_service = MagicMock(spec=PreprocessService)
     mock_service.preprocess_input.return_value = PreparedInput([], [], None, "some text", "file")
-    result = pipeline._preview_file(tmp_path / "doc.txt", mock_service)
+    pipeline._preview_file(tmp_path / "doc.txt", mock_service)
 
-    assert result is True
+    mock_service.preprocess_input.assert_called_once_with(tmp_path / "doc.txt")
 
 
 # ── Batch mixed-type processing (UC1) ────────────────────────────────────
@@ -2197,3 +2198,23 @@ def test_a_document_named_like_an_intermediate_keeps_its_pages(
     assert state is not None
     assert len(state.page_images) == 3
     assert all(Path(page).exists() for page in state.page_images)
+
+
+def test_a_run_reports_its_speed_samples_to_the_store_it_is_given(tmp_path: Path) -> None:
+    """
+    Given  the sample store the application layer also gives to its speed estimates
+    When   a run is built with it
+    Then   the run counts into that store, so one file sees one lock and every sample
+    """
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="ppocr",
+        correction_enabled=False,
+        docx_enabled=False,
+        preprocess_method="auto",
+    )
+    store = SampleStore()
+
+    pipeline = OCRPipeline(cfg, [], dependencies=PipelineDependencies(samples=store))
+
+    assert pipeline._samples is store

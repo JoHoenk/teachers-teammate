@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 import dataclasses
 import os
 from pathlib import Path
+from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.stages import Stage
 import tempfile
 import threading
@@ -187,7 +188,7 @@ class LocalDataFlowStub:
         """Answer with the real rule, over this stub's own location and default models."""
         return text_goes_online(settings, self.describe_llm_location, self.effective_model)
 
-    def anonymizer_available(self, language: str, config: object | None = None) -> bool:
+    def anonymizer_available(self, language: str, config: AnonymizerConfig | None = None) -> bool:
         _ = (language, config)
         return self.anonymizer_ready
 

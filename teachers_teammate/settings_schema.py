@@ -14,8 +14,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any
 
+from .domain.anonymization import pattern_problem
 from .domain.correction_policy import (
     DEFAULT_LEVEL,
     CorrectionOutput,
@@ -108,6 +110,31 @@ def _count(value: object) -> int:
     return int(str(value).strip())
 
 
+#: The pages the app renders: below 72 dpi a page cannot be read, above 600 dpi it only costs
+#: memory.  The command line and the window's spin box take the range from here.
+PDF_RENDER_DPI_RANGE = (72, 600)
+
+#: How long one recognition request may wait, in seconds.  No timeout at all would let a run
+#: hang forever on a server that stopped answering.
+OCR_TIMEOUT_RANGE = (1, 86400)
+
+
+def _count_between(low: int, high: int) -> Callable[[object], int]:
+    """Return a normaliser that accepts a whole number from *low* to *high* only.
+
+    A value outside is refused like text where a number belongs: the run needs a number it can
+    work with, and a page rendered at 0 dpi or a timeout of no seconds is none.
+    """
+
+    def normalize(value: object) -> int:
+        number = _count(value)
+        if not low <= number <= high:
+            raise ValueError(f"it must be a whole number from {low} to {high}")
+        return number
+
+    return normalize
+
+
 def _language(value: object) -> str:
     """Return the document language, falling back to the default for an empty one."""
     return str(value).strip() or _DEFAULT_LANGUAGE
@@ -156,7 +183,9 @@ def _pdf_text_layer(value: object) -> str:
 def _anonymizer_patterns(value: object) -> list[tuple[str, str]] | None:
     """Return *value* as ``[tag, pattern]`` pairs, raising :exc:`ValueError` for anything else.
 
-    ``None`` is the default ("the anonymizer's own list") and stays ``None``.
+    ``None`` is the default ("the anonymizer's own list") and stays ``None``.  A pattern that
+    does not compile, or a tag used twice, is refused here: the anonymizer would otherwise
+    skip it silently, and the text it was meant to hide would be sent as it is.
     """
     if value is None:
         return None
@@ -167,12 +196,23 @@ def _anonymizer_patterns(value: object) -> list[tuple[str, str]] | None:
         for pair in value
     ):
         raise ValueError("it must be a list of [tag, pattern] string pairs")
-    return [(str(tag), str(pattern)) for tag, pattern in value]
+    pairs = [(str(tag), str(pattern)) for tag, pattern in value]
+    tags: set[str] = set()
+    for tag, pattern in pairs:
+        problem = pattern_problem(tag, pattern, tags)
+        if problem:
+            raise ValueError(f"{problem.kind.value}: '{problem.tag}'")
+        tags.add(tag)
+    return pairs
 
 
 def _evaluate_prompt(value: object) -> str:
-    """Return the content review's instructions; a saved copy of the default means "built-in"."""
-    return migrate_saved_default(str(value), _DEFAULT_EVALUATE_PROMPT)
+    """Return the content review's instructions; a saved copy of the default means "built-in".
+
+    Trailing whitespace is dropped: it is not part of the instructions, and the value is part
+    of the review's fingerprint.
+    """
+    return migrate_saved_default(str(value).rstrip(), _DEFAULT_EVALUATE_PROMPT)
 
 
 def normalize_ocr_engine(value: object) -> str:
@@ -249,7 +289,7 @@ SETTINGS: tuple[Setting, ...] = (
         "preprocess_method", PreprocessMethod.AUTO, SettingScope.RUN, normalize_preprocess_method
     ),
     Setting("ollama_url", DEFAULT_SERVER_URL, SettingScope.RUN),
-    Setting("ocr_timeout", 180, SettingScope.RUN, _count),
+    Setting("ocr_timeout", 180, SettingScope.RUN, _count_between(*OCR_TIMEOUT_RANGE)),
     # Whether scans (images, PDFs without a text layer) are read.  Off = only text that already
     # exists is used (text files, PDFs with a text layer) and scans are skipped.
     Setting("recognition_enabled", True, SettingScope.RUN, _flag),
@@ -261,7 +301,7 @@ SETTINGS: tuple[Setting, ...] = (
     # keeps the check on.
     Setting("check_for_updates", True, SettingScope.APP, _flag),
     # ── Preprocessing (image preparation and PDF rendering) ───────────────────
-    Setting("pdf_render_dpi", 300, SettingScope.RUN, _count),
+    Setting("pdf_render_dpi", 300, SettingScope.RUN, _count_between(*PDF_RENDER_DPI_RANGE)),
     Setting("pdf_text_layer", "auto", SettingScope.RUN, _pdf_text_layer),
     Setting("debug", False, SettingScope.RUN, _flag),
     # ── Correction ────────────────────────────────────────────────────────────
@@ -325,9 +365,9 @@ SETTINGS: tuple[Setting, ...] = (
 
 #: The defaults of the settings a run or the app reads.  The folders are not among them: a
 #: "restore defaults" must not clear the folder a teacher chose.
-DEFAULTS: dict[str, Any] = {
-    setting.key: setting.default for setting in SETTINGS if setting.scope is not SettingScope.FILE
-}
+DEFAULTS: Mapping[str, Any] = MappingProxyType(
+    {setting.key: setting.default for setting in SETTINGS if setting.scope is not SettingScope.FILE}
+)
 
 #: The two keys that are normalised together: a model means nothing without its engine.
 _PAIRED_KEYS = frozenset({"ocr_engine", "ocr_model"})

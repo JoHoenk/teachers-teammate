@@ -219,6 +219,23 @@ def test_set_update_check_changes_only_that_key(tmp_path: Path, monkeypatch) -> 
     assert settings.read_text(encoding="utf-8") == "this is = = not toml"
 
 
+def test_set_update_check_leaves_a_settings_file_that_is_not_utf8(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a settings file an older Windows editor saved in a code page rather than UTF-8
+    When   the installer's switch turns the update check off
+    Then   it exits with 1 and the file keeps its bytes, instead of ending in a traceback
+    """
+    monkeypatch.setenv("TEACHERS_TEAMMATE_TMPDIR", str(tmp_path))
+    settings = tmp_path / "ocr.toml"
+    kept = 'language = "Français"\n'.encode("cp1252")
+    settings.write_bytes(kept)
+
+    assert frozen_modes.set_update_check("off") == 1
+    assert settings.read_bytes() == kept
+
+
 def test_set_update_check_writes_into_the_folder_it_is_given(tmp_path: Path, monkeypatch) -> None:
     """
     Given  an install that runs as another account, told the teacher's settings folder

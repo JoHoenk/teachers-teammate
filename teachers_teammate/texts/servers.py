@@ -37,6 +37,8 @@ STATUS_NOT_FOUND = (
     "this line turns green by itself."
 )
 BUTTON_START_OLLAMA = "Start Ollama"
+#: What the app says about a server that is not running, wherever there is no button to press.
+START_OLLAMA_HINT = "Use “Start Ollama” to start it."
 BUTTON_GET_OLLAMA = "Get Ollama…"
 BUTTON_CHECK_AGAIN = "Check again"
 
@@ -146,7 +148,7 @@ def cannot_reach(url: str, reason: BaseException) -> str:
 
 def cannot_connect(url: str) -> str:
     """Return what the app says about a server it cannot open a connection to."""
-    return f"Cannot connect to Ollama at {url}. Is it running? Start it with: ollama serve"
+    return f"Cannot connect to Ollama at {url}. Is it running? {START_OLLAMA_HINT}"
 
 
 def connection_timed_out(url: str) -> str:
@@ -216,7 +218,7 @@ def answer_abandoned(seconds: float) -> str:
 
 def check_cannot_connect(url: str) -> str:
     """Return the check's line for a server that refused the connection."""
-    return f"✗ Cannot connect to Ollama at {url} — is it running? (ollama serve)"
+    return f"✗ Cannot connect to Ollama at {url} — is it running? {START_OLLAMA_HINT}"
 
 
 def check_timed_out(url: str) -> str:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sys
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -24,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.composition import AppServices
+from ..domain.anonymization import AnonymizerConfig, pattern_problem
 from ..domain.local_models import PRIVACY_ADDON_ID
 from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from ..texts import dialogs as dlg
@@ -64,18 +64,15 @@ class AnonymizerConfigWidget(QWidget):
     def __init__(
         self,
         language: str,
-        anonymizer_config: object,
+        anonymizer_config: AnonymizerConfig | None,
         app_service: AppServices,
         parent: QWidget | None = None,
         *,
         sample_text: str = "",
     ) -> None:
-        from ..domain.anonymization import AnonymizerConfig  # noqa: PLC0415
-
         super().__init__(parent)
         self._language = language
         self._app_service = app_service
-        self._AnonymizerConfig = AnonymizerConfig
         self._valid = True
 
         config: AnonymizerConfig = (
@@ -358,32 +355,39 @@ class AnonymizerConfigWidget(QWidget):
 
     # ── Validation ─────────────────────────────────────────────────────────────
 
-    def _on_cell_changed(self, row: int, col: int) -> None:
+    def _on_cell_changed(self, _row: int, _col: int) -> None:
         if self._loading:
             return
-        if col == 1:
-            self._validate_row(row)
-            self._update_error_summary()
-            self._update_ok_button()
+        self._revalidate_all()
+
+    def _row_texts(self, row: int) -> tuple[str, str]:
+        """Return the stripped ``(tag, pattern)`` texts of *row*."""
+        tag_item = self._table.item(row, 0)
+        pattern_item = self._table.item(row, 1)
+        return (
+            tag_item.text().strip() if tag_item else "",
+            pattern_item.text().strip() if pattern_item else "",
+        )
 
     def _validate_row(self, row: int) -> bool:
-        item = self._table.item(row, 1)
-        if item is None:
-            return True
-        pattern_text = item.text()
-        if not pattern_text:
-            item.setBackground(self._table.palette().base())
-            item.setToolTip("")
-            return True
-        try:
-            re.compile(pattern_text)
-            item.setBackground(self._table.palette().base())
-            item.setToolTip("")
-            return True
-        except re.error as exc:
-            item.setBackground(_INVALID_BG)
-            item.setToolTip(privacy.invalid_regex(str(exc)))
-            return False
+        """Mark *row* as valid or not; a row with a blank tag or pattern is skipped on save."""
+        items = [self._table.item(row, col) for col in (0, 1)]
+        tag, pattern = self._row_texts(row)
+        problem = None
+        if tag and pattern:
+            others = {
+                other_tag
+                for other in range(self._table.rowCount())
+                if other != row
+                for other_tag, other_pattern in [self._row_texts(other)]
+                if other_tag and other_pattern
+            }
+            problem = pattern_problem(tag, pattern, others)
+        for item in items:
+            if item is not None:
+                item.setBackground(_INVALID_BG if problem else self._table.palette().base())
+                item.setToolTip(privacy.invalid_pattern_row(problem) if problem else "")
+        return problem is None
 
     def _revalidate_all(self) -> None:
         self._loading = True
@@ -428,7 +432,7 @@ class AnonymizerConfigWidget(QWidget):
             return
 
         try:
-            anonymized, mapping = self._app_service.anonymization.anonymize_preview(
+            anonymized, mapping = self._app_service.anonymization.anonymize_text(
                 text, self._language, self.anonymizer_config
             )
         except ImportError as exc:
@@ -524,9 +528,9 @@ class AnonymizerConfigWidget(QWidget):
             return configured
         return data if isinstance(data, str) else None
 
-    def set_config(self, config: object) -> None:
-        """Show *config* (an ``AnonymizerConfig``): models and patterns."""
-        if not isinstance(config, self._AnonymizerConfig):
+    def set_config(self, config: AnonymizerConfig | None) -> None:
+        """Show *config*: models and patterns."""
+        if not isinstance(config, AnonymizerConfig):
             return
         self._configured_primary = config.primary_model
         self._configured_secondary = config.secondary_model
@@ -557,7 +561,7 @@ class AnonymizerConfigWidget(QWidget):
     # ── Public properties ──────────────────────────────────────────────────────
 
     @property
-    def anonymizer_config(self) -> object:
+    def anonymizer_config(self) -> AnonymizerConfig | None:
         """Return an :class:`~teachers_teammate.domain.anonymization.AnonymizerConfig`
         reflecting the current dialog state."""
         primary = (
@@ -572,7 +576,7 @@ class AnonymizerConfigWidget(QWidget):
             secondary = self._configured_secondary
         if secondary == "":
             secondary = None
-        return self._AnonymizerConfig(
+        return AnonymizerConfig(
             primary_model=primary,
             secondary_model=secondary,
             patterns=tuple(self.patterns),
@@ -583,10 +587,7 @@ class AnonymizerConfigWidget(QWidget):
         """Return validated ``(tag, regex)`` pairs from the table, skipping blank rows."""
         result = []
         for row in range(self._table.rowCount()):
-            tag_item = self._table.item(row, 0)
-            pat_item = self._table.item(row, 1)
-            tag = tag_item.text().strip() if tag_item else ""
-            pattern = pat_item.text().strip() if pat_item else ""
+            tag, pattern = self._row_texts(row)
             if tag and pattern:
                 result.append((tag, pattern))
         return result

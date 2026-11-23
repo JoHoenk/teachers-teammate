@@ -14,6 +14,7 @@ from collections.abc import Callable
 import logging
 import os
 import sys
+from typing import cast
 
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
@@ -34,8 +35,9 @@ def create_app(
     :class:`QIcon`/``QPixmap`` before that aborts with "Must construct a
     QGuiApplication before a QPixmap".
     """
-    app = QApplication.instance() or QApplication(sys.argv)
-    assert isinstance(app, QApplication)
+    existing = QApplication.instance()
+    # ``instance()`` is typed as the base class; the app is a QApplication by construction.
+    app = cast("QApplication", existing) if existing is not None else QApplication(sys.argv)
     app.setApplicationName("teachers-teammate")
     app.setApplicationDisplayName(app_text.NAME)
     if sys.platform.startswith("linux") and hasattr(app, "setDesktopFileName"):

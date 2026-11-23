@@ -44,6 +44,10 @@ the app). A new script in an existing folder is picked up by that folder's `all_
 `scripts_lib` / `scripts` target; a new folder under `tools/` has to be added to `//:py_ruff`,
 `//:py_ty`, `//:first_party_sources` (or `//:sh_shellcheck`) in the root `BUILD`.
 
+Size is not a lint rule: no linter sees a class or a function that grew into several jobs, and
+pylint's refactoring messages are off. `tests/unit/test_class_size.py` is that gate — one ratchet
+per number, over every layer, and a unit over its limit is listed there at the size it has.
+
 The workflow files have their own linters, because rules_lint has none for them (`lint-ci` in
 `.github/workflows/format_lint.yml` runs them):
 
@@ -140,6 +144,20 @@ The processing stages and the choices at each stage:
 :alt: Teacher's Teammate processing pipeline stages and options
 :width: 100%
 ```
+
+### Glossary: the code's word, the teacher's word
+
+Both are in use, and neither renames the other: the code keeps the word the pipeline was built
+with, `texts/` and the interface use the one a teacher knows.
+
+| Code | What a teacher reads |
+|---|---|
+| correction, corrector, `Stage.CORRECTION` | proofreading — each change explained |
+| evaluation, evaluator, `Stage.EVALUATION` | content review — remarks on the text as a whole |
+| anonymization, anonymizer, `AnonymizationMap` | removing personal info: `[PERSON_1]` in place of a name |
+| OCR, `Stage.OCR`, recognition | text recognition — the write-up read into text |
+| review | three things: the *correction review* is the explanations of one proofreading (`domain/proofreading/review.py`), the *content review* is the evaluation, a *stored review* is what a run stored about a file, which the Check tab reads back. The module says which |
+| run | one start over the selected files; the Benchmark app calls the same thing a *batch* |
 
 ### Where text lives
 
@@ -1852,7 +1870,7 @@ where they exist.
 `work/<sha256>.json` in `resolve_data_folder("work")`; the key is `compute_file_hash` of the
 document, the `source_hash` the cache already computes.  One essay has one work wherever its
 results go and whatever it is called; a changed file is another essay.  Written atomically
-(`infrastructure/atomic_file.py:write_text_atomic`, the temp-file-and-replace the state store
+(`atomic_file.py:write_text_atomic`, the temp-file-and-replace the state store
 uses too).  **One writer**: the window, through `DocumentCommands`; runs and the CLI only read.
 
 **Two parts, two validity rules.**
@@ -1995,7 +2013,7 @@ write), `tests/unit/test_domain_policy.py` (the freshness flags),
 A pipeline run gets its anonymizer from the service: `run_selected()` hands the
 `PipelineDependencies` a `PipelineComponentFactory` whose `build_anonymizer` is
 `AnonymizationService.build_cached_anonymizer`.  That returns a
-`CachedAnonymizer` over the same two caches, so a run, `anonymize_preview()` and
+`CachedAnonymizer` over the same two caches, so a run, `anonymize_text()` and
 `export_text(anonymize=True)` analyse a given text once per session and settings —
 whichever came first fills the cache for the others.  `FileProcessor` anonymizes the extracted text once, right after recognition, and hands
 that result to proofreading and to the `_anonymized.txt` output.
@@ -2047,7 +2065,7 @@ words.
 
 The page asks for the stand-ins with `Masking.needs_request(raw_text)` — once per text — and the
 window answers through a background task (`_anonymize_task`), which calls
-`AnonymizationService.anonymize_preview()` off the GUI thread and therefore reuses the
+`AnonymizationService.anonymize_text()` off the GUI thread and therefore reuses the
 shared cache above (a run then needs no second spaCy pass, and vice versa).  A result that
 belongs to a text the page no longer shows is dropped (`set_anonymization(..., raw_text=…)`),
 and a failure keeps the names hidden behind the strip that says so.  Changing the
@@ -3021,7 +3039,7 @@ re-exported from the package root for convenience.
 | `ConfigFileParseError` | `ValueError` | `config._read_toml` |
 | `StorageResolutionError` | `RuntimeError` | `storage_root.resolve_storage_root` |
 | `ProviderNotAvailableError` | `RuntimeError` | provider modules, `ocr_processor`, `stage_builder` |
-| `OllamaConnectionError` | `RuntimeError` | `ollama_utils.check_model` |
+| `OllamaUnreachableError` | `OCRError` | `ollama_utils`: server unreachable, HTTP error, unknown model |
 | `ResponseTruncatedError` | `OCRError` | `ollama_utils.OllamaClient.chat` |
 | `AnonymizerError` | `StageError` | `file_processor._hide_personal_info`, `._restore_pii` |
 | `PipelineInputError` | `ValueError` | `input_provider_factory`, `preprocess_service` |

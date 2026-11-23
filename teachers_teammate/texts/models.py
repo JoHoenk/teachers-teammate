@@ -278,14 +278,14 @@ def too_large_text(
     card = card_gb if card_gb is not None else card_budget_gb(profile)
     if system_memory_gb is not None and memory_gb is not None:
         offer = memory_for_models_gb(profile, system_memory_gb, card_gb=card)
-        assert offer is not None  # the main memory is known here
-        parts = "main memory" if card <= 0 else "graphics memory and main memory"
-        return (
-            f"{need}. This computer can offer about {_gb(offer)} ({parts}); "
-            f"{_gb(system_reserve_gb(system_memory_gb))} of its {system_memory_gb:.0f} GB main "
-            "memory stay free for the system. The model does not fit, so it would not run "
-            "properly."
-        )
+        if offer is not None:  # the main memory is known here, so the offer is a number
+            parts = "main memory" if card <= 0 else "graphics memory and main memory"
+            return (
+                f"{need}. This computer can offer about {_gb(offer)} ({parts}); "
+                f"{_gb(system_reserve_gb(system_memory_gb))} of its {system_memory_gb:.0f} GB "
+                "main memory stay free for the system. The model does not fit, so it would not "
+                "run properly."
+            )
     if card <= 0:
         return "This model is too large to run quickly without a graphics card."
     tier = _TIER_MEMORY_GB[profile]

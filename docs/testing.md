@@ -42,6 +42,30 @@ You can also invoke pytest directly (without Bazel) for quick ad-hoc runs, but B
 
 Bazel gives every test file its own process, which hides a test that changes global state (`sys.modules`, `sys.path`, environment) and leaves it changed. A single `pytest tests` run puts all files in one process and is how such a leak between files shows up. A test that evicts or replaces modules must restore them (`with patch.dict(sys.modules):`).
 
+### Test groups in CI
+
+`tests.yml` runs `//tests/...` on one machine per group, each with its own disk cache
+(`tests-<group>`). A test is in the first group that claims it:
+
+| Group | Tests that |
+|---|---|
+| `walkthrough` | carry the tag `walkthrough` (`//tests:walkthrough_tests`): the whole app, end to end |
+| `gui` | depend on `gui_layer_lib` |
+| `application` | depend on `application_lib` and not on the GUI |
+| `rest` | are not claimed above |
+
+`tools/ci/target_groups.py` makes the split with `bazel query`; `CLAIMS` in it is the one place
+that names the groups, and the workflow takes their names from `--matrix`. `rest` is the
+complement of the others, so a new test cannot be left out. The script stops if a group is
+empty (a lost tag, a layer library no test depends on). A test that plays the whole app gets
+`tags = ["walkthrough"]` in `tests/BUILD`. List or run one group:
+
+```bash
+python tools/ci/target_groups.py gui
+bazel test --target_pattern_file=<(python tools/ci/target_groups.py application) --test_output=errors
+bazel test //tests:walkthrough_tests --test_output=errors
+```
+
 ### Coverage report
 
 ```bash

@@ -7,9 +7,27 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Unit and Integration Tests
+  # The group names come from tools/ci/target_groups.py, so a new group cannot be left out here.
+  plan:
+    name: Plan the test groups
     runs-on: ubuntu-24.04
+    outputs:
+      groups: ${{ steps.groups.outputs.groups }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - id: groups
+        run: echo "groups=$(python3 tools/ci/target_groups.py --matrix)" >> "${GITHUB_OUTPUT}"
+
+  test:
+    name: Tests (${{ matrix.group }})
+    needs: plan
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(needs.plan.outputs.groups) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -19,7 +37,7 @@ jobs:
       - name: Set up Bazel
         uses: ./.github/actions/setup-bazel
         with:
-          disk-cache: tests
+          disk-cache: tests-${{ matrix.group }}
 
       - name: Install Qt system libraries
         run: |
@@ -27,10 +45,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libxcb-xinerama0 libxcb-cursor0 libegl1 libgl1 libglib2.0-0
 
-      - name: Run unit tests
+      - name: Run the tests of this group
         # LangChain is an optional runtime dependency (pip install "teachers-teammate[llm]").
         # The test lock file (requirements_test_lock.txt) includes langchain-core so that
         # correction, evaluation, and LLM OCR tests are exercised in CI.
-        run: bazel test --config=ci //tests/... --test_output=errors
+        run: |
+          python3 tools/ci/target_groups.py "${GROUP}" --config=ci > "${RUNNER_TEMP}/targets.txt"
+          wc -l "${RUNNER_TEMP}/targets.txt"
+          bazel test --config=ci --target_pattern_file="${RUNNER_TEMP}/targets.txt" --test_output=errors
         env:
+          GROUP: ${{ matrix.group }}
           QT_QPA_PLATFORM: offscreen

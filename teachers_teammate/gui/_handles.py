@@ -27,6 +27,14 @@ INPUT_PATH = "inputPath"
 OUTPUT_PATH = "outputPath"
 CHECK_PAGE = "checkPage"
 READ_VIEW = "readView"
+FINAL_VIEW = "finalView"
+"""Where the teacher types a correction when the text was proofread: the read view is read-only."""
+FINAL_VIEW_BUTTON = "finalViewButton"
+"""The switch that puts the corrected text in front."""
+ITEM_LIST = "itemList"
+"""The list of the proofreading's items, in text order."""
+CHECKED_BUTTON = "checkedButton"
+"""Marks the chosen item as checked, or takes that back."""
 
 # ── menu entries ─────────────────────────────────────────────────────────────
 

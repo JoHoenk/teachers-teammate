@@ -26,8 +26,10 @@ on:
       - "tools/packaging/**"
       - "tools/build/**"
       - "requirements*.txt"
+      - "pyproject.toml"
       - "MODULE.bazel*"
       - ".python-version"
+      - ".github/actions/build-venv/**"
       - ".github/workflows/build_*.yml"
 
 # A new push to the same pull request cancels the run it supersedes; a dispatch is never

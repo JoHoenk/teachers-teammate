@@ -54,7 +54,7 @@ from ...domain.teacher_work import (
 from ...texts import check as check_text
 from ...texts import review as txt
 from .._export_menu import ExportKind
-from .._handles import READ_VIEW
+from .._handles import CHECKED_BUTTON, FINAL_VIEW, FINAL_VIEW_BUTTON, READ_VIEW
 from ._masking import Masking
 from ._run_strip import PRIMARY_STYLE, NextStepStrip, RunState, RunStrip
 from ._scan_view import ScanPane
@@ -306,6 +306,7 @@ class CheckBody(QWidget):
         self.read_view.setObjectName(READ_VIEW)
         self.marked_view = MarkedView()
         self.final_view = FinalView()
+        self.final_view.setObjectName(FINAL_VIEW)
         for view in (self.read_view, self.marked_view, self.final_view):
             self._stack.addWidget(view)
         self._splitter.addWidget(self._stack)
@@ -889,6 +890,7 @@ class CheckPage(QWidget):
         layout.addWidget(self._build_switch())
 
         self._checked_btn = QPushButton(txt.MARK_AS_CHECKED)
+        self._checked_btn.setObjectName(CHECKED_BUTTON)
         self._checked_btn.setCheckable(True)
         self._checked_btn.setToolTip(txt.CHECKED_TOOLTIP)
         self._checked_btn.setEnabled(False)
@@ -958,6 +960,8 @@ class CheckPage(QWidget):
         self._switch_buttons: dict[ViewKind, QPushButton] = {}
         for view in ViewKind:
             button = QPushButton(view.label)
+            if view is ViewKind.FINAL:
+                button.setObjectName(FINAL_VIEW_BUTTON)
             button.setCheckable(True)
             button.setFlat(True)
             button.clicked.connect(lambda _checked=False, v=view: self.set_view(v))

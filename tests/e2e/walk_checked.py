@@ -8,7 +8,8 @@ runs ``walkthrough.py`` alone.
     python -m tests.e2e.walk_checked <fault> <result.json>
 
 ``plain`` breaks nothing and then checks that no thread of Python's is left running; exit code 3
-says one is.
+says one is.  ``proofreading`` breaks nothing either and lets the run proofread against
+:class:`~tests.fakes.fake_ollama.FakeOllama`, which stays open for the whole walk.
 """
 
 from __future__ import annotations
@@ -25,8 +26,19 @@ from teachers_teammate.gui._run_controller import RunController
 from teachers_teammate.infrastructure import stage_builder
 from teachers_teammate.texts import dialogs as dlg
 from tests.e2e import walkthrough
+from tests.fakes.fake_ollama import FakeOllama, ProofreadingAnswers
 
 LEFT_RUNNING = 3
+
+#: The watchdog of the walk that hangs: long enough for a slow machine to reach the run step.
+HANG_WALK_S = 60.0
+
+#: The model tag the proofreading stand-in serves.  Not in the catalog, so no run warns about the
+#: memory it would need and nothing is downloaded.
+PROOFREADING_MODEL = "walkthrough-proofreader:1b"
+
+#: The servers a walk talks to, kept open for as long as the walk runs.
+_SERVERS: list[FakeOllama] = []
 
 
 def _reader_raises() -> None:
@@ -74,6 +86,20 @@ def _slot_raises() -> None:
     RunController._set_steps_done = broken  # ty: ignore[invalid-assignment]
 
 
+def _proofreading() -> walkthrough.ProofreadingSetup:
+    """Answer the proofreading like a model would, and let the walk work with the changed text."""
+    server = FakeOllama()
+    _SERVERS.append(server)
+    server.install(PROOFREADING_MODEL)
+    setup = walkthrough.ProofreadingSetup(url=server.url, model=PROOFREADING_MODEL)
+    server.answer_chats(
+        ProofreadingAnswers(
+            last_word=setup.word, explanation=setup.explanation, category=setup.category
+        )
+    )
+    return setup
+
+
 def _hangs() -> None:
     """The reader never returns, so the watchdog has to end the walk."""
     import time  # noqa: PLC0415
@@ -82,7 +108,7 @@ def _hangs() -> None:
         time.sleep(3600)
 
     stage_builder.PpOcrProcessor = stuck  # ty: ignore[invalid-assignment]
-    walkthrough.WALK_S = 20.0
+    walkthrough.WALK_S = HANG_WALK_S
 
 
 FAULTS: dict[str, Callable[[], None]] = {
@@ -94,13 +120,18 @@ FAULTS: dict[str, Callable[[], None]] = {
     "hangs": _hangs,
 }
 
+#: The walk that breaks nothing and lets the run proofread.
+PROOFREADING = "proofreading"
+
 
 def main(argv: list[str]) -> int:
     """Break what *argv* names, walk, and return the walk's exit code."""
     fault, out = argv
-    FAULTS[fault]()
+    proofreading = _proofreading() if fault == PROOFREADING else None
+    if fault != PROOFREADING:
+        FAULTS[fault]()
     before = set(threading.enumerate())
-    code = walkthrough.main([out])
+    code = walkthrough.main([out], proofreading=proofreading)
     if fault == "plain" and code == 0 and set(threading.enumerate()) - before:
         return LEFT_RUNNING
     return code

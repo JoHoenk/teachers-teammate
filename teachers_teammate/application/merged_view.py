@@ -4,22 +4,32 @@ The cache holds the machine's texts; the teacher's work holds theirs.  Every rea
 the Check tab, Export, Copy, *What is sent* — shows the document as it is *now*, which is the
 merge of the two.  That merge happens here and nowhere else: nothing outside the cache's own code
 reads the texts of a ``DocumentState``.
+
+A stored review that no longer quotes the words it points at in the transcription is dropped here,
+with one logged warning, so the queue, the Check tab and Export all see the same document.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import lru_cache
+import logging
 from pathlib import Path
 
+from ..domain.formatted_text import TextFormat
 from ..domain.freshness import (
     correction_kept_over_settings,
     first_stale_stage_for_hashes,
 )
+from ..domain.proofreading.review import CorrectionReview, fits
 from ..domain.stages import Stage
 from ..domain.teacher_work import TeacherWork, current_texts, work_status
 from ..infrastructure.state_repository import DocumentState, machine_texts, reset_fields
 from ..infrastructure.workflow.cache_service import ExpectedHashes, stage_hashes
 from .document_view import DocumentStateView, to_view
+from .formatting import TextFormatter
+
+_logger = logging.getLogger(__name__)
 
 
 def merged_view(
@@ -39,10 +49,49 @@ def merged_view(
         view,
         raw_text=texts.transcription,
         raw_text_format=texts.transcription_format,
+        correction_review=_fitted(
+            view.correction_review,
+            texts.transcription,
+            texts.transcription_format,
+            source_id=view.source_id,
+            name=view.name,
+        ),
         correction_text=texts.corrected,
         machine_correction_text=texts.machine_corrected,
         work=work_status(work, texts, kept_over_settings=kept_over_settings),
     )
+
+
+def _fitted(
+    review: CorrectionReview | None,
+    transcription: str,
+    text_format: TextFormat,
+    *,
+    source_id: str,
+    name: str,
+) -> CorrectionReview | None:
+    """Return *review*, or ``None`` when it no longer quotes the words it points at.
+
+    A review that does not fit the transcription would put the model's explanations on other
+    words than the ones it changed, and a half-right review is worse than none: the text still
+    diffs against the corrected one, so the changes stay visible as changes without a reason.
+    """
+    if review is None:
+        return None
+    if fits(review, TextFormatter.plain_text(transcription, text_format)):
+        return review
+    _warn_dropped(source_id, name, review)
+    return None
+
+
+@lru_cache(maxsize=256)
+def _warn_dropped(
+    source_id: str,  # noqa: ARG001  # the cache key: one warning per document and review
+    name: str,
+    review: CorrectionReview,  # noqa: ARG001
+) -> None:
+    """Log the dropped review of one document once: every read of it comes through here."""
+    _logger.warning("Dropped the review of %s: it does not match the text it was made for", name)
 
 
 def reconciled_view(

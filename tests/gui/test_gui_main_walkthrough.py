@@ -18,9 +18,14 @@ a hung or aborted walk ends only its own process, and the test prints the result
 
 The failure tests break one thing each in the child and check that the walk reports it: a reader
 that raises, a box the step did not expect, a window the step did not open, a slot that raises,
-and a reader that never returns.  The last three tests need no model and no child: a wait that
-runs out says what the guards caught, a window is quoted as the teacher read it, and a slot's
-exception is reported once.
+and a reader that never returns.  Three tests need no child: a wait that runs out says what the
+guards caught, a window is quoted as the teacher read it, and a slot's exception is reported once.
+The plain walk also checks that no thread of Python's is left running (the child exits with 3
+if one is).
+
+One walk proofreads: the child starts a stand-in Ollama server
+(:class:`~tests.fakes.fake_ollama.FakeOllama`) and the walk reads the items, ticks one and spoils
+a stored review, so the app has to drop it.
 """
 
 from __future__ import annotations
@@ -124,6 +129,35 @@ def test_the_walk_passes_on_the_real_models(tmp_path: Path) -> None:
 @skip_no_page_models
 @pytest.mark.needs_reader_models
 @pytest.mark.needs_page_models
+def test_the_walk_passes_with_proofreading(tmp_path: Path) -> None:
+    """
+    Given  a stand-in Ollama server that answers the proofreading exchange
+    When   the walk runs and the teacher opens, reads and ticks what the model changed
+    Then   every step passes, the review of a document that no longer fits its text is dropped
+           with a warning, and the app kept nothing half right
+    """
+    code, result, printed = _walk(tmp_path, "proofreading")
+
+    assert result["failed"] == [], printed
+    assert [step["name"] for step in result["steps"]] == [
+        name for name, _method in walkthrough.walk_steps(proofreading=True)
+    ]
+    assert result["ok"] is True
+    assert code == 0, printed
+    assert result["modals"] == []
+    assert result["exceptions"] == []
+    assert all(entry["expected"] for entry in result["dialogs"]), [
+        entry for entry in result["dialogs"] if not entry["expected"]
+    ]
+    # The review that no longer fits was dropped, and the walk's own assertions caught the rest:
+    # it would have failed the step had the app shown the moved explanations.
+    assert any("Dropped the review" in line for line in result["warnings"]), result["warnings"]
+
+
+@skip_no_reader_models
+@skip_no_page_models
+@pytest.mark.needs_reader_models
+@pytest.mark.needs_page_models
 def test_a_reader_that_raises_fails_the_run_step(tmp_path: Path) -> None:
     """
     Given  a text reader that raises
@@ -202,7 +236,7 @@ def test_an_exception_in_a_slot_fails_the_step_it_happened_in(tmp_path: Path) ->
 @pytest.mark.needs_page_models
 def test_a_walk_that_hangs_is_ended_with_its_stacks_in_the_result(tmp_path: Path) -> None:
     """
-    Given  a reader that never returns and a watchdog set to twenty seconds
+    Given  a reader that never returns and a watchdog set to a minute
     When   the walk runs
     Then   the process ends with exit 1, and the result names the step, every thread's stack and
            what the app was running
@@ -290,21 +324,6 @@ def test_a_slot_exception_is_reported_by_one_guard_only(qtbot, tmp_path: Path) -
     kept = walk.result()["exceptions"]
     assert "RuntimeError: first" in kept
     assert "ValueError: second" in kept
-
-
-@skip_no_reader_models
-@skip_no_page_models
-@pytest.mark.needs_reader_models
-@pytest.mark.needs_page_models
-def test_the_walk_leaves_no_thread_running(tmp_path: Path) -> None:
-    """
-    Given  a walk that ends by closing the window
-    When   the entry point returns
-    Then   no thread of Python's the walk started is still running (the child exits with 3 if one is)
-    """
-    code, result, printed = _walk(tmp_path)
-
-    assert code == 0, (result["failed"], printed)
 
 
 @pytest.mark.parametrize(

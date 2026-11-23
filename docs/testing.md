@@ -166,8 +166,20 @@ runs `walkthrough.main`, the same entry point the bundle runner calls, on the th
 Every walk is a process of its own (`tests/e2e/walk_checked.py`): a walk leaves windows and
 queued signals behind, and a hung walk ends only its own process. One thing is broken per test and
 the report is checked: a reader that raises, an unexpected dialog, an unexpected window, a raising
-slot, a reader that never returns (the watchdog), a saved config, and that no thread is left
-running. The target is `large` (about a minute).
+slot, a reader that never returns (the watchdog) and a saved config; the plain walk also checks
+that no thread is left running. The target is `large` (about a minute).
+
+One walk is the app with proofreading on (`walkthrough.main(..., proofreading=...)`): the settings
+file turns it on and names a model on `127.0.0.1`, and `FakeOllama` answers the exchange's three
+steps (`ProofreadingAnswers`, which replaces the last word of every text). The walk then reads the items
+the model left in the Check tab, ticks them as checked, finds the model's word in the Word file a
+run writes, and spoils a stored review so that the app has to drop it. That last step is what
+`application/merged_view.py` does for any stored document: a review that no longer quotes the
+words it points at is dropped with a logged warning, and the walk requires that warning and the
+changes without explanations.
+
+The bundle walk never has proofreading on: the stand-in is test code, and the import list below
+keeps it out of the script.
 
 ### Against a bundle
 
@@ -208,12 +220,13 @@ installers, and nothing the app writes while it runs can land in one of them.
 
 ### Adding a step
 
-One method on `Walk`, one row in `STEPS` (`tests/e2e/walkthrough.py`). The step clicks what a
-teacher clicks through `_handles`, and declares the dialogs it expects with `self._answers.expect`
-before it triggers them — any other dialog fails the step. A menu or a window the step opens
-itself goes through `_in_modal`. Waits are conditions with a deadline (`_settle`), never sleeps;
-a run is waited for with `_wait_run`. New settings go into `write_settings`; new input files into
-`write_inputs`.
+One method on `Walk`, one row in `STEPS` (`tests/e2e/walkthrough.py`) — or in `PROOFREADING_STEPS`
+with the step it follows, for one that needs a model behind it: those run only when the walk is
+given a `ProofreadingSetup`. The step clicks what a teacher clicks through `_handles`, and declares
+the dialogs it expects with `self._answers.expect` before it triggers them — any other dialog fails
+the step. A menu or a window the step opens itself goes through `_in_modal`. Waits are conditions
+with a deadline (`_settle`), never sleeps; a run is waited for with `_wait_run`. New settings go
+into `write_settings`; new input files into `write_inputs`.
 
 ### What the script may import
 

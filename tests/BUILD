@@ -458,6 +458,15 @@ py_test(
 )
 
 py_test(
+    name = "test_merged_view",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_merged_view.py"],
+    args = ["unit/test_merged_view.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _APPLICATION_LIB,
+)
+
+py_test(
     name = "test_check_document",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_check_document.py"],
@@ -2866,13 +2875,18 @@ py_test(
         "e2e/__init__.py",
         "e2e/walk_checked.py",
         "e2e/walkthrough.py",
+        "fakes/fake_ollama.py",
         "gui/test_gui_main_walkthrough.py",
     ],
     args = ["gui/test_gui_main_walkthrough.py"],
     data = _READER_MODEL_DATA + _PAGE_MODEL_DATA,
     env = _MODEL_ENV,
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
+        "//teachers_teammate:gui_layer_lib",
+        # The proofreading walk talks to the real ``ollama`` client.
+        "@ocr_test_dependencies//ollama:pkg",
+    ],
 )
 
 # What that script may import: it also runs inside the shipped bundle, which carries no tests.
@@ -2982,6 +2996,7 @@ test_suite(
         ":test_make_constraints",
         ":test_make_version_resource",
         ":test_markdown_shield",
+        ":test_merged_view",
         ":test_model_catalog",
         ":test_model_listing",
         ":test_model_store",

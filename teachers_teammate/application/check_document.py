@@ -124,9 +124,8 @@ def check_document_of(view: DocumentStateView) -> CheckDocument:
     corrected_plain = TextFormatter.plain_text(view.correction_text, text_format)
     machine_text = view.machine_correction_text or view.correction_text
     machine_plain = TextFormatter.plain_text(machine_text, text_format)
-    aligned = _aligned(
-        raw_plain, corrected_plain, view.correction_review, view.correction_text, machine_plain
-    )
+    review = view.correction_review
+    aligned = _aligned(raw_plain, corrected_plain, review, view.correction_text, machine_plain)
     pages = tuple(Path(page) for page in view.page_images)
     items = _items(aligned)
     return CheckDocument(
@@ -138,7 +137,7 @@ def check_document_of(view: DocumentStateView) -> CheckDocument:
         text_format=text_format,
         raw_plain=raw_plain,
         corrected_plain=corrected_plain,
-        review=view.correction_review,
+        review=review,
         warning=view.correction_warning,
         aligned=aligned,
         items=items,

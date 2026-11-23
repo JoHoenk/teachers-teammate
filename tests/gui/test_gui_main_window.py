@@ -5407,6 +5407,10 @@ _WALKTHROUGH_WIDGETS = (
     _handles.OUTPUT_PATH,
     _handles.CHECK_PAGE,
     _handles.READ_VIEW,
+    _handles.FINAL_VIEW,
+    _handles.FINAL_VIEW_BUTTON,
+    _handles.ITEM_LIST,
+    _handles.CHECKED_BUTTON,
 )
 
 #: The menu entries it triggers.

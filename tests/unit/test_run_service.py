@@ -1080,6 +1080,34 @@ def test_stage_requirements_ask_for_the_add_on_update_after_an_app_update(
 
 
 @pytest.mark.unit
+def test_stage_requirements_ask_for_the_install_of_a_failed_add_on_update(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  the folder after an add-on update that failed: nothing is outdated any more, and the
+           add-on whose reinstall failed was removed
+    When   removing names is checked
+    Then   it asks for the add-on to be installed (PRIVACY_ADDON_MISSING), which is true, instead
+           of offering an update that would leave it against the bundle's packages
+    """
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    monkeypatch.setattr(addon_manager, "addons_outdated", lambda: False)
+    monkeypatch.setattr(addon_manager, "addon_in_folder", lambda _name: False)
+    monkeypatch.setattr(addon_manager, "addon_waits_for_restart", lambda _name: False)
+    svc = _make_svc()
+    cfg = dataclasses.replace(_ollama_config(tmp_path), language="german")
+
+    with (
+        patch.object(svc.anonymization, "list_installed_spacy_models", return_value=[]),
+        patch.object(svc.addons, "is_module_importable", lambda *_a: False),
+    ):
+        issues = svc.run.check_stage_requirements(cfg, "anonymizer")
+
+    assert [i.kind for i in issues] == [IssueKind.PRIVACY_ADDON_MISSING]
+
+
+@pytest.mark.unit
 def test_stage_requirements_ask_for_a_restart_while_a_package_waits(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -590,6 +590,22 @@ def drop_outdated_shared_packages(pkg_dir: Path, constraints: Path | None) -> li
     return removed
 
 
+def drop_addon_distribution(pkg_dir: Path, requirement: str) -> list[str]:
+    """Delete the copies of the add-on *requirement* left by a failed update; return their names.
+
+    The add-on's own package is removed, never a shared one: the folder then holds neither its
+    old copy nor a new one, so it no longer counts as outdated and readiness says the add-on is
+    missing — which is true, so installing it again is what helps.  Nothing in the folder is
+    loaded at this point (it was off ``sys.path``), so no file is locked by this process.
+    """
+    name = _normalise(re.split(r"[<>=!~\[;,\s]", requirement, maxsplit=1)[0])
+    stale = [found for found in _distributions(pkg_dir) if found[0] == name]
+    removed = _remove_stale(pkg_dir, stale)
+    for removed_name in removed:
+        _logger.info("Removed the %s copy of the failed add-on from %s", removed_name, pkg_dir)
+    return removed
+
+
 def drop_foreign_packages(pkg_dir: Path) -> list[str]:
     """Delete the distributions built for another Python; return their names.
 
@@ -882,9 +898,10 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
     ``py3-none-any`` model runs on any Python.
 
     Each add-on is installed on its own: one without a wheel for this Python (or a failed
-    download) does not keep the others, nor the clean-up, from happening.  The folder is made
-    usable first; the failures are reported afterwards, and an add-on whose old copy could not
-    be replaced is gone from the folder (install it again on Settings → Add-ons).
+    download) does not keep the others from updating.  An add-on whose install failed is removed
+    from the folder, so the folder holds neither its old copy nor a new one: readiness then says
+    the add-on is missing, which is true, instead of offering an add-on that would run against
+    the bundle's packages it was not built for.
 
     Raises:
         OSError: if the folder cannot be written.
@@ -902,6 +919,8 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
         except RuntimeError as exc:
             _logger.warning("Could not update %s: %s", requirement, exc)
             failures.append((requirement, exc))
+    for requirement, _error in failures:
+        drop_addon_distribution(pkg_dir, requirement)
     drop_outdated_shared_packages(pkg_dir, addon_constraints_path())
     drop_foreign_packages(pkg_dir)
     inject_packages_dir()

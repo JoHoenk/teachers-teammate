@@ -1287,6 +1287,66 @@ def test_update_cleans_up_when_one_add_on_fails_to_install(
     assert addon_manager.foreign_python_packages(pkg_dir) == []
 
 
+def test_a_failed_update_removes_the_add_on_it_could_not_reinstall(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a folder with an outdated numpy (the bundle pins another one) and spaCy, whose
+           reinstall fails
+    When   the add-ons are updated
+    Then   spaCy is removed by its RECORD together with the outdated numpy, so the folder is not
+           outdated and holds no old spaCy that would run against the bundle's numpy; the failure
+           names the requirement
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "numpy", "2.4.0", files=("numpy/core/a.py",))
+    _dist_info(pkg_dir, "spacy", "3.8.0", files=("spacy/pipeline.py",))
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    monkeypatch.setattr(addon_manager, "inject_packages_dir", lambda: None)
+    monkeypatch.setattr(addon_manager, "addon_constraints_path", lambda: frozen_bundle)
+
+    def _install(packages: list[str], _target: Path, _cb: object, **_kw: object) -> None:
+        if packages[0].startswith("spacy"):
+            raise RuntimeError("no matching distribution")
+        _dist_info(pkg_dir, "numpy", "2.5.4", files=("numpy/core/a.py",))
+
+    monkeypatch.setattr(addon_manager, "install_packages_subprocess", _install)
+
+    with pytest.raises(addon_manager.AddonUpdateError) as raised:
+        addon_manager.update_installed_addons(lambda _line: None)
+
+    assert [requirement for requirement, _error in raised.value.errors] == ["spacy>=3.7"]
+    assert not (pkg_dir / "spacy-3.8.0.dist-info").exists()
+    assert not (pkg_dir / "spacy" / "pipeline.py").exists()
+    assert addon_manager.addon_in_folder("spacy", pkg_dir) is False
+    assert addon_manager.addons_outdated() is False
+
+
+def test_an_add_on_that_updates_stays_in_the_folder(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a folder with spaCy, whose reinstall succeeds with a new version
+    When   the add-ons are updated
+    Then   the fresh copy stays and no failure is raised, so only what failed is removed
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0")
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    monkeypatch.setattr(addon_manager, "inject_packages_dir", lambda: None)
+    monkeypatch.setattr(addon_manager, "addon_constraints_path", lambda: frozen_bundle)
+
+    def _install(_packages: list[str], _target: Path, _cb: object, **_kw: object) -> None:
+        _dist_info(pkg_dir, "spacy", "3.8.7")
+
+    monkeypatch.setattr(addon_manager, "install_packages_subprocess", _install)
+
+    addon_manager.update_installed_addons(lambda _line: None)
+
+    assert addon_manager.addon_in_folder("spacy", pkg_dir) is True
+    assert addon_manager.addons_outdated() is False
+
+
 def test_a_wheel_file_that_is_not_text_is_left_alone(tmp_path: Path, python_314: None) -> None:
     """
     Given  a distribution whose WHEEL file is not valid UTF-8

@@ -205,10 +205,13 @@ def test_notice_carries_the_written_offer() -> None:
     """
     Given  NOTICE
     When   the written offer is read
-    Then   it names the three years, the LGPL and GPL sections it rests on, and a contact
+    Then   it names the program's own source, the three years, the LGPL and GPL sections it rests
+           on, and a contact
     """
     section = notice.section(_notice(), "Written offer")
 
+    assert "Corresponding Source" in section
+    assert '"Source code" archive' in section
     assert "three years" in section
     assert "LGPL-2.1 section 6(c)" in section
     assert "GPL-3.0 section 6(b)" in section

@@ -473,12 +473,11 @@ def denied_reason(license_text: str, deny: Iterable[tuple[re.Pattern[str], str]]
 
     An ``OR`` expression is acceptable as soon as one alternative is: the package can be used
     under that one (``LGPL-3.0-only OR GPL-3.0-only`` is fine, ``GPL-3.0-only OR AGPL-3.0`` is
-    not).  ``AND`` is not split — every part then applies.
+    not).  ``AND`` is not split — every part then applies.  Only the upper-case SPDX operator
+    splits: a free-text "or later" is part of one license's name.
     """
     deny = tuple(deny)
-    alternatives = [
-        part.strip() for part in re.split(r"\s+OR\s+", license_text, flags=re.IGNORECASE)
-    ]
+    alternatives = [part.strip() for part in re.split(r"\s+OR\s+", license_text)]
     reasons: list[str] = []
     for alternative in alternatives:
         matched = [reason for pattern, reason in deny if pattern.search(alternative)]

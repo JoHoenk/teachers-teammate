@@ -29,7 +29,7 @@ def version_notice(version: str) -> str:
         (
             f"{NAME} {version}",
             app.COPYRIGHT,
-            f"Licensed under the {app.LICENSE_TITLE}: <{app.LICENSE_URL}>.",
+            f"License {app.LICENSE_ID}: <{app.LICENSE_URL}>.",
             app.NO_WARRANTY,
         )
     )

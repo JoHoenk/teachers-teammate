@@ -176,13 +176,27 @@ def _parse_args(
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
+class _VersionNotice(argparse.Action):
+    """Print the version notice as written, then exit 0.
+
+    argparse's own ``version`` action reflows the text into one paragraph, which joins the
+    version and the copyright line.
+    """
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        _namespace: argparse.Namespace,
+        _values: str | Sequence[str] | None,
+        _option_string: str | None = None,
+    ) -> None:
+        print(cli_text.version_notice(__version__))
+        parser.exit()
+
+
 def _add_version_arg(parser: argparse.ArgumentParser) -> None:
     """Add ``--version``: the notice with the copyright and the license, then exit 0."""
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=cli_text.version_notice(__version__),
-    )
+    parser.add_argument("--version", action=_VersionNotice, nargs=0)
 
 
 def exit_on_version(argv: Sequence[str] | None) -> None:

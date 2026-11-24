@@ -3,7 +3,8 @@
 Teacher's Teammate
 Copyright 2026 Teacher's Teammate contributors
 
-This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+This product is licensed under the GNU General Public License, version 3 or (at your option) any
+later version (see LICENSE).
 
 This product includes software developed by third parties. The full license
 and notice texts for all bundled third-party components are reproduced in:
@@ -37,6 +38,9 @@ only: the Windows bundle leaves out the separate DLL that OpenCV's Windows build
 
 Source code
 -----------
+The source of Teacher's Teammate itself is the "Source code" archive on the page of each release
+(https://github.com/JoHoenk/teachers-teammate/releases).
+
 The LGPL and MPL components above are open source, and this section says where their source
 is. Each entry names the version it was written for; a version bump turns the license test
 red until the entry and the sources release below name the new one.
@@ -63,10 +67,12 @@ update check does not see it.
 Written offer
 -------------
 The sources release named above is the offer of corresponding source from the same place as the
-download (GPL-3.0 section 6(d), as used through LGPL-3.0). In addition, for three years after we
-last distributed a version, we send the corresponding source of any LGPL component in this
-product on request, on a medium customary for software interchange, for no more than our cost of
-physically performing the source distribution (LGPL-2.1 section 6(c), GPL-3.0 section 6(b)). Ask at
+download (GPL-3.0 section 6(d), as used through LGPL-3.0). Teacher's Teammate itself is offered the
+same way: the "Source code" archive on the page of each release is its Corresponding Source
+(GPL-3.0 section 6(d)). In addition, for three years after we last distributed a version, we send
+the corresponding source of this program and of every LGPL component in it on request, on a
+medium customary for software interchange, for no more than our cost of physically performing the
+source distribution (LGPL-2.1 section 6(c), GPL-3.0 section 6(b)). Ask at
 https://github.com/JoHoenk/teachers-teammate/issues.
 
 The macOS OpenCV libraries and the Linux host libraries are covered by this offer. The Linux

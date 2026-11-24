@@ -114,7 +114,7 @@ Source: https://github.com/JoHoenk/teachers-teammate
 
 Files: *
 Copyright: 2026 Teacher's Teammate contributors
-License: Apache-2.0
+License: GPL-3+
 
 EOF
     # DEP-5 wants the license text indented by one space, blank lines as " .".

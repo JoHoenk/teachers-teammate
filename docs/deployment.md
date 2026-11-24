@@ -203,6 +203,9 @@ and commit the result; the diff shows any license change. A license that
 | `teachers_teammate/assets/third_party_licenses.md` | tool | what the third-party tab of **Help → Licenses** shows |
 | `NOTICE` | hand | attributions and source pointers; a test checks its versions |
 
+Our own source needs no mirror: each release page carries the tag's "Source code" archive, which
+is the Corresponding Source of that release (`NOTICE` → "Written offer").
+
 The bundle carries Qt under the LGPL v3 as separate, replaceable files
 (`_internal/PySide6/Qt/lib`). The LGPL requires passing on the Qt, PySide6 and FFmpeg sources:
 every version we ship gets a release of its own, `third-party-sources-qt<version>`, and

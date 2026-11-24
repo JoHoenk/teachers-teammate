@@ -3474,7 +3474,7 @@ The constraints file says what an add-on may **not** change.  What it *gets* is 
   version from the two locks, and downloads each locked wheel for its license text.  The same run
   compiles `third_party_licenses/third_party_license.txt` and the copy the GUI shows,
   `teachers_teammate/assets/third_party_licenses.md`.  `tools/licenses/policy.toml` holds the
-  denied licenses (AGPL, GPL-only, non-commercial), the display names and the accepted
+  denied licenses (what cannot join a GPL-3.0 program, AGPL, non-commercial), the display names and the accepted
   exceptions; an `OR` expression is fine as soon as one alternative is.  The Add-ons page shows a
   package's license as the tooltip of its row (`infrastructure/addon_licenses.py`, reading the
   bundled copy of the inventory).  `--compile`, `--check-env` and `--check-resolved` run offline
@@ -3567,10 +3567,10 @@ if "--_spacy_download_mode" in sys.argv:
     # call pip._internal.cli.main(["install", "--target", ..., _download_url])
 ```
 
-**Two languages have no model.**  `es_core_news_sm` is GPL-3.0 and `it_core_news_sm` is
-CC BY-NC-SA (non-commercial); the license policy refuses both, so Spanish and Italian documents
-are anonymized with the multilingual model like any other language without one.  The language
-stays in `domain/language.py`; it has no model.
+**Two languages have no model.**  Spanish has none listed (`es_core_news_sm` is GPL-3.0, which
+the license policy accepts); `it_core_news_sm` is CC BY-NC-SA (non-commercial), which it refuses.
+Spanish and Italian documents are anonymized with the multilingual model like any other language
+without one.  The languages stay in `domain/language.py`.
 
 After a model download, `inject_packages_dir()` ensures the model is immediately usable.
 `spacy.load("en_core_web_sm")` finds the model because `packages_dir` is on `sys.path`.

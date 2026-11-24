@@ -616,7 +616,7 @@ py_wheel(
         "wheel_requires_llm.txt": "llm",
         "wheel_requires_privacy.txt": "privacy",
     },
-    license = "Apache-2.0",
+    license = "GPL-3.0-or-later",
     platform = "any",
     python_requires = ">=3.14",
     python_tag = "py3",

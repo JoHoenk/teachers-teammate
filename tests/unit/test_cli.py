@@ -215,9 +215,11 @@ def test_version_prints_the_notice_and_needs_no_folder(capsys, monkeypatch) -> N
 
     assert exit_info.value.code == 0
     printed = capsys.readouterr().out
-    assert __version__ in printed
-    assert app_text.COPYRIGHT in printed
-    assert app_text.LICENSE_TITLE in printed
+    lines = printed.rstrip().splitlines()
+    assert lines[0] == f"{app_text.NAME} {__version__}"
+    assert app_text.COPYRIGHT in lines
+    assert app_text.LICENSE_ID in printed
+    assert app_text.LICENSE_URL in printed
 
 
 # ── main() error paths ─────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 This file covers third-party software embedded in the **installer artifacts**
 produced by the scripts in this directory. It is separate from
-`third_party_licenses/` (and the in-app Third-Party Licenses dialog), which
+`third_party_licenses/` (and the Third-Party Licenses tab of Help → Licenses), which
 covers the software bundled **inside** the Teacher's Teammate application itself.
 
 ## Scope by platform

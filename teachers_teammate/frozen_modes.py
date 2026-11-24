@@ -105,10 +105,10 @@ SETUP_PLAN_TIMEOUT_MS = 30_000
 # The pages the check clicks through: Welcome, Classes, Local AI, Proofreading, Privacy → Summary.
 SETUP_PAGES = 5
 
-# Qt modules that Qt offers only under the GPL-3.0 or a commercial license. The rest of Qt is
-# LGPL-3.0, which lets an Apache-2.0 application link it; one of these in the bundle would make
-# the whole application GPL-3.0. ``tools/build/teachers-teammate.spec`` drops the same names
-# (a unit test keeps the two lists equal); the smoke test is the check on the finished bundle.
+# Qt modules the app does not use: Qt offers them only under the GPL-3.0 or a commercial license,
+# and one in the bundle would be size for nothing. ``tools/build/teachers-teammate.spec`` drops
+# the same names (a unit test keeps the two lists equal); the smoke test is the check on the
+# finished bundle.
 GPL_ONLY_QT_MODULES: tuple[str, ...] = (
     "Charts",
     "DataVisualization",

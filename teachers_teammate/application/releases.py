@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from ..domain.releases import ReleaseOffer, newer_release
+from ..domain.releases import DEVELOPMENT_VERSION, ReleaseOffer, newer_release
 from ..exceptions import ReleaseFeedError
 from .ports import ReleaseFeed
 
@@ -27,8 +27,11 @@ class ReleaseService:
 
         Best effort: no answer, no network and an unreadable answer all give ``None``, and the
         start goes on.  A failed ask writes one info line, because a log a teacher sends is the
-        only place a rate limit (403, 429) would show.
+        only place a rate limit (403, 429) would show.  A development build asks nobody: its
+        placeholder sorts below every release, so every answer would be an offer.
         """
+        if self._installed_version == DEVELOPMENT_VERSION:
+            return None
         try:
             tag, url = self._feed.latest()
         except ReleaseFeedError as exc:

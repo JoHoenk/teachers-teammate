@@ -726,6 +726,15 @@ app_test(
 )
 
 app_test(
+    "unit/test_walkthrough_folder.py",
+    extra_srcs = [
+        "e2e/__init__.py",
+        "e2e/walkthrough.py",
+    ],
+    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+app_test(
     "unit/test_update_banner_script.py",
     extra_srcs = [
         "e2e/__init__.py",

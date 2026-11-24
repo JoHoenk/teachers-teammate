@@ -238,10 +238,12 @@ FunctionEnd
   DeleteRegKey /ifempty ${HIVE} "${REG_KEY}"
 !macroend
 
-; Start this installer again with administrator rights. The result lands in $0: > 32 means the
-; elevated copy started, anything else means UAC was refused or cancelled.
-!macro RelaunchElevated ARGS
-  System::Call 'shell32::ShellExecuteW(i $HWNDPARENT, w "runas", w "$EXEPATH", w "${ARGS}", w "$EXEDIR", i 1) i.r0'
+; Start this installer again with administrator rights, with the arguments in $R1. The result
+; lands in $0: > 32 means the elevated copy started, anything else means UAC was refused or
+; cancelled. $R1 goes in as a register (w R1): the System plugin ends a quoted string at the
+; first quote inside it, and the arguments carry quotes (/SETTINGSDIR="...").
+!macro RelaunchElevated
+  System::Call 'shell32::ShellExecuteW(i $HWNDPARENT, w "runas", w "$EXEPATH", w R1, w "$EXEDIR", i 1) i.r0'
 !macroend
 
 ; ── Installer pages ──────────────────────────────────────────────────────────
@@ -606,7 +608,7 @@ FunctionEnd
 Function WelcomePageLeave
   ${If} $NeedElevation == "1"
     StrCpy $R1 "/SCOPE=all /ELEVATED"
-    !insertmacro RelaunchElevated "$R1"
+    !insertmacro RelaunchElevated
     ${If} $0 > 32
       Quit
     ${EndIf}
@@ -762,7 +764,7 @@ Function ScopePageLeave
       ${If} $DirGiven == "1"
         StrCpy $R1 "$R1 /D=$INSTDIR"
       ${EndIf}
-      !insertmacro RelaunchElevated "$R1"
+      !insertmacro RelaunchElevated
       ${If} $0 > 32
         Quit
       ${EndIf}

@@ -8,8 +8,8 @@ banner a teacher would see is there.  A break in any link looks exactly like "no
 nothing a teacher reports would show it.
 
 It claims an old version of itself first (``OLD_VERSION``), so a published release is newer than
-this build.  ``application.composition`` reads the version into the service when the services are
-built, and binds the name when the module is imported: the override comes before that import.
+this build.  ``application.composition`` reads the version when the services are built, so the
+override only has to come before that.
 
 A refused answer is not the same as no answer.  GitHub answers ``403`` or ``429`` with
 ``x-ratelimit-remaining: 0`` when its hourly limit for a shared address is used up, which says TLS

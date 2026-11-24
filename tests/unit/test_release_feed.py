@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from email.message import Message
+from http.client import BadStatusLine, IncompleteRead
 import json
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
@@ -85,12 +86,19 @@ def test_a_refusal_that_is_no_rate_limit_says_so() -> None:
 
 @pytest.mark.parametrize(
     "failure",
-    [URLError("no route to host"), TimeoutError("timed out"), OSError("connection refused")],
-    ids=["unreachable", "timeout", "refused"],
+    [
+        URLError("no route to host"),
+        TimeoutError("timed out"),
+        OSError("connection refused"),
+        IncompleteRead(b"{"),
+        BadStatusLine("garbage"),
+    ],
+    ids=["unreachable", "timeout", "refused", "cut-off", "bad-status"],
 )
 def test_no_answer_carries_no_status(failure: Exception) -> None:
     """
-    Given  the request never gets an answer: unreachable, a timeout, a refused connection
+    Given  the request never gets an answer: unreachable, a timeout, a refused or cut connection,
+           a reply that is no HTTP
     When   the feed is read
     Then   the error carries no status
     """

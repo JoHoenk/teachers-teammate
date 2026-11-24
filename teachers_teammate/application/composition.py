@@ -18,7 +18,8 @@ import functools
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .. import __version__
+import teachers_teammate
+
 from ..infrastructure import logging_setup, power
 from ..infrastructure.addon_manager import AddonPackages
 from ..infrastructure.credential_store import CredentialStore
@@ -169,7 +170,9 @@ def build_app_services(
         speeds=speeds,
         anonymization=anonymization,
         addons=addons,
-        releases=ReleaseService(feed=GitHubReleaseFeed(), installed_version=__version__),
+        releases=ReleaseService(
+            feed=GitHubReleaseFeed(), installed_version=teachers_teammate.__version__
+        ),
         data_flow=data_flow,
         setup=setup,
         documents=documents,

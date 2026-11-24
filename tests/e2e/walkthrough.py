@@ -390,30 +390,36 @@ def _reads(text: str, words: str) -> bool:
 
 
 @contextmanager
-def isolated() -> Iterator[Path]:
-    """Run with one temporary folder for the cache, the config root and the data root.
+def isolated(root: Path | None = None, *, keep: bool = False) -> Iterator[Path]:
+    """Run with one folder for the cache, the config root and the data root.
 
     ``TEACHERS_TEAMMATE_TMPDIR`` is what the app reads (``config.override_root``), and under it
     the app also keeps its GUI settings in a file instead of the platform's registry or plist.
     ``QT_QPA_PLATFORM`` is left alone — native in a bundle, offscreen under Bazel — and
     ``QT_PLUGIN_PATH`` is never set: a bundle also carries OpenCV's Qt 5 platform plugin, which
     a set path would find before Qt's own.
+
+    *root* runs in a folder of the caller's, which *keep* leaves as the walk left it — what an
+    upgrade walk needs, and what a walk being looked into afterwards needs.  Without *root* a
+    temporary folder is made.  At the end the walk removes only a folder it made itself: one
+    that was there before (an old version's data root) is never removed, *keep* or not.
     """
-    names = ("TEACHERS_TEAMMATE_TMPDIR",)
-    previous = {name: os.environ.get(name) for name in names}
+    previous = os.environ.get("TEACHERS_TEAMMATE_TMPDIR")
     # The real path: macOS keeps its temporary folder behind a link (/var -> /private/var) and
     # Windows may hand out an 8.3 short name, and the app resolves every source id it is given.
-    folder = str(Path(tempfile.mkdtemp(prefix="teachers-teammate-walk-")).resolve())
-    os.environ["TEACHERS_TEAMMATE_TMPDIR"] = folder
+    made_here = root is None or not Path(root).exists()
+    folder = Path(root or tempfile.mkdtemp(prefix="teachers-teammate-walk-")).resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+    os.environ["TEACHERS_TEAMMATE_TMPDIR"] = str(folder)
     try:
-        yield Path(folder)
+        yield folder
     finally:
-        for name, value in previous.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
-        shutil.rmtree(folder, onexc=lambda *_exc: None)
+        if previous is None:
+            os.environ.pop("TEACHERS_TEAMMATE_TMPDIR", None)
+        else:
+            os.environ["TEACHERS_TEAMMATE_TMPDIR"] = previous
+        if made_here and not keep:
+            shutil.rmtree(folder, onexc=lambda *_exc: None)
 
 
 # ── what only one system has ─────────────────────────────────────────────────
@@ -2122,12 +2128,17 @@ def main(argv: list[str], *, proofreading: ProofreadingSetup | None = None) -> i
     parser.add_argument(
         "--screenshots", default="", help="a folder for one picture per window state"
     )
+    parser.add_argument(
+        "--root", default="", help="the folder to run in, instead of a temporary one"
+    )
+    parser.add_argument("--keep", action="store_true", help="leave the folder as the walk left it")
     options = parser.parse_args(argv)
     out = Path(options.out).expanduser().resolve()
     screenshots = Path(options.screenshots).expanduser().resolve() if options.screenshots else None
+    root_given = Path(options.root).expanduser().resolve() if options.root else None
     # The pictures are written while the walk runs, so their folder must not be the one the
     # walk's isolation removes at the end.
-    with isolated() as root:
+    with isolated(root_given, keep=options.keep) as root:
         write_settings(root, proofreading=proofreading)
         # Armed before the services are built: a hang there leaves a file to read instead of a
         # job that runs to its limit.

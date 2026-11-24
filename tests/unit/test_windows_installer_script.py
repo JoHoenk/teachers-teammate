@@ -248,3 +248,20 @@ def test_the_privacy_link_opens_the_privacy_statement_not_the_top_of_the_page() 
 
     headings = [line for line in _policy().splitlines() if line.startswith("#")]
     assert "## Privacy statement" in headings
+
+
+def test_the_relaunch_passes_its_arguments_as_a_register() -> None:
+    """
+    Given  the installer script
+    When   the RelaunchElevated macro and its callers are read
+    Then   the arguments reach ShellExecuteW as the register $R1 and never inside a quoted
+           System string, whose first inner quote would end it (/SETTINGSDIR="..." has two)
+    """
+    script = _script()
+    start = script.index("!macro RelaunchElevated")
+    macro = script[start : script.index("!macroend", start)]
+
+    assert "w R1," in macro
+    assert '"${ARGS}"' not in macro
+    assert "ARGS" not in macro
+    assert '!insertmacro RelaunchElevated "' not in script

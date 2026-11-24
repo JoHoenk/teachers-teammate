@@ -234,6 +234,12 @@ An older bundle that lacks a handle a newer script uses fails the first step, na
 A bundle is a working one only if the walk exits 0: a missing Qt platform plugin aborts the
 process before the script's first line, so there is no `e2e.json` to read.
 
+The walk makes its own temporary folder and removes it at the end. `--root <dir>` runs it in a
+folder of the caller's instead, and `--keep` leaves that folder as the walk left it — the settings
+file, the documents, the stored results, the add-on folder and the log, which is what a failed
+walk or an upgrade is looked into with. Without `--keep` the walk removes only a folder it made
+itself; one that exists already, such as the data root an earlier version left, is never removed.
+
 On a Wayland desktop the window opens on the `wayland` platform, even under `xvfb-run`:
 `WAYLAND_DISPLAY` is what Qt follows. `QT_QPA_PLATFORM=xcb` puts it on the display `DISPLAY`
 names instead; the Qt xcb plugin needs `libxcb-cursor0` and the other `libxcb-*` packages that

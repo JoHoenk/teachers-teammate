@@ -1797,12 +1797,20 @@ def test_a_failed_install_is_told_in_the_words_of_its_reason() -> None:
         f"spacy>=3.7: {txt.addon_error_text(offline)}; "
         f"langchain-core>=1: {txt.addon_error_text(no_version)}"
     )
-    both = AddonUpdateError([("spacy>=3.7", offline), ("langchain-core>=1", no_version)])
-    one = AddonUpdateError([("spacy>=3.7", offline)])
+    failed: list[tuple[str, RuntimeError]] = [
+        ("spacy>=3.7", offline),
+        ("langchain-core>=1", no_version),
+    ]
+    both = AddonUpdateError(failed, gone=["spacy>=3.7", "langchain-core>=1"])
+    one = AddonUpdateError(failed[:1], gone=["spacy>=3.7"])
+    some = AddonUpdateError(failed, gone=["spacy>=3.7"])
+    none = AddonUpdateError(failed[:1])
 
     assert txt.addon_error_text(both) == f"{failures} {txt.ADDONS_GONE_MANY}"
     assert txt.addon_error_text(one).endswith(txt.ADDONS_GONE_ONE)
     assert "Settings → Add-ons" in txt.addon_error_text(one)
+    assert txt.addon_error_text(some) == f"{failures} {txt.ADDONS_GONE_SOME}"
+    assert txt.addon_error_text(none) == f"spacy>=3.7: {txt.addon_error_text(offline)}"
     assert txt.addon_error_text(RuntimeError("boom")) == "boom"
 
 

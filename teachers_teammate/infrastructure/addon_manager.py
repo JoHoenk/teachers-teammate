@@ -142,10 +142,15 @@ def addon_requirements() -> dict[str, list[str]]:
     return {addon: list(packages) for addon, packages in _ADDON_PACKAGES.items()}
 
 
+def _requirement_name(requirement: str) -> str:
+    """Return the normalised package name of a pip *requirement* (``spacy>=3.7`` → ``spacy``)."""
+    return _normalise(re.split(r"[<>=!~\[;,\s]", requirement, maxsplit=1)[0])
+
+
 def addon_package_names() -> list[str]:
     """Return the normalised name of every package an add-on installs, without its version."""
     return [
-        _normalise(re.split(r"[<>=!~\[;,\s]", requirement, maxsplit=1)[0])
+        _requirement_name(requirement)
         for packages in _ADDON_PACKAGES.values()
         for requirement in packages
     ]
@@ -566,8 +571,7 @@ def installed_addon_requirements(pkg_dir: Path | None = None) -> list[str]:
     requirements: list[str] = []
     for packages in _ADDON_PACKAGES.values():
         for requirement in packages:
-            name = _normalise(re.split(r"[<>=!~\[;\s]", requirement, maxsplit=1)[0])
-            if name in installed and requirement not in requirements:
+            if _requirement_name(requirement) in installed and requirement not in requirements:
                 requirements.append(requirement)
     return requirements
 
@@ -590,16 +594,20 @@ def drop_outdated_shared_packages(pkg_dir: Path, constraints: Path | None) -> li
     return removed
 
 
-def drop_addon_distribution(pkg_dir: Path, requirement: str) -> list[str]:
-    """Delete the copies of the add-on *requirement* left by a failed update; return their names.
+def drop_addon_distribution(pkg_dir: Path, requirement: str, before: frozenset[Path]) -> list[str]:
+    """Delete the old copies of the add-on *requirement* a failed update left; return their names.
 
-    The add-on's own package is removed, never a shared one: the folder then holds neither its
-    old copy nor a new one, so it no longer counts as outdated and readiness says the add-on is
-    missing — which is true, so installing it again is what helps.  Nothing in the folder is
-    loaded at this point (it was off ``sys.path``), so no file is locked by this process.
+    *before* is the ``.dist-info`` folders the update started with.  Only those go: another
+    add-on's update may have installed a fresh copy of the same package meanwhile (every provider
+    brings ``langchain-core``), and that copy stays, with the files it shares.  The old copy is
+    removed, never a shared package: the folder then holds neither it nor a new one, so it no
+    longer counts as outdated and readiness says the add-on is missing — which is true, so
+    installing it again is what helps.  Nothing in the folder is loaded at this point (it was
+    off ``sys.path``), so no file is locked by this process.  An empty result means nothing was
+    removed (no readable ``RECORD``).
     """
-    name = _normalise(re.split(r"[<>=!~\[;,\s]", requirement, maxsplit=1)[0])
-    stale = [found for found in _distributions(pkg_dir) if found[0] == name]
+    name = _requirement_name(requirement)
+    stale = [found for found in _distributions(pkg_dir) if found[0] == name and found[2] in before]
     removed = _remove_stale(pkg_dir, stale)
     for removed_name in removed:
         _logger.info("Removed the %s copy of the failed add-on from %s", removed_name, pkg_dir)
@@ -913,21 +921,25 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
         raise RuntimeError(addons_update_needs_install())
     pkg_dir = get_packages_dir()
     failures: list[tuple[str, RuntimeError]] = []
+    before = frozenset(folder for _name, _version, folder in _distributions(pkg_dir))
     for requirement in installed_addon_requirements(pkg_dir):
         try:
             install_packages_subprocess([requirement], pkg_dir, progress_cb)
         except RuntimeError as exc:
             _logger.warning("Could not update %s: %s", requirement, exc)
             failures.append((requirement, exc))
-    for requirement, _error in failures:
-        drop_addon_distribution(pkg_dir, requirement)
+    gone = [
+        requirement
+        for requirement, _error in failures
+        if drop_addon_distribution(pkg_dir, requirement, before)
+    ]
     drop_outdated_shared_packages(pkg_dir, addon_constraints_path())
     drop_foreign_packages(pkg_dir)
     inject_packages_dir()
     for addon in _ADDON_CHECK_MODULE:
         clear_stale_modules(addon)
     if failures:
-        raise AddonUpdateError(failures)
+        raise AddonUpdateError(failures, gone=gone)
 
 
 def pip_policy_arguments() -> list[str]:

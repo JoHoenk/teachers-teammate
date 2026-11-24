@@ -80,3 +80,15 @@ def test_a_refused_answer_writes_the_status(caplog) -> None:
     line = caplog.records[0].getMessage()
     assert "403" in line
     assert "api.github.com" not in line
+
+
+def test_a_development_build_asks_nobody() -> None:
+    """
+    Given  a build nobody stamped (0.0.0.dev0), and a feed that names a release
+    When   the service is asked
+    Then   nothing is offered and the feed was not asked at all
+    """
+    feed = _FakeFeed(("v1.0.0", _RELEASE_PAGE))
+
+    assert ReleaseService(feed=feed, installed_version="0.0.0.dev0").newer_release() is None
+    assert feed.asked == 0

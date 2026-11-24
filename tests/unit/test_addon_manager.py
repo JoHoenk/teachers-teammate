@@ -1316,10 +1316,74 @@ def test_a_failed_update_removes_the_add_on_it_could_not_reinstall(
         addon_manager.update_installed_addons(lambda _line: None)
 
     assert [requirement for requirement, _error in raised.value.errors] == ["spacy>=3.7"]
+    assert raised.value.gone == ["spacy>=3.7"]
     assert not (pkg_dir / "spacy-3.8.0.dist-info").exists()
     assert not (pkg_dir / "spacy" / "pipeline.py").exists()
     assert addon_manager.addon_in_folder("spacy", pkg_dir) is False
     assert addon_manager.addons_outdated() is False
+
+
+def test_a_failed_update_keeps_the_fresh_copy_another_add_on_brought(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a folder with langchain-core 1.4.7 and langchain-openai, where the reinstall of
+           langchain-core fails and the one of langchain-openai brings langchain-core 1.5.0
+    When   the add-ons are updated
+    Then   the old langchain-core goes, the fresh one stays with its files, and the provider that
+           updated is not broken by the clean-up of the one that failed
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "langchain_core", "1.4.7", files=("langchain_core/old.py",))
+    _dist_info(pkg_dir, "langchain_openai", "0.2.0")
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    monkeypatch.setattr(addon_manager, "inject_packages_dir", lambda: None)
+    monkeypatch.setattr(addon_manager, "addon_constraints_path", lambda: frozen_bundle)
+
+    def _install(packages: list[str], _target: Path, _cb: object, **_kw: object) -> None:
+        if packages[0].startswith("langchain-core"):
+            raise RuntimeError("no matching distribution")
+        _dist_info(pkg_dir, "langchain_core", "1.5.0", files=("langchain_core/new.py",))
+        _dist_info(pkg_dir, "langchain_openai", "0.3.0")
+
+    monkeypatch.setattr(addon_manager, "install_packages_subprocess", _install)
+
+    with pytest.raises(addon_manager.AddonUpdateError) as raised:
+        addon_manager.update_installed_addons(lambda _line: None)
+
+    assert [requirement for requirement, _error in raised.value.errors] == ["langchain-core>=1.4.7"]
+    assert not (pkg_dir / "langchain_core-1.4.7.dist-info").exists()
+    assert not (pkg_dir / "langchain_core" / "old.py").exists()
+    assert (pkg_dir / "langchain_core-1.5.0.dist-info").is_dir()
+    assert (pkg_dir / "langchain_core" / "new.py").is_file()
+    assert (pkg_dir / "langchain_openai-0.3.0.dist-info").is_dir()
+
+
+def test_a_failed_update_that_could_not_remove_the_copy_does_not_claim_it_is_gone(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a folder whose spaCy has no readable RECORD, and a reinstall that fails
+    When   the add-ons are updated
+    Then   the old copy stays and the error does not list spaCy as gone, so the teacher is not
+           told something false
+    """
+    pkg_dir = tmp_path / "packages"
+    (pkg_dir / "spacy-3.8.0.dist-info").mkdir(parents=True)
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    monkeypatch.setattr(addon_manager, "inject_packages_dir", lambda: None)
+    monkeypatch.setattr(addon_manager, "addon_constraints_path", lambda: frozen_bundle)
+
+    def _install(_packages: list[str], _target: Path, _cb: object, **_kw: object) -> None:
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(addon_manager, "install_packages_subprocess", _install)
+
+    with pytest.raises(addon_manager.AddonUpdateError) as raised:
+        addon_manager.update_installed_addons(lambda _line: None)
+
+    assert raised.value.gone == []
+    assert (pkg_dir / "spacy-3.8.0.dist-info").is_dir()
 
 
 def test_an_add_on_that_updates_stays_in_the_folder(

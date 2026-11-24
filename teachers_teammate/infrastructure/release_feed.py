@@ -7,6 +7,7 @@ the switch on the Privacy page decides whether the service is called at all.
 
 from __future__ import annotations
 
+from http.client import HTTPException
 import json
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -29,8 +30,9 @@ class GitHubReleaseFeed:
                 data = json.loads(response.read())
         except HTTPError as exc:
             raise ReleaseFeedError(exc.code, rate_limited=_rate_limited(exc)) from exc
-        except (OSError, ValueError) as exc:
-            # No answer (offline, a timeout) or one that is not JSON: the same nothing to offer.
+        except (OSError, HTTPException, ValueError) as exc:
+            # No answer (offline, a timeout, a cut connection) or one that is not JSON: the same
+            # nothing to offer.
             raise ReleaseFeedError() from exc
         if not isinstance(data, dict):
             raise ReleaseFeedError()

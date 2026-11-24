@@ -256,11 +256,17 @@ class AddonInstallError(RuntimeError):
 
 
 class AddonUpdateError(RuntimeError):
-    """Updating the add-ons failed for some of them; *errors* pairs a requirement with its error."""
+    """Updating the add-ons failed for some of them; *errors* pairs a requirement with its error.
 
-    def __init__(self, errors: list[tuple[str, RuntimeError]]) -> None:
+    *gone* lists the requirements whose old copy was removed from the add-on folder.
+    """
+
+    def __init__(
+        self, errors: list[tuple[str, RuntimeError]], gone: list[str] | None = None
+    ) -> None:
         super().__init__("; ".join(f"{requirement}: {error}" for requirement, error in errors))
         self.errors = errors
+        self.gone = gone or []
 
 
 class ReleaseFeedError(RuntimeError):

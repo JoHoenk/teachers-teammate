@@ -11,7 +11,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.domain.setting_values import PreprocessMethod
-from teachers_teammate.config import DEFAULTS, OcrConfig
+from teachers_teammate.config import OcrConfig
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.infrastructure.input_provider_factory import (
     InputOptions,
     input_settings_fingerprint,
@@ -1139,8 +1140,8 @@ def test_the_fingerprint_changes_when_the_context_window_is_pinned(
     When   the correction fingerprint is computed
     Then   a pinned window gives another key, so the files are proofread again
 
-    The proofreading cap is raised to 16384 for this test: the shipped one is the base window
-    (CW7), so every setting gives the same window, and this test is about the key.
+    The proofreading cap is raised to 16384 for this test: the shipped one is the base window,
+    so every setting gives the same window, and this test is about the key.
     """
     from teachers_teammate.domain import context_budget  # noqa: PLC0415
     from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
@@ -1167,8 +1168,8 @@ def test_settings_that_give_the_same_window_give_the_same_fingerprint(
     When   the correction fingerprint is computed
     Then   the keys are equal, because the run uses the same window for both
 
-    The proofreading cap is raised to 16384 for this test: the shipped one is the base window
-    (CW7), so every setting gives the same window, and this test is about the key.
+    The proofreading cap is raised to 16384 for this test: the shipped one is the base window,
+    so every setting gives the same window, and this test is about the key.
     """
     from teachers_teammate.domain import context_budget  # noqa: PLC0415
     from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
@@ -1250,7 +1251,7 @@ def test_a_profile_change_changes_the_cache_key_of_that_model_only(tmp_path: Pat
     assert after[untouched] == before[untouched]
 
 
-# ── The window the run really uses (CW1) ───────────────────────────────────
+# ── The window the run really uses ─────────────────────────────────────────
 
 
 def test_the_resolved_window_changes_the_correction_key(tmp_path: Path) -> None:
@@ -1282,8 +1283,8 @@ def test_a_pinned_window_without_resolved_windows_keeps_todays_key(
     When   the correction fingerprint is computed
     Then   it equals the key of the same window passed in, so nothing is invalidated
 
-    The proofreading cap is raised to 16384 for this test: the shipped one is the base window
-    (CW7), so the setting alone gives 8192, and this test is about the key.
+    The proofreading cap is raised to 16384 for this test: the shipped one is the base window,
+    so the setting alone gives 8192, and this test is about the key.
     """
     from teachers_teammate.domain import context_budget  # noqa: PLC0415
     from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415

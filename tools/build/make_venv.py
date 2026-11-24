@@ -10,6 +10,8 @@ Every version comes from ``requirements_lock.txt`` plus ``tools/build/requiremen
 (through ``pyinstaller-work/constraints.txt``), so two builds of one commit give the same bundle
 and the same license list.
 
+An existing venv at the given folder is deleted and made again.
+
 Usage (from the repo root):
 
     python tools/build/make_venv.py .build_venv --for build
@@ -71,8 +73,15 @@ def pip_install_command(venv: Path, purpose: str) -> list[str]:
 
 
 def create(venv: Path, purpose: str) -> None:
-    """Delete and recreate *venv*, then install *purpose* into it from the pins."""
+    """Delete and recreate *venv*, then install *purpose* into it from the pins.
+
+    Only a venv is deleted: a folder without ``pyvenv.cfg`` is somebody's files, and the script
+    stops instead of removing them.
+    """
     if venv.exists():
+        if not (venv / "pyvenv.cfg").is_file():
+            msg = f"{venv} exists and is not a venv; remove it or choose another folder"
+            raise SystemExit(msg)
         shutil.rmtree(venv)
     run([sys.executable, "-m", "venv", str(venv)])
     run([sys.executable, str(MAKE_CONSTRAINTS)])

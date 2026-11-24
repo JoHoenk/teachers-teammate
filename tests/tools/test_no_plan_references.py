@@ -71,9 +71,9 @@ because it is also a CEFR level, and a bare id is caught by its prefix (``F-W``,
 """
 
 ALLOWED: dict[str, str] = {
-    ".gitignore:58": "the ignore rule for the folder itself, which is what keeps it out of the tree",
+    ".gitignore: plans/": "the ignore rule for the folder itself, which is what keeps it out of the tree",
 }
-"""``"path:line"`` of a line that matches by accident, with the reason."""
+"""``"path: line text"`` of a line that matches by accident, with the reason."""
 
 
 def _files() -> list[Path]:
@@ -97,7 +97,7 @@ def _hits(path: Path) -> list[str]:
         for kind, pattern in REFERENCES.items():
             if pattern.search(line):
                 where = f"{path.relative_to(ROOT)}:{number}"
-                if where not in ALLOWED:
+                if f"{path.relative_to(ROOT)}: {line.strip()}" not in ALLOWED:
                     hits.append(f"{where}: {kind}: {line.strip()[:90]}")
     return hits
 

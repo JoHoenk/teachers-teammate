@@ -22,8 +22,9 @@ python tools/build/make_venv.py .venv --for dev
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 ```
 
-The venv installs against the pinned constraints, so it matches what Bazel tests with. It is for
-running the app and your editor; Bazel manages its own toolchain.
+The venv installs against the pinned constraints, so it matches what Bazel tests with. Running the
+script again recreates it. It is for running the app and your editor; Bazel manages its own
+toolchain.
 
 ## Everyday commands
 

@@ -19,7 +19,8 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 ```
 
 The same script builds the bundle's venv (`--for build`) and the one the tests run in
-(`--for test`), so a developer environment and CI install the same versions.
+(`--for test`), so a developer environment and CI install the same versions. Running it again
+recreates the venv; it refuses a folder that is not one.
 
 ## Development checks
 

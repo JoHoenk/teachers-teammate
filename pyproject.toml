@@ -186,7 +186,7 @@ line-ending = "auto"
 docstring-code-format = true
 
 # ── ty ────────────────────────────────────────────────────────────────────
-# Astral's Rust-based type checker (successor to mypy in this project).
+# Astral's Rust-based type checker.
 # https://docs.astral.sh/ty/
 
 [tool.ty.environment]

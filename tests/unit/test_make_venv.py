@@ -56,12 +56,13 @@ def test_every_purpose_installs_against_the_constraints() -> None:
 
 def test_the_build_venv_is_recreated_and_its_pins_checked(tmp_path: Path) -> None:
     """
-    Given  a venv folder that already exists
+    Given  a venv that already exists
     When   the build venv is created
     Then   it is deleted first, and check_pins.py runs at the end
     """
     venv = tmp_path / "venv"
     venv.mkdir()
+    (venv / "pyvenv.cfg").write_text("", encoding="utf-8")
     (venv / "stale").write_text("", encoding="utf-8")
 
     with patch.object(make_venv.subprocess, "run") as run:
@@ -71,6 +72,23 @@ def test_the_build_venv_is_recreated_and_its_pins_checked(tmp_path: Path) -> Non
     assert commands[0] == [sys.executable, "-m", "venv", str(venv)]
     assert str(make_venv.CHECK_PINS) in commands[-1]
     assert not (venv / "stale").exists()
+
+
+def test_a_folder_that_is_not_a_venv_is_never_deleted(tmp_path: Path) -> None:
+    """
+    Given  a folder with somebody's files and no pyvenv.cfg
+    When   a venv is created there
+    Then   the script stops and the files stay
+    """
+    folder = tmp_path / "work"
+    folder.mkdir()
+    (folder / "notes.txt").write_text("keep", encoding="utf-8")
+
+    with patch.object(make_venv.subprocess, "run") as run, pytest.raises(SystemExit):
+        make_venv.create(folder, "dev")
+
+    run.assert_not_called()
+    assert (folder / "notes.txt").read_text(encoding="utf-8") == "keep"
 
 
 def test_a_test_venv_checks_no_pins(tmp_path: Path) -> None:

@@ -161,7 +161,8 @@ default models in `_model_defaults.py`.
 - Type checker is `ty`. Suppress with `# ty: ignore[<rule>]`, **not** `# type: ignore[...]`
   (ty ignores it silently). ty uses its own rule names (`invalid-assignment`,
   `invalid-argument-type`, `invalid-method-override`, `unresolved-attribute`, …). Prefer
-  fixing the cause. `unresolved-import` is ignored on purpose for optional extras.
+  fixing the cause. A module ty cannot resolve (an optional extra) is listed in `allowed-unresolved-imports` in
+  `pyproject.toml`; every other import must resolve.
 - **Run linters through Bazel only** (`bazel test //:lint`, `bazel run //:format.fix`). A
   `ruff` or `ty` in a local `.venv` can be a different version and give different results.
 - GUI code: test widgets and threads with pytest-qt.

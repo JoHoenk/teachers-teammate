@@ -298,9 +298,43 @@ into `write_settings`; new input files into `write_inputs`.
 
 ### What the script may import
 
-`tests/unit/test_walkthrough_imports.py` holds the list: the standard library, Qt, Pillow,
-python-docx and `teachers_teammate`, and nothing from `tests`. The bundle carries no test
-framework, so a test-only helper in the script breaks the bundle run; teach the script instead.
+`tests/unit/test_walkthrough_imports.py` holds the list, for this script and for the update
+banner's: the standard library, Qt, Pillow, python-docx and `teachers_teammate`, and nothing from
+`tests`. The bundle carries no test framework, so a test-only helper in a script breaks the bundle
+run; teach the script instead.
+
+---
+
+## The update banner
+
+`tests/e2e/update_banner.py` is the one check of the update check that is not a unit test: the
+bundle's own `urllib` against the real feed, and the window that follows it. The unit tests cover
+each piece on its own (`ReleaseService`, the banner's text, the answer on the GUI thread), and a
+break between them looks exactly like "no update", so nothing a teacher reports would show it.
+
+It claims to be version `0.0.1` first, which composition reads when the services are built, so a
+published release is newer than this build. Then it writes an `ocr.toml` with the check on, builds
+the window the app builds, waits up to 20 s for `UpdateBanner`, and reads what it says: the newest
+tag at its page under the project's release prefix. It clicks the banner's close button, and a
+second window built with the check off must send no request — the feed is counted for that.
+
+Every bundle build runs it once per system, on `xvfb-run` on Linux, with the newest tag from
+`tools/packaging/latest_release.py tag` as `--tag`, so the answer the app reads is held against
+GitHub's own idea of the newest release. Run it by hand against a built bundle:
+
+```bash
+xvfb-run -a ./dist/teachers-teammate/teachers-teammate \
+  --_run_script tests/e2e/update_banner.py banner.json \
+  --tag "$(python tools/packaging/latest_release.py tag)"
+```
+
+GitHub allows 60 unauthenticated API requests per hour per address, and a hosted runner shares
+its address, so the limit is used up there at times. A `403` or `429` with
+`x-ratelimit-remaining: 0` is therefore not a failed check: it proves TLS and the request work,
+which is what the check is for, so the script passes and writes "rate limited: TLS and the request
+work, banner not checked" into its result and the job summary. To tell the two cases apart it asks
+the feed directly before it builds a window — two requests per system per build. Every other
+failure fails, and so does a `200` that shows no banner.
 
 ---
 

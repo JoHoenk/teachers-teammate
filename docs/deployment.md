@@ -66,15 +66,16 @@ gh run download <run-id> -n teachers-teammate-linux   # or -windows, -macos
 
 The wheel is installed the way a teacher would, into a clean venv, and every console script has to
 start. Every bundle build runs the app's smoke test (`--_smoke_test`), installs and uses every
-add-on in it (`--_addon_smoke_test`, needs the network), and walks a teacher's work through the
-app's own window (`tests/e2e/walkthrough.py`, see [testing.md](testing.md) → "The app
-walkthrough"). It then installs the result on fresh systems (Ubuntu 24.04/26.04 and Debian 13
-containers, macOS 15/26, Windows Server 2022/2025), including an update from the newest published
-release. In the containers the walk runs twice when the bundle carries the Wayland platform
-plugin: on `xvfb` and under a headless `weston`, and the second result has to name Wayland as the
-platform. Not covered by CI, so checked by hand on a VM before a release: the installer's
-interactive pages, the UAC prompt, a real desktop (fonts, icons, a window manager), Gatekeeper,
-Windows 10 1809 and macOS 15.0.
+add-on in it (`--_addon_smoke_test`, needs the network), asks the release feed once and looks for
+the banner it should show (`tests/e2e/update_banner.py`, needs the network), and walks a teacher's
+work through the app's own window (`tests/e2e/walkthrough.py`; see [testing.md](testing.md) → "The
+app walkthrough" and "The update banner"). It then installs the result on fresh systems
+(Ubuntu 24.04/26.04 and Debian 13 containers, macOS 15/26, Windows Server 2022/2025), including an
+update from the newest published release. In the containers the walk runs twice when the bundle
+carries the Wayland platform plugin: on `xvfb` and under a headless `weston`, and the second result
+has to name Wayland as the platform. Not covered by CI, so checked by hand on a VM before a
+release: the installer's interactive pages, the UAC prompt, a real desktop (fonts, icons, a window
+manager), Gatekeeper, Windows 10 1809 and macOS 15.0.
 
 ### Checksums and provenance
 

@@ -726,6 +726,15 @@ app_test(
 )
 
 app_test(
+    "unit/test_update_banner_script.py",
+    extra_srcs = [
+        "e2e/__init__.py",
+        "e2e/update_banner.py",
+    ],
+    deps = _GUI_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+app_test(
     "unit/test_addon_constraints.py",
     deps = ["//tools/build:build_tools_lib"] + _INFRASTRUCTURE_LIB,
 )
@@ -2134,11 +2143,12 @@ app_test(
     ],
 )
 
-# What that script may import: it also runs inside the shipped bundle, which carries no tests.
+# What those scripts may import: they also run inside the shipped bundle, which carries no tests.
 app_test(
     "unit/test_walkthrough_imports.py",
     extra_srcs = [
         "e2e/__init__.py",
+        "e2e/update_banner.py",
         "e2e/walkthrough.py",
     ],
 )

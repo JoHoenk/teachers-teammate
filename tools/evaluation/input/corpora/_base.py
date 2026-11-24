@@ -276,7 +276,7 @@ class CorpusAdapter(ABC):
         """Return the reading *name* of *split*, built once per split.
 
         A dict on the instance, not ``functools.cache`` on a method: that would keep the adapter
-        alive and pylint refuses it (W1518).
+        alive for as long as the process runs.
         """
         key = (name, split)
         if key not in self._readings:

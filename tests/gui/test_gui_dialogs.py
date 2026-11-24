@@ -1,5 +1,4 @@
 """GUI tests for ``gui/_dialogs.py``: which button a question reports, and what a picker gets."""
-# pylint: disable=W0212,W0613  # protected-access — the tests reach into the box / unused-argument — pytest fixtures
 
 from __future__ import annotations
 

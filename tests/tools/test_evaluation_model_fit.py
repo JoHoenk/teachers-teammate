@@ -5,6 +5,7 @@ No server and no card: the records are built here, the way a measurement would s
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -446,9 +447,11 @@ def test_a_memory_that_differs_from_the_catalog_is_flagged() -> None:
     ]
 
     figures = growth_figures(records, catalog_memory_gb=8.0)
+    off_by = figures.memory_off_by
+    assert off_by is not None
 
-    assert figures.memory_off_by == pytest.approx(0.125)
-    assert figures.memory_off_by > MEMORY_TOLERANCE
+    assert off_by == pytest.approx(0.125)
+    assert off_by > MEMORY_TOLERANCE
     assert any("the catalog says 8.00 GB" in flag for flag in figures.flags)
 
 
@@ -466,9 +469,11 @@ def test_a_difference_within_the_tolerance_is_not_flagged() -> None:
     ]
 
     figures = growth_figures(records, catalog_memory_gb=8.0)
+    off_by = figures.memory_off_by
+    assert off_by is not None
 
-    assert figures.memory_off_by == pytest.approx(0.05)
-    assert figures.memory_off_by < MEMORY_TOLERANCE
+    assert off_by == pytest.approx(0.05)
+    assert off_by < MEMORY_TOLERANCE
     assert figures.flags == ()
 
 
@@ -487,10 +492,12 @@ def test_growth_that_is_not_linear_is_flagged() -> None:
     ]
 
     figures = growth_figures(records)
+    long_span = figures.growth_per_8k_gb
+    short_span = figures.growth_per_8k_short_gb
+    assert long_span is not None
+    assert short_span is not None
 
-    spread = abs(figures.growth_per_8k_gb - figures.growth_per_8k_short_gb) / max(
-        figures.growth_per_8k_gb, figures.growth_per_8k_short_gb
-    )
+    spread = abs(long_span - short_span) / max(long_span, short_span)
     assert spread > LINEARITY_TOLERANCE
     assert any("growth is not linear" in flag for flag in figures.flags)
 
@@ -760,7 +767,7 @@ def test_the_report_shows_the_speed_and_ollamas_own_split() -> None:
 def _cpu_record(**kwargs) -> FitRecord:
     """Return a CPU-only measurement: the model asked to stay off the card, nothing put on it."""
     record = _record(size_gb=4.0, vram_gb=0.0, card_gb=0.0, ram_drop_gb=4.2, device="cpu", **kwargs)
-    return FitRecord(**{**record.__dict__, "options": {"num_ctx": record.num_ctx, "num_gpu": 0}})
+    return replace(record, options={"num_ctx": record.num_ctx, "num_gpu": 0})
 
 
 @pytest.mark.use_case("Model_Eval_Model_Fit")
@@ -805,11 +812,8 @@ def test_a_cpu_only_report_names_the_speed_and_a_card_that_was_used() -> None:
     """
     good = record_line(_cpu_record())
     bad = record_line(
-        FitRecord(
-            **{
-                **_record(size_gb=4.0, vram_gb=4.0, card_gb=3.0, device="cpu").__dict__,
-                "options": {"num_gpu": 0},
-            }
+        replace(
+            _record(size_gb=4.0, vram_gb=4.0, card_gb=3.0, device="cpu"), options={"num_gpu": 0}
         )
     )
 

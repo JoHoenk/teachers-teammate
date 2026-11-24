@@ -14,7 +14,6 @@ Provides:
 * The ``main_window`` and ``stored`` fixtures and the helpers around them, which the
   main-window and Check-controller tests share.
 """
-# pylint: disable=W0621  # redefined-outer-name — a fixture is injected by parameter name
 
 from __future__ import annotations
 

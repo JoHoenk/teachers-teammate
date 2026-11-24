@@ -50,7 +50,7 @@ class ChatRequest:
     #: Reasoning on, off, or at the level the server names.
     think: bool | str = False
     #: A JSON schema the answer is constrained to; ``None`` leaves it free.
-    format: dict | None = None  # pylint: disable=redefined-builtin  # the ollama API's name
+    format: dict | None = None
     #: How many tokens the answer may take; ``None`` — as many as the request, which is the
     #: proofreading shape.  A content review passes a short fixed allowance.
     answer_tokens: int | None = None

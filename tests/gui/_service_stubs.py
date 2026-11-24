@@ -364,7 +364,7 @@ class RecommendationServiceStub(LocalDataFlowStub):
         return ModelListing(list(self.list_provider_models(provider, base_url=base_url)))
 
     def get_cached_listing(self, provider: str, *, base_url: str = "") -> ModelListing | None:
-        cached = self.get_cached_models(provider, base_url=base_url)  # pylint: disable=assignment-from-none  # subclasses return lists
+        cached = self.get_cached_models(provider, base_url=base_url)
         return ModelListing(list(cached)) if cached is not None else None
 
     def missing_provider_package(self, provider: str) -> str | None:

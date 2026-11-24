@@ -355,7 +355,7 @@ _GUI_SRCS = [
     "frozen_modes.py",
 ]
 
-# Third-party deps used ONLY to give the ty/pylint lint aspects real type
+# Third-party deps used ONLY to give the ty lint aspect real type
 # resolution (PySide6, numpy, spaCy, …). They must NOT be added to ocr_lib/
 # gui_lib: those feed py_package/py_wheel, which would then bundle the packages
 # into the wheel. The *_typed targets below exist purely for the lint targets.
@@ -379,6 +379,8 @@ _TYPED_DEPS_OCR = [
 ]
 
 _TYPED_DEPS_GUI = [
+    # keyring: the credential store, and the uninstaller's key removal in frozen_modes.py.
+    "@ocr_test_dependencies//keyring:pkg",
     "@ocr_test_dependencies//psutil:pkg",
     "@ocr_test_dependencies//pyside6_essentials:pkg",
     "@ocr_test_dependencies//qdarkstyle:pkg",
@@ -500,8 +502,8 @@ py_library(
     ],
 )
 
-# Every Python file of the package, for //:py_pylint (which lints the whole first-party tree in
-# one action so pylint can resolve cross-package imports). Never part of the wheel or of a test.
+# Every Python file of the package, for the tests that scan the whole tree (the user-facing
+# sentence ratchet, the layer imports). Never part of the wheel.
 filegroup(
     name = "all_sources",
     srcs = glob(["**/*.py"]),
@@ -517,7 +519,7 @@ filegroup(
 )
 
 # Lint-only mirrors of ocr_lib/gui_lib that additionally depend on the runtime
-# pip packages, so the rules_lint ty/pylint aspects resolve real types. Tagged
+# pip packages, so the rules_lint ty aspect resolves real types. Tagged
 # "manual" and never referenced by the wheel — keep them out of //:ocr_pkg.
 py_library(
     name = "ocr_lib_typed",

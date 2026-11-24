@@ -11,6 +11,7 @@ import ast
 from dataclasses import replace
 import importlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -32,7 +33,7 @@ from tools.evaluation.store import reader, writer
 
 def _header(**overrides) -> RunHeader:
     """Return the header of a run of one German text in review mode, with *overrides*."""
-    values = {
+    values: dict[str, Any] = {
         "input": Input(
             testset="gec-2026-12", question_sha256="b" * 64, texts=27, languages=("de",)
         ),

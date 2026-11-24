@@ -6,13 +6,6 @@ the offline tests can drive the closure walk, the policy and the compile without
 
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 
-# The tool runs as a program, so nothing imports it from the app; this keeps it in the lint set.
-filegroup(
-    name = "all_sources",
-    srcs = glob(["*.py"]),
-    visibility = ["//visibility:public"],
-)
-
 # The modules a build or release check imports: they read NOTICE and the inventory and compare
 # them with what a download carries, so they take standard library imports only and run in a bare
 # CI job.
@@ -31,8 +24,14 @@ py_library(
 py_library(
     name = "lint_lib",
     srcs = glob(["*.py"]),
+    # inventory.py reads the app's model catalog and add-on lists, so the linter has to resolve
+    # the package's layers.
     tags = ["manual"],
     visibility = ["//visibility:public"],
+    deps = [
+        "//teachers_teammate:domain_lib",
+        "//teachers_teammate:infrastructure_lib",
+    ],
 )
 
 py_library(

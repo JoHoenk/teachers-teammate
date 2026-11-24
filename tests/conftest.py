@@ -37,7 +37,7 @@ def sample_png(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def sample_pdf(tmp_path: Path, sample_png: Path) -> Path:  # pylint: disable=redefined-outer-name
+def sample_pdf(tmp_path: Path, sample_png: Path) -> Path:
     """A single-page PDF wrapping the sample PNG."""
     from PIL import Image  # noqa: PLC0415
 
@@ -47,7 +47,7 @@ def sample_pdf(tmp_path: Path, sample_png: Path) -> Path:  # pylint: disable=red
 
 
 @pytest.fixture
-def sample_multipage_pdf(tmp_path: Path, sample_png: Path):  # pylint: disable=redefined-outer-name
+def sample_multipage_pdf(tmp_path: Path, sample_png: Path):
     """A factory for a scanned PDF of *pages* pages, each one the sample PNG.
 
     A scanned PDF has no text layer, so every page is rendered and prepared — the case in
@@ -457,7 +457,6 @@ skip_no_reader_models = pytest.mark.skipif(
     not _reader_model_files(),
     reason="the built-in reader's model files are only fetched under Bazel",
 )
-
 
 PAGE_MODEL_ENV = {
     "DOC_ORI_ONNX": ("doc-ori", "inference.onnx"),

@@ -1,5 +1,4 @@
 """Unit tests for the run: its files, its requirements and its summary."""
-# pylint: disable=W0613  # unused-argument — pytest injects fixtures by parameter name; not all are used in every test
 
 from __future__ import annotations
 

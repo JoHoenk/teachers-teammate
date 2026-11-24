@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from typing import cast
+
 import pytest
 
 from teachers_teammate.exceptions import StageError, StageErrorKind
@@ -225,6 +227,11 @@ def test_the_exchange_factory_builds_the_exchange_corrector_in_the_chunking_wrap
     assert small.inner.max_text_chars("German") < large.inner.max_text_chars("German")
 
 
+def _as_client(stand_in: _OneStepClient) -> OllamaClient:
+    """Return the stand-in as the client the factory is typed against: it only calls ``chat``."""
+    return cast(OllamaClient, stand_in)
+
+
 class _OneStepClient:
     """A client that answers step one and fails the test when any other step asks."""
 
@@ -256,7 +263,7 @@ def test_a_correct_only_corrector_sends_step_one_alone_and_returns_the_text_with
 
     client = _OneStepClient()
     corrector = app_corrector_factory(
-        client, timeout=5.0, exchange=Exchange.TEXT_FIRST, steps=(Step.CORRECT,)
+        _as_client(client), timeout=5.0, exchange=Exchange.TEXT_FIRST, steps=(Step.CORRECT,)
     )("gemma4:e4b", 0.2)
 
     outcome = corrector.correct("Ich habe ein Hund.", "German")
@@ -276,7 +283,10 @@ def test_a_correct_only_file_whose_step_one_failed_keeps_its_failure() -> None:
     Then   the proofreading fails with its reason, as in the full exchange
     """
     corrector = app_corrector_factory(
-        _OneStepClient(fail=True), timeout=5.0, exchange=Exchange.TEXT_FIRST, steps=(Step.CORRECT,)
+        _as_client(_OneStepClient(fail=True)),
+        timeout=5.0,
+        exchange=Exchange.TEXT_FIRST,
+        steps=(Step.CORRECT,),
     )("gemma4:e4b", 0.2)
 
     with pytest.raises(StageError) as raised:

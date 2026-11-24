@@ -29,8 +29,8 @@ py_binary(
     ],
 )
 
-# Every developer-tool source, for //:py_pylint (one action over the whole first-party tree, so
-# pylint can resolve the tools' first-party imports). Not added to any wheel.
+# Every developer-tool source, for the tests that hold the tool layers to each other and to the
+# app. Not added to any wheel.
 filegroup(
     name = "all_sources",
     srcs = glob(["**/*.py"]),
@@ -48,6 +48,7 @@ py_library(
     deps = [
         "//teachers_teammate:application_lib",
         "//tools/evaluation:checks",
+        "//tools/evaluation:convert",
         "//tools/evaluation:core",
         "//tools/evaluation:input",
         "//tools/evaluation:report",

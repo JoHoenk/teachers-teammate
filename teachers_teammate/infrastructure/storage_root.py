@@ -126,9 +126,8 @@ def _spelled_as_stored(resolved: str) -> str:
         return resolved
     import fcntl  # noqa: PLC0415  # macOS only: other systems answer nothing here
 
-    # macOS's own command: the fcntl other systems have does not define it, and pylint reads
-    # theirs.
-    command = fcntl.F_GETPATH  # pylint: disable=no-member
+    # macOS's own command: the fcntl other systems have does not define it.
+    command = fcntl.F_GETPATH
     try:
         handle = os.open(resolved, os.O_RDONLY)
     except OSError:

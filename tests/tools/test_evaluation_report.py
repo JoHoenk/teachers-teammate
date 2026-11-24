@@ -9,8 +9,6 @@ Nothing here reads the real store: the records and the runs are built in the tes
 names the rule that broke and not a file on somebody's disk.
 """
 
-# pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module names by design
-
 from __future__ import annotations
 
 from dataclasses import replace

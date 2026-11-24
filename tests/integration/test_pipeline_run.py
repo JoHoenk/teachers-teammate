@@ -12,7 +12,6 @@ Per-file stage branching is unit-tested directly against ``FileProcessor`` in
 ``tests/unit/test_ocr_stage_service.py``; and the cache/correction/evaluation
 scenarios in ``tests/integration/test_pipeline_scenarios.py``.
 """
-# pylint: disable=W0404,W0621,W0613  # reimported — monkeypatch/patch blocks locally reimport the patched symbol / redefined-outer-name — pytest fixtures shadow module-scope names by design / unused-argument — pytest injects fixtures by parameter name; not all are used in every test
 
 from __future__ import annotations
 

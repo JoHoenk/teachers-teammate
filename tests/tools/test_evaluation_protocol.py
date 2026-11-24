@@ -252,7 +252,8 @@ def test_a_version_pair_the_file_does_not_record_is_not_recorded() -> None:
     assert protocol_table.accepts(stamp.eval_version, stamp.fingerprint)
     assert not protocol_table.accepts(stamp.eval_version, "0" * 64)
     assert not protocol_table.accepts(99, stamp.fingerprint)
-    assert not protocol_table.accepts("1", stamp.fingerprint)
+    # a version read as a string is no version of the file, and must not match
+    assert not protocol_table.accepts("1", stamp.fingerprint)  # ty: ignore[invalid-argument-type]
 
 
 # ── the instructions hash (moved here from test_store.py) ─────────────────────

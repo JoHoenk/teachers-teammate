@@ -1,5 +1,4 @@
 """GUI tests for the assistant's pages: what each one asks and what it hands back."""
-# pylint: disable=W0212  # protected-access — the tests drive the pages' widgets directly
 
 from __future__ import annotations
 

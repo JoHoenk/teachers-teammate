@@ -228,7 +228,7 @@ def _repeats(
 # ── the model table ─────────────────────────────────────────────────────────
 
 
-def _summaries(root: Path) -> tuple[summary.ModelSummary, ...]:
+def _summaries(root: Path) -> list[summary.ModelSummary]:
     """Return the summaries of a store of three texts, run three times."""
     records = _records()
     loaded = load.load(_store(root, records, *_repeats(records)))

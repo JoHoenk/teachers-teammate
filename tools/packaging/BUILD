@@ -20,14 +20,6 @@ exports_files(
     visibility = ["//tests:__pkg__"],
 )
 
-# Every script of this folder, for the lint set in the root BUILD: packaging_tools_lib below holds
-# only the two a unit test imports (make_ico.py is a program).
-filegroup(
-    name = "all_sources",
-    srcs = glob(["*.py"]),
-    visibility = ["//visibility:public"],
-)
-
 py_library(
     name = "lint_lib",
     srcs = glob(["*.py"]),

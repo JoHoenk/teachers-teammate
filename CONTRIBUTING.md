@@ -35,7 +35,7 @@ bazel test //tests/... --test_output=errors           # full suite (skips Ollama
 # After a dependency change: the three locks against pyproject.toml
 bazel test //:lock_tests --test_output=errors
 
-# Lint + type check (ruff, pylint, ty)
+# Lint + type check (ruff, ty)
 bazel test //:lint --test_output=errors
 
 # Format and apply safe lint fixes

@@ -48,7 +48,7 @@ def recipes() -> dict[str, Recipe]:
 
     The dict is the same object on every call, so a test can add a recipe to it.
     """
-    global _RECIPES  # noqa: PLW0603  # pylint: disable=global-statement  # found once, so a test can add a recipe to the dict
+    global _RECIPES  # noqa: PLW0603
     if _RECIPES is None:
         _RECIPES = _discover()
     return _RECIPES

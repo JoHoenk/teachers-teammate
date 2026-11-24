@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -15,7 +16,7 @@ from tools.evaluation.core.performance import LoadedModel, Performance, RequestS
 from tools.evaluation.core.records import RunFile, RunHeader, Session
 from tools.evaluation.core.revision import tool_revision
 from tools.evaluation.run import defaults, measure, protocol
-from tools.evaluation.run.agent_client import MIB, AgentError
+from tools.evaluation.run.agent_client import MIB, AgentClient, AgentError
 from tools.evaluation.run.measure import (
     AgentSampler,
     GpuSampler,
@@ -449,7 +450,7 @@ class _FakeRecorder:
 
 
 class _FakeSampler:
-    baseline_mb = 700
+    baseline_mb: int | None = 700
 
     def __init__(self, peak: int | None) -> None:
         self._peak = peak
@@ -648,7 +649,7 @@ _STAMP = protocol.Stamp(eval_version=7, fingerprint="a" * 64)
 
 def _header(**overrides) -> RunHeader:
     """Return the header of a run of the three languages in the one-request review, with *overrides*."""
-    values = {
+    values: dict[str, Any] = {
         "stamp": _STAMP,
         "probe": ServerProbe("http://x", fetch=_FakeServer()),
         "model": "granite4.1:3b",
@@ -674,7 +675,7 @@ def _header(**overrides) -> RunHeader:
 
 def _session(**overrides) -> Session:
     """Return one session line of a run, with *overrides*."""
-    values = {
+    values: dict[str, Any] = {
         "preparation": Preparation(loaded_before=(), vram_baseline_mb=None),
         "revision": "abc1234",
         "now": "2026-11-09T19:00:00+00:00",
@@ -841,7 +842,11 @@ def test_a_sampler_that_ignores_terminate_is_killed() -> None:
     Then   it is killed after the wait, so nothing keeps sampling into the next run
     """
     process = _StubbornProcess(_AMD_OUTPUT)
-    sampler = GpuSampler("amd", popen=lambda *_, **__: process, run=lambda *_, **__: None)
+    sampler = GpuSampler(
+        "amd",
+        popen=lambda *_, **__: process,  # ty: ignore[invalid-argument-type]  # a stand-in
+        run=lambda *_, **__: None,
+    )
     sampler.start(wait_s=2.0)
 
     sampler.stop()
@@ -886,6 +891,11 @@ def _wait_for(condition, seconds: float = 2.0) -> bool:
     return False
 
 
+def _read_by(agent: _Agent) -> AgentClient:
+    """Return *agent* as the client the sampler is typed against: it answers the same two calls."""
+    return cast(AgentClient, agent)
+
+
 @pytest.mark.use_case("Model_Eval_Measure")
 def test_the_agent_sampler_takes_the_idle_memory_as_baseline_and_finds_the_peak() -> None:
     """
@@ -893,7 +903,7 @@ def test_the_agent_sampler_takes_the_idle_memory_as_baseline_and_finds_the_peak(
     When   the sampler is started and polls for a while
     Then   the baseline is the first reading and the peak of the whole span is the highest one
     """
-    sampler = AgentSampler(_Agent([330, 330, 6900]), interval_s=0.005)
+    sampler = AgentSampler(_read_by(_Agent([330, 330, 6900])), interval_s=0.005)
 
     sampler.start()
     try:
@@ -913,7 +923,7 @@ def test_the_agent_sampler_refuses_to_start_without_a_reading(agent) -> None:
     Then   it raises, because nothing can be measured with it
     """
     with pytest.raises(RuntimeError):
-        AgentSampler(agent).start()
+        AgentSampler(_read_by(agent)).start()
 
 
 @pytest.mark.use_case("Model_Eval_Measure")
@@ -924,7 +934,7 @@ def test_a_failed_poll_is_a_gap_not_the_end_of_the_run() -> None:
     Then   it keeps running and stops cleanly
     """
     agent = _Agent([500])
-    sampler = AgentSampler(agent, interval_s=0.005)
+    sampler = AgentSampler(_read_by(agent), interval_s=0.005)
     sampler.start()
     agent._down = True
 
@@ -943,7 +953,7 @@ def test_the_agent_sampler_refuses_a_card_that_is_still_moving() -> None:
     Then   it refuses, because a baseline taken now would make the next model look empty
     """
     with pytest.raises(RuntimeError, match="did not settle"):
-        AgentSampler(_Agent([8600, 300, 300])).start()
+        AgentSampler(_read_by(_Agent([8600, 300, 300]))).start()
 
 
 @pytest.mark.use_case("Model_Eval_Measure")

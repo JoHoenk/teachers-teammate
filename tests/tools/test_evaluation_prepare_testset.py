@@ -5,7 +5,6 @@ different question that has to get a new id.  The builder also runs where the co
 machine that has no app: importing it may not load the app's infrastructure.
 """
 
-# pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module-scope names by design
 from __future__ import annotations
 
 from dataclasses import replace

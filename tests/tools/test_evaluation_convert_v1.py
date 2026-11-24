@@ -15,8 +15,6 @@ The three hashes need no old data — they are a property of the records — so 
 everywhere.
 """
 
-# pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module names by design
-
 from __future__ import annotations
 
 from dataclasses import replace
@@ -85,7 +83,6 @@ MANIFESTS = {
     for name in ("gec-2026-12", "gec-2026-12-heldout")
 }
 """The private store's manifests of the two sets the in-scope runs were asked about."""
-
 
 # ── an old store, built in the test ─────────────────────────────────────────
 
@@ -742,7 +739,7 @@ def test_a_named_machine_is_kept_as_it_is():
     notes: list[str] = []
 
     environment = convert_v1._environment_of(
-        _old_header(), "other", {"other": ("0.40.16", "b" * 64)}, notes
+        _old_header(), "other", {"other": frozenset({("0.40.16", "b" * 64)})}, notes
     )
 
     assert environment.machine == "rx9070xt-server"
@@ -1116,10 +1113,8 @@ def test_an_accepted_alternative_moves_neither_the_question_nor_the_text():
 
 # ── the acceptance tests, on the real folders ───────────────────────────────
 
-
 _instructions = convert_v1.instructions_hook(instructions_sha256)
 """The converter's instructions hook, from the run layer's own hash function."""
-
 
 _LEFT_OUT = (
     "results-text/gemma4_e2b__T1__text__r1.header.json",

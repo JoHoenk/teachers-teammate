@@ -1,5 +1,4 @@
 """GUI tests for miscellaneous widgets: CollapsibleSection, LogWidget, StatsWidget."""
-# pylint: disable=W0613  # unused-argument — pytest injects fixtures by parameter name; not all are used in every test
 
 from __future__ import annotations
 
@@ -8,7 +7,6 @@ from unittest.mock import MagicMock
 import pytest
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QLabel
-
 
 # ── CollapsibleSection ────────────────────────────────────────────────────
 

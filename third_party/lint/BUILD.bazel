@@ -1,21 +1,3 @@
-load("@rules_python//python/entry_points:py_console_script_binary.bzl", "py_console_script_binary")
-
-# Pylint binary from the pip hub. Pylint and its deps come from the `dev` extra
-# in pyproject.toml (compiled into requirements_dev_lock.txt).
-py_console_script_binary(
-    name = "pylint",
-    pkg = "@ocr_dev_dependencies//pylint:pkg",
-    visibility = ["//visibility:public"],
-    deps = [
-        "@ocr_dev_dependencies//astroid:pkg",
-        "@ocr_dev_dependencies//dill:pkg",
-        "@ocr_dev_dependencies//isort:pkg",
-        "@ocr_dev_dependencies//mccabe:pkg",
-        "@ocr_dev_dependencies//platformdirs:pkg",
-        "@ocr_dev_dependencies//tomlkit:pkg",
-    ],
-)
-
 # The configs aspect_rules_lint passes to shellcheck and PSScriptAnalyzer explicitly (--rcfile,
 # -Settings), so they need no place a tool would search: see linters.bzl.
 exports_files(

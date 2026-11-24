@@ -72,7 +72,7 @@ def _plain_server(payload):
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, format: str, *args: object) -> None:  # pylint: disable=W0622
+        def log_message(self, format: str, *args: object) -> None:
             """Stay quiet."""
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)

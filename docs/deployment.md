@@ -47,7 +47,7 @@ Only the maintainer may create or delete `v*` tags (tag ruleset); a tag cannot b
 
 | Workflow | Runs on | What it does |
 |---|---|---|
-| `pull_request_checks.yml` | pushes to `main`, pull requests, merge queue | lint (Bazel format check, ruff, pylint, ty; shellcheck and PSScriptAnalyzer for the scripts), the three lock files against `pyproject.toml` and each other, the Bazel tests, the docs build (`build_docs.yml`) and CodeQL; the `check` job is the required status |
+| `pull_request_checks.yml` | pushes to `main`, pull requests, merge queue | lint (Bazel format check, ruff, ty; shellcheck and PSScriptAnalyzer for the scripts), the three lock files against `pyproject.toml` and each other, the Bazel tests, the docs build (`build_docs.yml`) and CodeQL; the `check` job is the required status |
 | `deploy_docs.yml` | pushes to `main`, manual | builds the Sphinx site and deploys it to GitHub Pages |
 | `release.yml` | a `v*` tag | the release above |
 | `release_dry_run.yml` | manual, with a version | the whole release build without touching a release |

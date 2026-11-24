@@ -1,8 +1,8 @@
 load("@rules_python//python:defs.bzl", "py_library")
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
-load("//third_party/lint:linters.bzl", "ps_script_analyzer_test", "pylint_test", "ruff_test", "shellcheck_test", "ty_test")
+load("//third_party/lint:linters.bzl", "ps_script_analyzer_test", "ruff_test", "shellcheck_test", "ty_test")
 
-# pyproject.toml is needed by pylint/ty via rules_lint.  `.python-version` is the one place the
+# pyproject.toml is needed by ruff/ty via rules_lint.  `.python-version` is the one place the
 # Python version is written down; //tests:test_python_version holds the interpreter to it.
 exports_files(
     [
@@ -40,37 +40,6 @@ filegroup(
     name = "license_store",
     srcs = glob(["third_party_licenses/**"]),
     visibility = ["//visibility:public"],
-)
-
-# pylint resolves imports by importing modules from the action's sandbox; the rules_lint pylint
-# aspect passes only the visited target's own source files, not its deps. So unlike py_ty there's
-# no benefit to the *_typed libs here — PySide6/qdarkstyle simply aren't importable by pylint and
-# are carved out via [tool.pylint.typecheck] ignored-modules in pyproject.toml.
-# Because only its own sources are in the sandbox, a per-package pylint target would report
-# import-error (E0401) for every correct first-party import from //tools and //tests. One target
-# holding the whole first-party tree puts it all in a single action's sandbox, which keeps E0401
-# meaningful everywhere (a typo still fails) — and the developer tools get the same gate as the
-# app, which they need: they decide product facts (the catalog's `explanations ✓` flag, the gate-1
-# pass rule).
-py_library(
-    name = "first_party_sources",
-    srcs = [
-        "//teachers_teammate:all_sources",
-        "//tests:all_sources",
-        "//tools:all_sources",
-        "//tools/build:all_sources",
-        "//tools/ci:all_sources",
-        "//tools/licenses:all_sources",
-        "//tools/packaging:all_sources",
-        "//tools/release:all_sources",
-        "//tools/user_text:all_sources",
-    ],
-    tags = ["manual"],
-)
-
-pylint_test(
-    name = "py_pylint",
-    srcs = [":first_party_sources"],
 )
 
 # The libraries ruff and ty visit: one per package of Python, each holding every file of its
@@ -134,7 +103,6 @@ test_suite(
     name = "lint",
     tests = [
         ":ps_script_analyzer",
-        ":py_pylint",
         ":py_ruff",
         ":py_ty",
         ":sh_shellcheck",
@@ -161,7 +129,7 @@ compile_pip_requirements(
 # receive, not only what CI runs.
 #
 # Run: bazel run //:requirements.update
-# --extra=privacy pulls spaCy so the ty/pylint typecheck targets can resolve the
+# --extra=privacy pulls spaCy so the ty typecheck targets can resolve the
 # anonymizer's NER imports (see //teachers_teammate:gui_lib_typed / ocr_lib_typed).
 compile_pip_requirements(
     name = "requirements",

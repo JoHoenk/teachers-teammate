@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -89,7 +90,7 @@ def test_first_stale_stage_for_hashes_returns_earliest_stale_stage() -> None:
 
 def _hashes(**overrides) -> StageHashes:
     """Return the hashes of a document whose stages are all done and all current."""
-    values = {
+    values: dict[str, Any] = {
         "ocr_done": True,
         "ocr_config_hash": "ocr",
         "expected_ocr_config_hash": "ocr",
@@ -103,7 +104,7 @@ def _hashes(**overrides) -> StageHashes:
         "expected_correction_source": "source",
     }
     values.update(overrides)
-    return StageHashes(**values)  # ty: ignore[invalid-argument-type]
+    return StageHashes(**values)
 
 
 def test_a_frozen_reading_is_not_stale_by_its_settings() -> None:

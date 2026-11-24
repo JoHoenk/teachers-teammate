@@ -26,26 +26,28 @@ The same script builds the bundle's venv (`--for build`) and the one the tests r
 ### Linting
 
 ```bash
-bazel test //:lint          # all three: ruff, pylint and ty
+bazel test //:lint          # ruff, ty, shellcheck, PSScriptAnalyzer
 bazel test //:py_ruff
-bazel test //:py_pylint
+bazel test //:py_ty
+bazel run //:format.fix     # ruff format and the lint-safe fixes
 ```
 
 ruff and ty come with `aspect_rules_lint` (see `MODULE.bazel`), the same ruff the formatter
 uses; a version bump is a rules_lint bump. Run them through Bazel only — a `ruff`/`ty` from a
 local `.venv` can be a different version and report different results.
 
-The linters (ruff, ty, pylint, shellcheck for the `.sh` scripts and PSScriptAnalyzer for the `.ps1`
+The linters (ruff, ty, shellcheck for the `.sh` scripts and PSScriptAnalyzer for the `.ps1`
 scripts, all from `aspect_rules_lint`; `bazel test //:lint` runs them; the PowerShell one is skipped
-off Linux, and its rules are in `third_party/lint/PSScriptAnalyzerSettings.psd1`) cover the whole first-party tree: the app, the tests and every folder of
-`tools/` (the build, packaging and release scripts decide what ships, so they get the same gate as
-the app). A new script in an existing folder is picked up by that folder's `all_lib` /
-`scripts_lib` / `scripts` target; a new folder under `tools/` has to be added to `//:py_ruff`,
-`//:py_ty`, `//:first_party_sources` (or `//:sh_shellcheck`) in the root `BUILD`.
+off Linux, and its rules are in `third_party/lint/PSScriptAnalyzerSettings.psd1`) cover the whole
+first-party tree: the app, the tests and every folder of `tools/` (the build, packaging and release
+scripts decide what ships, so they get the same gate as the app). The libraries they visit are the
+one `_LINTED` list in the root `BUILD`, one per package of Python; `tools/ci/check_lint_coverage.py`
+fails the lint job when a package is missing from it, so a new folder under `tools/` needs no
+second list.
 
-Size is not a lint rule: no linter sees a class or a function that grew into several jobs, and
-pylint's refactoring messages are off. `tests/unit/test_class_size.py` is that gate — one ratchet
-per number, over every layer, and a unit over its limit is listed there at the size it has.
+Size is not a lint rule: no linter sees a class or a function that grew into several jobs.
+`tests/unit/test_class_size.py` is that gate — one ratchet per number, over every layer, and a unit
+over its limit is listed there at the size it has.
 
 The workflow files have their own linters, because rules_lint has none for them (`lint-ci` in
 `.github/workflows/format_lint.yml` runs them):

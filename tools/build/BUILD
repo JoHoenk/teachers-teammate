@@ -52,19 +52,17 @@ py_library(
 py_library(
     name = "lint_lib",
     srcs = glob(["*.py"]),
+    # The checks read the app's model catalog and its add-on resolution, so the linter has to
+    # resolve the package's layers.
     tags = ["manual"],
     visibility = ["//visibility:public"],
     deps = [
+        "//teachers_teammate:domain_lib",
+        "//teachers_teammate:infrastructure_lib",
+        "//teachers_teammate:pkg_lib",
         "//tools/licenses:artifact_checks_lib",
         "@ocr_test_dependencies//packaging:pkg",
     ],
-)
-
-# The scripts here run as programs, so nothing imports them; this keeps them in the lint set.
-filegroup(
-    name = "all_sources",
-    srcs = glob(["*.py"]),
-    visibility = ["//visibility:public"],
 )
 
 # The shell scripts, for //:sh_shellcheck (rules_lint's shellcheck visits sh_library targets).

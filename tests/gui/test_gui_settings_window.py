@@ -1,5 +1,4 @@
 """GUI tests for the Settings window: lazy pages, shared state, deep links, restore, closing."""
-# pylint: disable=W0212,W0621,W0613  # protected-access — the tests drive the window's pages directly / redefined-outer-name, unused-argument — pytest fixtures are injected by parameter name
 
 from __future__ import annotations
 

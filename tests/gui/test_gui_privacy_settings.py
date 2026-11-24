@@ -1,7 +1,5 @@
 """GUI tests for Settings → Privacy: remembered "don't ask again" answers and the combined page."""
 
-# pylint: disable=W0212,W0621  # protected-access — the tests drive the tab's buttons directly / redefined-outer-name — pytest fixtures shadow module-scope names by design
-
 from __future__ import annotations
 
 from unittest.mock import MagicMock

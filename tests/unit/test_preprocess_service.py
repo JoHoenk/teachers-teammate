@@ -1,5 +1,4 @@
 """Unit tests for teachers_teammate.infrastructure.workflow.preprocess_service."""
-# pylint: disable=W0404  # reimported — monkeypatch/patch blocks locally reimport the patched symbol
 
 from __future__ import annotations
 
@@ -12,7 +11,6 @@ from teachers_teammate.exceptions import PipelineInputError, RecognitionSwitched
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreprocessService
 from teachers_teammate.interfaces import ImageUnit, InputPayload, TextUnit
 from teachers_teammate.messages import MessageKey
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -135,8 +133,8 @@ def test_preprocess_input_multiple_text_units_joined(tmp_path: Path) -> None:
     prepared = svc.preprocess_input(tmp_path / "doc.txt")
 
     assert prepared.raw_text_hint is not None
-    assert "first" in prepared.raw_text_hint  # pylint: disable=unsupported-membership-test
-    assert "second" in prepared.raw_text_hint  # pylint: disable=unsupported-membership-test
+    assert "first" in prepared.raw_text_hint
+    assert "second" in prepared.raw_text_hint
 
 
 def test_preprocess_input_keeps_each_page_as_it_was_loaded(tmp_path: Path) -> None:

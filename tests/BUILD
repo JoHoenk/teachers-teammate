@@ -5,7 +5,7 @@ derives the target's name, its folder tag and ``run_test.py`` from it.
 
 Running tests
 ─────────────
-  * Lint targets (ruff / pylint / ty):
+  * Lint targets (ruff / ty / shellcheck):
         bazel test //:lint
 
   * Run a single test file:
@@ -98,7 +98,7 @@ exports_files(["BUILD"])
 
 # ── Shared library used by lint targets ───────────────────────────────────
 
-# Every test source, for //:py_pylint (one action over the whole first-party tree). Not a test.
+# Every test source, for the tests that scan the tree they run in. Not a test.
 filegroup(
     name = "all_sources",
     srcs = glob(["**/*.py"]),
@@ -112,7 +112,7 @@ filegroup(
     srcs = glob(["**/test_*.py"]),
 )
 
-# Full pip dep set for the lint aspects (ty/pylint) so test sources resolve
+# Full pip dep set for the lint aspects (ruff/ty) so test sources resolve
 # their third-party imports. tests_lib is consumed only by lint targets, never
 # the wheel, so depending on pip packages here is safe.
 _TESTS_TYPED_DEPS = [
@@ -138,6 +138,19 @@ _TESTS_TYPED_DEPS = [
     "@ocr_test_dependencies//spacy:pkg",
 ]
 
+# The developer tools the tests drive: a test that runs `tools/packaging/latest_release.py` imports
+# it, and the linter only resolves an import whose sources are those of a declared dep.
+# `//tools:scripts_lib` holds every script of `tools/` and the evaluation layers below them.
+_TESTS_DEVELOPER_TOOLS = [
+    "//tools:scripts_lib",
+    "//tools/build:lint_lib",
+    "//tools/ci:lint_lib",
+    "//tools/licenses:lint_lib",
+    "//tools/packaging:lint_lib",
+    "//tools/release:lint_lib",
+    "//tools/user_text:user_text_lib",
+]
+
 py_library(
     name = "tests_lib",
     srcs = glob(
@@ -155,7 +168,7 @@ py_library(
     deps = [
         "//teachers_teammate:gui_lib_typed",
         "//teachers_teammate:ocr_lib_typed",
-    ] + _TESTS_TYPED_DEPS,
+    ] + _TESTS_DEVELOPER_TOOLS + _TESTS_TYPED_DEPS,
 )
 
 # ── Shared dep groups ─────────────────────────────────────────────────────

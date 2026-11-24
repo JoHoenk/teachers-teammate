@@ -12,12 +12,12 @@ stored as characters.  ``core`` may not import ``metrics``, and both writers sit
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Protocol
 
 from ..core.constants import TextKind
 from ..core.hashing import sha256_text
 from ..core.manifest import ManifestItem
-from ..core.records import TestRecord
+from ..core.records import ReferenceLabel, TestRecord
 from ..metrics.offsets import token_offsets
 from ..metrics.quality import ordered_edits
 
@@ -65,7 +65,27 @@ def manifest_item(record: TestRecord, meta: Mapping[str, Any] | None = None) -> 
     )
 
 
-def edit_hashes(record: TestRecord) -> list[dict[str, Any]]:
+class ReferenceEdits(Protocol):
+    """What the edits of a reference are read from: a stored record or a corpus's resolved item."""
+
+    @property
+    def kind(self) -> str:
+        """``"errors"`` for a text with a reference, ``"correct"`` for one already right."""
+
+    @property
+    def source(self) -> str:
+        """The text as it is written."""
+
+    @property
+    def reference(self) -> str:
+        """The text as it is meant to read."""
+
+    @property
+    def labels(self) -> tuple[ReferenceLabel, ...]:
+        """The corpus label of every change the reference makes."""
+
+
+def edit_hashes(record: ReferenceEdits) -> list[dict[str, Any]]:
     """Return the reference edits of *record* as positions, label codes and hashes.
 
     The positions are **characters** of the source, as every stored position is, so a tokenizer

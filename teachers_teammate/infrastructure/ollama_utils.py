@@ -894,7 +894,7 @@ class OllamaClient:
         options: dict | None = None,
         think: bool | str | None = False,
         timeout: float = 120.0,
-        format: dict | str | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
+        format: dict | str | None = None,
         system: str = "",
         allow_truncated: bool = False,
         answer_tokens: int | None = None,
@@ -955,7 +955,7 @@ class OllamaClient:
         options: dict | None = None,
         think: bool | str | None = False,
         timeout: float = 120.0,
-        format: dict | str | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
+        format: dict | str | None = None,
         system: str = "",
         total_timeout: float | None = None,
     ) -> tuple[str, ChatStats]:

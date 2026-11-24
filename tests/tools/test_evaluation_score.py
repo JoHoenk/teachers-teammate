@@ -5,11 +5,11 @@ unexplained, a ``correct`` text counts its untouched sentences, the marks a mode
 unless the report asks for them, and an accepted alternative of the key is counted apart.
 """
 
-# pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module-scope names by design
 from __future__ import annotations
 
 import random
 from dataclasses import dataclass, replace
+from typing import Any
 
 import pytest
 
@@ -60,7 +60,7 @@ class Extended(Scored):
 
 def _record(**overrides) -> TestRecord:
     """Return a test record of one error text, with sensible defaults."""
-    values = {
+    values: dict[str, Any] = {
         "id": "de-01",
         "language": "de",
         "source": SOURCE,
@@ -74,7 +74,7 @@ def _record(**overrides) -> TestRecord:
 
 def _answer(**overrides) -> Answer:
     """Return a stored answer of the default text, with sensible defaults."""
-    values = {
+    values: dict[str, Any] = {
         "text": "de/de-01",
         "text_sha256": _record().text_sha256,
         "output": OUTPUT,
@@ -85,7 +85,7 @@ def _answer(**overrides) -> Answer:
 
 def _run(**overrides) -> RunHeader:
     """Return a run header of the default text, with sensible defaults."""
-    values = {
+    values: dict[str, Any] = {
         "input": Input(
             testset="gec-2026-12",
             question_sha256=_record().text_sha256,

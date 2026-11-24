@@ -73,6 +73,9 @@ py_library(
     ] + _APP,
 )
 
+# pydantic and langchain_core are here for the linter, not for the run: one_request builds the
+# review schema with pydantic and types the model it sends to langchain. A direct dep is what puts
+# a package on the type checker's search path.
 py_library(
     name = "run",
     srcs = glob(["run/*.py"]) + glob(["run/one_request/*.py"]),
@@ -82,6 +85,8 @@ py_library(
         ":input",
         ":metrics",
         ":store",
+        "@ocr_test_dependencies//langchain_core:pkg",
+        "@ocr_test_dependencies//pydantic:pkg",
     ] + _APP,
 )
 

@@ -1,5 +1,4 @@
 """Unit tests for teachers_teammate.infrastructure.workflow.ocr_service."""
-# pylint: disable=W0613  # unused-argument — pytest injects fixtures by parameter name; not all are used in every test
 
 from __future__ import annotations
 
@@ -12,7 +11,6 @@ import pytest
 from teachers_teammate.exceptions import OCRError, RunStoppedError, StageError, StageErrorKind
 from teachers_teammate.infrastructure.workflow.ocr_service import OCRStageService
 from teachers_teammate.messages import MessageKey
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 

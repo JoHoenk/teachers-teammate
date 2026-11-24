@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 import time
+from typing import Any, cast
 
 import pytest
 
@@ -28,6 +29,8 @@ from tools.evaluation.core.modes import (
 from tools.evaluation.core.performance import LoadedModel, RequestStats
 from tools.evaluation.core.records import Answer, RunFile, RunHeader, Session, TestRecord
 from tools.evaluation.run import protocol, runner
+from tools.evaluation.run.measure import VramSampler
+from tools.evaluation.run.ports import RecordingPort
 from tools.evaluation.store import reader, writer
 
 MODEL = "gemma4:e2b"
@@ -70,7 +73,7 @@ def _answer(identifier: str) -> Answer:
 
 def _matrix(root: Path, **overrides) -> runner.Matrix:
     """Return the matrix of a run over the invented texts, with *overrides* applied."""
-    values = {
+    values: dict[str, Any] = {
         "root": root,
         "testset": "gec-2026-12",
         "languages": ("de",),
@@ -214,7 +217,7 @@ class _Sampler:
 
     def __init__(self, log: list[str]) -> None:
         self._log = log
-        self.baseline_mb = 100
+        self.baseline_mb: int | None = 100
 
     def start(self) -> None:
         """Note the start."""
@@ -248,7 +251,7 @@ class _Harness:
 
     def new_factory(
         self,
-        client: _Client,
+        client: RecordingPort,
         exchange: Exchange,
         steps: tuple[Step, ...],
         profile: RequestProfile,
@@ -257,13 +260,13 @@ class _Harness:
         self.profiles.append(profile)
 
         def build(model: str, temperature: float) -> Corrector:
-            corrector = _Scripted(client, self.log, fail_on=self._fail_on)
+            corrector = _Scripted(cast(_Client, client), self.log, fail_on=self._fail_on)
             self.correctors.append(corrector)
             return corrector
 
         return build
 
-    def new_sampler(self) -> _Sampler:
+    def new_sampler(self) -> VramSampler:
         """Return a sampler that writes into this run's log."""
         return _Sampler(self.log)
 

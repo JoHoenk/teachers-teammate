@@ -24,7 +24,7 @@ def adapters() -> dict[str, type[CorpusAdapter]]:
     The dict is the same object on every call, so a test can add a corpus to it with
     ``monkeypatch.setitem``.
     """
-    global _ADAPTERS  # noqa: PLW0603  # pylint: disable=global-statement  # found once, so a test can add a corpus to the dict
+    global _ADAPTERS  # noqa: PLW0603
     if _ADAPTERS is None:
         _ADAPTERS = _discover()
     return _ADAPTERS

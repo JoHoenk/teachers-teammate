@@ -1,12 +1,5 @@
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 
-# Every script of this folder, for the lint set in the root BUILD.
-filegroup(
-    name = "all_sources",
-    srcs = glob(["*.py"]),
-    visibility = ["//visibility:public"],
-)
-
 py_library(
     name = "lint_lib",
     srcs = glob(["*.py"]),

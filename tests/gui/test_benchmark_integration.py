@@ -4,7 +4,6 @@ Drives the real BenchmarkWindow → BenchmarkApplicationService → BenchmarkRun
 → domain metrics, with only the OCR runner stubbed, exercising run&store, list,
 compare, and delete through the UI.
 """
-# pylint: disable=W0621,W0613  # pytest fixtures shadow module-scope names / injected by name
 
 from __future__ import annotations
 

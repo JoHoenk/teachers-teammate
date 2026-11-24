@@ -32,8 +32,11 @@ def _pip_main(args: list[str]) -> int:
     The loader type is registered with the same API distlib uses, before pip runs.
     """
     try:
-        from pip._vendor import distlib  # noqa: PLC0415
-        from pip._vendor.distlib import resources as distlib_resources  # noqa: PLC0415
+        # pip is in no lock: PyInstaller collects it into the bundle, and nothing else imports it.
+        from pip._vendor import distlib  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        from pip._vendor.distlib import (  # noqa: PLC0415  # ty: ignore[unresolved-import]
+            resources as distlib_resources,
+        )
 
         loader = getattr(distlib, "__loader__", None)
         registry = distlib_resources._finder_registry  # noqa: SLF001
@@ -42,7 +45,9 @@ def _pip_main(args: list[str]) -> int:
     except Exception:  # noqa: BLE001  # no distlib: pip works without the registration
         pass
 
-    from pip._internal.cli.main import main as pip_main  # noqa: PLC0415
+    from pip._internal.cli.main import (  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        main as pip_main,
+    )
 
     return pip_main(args)
 

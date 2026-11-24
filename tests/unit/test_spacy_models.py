@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-# pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module-scope names by design
-
 import importlib
 import sys
 from pathlib import Path

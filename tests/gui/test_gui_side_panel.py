@@ -1,7 +1,5 @@
 """GUI tests for the Check tab's side panel: the card of the chosen item and the list."""
 
-# pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module-scope names by design
-
 from __future__ import annotations
 
 import pytest

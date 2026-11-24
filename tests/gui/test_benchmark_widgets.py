@@ -1,5 +1,4 @@
 """Behaviour tests for the benchmark sub-widgets (CompareView, RunsList)."""
-# pylint: disable=W0621,W0613  # pytest fixtures shadow module-scope names / injected by name
 
 from __future__ import annotations
 

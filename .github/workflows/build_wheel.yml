@@ -28,6 +28,7 @@ jobs:
   build-wheel:
     name: Build wheel
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -44,17 +45,24 @@ jobs:
         with:
           disk-cache: wheel
 
-      - name: Stamp pyproject and Bazel wheel version
+      - name: Stamp the version into the package
+        id: version
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          python tools/release/stamp_versions.py --version "$VERSION"
+          python tools/release/stamp_versions.py --version "$VERSION" \
+            --github-output "$GITHUB_OUTPUT"
 
+      # Bazel substitutes the embed label into the wheel's version and file name, so the tag and
+      # the installed metadata cannot disagree. `.dist` is the folder holding the stamped name.
       - name: Build wheel with Bazel
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          bazel build --config=ci //teachers_teammate:teachers_teammate_wheel
+          bazel build --config=ci --stamp --embed_label="$VERSION" \
+            //teachers_teammate:teachers_teammate_release_wheel.dist
           mkdir -p dist
-          cp bazel-bin/teachers_teammate/*.whl dist/
+          cp bazel-bin/teachers_teammate/teachers_teammate_release_wheel_dist/*.whl dist/
 
       # What a teacher does: `pip install` the file into a clean environment with the versions
       # the app is tested with (the constraints are the test lock), and start what it installed.
@@ -87,3 +95,40 @@ jobs:
           name: ${{ inputs.artifact_name }}
           retention-days: ${{ inputs.retention_days }}
           path: dist/*.whl
+
+  # The other wheel a source install builds: setuptools reads pyproject.toml, so its package data
+  # has to carry the assets listed there.  Its own job, because the build fetches an unpinned
+  # setuptools: nothing it runs can reach the wheel the release ships.  The help pages are not in
+  # it (see the comment at [build-system] in pyproject.toml), so they are not checked here.
+  setuptools-wheel:
+    name: Build the setuptools wheel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version-file: .python-version
+
+      - name: Build the wheel and check its assets
+        run: |
+          python -m pip wheel --quiet --no-deps -w "$RUNNER_TEMP/setuptools-dist" .
+          python - "$RUNNER_TEMP/setuptools-dist" <<'PY'
+          import sys
+          import tomllib
+          import zipfile
+          from pathlib import Path
+
+          declared = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          data = declared["tool"]["setuptools"]["package-data"]["teachers_teammate"]
+          wanted = {f"teachers_teammate/{name}" for name in data}
+          built = next(Path(sys.argv[1]).glob("*.whl"))
+          missing = wanted - set(zipfile.ZipFile(built).namelist())
+          if not wanted or missing:
+              sys.exit(f"{built.name} does not carry: {sorted(missing)}")
+          print(f"{built.name} carries the {len(wanted)} declared assets")
+          PY

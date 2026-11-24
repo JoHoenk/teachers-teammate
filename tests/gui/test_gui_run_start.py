@@ -1,4 +1,3 @@
-# pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module-scope names
 """One answer to "can this run start?": the window and the command line say the same thing.
 
 The window shows the blocked run through :class:`DependencyGuardDialog`, the command line

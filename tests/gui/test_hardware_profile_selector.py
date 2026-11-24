@@ -1,5 +1,4 @@
 """GUI tests for the shared HardwareProfileSelector widget."""
-# pylint: disable=W0621,W0613  # redefined-outer-name — pytest fixtures shadow module-scope names by design / unused-argument — pytest injects fixtures by parameter name; not all are used in every test
 
 from __future__ import annotations
 

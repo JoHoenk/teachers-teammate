@@ -16,8 +16,8 @@
 #   /usr/share/icons/hicolor/          icon
 #   /usr/share/doc/teachers-teammate/  DEP-5 copyright, NOTICE, third_party_license.txt
 #
-# An upgrade from the old package (which installed /usr/local/bin/teachers-teammate) removes
-# that file by itself: dpkg drops the files the new version no longer contains.
+# dpkg drops the files an installed version no longer carries, so a change of layout needs no
+# maintainer script.
 
 set -euo pipefail
 

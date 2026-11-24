@@ -1,5 +1,4 @@
 .venv
-.venv-licenses
 .build_venv
 build
 dist

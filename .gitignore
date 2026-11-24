@@ -3,11 +3,7 @@
 __pycache__/
 *.egg-info/
 dist/
-build/
-!tools/build/
-!tools/build/**
-# The negations above would otherwise un-ignore the byte-code cache too.
-__pycache__/
+/build/
 .coverage
 # Claude Code: keep local state out, but allow shared .claude/settings.json, skills and rules
 .claude/*
@@ -19,11 +15,9 @@ coverage_html/
 # Virtual environments
 .venv/
 .build_venv/
-.venv-licenses/
 
-# Third-party license docs (tools/release/update_licenses.sh) ARE committed:
+# The third-party license texts are committed (tools/licenses/inventory.py --compile):
 # both third_party_licenses/ and teachers_teammate/assets/third_party_licenses.md.
-# The throwaway venv used to generate them is ignored via .venv-licenses/ above.
 
 # PyInstaller build scratch
 pyinstaller-work/

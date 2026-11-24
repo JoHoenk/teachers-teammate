@@ -501,7 +501,7 @@ class PerformanceProbe:
         system: str = "",
         images: list[str] | None = None,
         options: dict | None = None,
-        format: dict | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
+        format: dict | None = None,
         think: bool | str = False,
     ) -> tuple[ChatStats | None, StepOutcome, str]:
         """Send one request and return ``(stats, outcome, message)``.

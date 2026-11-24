@@ -1,5 +1,4 @@
 """GUI tests for showing placeholders instead of names: the View setting and the Check tab."""
-# pylint: disable=W0212,W0613,W0621  # protected-access — the tests drive the page and the menu directly / unused-argument, redefined-outer-name — pytest fixtures are injected by parameter name
 
 from __future__ import annotations
 
@@ -34,7 +33,6 @@ RAW = "Anna Müller schreibt an Bernd."
 CORRECTED = "Anna Müller schreibt einen Brief an Bernd."
 ANONYMIZED = "[PERSON_1] schreibt an [PERSON_2]."
 MAPPING = {"[PERSON_1]": "Anna Müller", "[PERSON_2]": "Bernd"}
-
 
 # ── where the setting is chosen: Privacy Settings and the eye button ─────
 

@@ -46,6 +46,11 @@ def _version_tuple(tag: str) -> tuple[int, ...]:
     return (*release, -1 if is_prerelease else 0)
 
 
+def _is_development_build(version: str) -> bool:
+    """Whether *version* is a development build, which names no release to compare with."""
+    return ".dev" in version
+
+
 def _is_release_url(url: str) -> bool:
     """Whether *url* names a page of this project's own releases."""
     return url.startswith(_RELEASE_URL_PREFIX) and len(url) > len(_RELEASE_URL_PREFIX)
@@ -56,8 +61,11 @@ def fetch_newer_release() -> tuple[str, str] | None:
 
     Best effort: no answer, no network and an unreadable answer all give ``None``.  An
     installed version that cannot be read gives no banner either: better silent than offering
-    the same release on every launch.
+    the same release on every launch.  A development build asks nobody: its placeholder sorts
+    below every release, so every answer would offer one.
     """
+    if _is_development_build(_pkg.__version__):
+        return None
     try:
         import json  # noqa: PLC0415
         import urllib.request  # noqa: PLC0415

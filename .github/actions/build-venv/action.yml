@@ -1,39 +1,32 @@
 name: Build environment
-description: >
-  The venv the bundle build and the weekly add-on check share: a clean venv and the pinned
-  install. One place, so the two cannot drift.
+description: >-
+  The venv the bundle build, the tests and the weekly add-on check share: one recipe,
+  tools/build/make_venv.py, so they cannot drift.
 
-# The caller checks out first, runs actions/setup-python with python-version-file:
-# .python-version, and runs its own checks afterwards (check_pins.py, the build itself).
+# The caller checks out first and runs actions/setup-python with python-version-file:
+# .python-version. The venv's script folder goes on the PATH, so later steps find its python.
+
+inputs:
+  for:
+    description: >-
+      What to install on top of the pinned constraints: the bundle's base runtime (build, the
+      default), the `[test]` extra (test), or every extra (dev).
+    required: false
+    default: build
 
 runs:
   using: composite
   steps:
     - name: Create the build environment
       shell: bash
+      env:
+        PURPOSE: ${{ inputs.for }}
       run: |
-        # A clean venv, as tools/build/build.sh and build.bat make: PyInstaller freezes what
-        # is importable in the running interpreter, and the runners' own Python carries tools
-        # (pipx and its dependencies on Windows) that are not ours to pin, which
-        # check_pins.py rightly reports. Later steps find this python first on the PATH.
-        python -m venv "$RUNNER_TEMP/build-venv"
+        # The recipe and its reasons live in the script: a fresh venv, the pinned install, and
+        # no optional extras unless asked for.
+        folder="$(python tools/build/make_venv.py "$RUNNER_TEMP/build-venv" --for "$PURPOSE" | tail -n 1)"
         if [[ "$RUNNER_OS" == "Windows" ]]; then
-          cygpath -w "$RUNNER_TEMP/build-venv/Scripts" >> "$GITHUB_PATH"
+          cygpath -w "$folder" >> "$GITHUB_PATH"
         else
-          echo "$RUNNER_TEMP/build-venv/bin" >> "$GITHUB_PATH"
+          echo "$folder" >> "$GITHUB_PATH"
         fi
-
-    - name: Install Python dependencies
-      shell: bash
-      run: |
-        # Base runtime deps only — optional providers (langchain/spacy)
-        # are downloaded at runtime by the in-app addon manager, so they are
-        # intentionally not bundled into the standalone binary.
-        #
-        # Every version comes from requirements_test_lock.txt (plus the
-        # platform-only pins in tools/build/requirements_platform.txt), and
-        # check_pins.py fails the build if pip installed anything else.
-        python tools/build/make_constraints.py
-        python -m pip install --upgrade -c pyinstaller-work/constraints.txt pip
-        python -m pip install -c pyinstaller-work/constraints.txt \
-          -e . pyinstaller pyinstaller-hooks-contrib

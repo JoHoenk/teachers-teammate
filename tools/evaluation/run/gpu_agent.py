@@ -225,7 +225,7 @@ def _windows_memory_status() -> MemoryStatusEx | None:
         return None
     status = MemoryStatusEx()
     # The API is told how large the structure it fills is.
-    status.dwLength = ctypes.sizeof(MemoryStatusEx)  # pylint: disable=W0201
+    status.dwLength = ctypes.sizeof(MemoryStatusEx)
     kernel32 = ctypes.windll.kernel32  # ty: ignore[unresolved-attribute]  # Windows only
     if not kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
         return None
@@ -500,7 +500,7 @@ class _Handler(BaseHTTPRequestHandler):
     do_HEAD = do_PUT
     do_OPTIONS = do_PUT
 
-    def log_message(self, format: str, *args: object) -> None:  # pylint: disable=redefined-builtin
+    def log_message(self, format: str, *args: object) -> None:
         """Stay quiet: the agent is a background service, not a conversation."""
 
     def _handle(self, method: str) -> None:

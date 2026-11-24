@@ -18,10 +18,10 @@ WORKSPACE = "_main"
 """The workspace directory inside the runfiles tree."""
 
 BINARIES: dict[str, tuple[str, ...]] = {
-    "tools/compare_mistral_regions": (),
+    "tools/dev/compare_mistral_regions": (),
     "tools/evaluate": ("run",),
     "tools/extract_test_specs": (),
-    "tools/ocr_page_tokens": (),
+    "tools/dev/ocr_page_tokens": (),
     "tools/prepare_gec_testset": (),
     "tools/report": ("table", "compare", "gate", "passes", "sheet", "page"),
     "tools/store": (
@@ -73,7 +73,7 @@ def _problems(name: str, *args: str) -> list[str]:
 
 def test_every_tool_binary_starts():
     """
-    Given  every tool binary of ``tools/`` and ``tools/evaluation/``
+    Given  every tool binary of ``tools/``, ``tools/dev/`` and ``tools/evaluation/``
     When   each one is asked for its help
     Then   it exits 0, so its main module and everything it pulls in at start-up import
     """

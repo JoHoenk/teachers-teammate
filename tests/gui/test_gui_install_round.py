@@ -1,5 +1,4 @@
 """GUI tests for :class:`InstallRound`: the order of an install round and what it reports."""
-# pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module-scope names by design
 
 from __future__ import annotations
 
@@ -790,7 +789,6 @@ def test_every_job_a_round_starts_is_held_until_it_ends(
 
 # ── the fakes say what the real threads say ──────────────────────────────────
 
-
 #: The signals a long job reports with; ``LongJobThread`` declares them once.
 _JOB_SIGNALS = ("log_line", "progress", "finished_ok", "finished_err")
 
@@ -851,7 +849,7 @@ def test_a_round_with_two_spacy_models_downloads_both_with_the_real_thread(
         downloaded.append(model)
         log(f"Successfully installed {model}")
 
-    service.download_spacy_model = _download  # pylint: disable=attribute-defined-outside-init
+    service.download_spacy_model = _download
     seen = _record(round_)
 
     with qtbot.waitSignal(round_.finished, timeout=5000):

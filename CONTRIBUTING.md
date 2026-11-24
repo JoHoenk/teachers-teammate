@@ -14,17 +14,17 @@ clone to a passing check run. The detailed developer documentation lives in `doc
 
 - Python 3.14
 - [Bazel](https://bazel.build/) — build, lint, test, and docs harness
-- [uv](https://docs.astral.sh/uv/) (optional — faster venv creation)
 
 ## Set up
 
 ```bash
-python -m venv .venv
+python tools/build/make_venv.py .venv --for dev
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[dev,test,llm]"   # or: uv pip install -e ".[dev,test,llm]"
 ```
 
-The venv is for running the app and your editor; Bazel manages its own toolchain.
+The venv installs against the pinned constraints, so it matches what Bazel tests with. Running the
+script again recreates it. It is for running the app and your editor; Bazel manages its own
+toolchain.
 
 ## Everyday commands
 
@@ -33,7 +33,10 @@ The venv is for running the app and your editor; Bazel manages its own toolchain
 bazel test //tests:unit_tests --test_output=errors   # fast, no external services
 bazel test //tests/... --test_output=errors           # full suite (skips Ollama tests if absent)
 
-# Lint + type check (ruff, pylint, ty)
+# After a dependency change: the three locks against pyproject.toml
+bazel test //:lock_tests --test_output=errors
+
+# Lint + type check (ruff, ty)
 bazel test //:lint --test_output=errors
 
 # Format and apply safe lint fixes

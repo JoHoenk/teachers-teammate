@@ -6,7 +6,6 @@ The formats round-trip, an unknown field survives a read and a write, a changed 
 tokenizer, and changing each record field in turn moves exactly the hash it should.
 """
 
-# pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module-scope names by design
 from __future__ import annotations
 
 import argparse
@@ -14,6 +13,7 @@ import dataclasses
 from dataclasses import replace
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -54,7 +54,7 @@ REFERENCE = "Gestern ist sie mit ihrer Freundin ins Kino gegangen."
 
 def _record(**overrides) -> TestRecord:
     """Return a test record of an error text, with sensible defaults."""
-    values = {
+    values: dict[str, Any] = {
         "id": "de-01",
         "language": "de",
         "source": SOURCE,
@@ -69,7 +69,7 @@ def _record(**overrides) -> TestRecord:
 
 def _header(**overrides) -> RunHeader:
     """Return a run header of one German text, with sensible defaults."""
-    values = {
+    values: dict[str, Any] = {
         "input": Input(
             testset="gec-2026-12",
             question_sha256=question_sha256([_record()]),
@@ -1450,7 +1450,8 @@ def test_the_mode_table_maps_exactly_the_stored_modes() -> None:
         "correct-only",
     }
     for mode in modes.AnswerMode:
-        assert modes.exchange_and_steps(mode)
+        _, steps = modes.exchange_and_steps(mode)
+        assert steps
 
 
 def test_every_exchange_has_a_default_step_list() -> None:
@@ -1529,13 +1530,13 @@ def test_a_new_axis_round_trips_through_the_key_the_tag_and_the_label(monkeypatc
     monkeypatch.setattr(axes, "AXES", axis_table.AXES)
     base = _header().protocol
     fields = [
-        (axis.field, object, dataclasses.field(default=getattr(base, axis.field)))  # pylint: disable=invalid-field-call
+        (axis.field, object, dataclasses.field(default=getattr(base, axis.field)))
         for axis in axis_table.AXES
         if axis.field != "thinking"
     ]
     protocol = dataclasses.make_dataclass(
         "Protocol",
-        [*fields, ("thinking", bool, dataclasses.field(default=False))],  # pylint: disable=invalid-field-call
+        [*fields, ("thinking", bool, dataclasses.field(default=False))],
     )(thinking=True)
 
     written = {axis.name: axis.dump(getattr(protocol, axis.field)) for axis in axis_table.AXES}

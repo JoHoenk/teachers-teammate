@@ -1,5 +1,4 @@
 """GUI tests for the speed panel on the AI models page, and for its duration wording."""
-# pylint: disable=W0212  # protected-access — the tests drive the panel's widgets directly
 
 from __future__ import annotations
 

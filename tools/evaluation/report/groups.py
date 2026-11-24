@@ -270,7 +270,7 @@ def beyond(a: Range, b: Range) -> bool:
 
 def within_the_spread(a: Range, b: Range) -> bool:
     """Whether neither range lies beyond the other: the two overlap."""
-    return not beyond(a, b) and not beyond(b, a)  # pylint: disable=arguments-out-of-order
+    return not beyond(a, b) and not beyond(b, a)
 
 
 @dataclass(frozen=True)

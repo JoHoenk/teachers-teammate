@@ -2,7 +2,7 @@
 
 NOT run in CI - it needs a running Ollama server and the developer's own benchmark pages.
 
-    bazel run //tools:ocr_page_tokens -- --pages ~/handwriting
+    bazel run //tools/dev:ocr_page_tokens -- --pages ~/handwriting
 
 Every catalogued reading model is sent the app's own OCR request - the same prompt, the same
 preprocessing, the same options - once per page, after a warm-up request so the model's load time

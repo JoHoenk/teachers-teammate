@@ -1,5 +1,4 @@
 """Unit tests for teachers_teammate.infrastructure.workflow.coordinator."""
-# pylint: disable=W0613  # unused-argument — pytest injects fixtures by parameter name; not all are used in every test
 
 from __future__ import annotations
 
@@ -21,7 +20,6 @@ from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
 from teachers_teammate.exceptions import UNEXPECTED_ERROR_MESSAGE
 from teachers_teammate.infrastructure.workflow.coordinator import run_files
 from teachers_teammate.infrastructure.workflow.file_processor import ProcessingResult
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 

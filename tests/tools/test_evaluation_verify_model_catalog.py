@@ -101,7 +101,7 @@ class _ScriptedChat:
         options: dict | None = None,
         think: bool | str = False,
         timeout: float = 120.0,
-        format: dict | str | None = None,  # pylint: disable=redefined-builtin
+        format: dict | str | None = None,
         total_timeout: float | None = None,
     ) -> tuple[str, ChatStats]:
         """Return the scripted answer for this request."""

@@ -47,11 +47,12 @@ Only the maintainer may create or delete `v*` tags (tag ruleset); a tag cannot b
 
 | Workflow | Runs on | What it does |
 |---|---|---|
-| `pull_request_checks.yml` | pushes to `main`, pull requests, merge queue | lint (Bazel format check, ruff, pylint, ty; shellcheck and PSScriptAnalyzer for the scripts), the Bazel tests, the docs build (`build_docs.yml`) and CodeQL; the `check` job is the required status |
+| `pull_request_checks.yml` | pushes to `main`, pull requests, merge queue | lint (Bazel format check, ruff, ty; shellcheck and PSScriptAnalyzer for the scripts), the three lock files against `pyproject.toml` and each other, the Bazel tests, the docs build (`build_docs.yml`) and CodeQL; the `check` job is the required status |
 | `deploy_docs.yml` | pushes to `main`, manual | builds the Sphinx site and deploys it to GitHub Pages |
 | `release.yml` | a `v*` tag | the release above |
 | `release_dry_run.yml` | manual, with a version | the whole release build without touching a release |
 | `build_bundles.yml` | manual; PRs touching the app (`teachers_teammate/`), `tests/e2e/`, `tools/packaging/`, `tools/build/`, the requirement, `pyproject.toml` and Bazel module files, the build-venv action or `build_*.yml` | the three bundles as workflow artifacts (2 days) |
+| `platform_tests.yml` | pull requests | the tests marked `platform` in a plain venv on Windows and macOS, without Bazel; a trial, not part of the merge gate |
 | `addon_resolution.yml` | weekly | resolves every add-on's requirement against the bundle's versions, so a new `langchain-*` or spaCy release that breaks an add-on shows up before release day |
 | `dependabot.yml` | weekly | dependency bumps, each held back 7 days after its release (security updates are not) |
 
@@ -126,7 +127,7 @@ bash tools/build/build.sh
 ```
 
 The output is a folder (`dist/teachers-teammate/`) or, on macOS, `dist/teachers-teammate.app/`.
-Every version comes from `requirements_test_lock.txt` plus `tools/build/requirements_platform.txt`,
+Every version comes from `requirements_lock.txt` plus `tools/build/requirements_platform.txt`,
 so two builds of one commit give the same bundle. Check that it starts:
 
 ```bash
@@ -137,7 +138,14 @@ QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_addon_sm
 ### Python wheel
 
 ```bash
-bazel build //teachers_teammate:teachers_teammate_wheel
+bazel build //teachers_teammate:teachers_teammate_wheel   # the development version
+```
+
+A release build stamps the version into the wheel's metadata and file name; the file is in the
+`.dist` folder, because the name is fixed before the label is substituted:
+
+```bash
+bazel build --stamp --embed_label=1.2.3 //teachers_teammate:teachers_teammate_release_wheel.dist
 ```
 
 ### Installers
@@ -171,7 +179,7 @@ pwsh -File tools/packaging/test_windows_installer.ps1 -Setup dist\teachers-teamm
 (`python.toolchain`). Change both together, then relock:
 
 ```bash
-bazel run //:requirements_test.update
+bazel run //:requirements.update
 ```
 
 ```bash
@@ -246,6 +254,12 @@ one run that passes `--skip-sources`.
 
 A sources release is never deleted while a download that carries its version exists; that download
 promises it.
+
+A bumped `pyside6-essentials`, `shiboken6` or `opencv-python-headless` is therefore three steps:
+re-run the mirror, name the new versions in the Qt/PySide6 and FFmpeg entries of `NOTICE`, then
+`python tools/licenses/inventory.py --compile`. Dependabot groups the three, so they never hold up
+the weekly minor updates. `certifi` needs none of this: its entry names no version, because every
+certifi release on PyPI carries its own source.
 
 ---
 

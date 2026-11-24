@@ -244,7 +244,7 @@ class _CapturingClient(OllamaClient):
         options: dict | None = None,
         think: bool | str = False,
         timeout: float = 120.0,
-        format: dict | str | None = None,  # pylint: disable=redefined-builtin
+        format: dict | str | None = None,
         system: str = "",
         allow_truncated: bool = False,
         answer_tokens: int | None = None,

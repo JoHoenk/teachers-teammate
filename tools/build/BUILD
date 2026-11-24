@@ -1,9 +1,10 @@
 """Bazel targets for the standalone-build tools.
 
-The other scripts in this folder run as programs (build_standalone.py, check_pins.py,
-run_gui.py); addon_constraints.py, addon_lock.py, check_addon_resolution.py, fetch_models.py,
-make_constraints.py, check_pins.py, check_linux_bundle.py and check_macos_bundle.py are also
-libraries, so a unit test can drive them.  The license inventory lives in //tools/licenses.
+The other scripts in this folder run as programs (build_standalone.py);
+addon_constraints.py, addon_lock.py, check_addon_resolution.py, fetch_models.py,
+make_constraints.py, make_venv.py, check_pins.py, check_linux_bundle.py and check_macos_bundle.py
+are also libraries, so a unit test can drive them.  The license inventory lives in
+//tools/licenses.
 """
 
 load("@rules_python//python:defs.bzl", "py_library")
@@ -14,6 +15,7 @@ load("@rules_shell//shell:sh_library.bzl", "sh_library")
 # smoke test's unit test, which keeps its GPL-only Qt list equal to the one in frozen_modes.py.
 exports_files(
     [
+        "requirements_addons_platform.txt",
         "requirements_platform.txt",
         "teachers-teammate.spec",
     ],
@@ -34,6 +36,7 @@ py_library(
         "check_smoke.py",
         "fetch_models.py",
         "make_constraints.py",
+        "make_venv.py",
         "make_version_resource.py",
         "platform_lock.py",
     ],
@@ -44,24 +47,22 @@ py_library(
     ],
 )
 
-# Every script of this folder, for //:py_ruff and //:py_ty: build_tools_lib above holds only the
-# ones a unit test imports, and the rest (build_standalone.py, run_gui.py, ...) is what ships.
+# Every script of this folder, for the lint set in the root BUILD: build_tools_lib above holds
+# only the ones a unit test imports, and the rest (build_standalone.py, ...) is what ships.
 py_library(
-    name = "all_lib",
+    name = "lint_lib",
     srcs = glob(["*.py"]),
+    # The checks read the app's model catalog and its add-on resolution, so the linter has to
+    # resolve the package's layers.
     tags = ["manual"],
     visibility = ["//visibility:public"],
     deps = [
+        "//teachers_teammate:domain_lib",
+        "//teachers_teammate:infrastructure_lib",
+        "//teachers_teammate:pkg_lib",
         "//tools/licenses:artifact_checks_lib",
         "@ocr_test_dependencies//packaging:pkg",
     ],
-)
-
-# The scripts here run as programs, so nothing imports them; this keeps them in the lint set.
-filegroup(
-    name = "all_sources",
-    srcs = glob(["*.py"]),
-    visibility = ["//visibility:public"],
 )
 
 # The shell scripts, for //:sh_shellcheck (rules_lint's shellcheck visits sh_library targets).

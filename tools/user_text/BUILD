@@ -7,13 +7,6 @@ Standard library only: the test that uses it needs nothing but this library.
 
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 
-# The tool runs as a program, so nothing imports it from the app; this keeps it in the lint set.
-filegroup(
-    name = "all_sources",
-    srcs = glob(["*.py"]),
-    visibility = ["//visibility:public"],
-)
-
 py_library(
     name = "user_text_lib",
     srcs = [

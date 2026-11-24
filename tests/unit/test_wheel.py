@@ -20,6 +20,10 @@ import zipfile
 from packaging.requirements import Requirement
 import pytest
 
+# The wheel the tests read is the one Bazel built (``//teachers_teammate:teachers_teammate_wheel``)
+# and its paths come from the runfiles, so there is nothing to check outside a `bazel test` run.
+pytestmark = pytest.mark.needs_bazel
+
 #: Everything besides Python files that a wheel install needs (see ``wheel_data`` in
 #: ``teachers_teammate/BUILD``).
 _DATA_FILES = (
@@ -90,6 +94,20 @@ def test_every_source_module_is_in_the_wheel(wheel: zipfile.ZipFile, package_dir
 
     assert expected, "the test found no sources: is the runfile path right?"
     assert sorted(expected - in_wheel) == []
+
+
+def test_pyproject_package_data_lists_the_assets(pyproject: dict) -> None:
+    """
+    Given  the assets the wheel carries and pyproject.toml's package data (what a source install
+           ships)
+    When   the two lists are compared
+    Then   they name the same files; the help pages are the wheel's alone
+    """
+    declared = pyproject["tool"]["setuptools"]["package-data"]["teachers_teammate"]
+
+    assert sorted(f"teachers_teammate/{name}" for name in declared) == sorted(
+        name for name in _DATA_FILES if "/assets/" in name
+    )
 
 
 @pytest.mark.parametrize("name", _DATA_FILES)
@@ -193,7 +211,8 @@ def test_the_wheel_version_is_the_package_version(metadata, package_dir: Path) -
     """
     Given  `__version__` in teachers_teammate/__init__.py
     When   the wheel's Version is compared with it
-    Then   they are the same (stamp_versions.py writes both for a release)
+    Then   they are the same — a release stamps `__init__.py` and hands the same version to
+           Bazel as the embed label, and this is the development pair
     """
     init = (package_dir / "__init__.py").read_text(encoding="utf-8")
     match = re.search(r'^__version__\s*=\s*"([^"]+)"', init, flags=re.MULTILINE)

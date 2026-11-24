@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -123,6 +124,7 @@ def test_locate_returns_the_character_span_of_every_token():
 
     located = locate(text, sentences)
 
+    assert located is not None
     assert located == [((0, 3), (4, 8), (9, 14), (15, 22), (22, 23))]
     assert [text[start:end] for start, end in located[0]] == list(sentences[0].tokens)
 
@@ -312,7 +314,7 @@ def test_a_label_of_an_insertion_sits_between_two_characters():
 
 def _resolved(**overrides) -> ResolvedItem:
     """Return a resolved item of the invented French set, with *overrides* applied."""
-    fields = {
+    fields: dict[str, Any] = {
         "id": "fr-01",
         "language": "fr",
         "kind": "errors",

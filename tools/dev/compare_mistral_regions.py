@@ -7,7 +7,7 @@ to know is to ask both endpoints.  Run it after editing the built-in model list 
 models::
 
     export MISTRAL_API_KEY=...        # in your own shell: the key is read from here only
-    bazel run //tools:compare_mistral_regions
+    bazel run //tools/dev:compare_mistral_regions
 
 The report lists every entry either endpoint returns, whether each endpoint has it, and what the
 app does with it: offered to a teacher, hidden (with the reason: code, audio, embedding, archived

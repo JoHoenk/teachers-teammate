@@ -1,5 +1,4 @@
 """GUI tests for the runtime addon installer dialogs."""
-# pylint: disable=W0212  # accessing protected slots/state by design — these are the behaviours under test
 
 from __future__ import annotations
 

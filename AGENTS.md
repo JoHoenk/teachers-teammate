@@ -12,7 +12,8 @@ handwritten documents.
 bazel test //tests:unit_tests --test_output=errors   # fast, no external services
 bazel test //tests/... --test_output=errors           # full suite (skips Ollama tests if absent)
 bazel test //tests:test_config --test_output=errors   # one test file
-bazel test //:lint --test_output=errors               # ruff + pylint + ty
+bazel test //:lock_tests --test_output=errors         # the three locks after a dependency change
+bazel test //:lint --test_output=errors               # ruff + ty
 bazel run //:format.fix                               # ruff format + lint-safe fixes
 bazel build //docs:html                               # Sphinx docs (serve: bazel run //docs:html.serve)
 ```
@@ -44,7 +45,8 @@ gui/ / cli.py    — adapters; no discovery or availability logic
 `gui/` and `cli.py` import `pkg`, `core`, `domain`, `application` and `texts` only — never
 `infrastructure`. The modules that wire concrete classes are the exception and the only
 exception: `gui/composition.py`, `gui/__main__.py`, `gui/benchmark/composition.py`,
-`gui/benchmark/__main__.py`, `cli_composition.py`, `__main__.py` and `frozen_modes.py`.
+`gui/benchmark/__main__.py`, `cli_composition.py`, `__main__.py`, `frozen_entry.py` and
+`frozen_modes.py`.
 A module does not re-export a name it does not define either: a name has one home, and a
 caller imports it from there.
 
@@ -159,7 +161,8 @@ default models in `_model_defaults.py`.
 - Type checker is `ty`. Suppress with `# ty: ignore[<rule>]`, **not** `# type: ignore[...]`
   (ty ignores it silently). ty uses its own rule names (`invalid-assignment`,
   `invalid-argument-type`, `invalid-method-override`, `unresolved-attribute`, …). Prefer
-  fixing the cause. `unresolved-import` is ignored on purpose for optional extras.
+  fixing the cause. A module ty cannot resolve (an optional extra) is listed in `allowed-unresolved-imports` in
+  `pyproject.toml`; every other import must resolve.
 - **Run linters through Bazel only** (`bazel test //:lint`, `bazel run //:format.fix`). A
   `ruff` or `ty` in a local `.venv` can be a different version and give different results.
 - GUI code: test widgets and threads with pytest-qt.

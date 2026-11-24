@@ -1,5 +1,4 @@
 """GUI tests for the two options dialogs of the main panel (content review, proofreading)."""
-# pylint: disable=W0212,W0621  # protected-access — the tests drive the editor's widgets directly / redefined-outer-name — pytest fixtures shadow module-scope names by design
 
 from __future__ import annotations
 

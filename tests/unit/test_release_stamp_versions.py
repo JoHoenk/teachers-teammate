@@ -89,97 +89,44 @@ def test_stamp_init_version_requires_exactly_one_field() -> None:
         stamp_versions.stamp_init_version(content, "1.2.3")
 
 
-def test_stamp_bazel_wheel_version_updates_named_target_only() -> None:
+def test_stamp_init_file_writes_the_version(tmp_path: Path) -> None:
     """
-    Given  a BUILD snippet with two py_wheel targets
-    When   stamp_bazel_wheel_version() is called for teachers_teammate_wheel
-    Then   only that target's version is changed
-    """
-    content = (
-        "py_wheel(\n"
-        '    name = "other_wheel",\n'
-        '    version = "0.0.1",\n'
-        ")\n\n"
-        "py_wheel(\n"
-        '    name = "teachers_teammate_wheel",\n'
-        '    version = "0.1.0",\n'
-        ")\n"
-    )
-    updated = stamp_versions.stamp_bazel_wheel_version(content, "2.0.0", "teachers_teammate_wheel")
-    assert 'name = "other_wheel",\n    version = "0.0.1",' in updated
-    assert 'name = "teachers_teammate_wheel",\n    version = "2.0.0",' in updated
-
-
-def test_stamp_bazel_wheel_version_fails_when_target_missing() -> None:
-    """
-    Given  a BUILD snippet without the requested py_wheel target
-    When   stamp_bazel_wheel_version() is called
-    Then   a ValueError is raised
-    """
-    content = 'py_wheel(\n    name = "other_wheel",\n    version = "0.0.1",\n)\n'
-    with pytest.raises(ValueError, match="could not find py_wheel target"):
-        stamp_versions.stamp_bazel_wheel_version(content, "2.0.0", "teachers_teammate_wheel")
-
-
-def test_stamp_files_updates_both_files(tmp_path: Path) -> None:
-    """
-    Given  temporary __init__.py and BUILD files with old versions
-    When   stamp_files() is called with a normalized version
-    Then   both files are rewritten with the new version
+    Given  __init__.py that carries the development version
+    When   stamp_init_file() is called with a release version
+    Then   the file carries that version, and nothing else is written
     """
     init_path = tmp_path / "__init__.py"
     init_path.write_text('"""OCR pipeline package."""\n\n__version__ = "0.1.0"\n', encoding="utf-8")
 
-    build_path = tmp_path / "BUILD"
-    build_path.write_text(
-        'py_wheel(\n    name = "teachers_teammate_wheel",\n    version = "0.1.0",\n)\n',
-        encoding="utf-8",
-    )
+    stamp_versions.stamp_init_file("3.4.5", init_path)
 
-    stamp_versions.stamp_files("3.4.5", init_path, build_path, "teachers_teammate_wheel")
-
-    assert '__version__ = "3.4.5"' in init_path.read_text(encoding="utf-8")
-    assert 'version = "3.4.5"' in build_path.read_text(encoding="utf-8")
+    assert init_path.read_text(encoding="utf-8").endswith('__version__ = "3.4.5"\n')
 
 
-def _write_stampable_files(tmp_path: Path) -> tuple[Path, Path]:
-    """Write an __init__.py and a BUILD file the stamping functions accept."""
+def _write_init_file(tmp_path: Path) -> Path:
+    """Write an __init__.py the stamping functions accept."""
     init_path = tmp_path / "__init__.py"
     init_path.write_text('"""OCR pipeline package."""\n\n__version__ = "0.1.0"\n', encoding="utf-8")
-    build_path = tmp_path / "BUILD"
-    build_path.write_text(
-        'py_wheel(\n    name = "teachers_teammate_wheel",\n    version = "0.1.0",\n)\n',
-        encoding="utf-8",
-    )
-    return init_path, build_path
+    return init_path
 
 
 def test_check_prints_the_normalised_version_and_writes_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """
-    Given  a release tag and files that still carry the old version
+    Given  a release tag and a file that still carries the old version
     When   main() runs with --check
-    Then   it exits 0, prints the normalised version, and leaves both files untouched
+    Then   it exits 0, prints the normalised version, and leaves the file untouched
     """
-    init_path, build_path = _write_stampable_files(tmp_path)
+    init_path = _write_init_file(tmp_path)
 
     exit_code = stamp_versions.main(
-        [
-            "--version",
-            "v0.5.7-rc1",
-            "--check",
-            "--init-file",
-            str(init_path),
-            "--build-file",
-            str(build_path),
-        ]
+        ["--version", "v0.5.7-rc1", "--check", "--init-file", str(init_path)]
     )
 
     assert exit_code == 0
     assert "Resolved version: 0.5.7rc1" in capsys.readouterr().out
     assert '__version__ = "0.1.0"' in init_path.read_text(encoding="utf-8")
-    assert 'version = "0.1.0"' in build_path.read_text(encoding="utf-8")
 
 
 def test_check_fails_on_a_version_it_cannot_normalise(
@@ -190,20 +137,37 @@ def test_check_fails_on_a_version_it_cannot_normalise(
     When   main() runs with --check
     Then   it exits 1, reports the error, and writes nothing
     """
-    init_path, build_path = _write_stampable_files(tmp_path)
+    init_path = _write_init_file(tmp_path)
 
     exit_code = stamp_versions.main(
-        [
-            "--version",
-            "v0.5.7-rc1-extra",
-            "--check",
-            "--init-file",
-            str(init_path),
-            "--build-file",
-            str(build_path),
-        ]
+        ["--version", "v0.5.7-rc1-extra", "--check", "--init-file", str(init_path)]
     )
 
     assert exit_code == 1
     assert "ERROR:" in capsys.readouterr().err
     assert '__version__ = "0.1.0"' in init_path.read_text(encoding="utf-8")
+
+
+def test_github_output_gets_the_resolved_version(tmp_path: Path) -> None:
+    """
+    Given  an empty output file and a release tag
+    When   main() runs with --github-output
+    Then   the file holds the normalised version, which the wheel build stamps with
+    """
+    init_path = _write_init_file(tmp_path)
+    output = tmp_path / "output"
+
+    exit_code = stamp_versions.main(
+        [
+            "--version",
+            "v0.5.7-rc.1",
+            "--init-file",
+            str(init_path),
+            "--github-output",
+            str(output),
+        ]
+    )
+
+    assert exit_code == 0
+    assert output.read_text(encoding="utf-8") == "version=0.5.7rc1\n"
+    assert '__version__ = "0.5.7rc1"' in init_path.read_text(encoding="utf-8")

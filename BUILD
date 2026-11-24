@@ -1,8 +1,8 @@
 load("@rules_python//python:defs.bzl", "py_library")
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
-load("//third_party/lint:linters.bzl", "ps_script_analyzer_test", "pylint_test", "ruff_test", "shellcheck_test", "ty_test")
+load("//third_party/lint:linters.bzl", "ps_script_analyzer_test", "ruff_test", "shellcheck_test", "ty_test")
 
-# pyproject.toml is needed by pylint/ty via rules_lint.  `.python-version` is the one place the
+# pyproject.toml is needed by ruff/ty via rules_lint.  `.python-version` is the one place the
 # Python version is written down; //tests:test_python_version holds the interpreter to it.
 exports_files(
     [
@@ -13,8 +13,24 @@ exports_files(
         "pyproject.toml",
         "README.md",
         "requirements_addons_lock.txt",
-        "requirements_test_lock.txt",
+        "requirements_dev_lock.txt",
+        "requirements_lock.txt",
     ],
+    visibility = ["//visibility:public"],
+)
+
+# The repository's own configuration, for //tests:test_no_plan_references: a comment in these
+# files is as visible to a reader as one in a source file.
+filegroup(
+    name = "repo_config",
+    srcs = [
+        ".bazelignore",
+        ".bazelrc",
+        ".gitignore",
+        "BUILD",
+        "MODULE.bazel",
+        "pyproject.toml",
+    ] + glob([".github/**/*.yml"]),
     visibility = ["//visibility:public"],
 )
 
@@ -26,95 +42,45 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-# pylint resolves imports by importing modules from the action's sandbox; the rules_lint pylint
-# aspect passes only the visited target's own source files, not its deps. So unlike py_ty there's
-# no benefit to the *_typed libs here — PySide6/qdarkstyle simply aren't importable by pylint and
-# are carved out via [tool.pylint.typecheck] ignored-modules in pyproject.toml.
-# Because only its own sources are in the sandbox, a per-package pylint target would report
-# import-error (E0401) for every correct first-party import from //tools and //tests. One target
-# holding the whole first-party tree puts it all in a single action's sandbox, which keeps E0401
-# meaningful everywhere (a typo still fails) — and the developer tools get the same gate as the
-# app, which they need: they decide product facts (the catalog's `explanations ✓` flag, the gate-1
-# pass rule).
-py_library(
-    name = "first_party_sources",
-    srcs = [
-        "//teachers_teammate:all_sources",
-        "//tests:all_sources",
-        "//tools:all_sources",
-        "//tools/build:all_sources",
-        "//tools/ci:all_sources",
-        "//tools/licenses:all_sources",
-        "//tools/packaging:all_sources",
-        "//tools/release:all_sources",
-        "//tools/user_text:all_sources",
-    ],
-    tags = ["manual"],
-)
-
-pylint_test(
-    name = "py_pylint",
-    srcs = [":first_party_sources"],
-)
+# The libraries ruff and ty visit: one per package of Python, each holding every file of its
+# package that the narrow libraries below it do not. A new package adds its library here, and
+# tools/ci/check_lint_coverage.py fails the lint job when one is missing.
+_LINTED = [
+    "//teachers_teammate:gui_lib_typed",
+    "//teachers_teammate:ocr_lib_typed",
+    "//tests:tests_lib",
+    "//tools:evaluate",
+    "//tools:prepare_gec_testset",
+    "//tools:report",
+    "//tools:scripts_lib",
+    "//tools:store",
+    "//tools:verify_model_catalog",
+    "//tools/build:lint_lib",
+    "//tools/dev:lint_lib",
+    "//tools/ci:lint_lib",
+    "//tools/evaluation:checks",
+    "//tools/evaluation:convert",
+    "//tools/evaluation:core",
+    "//tools/evaluation:input",
+    "//tools/evaluation:metrics",
+    "//tools/evaluation:report",
+    "//tools/evaluation:run",
+    "//tools/evaluation:store",
+    "//tools/evaluation:viewer",
+    "//tools/licenses:lint_lib",
+    "//tools/packaging:lint_lib",
+    "//tools/release:lint_lib",
+    "//tools/user_text:user_text_lib",
+]
 
 ruff_test(
     name = "py_ruff",
-    srcs = [
-        "//teachers_teammate:gui_lib_typed",
-        "//teachers_teammate:ocr_lib_typed",
-        "//tests:tests_lib",
-        "//tools:evaluate",
-        "//tools:prepare_gec_testset",
-        "//tools:report",
-        "//tools:scripts_lib",
-        "//tools:store",
-        "//tools:verify_model_catalog",
-        "//tools/build:all_lib",
-        "//tools/ci:all_lib",
-        "//tools/evaluation:checks",
-        "//tools/evaluation:convert",
-        "//tools/evaluation:core",
-        "//tools/evaluation:input",
-        "//tools/evaluation:metrics",
-        "//tools/evaluation:report",
-        "//tools/evaluation:run",
-        "//tools/evaluation:store",
-        "//tools/evaluation:viewer",
-        "//tools/licenses:licenses_lib",
-        "//tools/packaging:all_lib",
-        "//tools/release:all_lib",
-        "//tools/user_text:user_text_lib",
-    ],
+    srcs = _LINTED,
 )
 
 ty_test(
     name = "py_ty",
-    srcs = [
-        "//teachers_teammate:gui_lib_typed",
-        "//teachers_teammate:ocr_lib_typed",
-        "//tests:tests_lib",
-        "//tools:evaluate",
-        "//tools:prepare_gec_testset",
-        "//tools:report",
-        "//tools:scripts_lib",
-        "//tools:store",
-        "//tools:verify_model_catalog",
-        "//tools/build:all_lib",
-        "//tools/ci:all_lib",
-        "//tools/evaluation:checks",
-        "//tools/evaluation:convert",
-        "//tools/evaluation:core",
-        "//tools/evaluation:input",
-        "//tools/evaluation:metrics",
-        "//tools/evaluation:report",
-        "//tools/evaluation:run",
-        "//tools/evaluation:store",
-        "//tools/evaluation:viewer",
-        "//tools/licenses:licenses_lib",
-        "//tools/packaging:all_lib",
-        "//tools/release:all_lib",
-        "//tools/user_text:user_text_lib",
-    ],
+    srcs = _LINTED,
 )
 
 # Every shell script of the repository (the packaging and build scripts the workflows run).
@@ -138,7 +104,6 @@ test_suite(
     name = "lint",
     tests = [
         ":ps_script_analyzer",
-        ":py_pylint",
         ":py_ruff",
         ":py_ty",
         ":sh_shellcheck",
@@ -161,18 +126,21 @@ compile_pip_requirements(
     requirements_txt = "requirements_dev_lock.txt",
 )
 
-# Run: bazel run //:requirements_test.update
-# --extra=privacy pulls spaCy so the ty/pylint typecheck targets can resolve the
+# The lock the bundle's runtime and the tests install from: a bump here changes what teachers
+# receive, not only what CI runs.
+#
+# Run: bazel run //:requirements.update
+# --extra=privacy pulls spaCy so the ty typecheck targets can resolve the
 # anonymizer's NER imports (see //teachers_teammate:gui_lib_typed / ocr_lib_typed).
 compile_pip_requirements(
-    name = "requirements_test",
+    name = "requirements",
     src = "pyproject.toml",
     data = ["//teachers_teammate:__init__.py"],
     extra_args = [
         "--extra=test",
         "--extra=privacy",
     ],
-    requirements_txt = "requirements_test_lock.txt",
+    requirements_txt = "requirements_lock.txt",
 )
 
 # Run: bazel run //:requirements_addons.update
@@ -189,6 +157,18 @@ compile_pip_requirements(
         "--extra=privacy",
     ],
     requirements_txt = "requirements_addons_lock.txt",
+)
+
+# The lock files checked against pyproject.toml and against one another, as CI runs them: one
+# label to hold a dependency change against before pushing it.
+test_suite(
+    name = "lock_tests",
+    tests = [
+        ":requirements.test",
+        ":requirements_addons.test",
+        ":requirements_dev.test",
+        "//tests:test_lock_agreement",
+    ],
 )
 
 alias(

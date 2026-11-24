@@ -1,5 +1,4 @@
 """GUI tests for the assistant's window: Set up, Cancel, and the rules for leaving."""
-# pylint: disable=W0212  # protected-access — the tests drive the wizard's widgets directly
 
 from __future__ import annotations
 

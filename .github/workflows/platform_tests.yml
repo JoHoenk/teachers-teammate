@@ -1,0 +1,51 @@
+name: Tests without Bazel
+
+# The platform tests (`PLATFORM_TEST_FILES` in `tests/conftest.py`) in a plain venv on the systems
+# teachers use, against the versions the bundle ships there.  `pull_request_checks.yml` does not
+# call it, so it blocks no merge.
+#
+# Why not Bazel: the lock is resolved on Linux and has no `pywin32-ctypes`, `run_test.py` is
+# Linux-only, and Bazel on Windows needs runfiles flags, a short output root and MSYS2.
+
+on:
+  pull_request:
+    branches: ["main"]
+    types: [opened, reopened, synchronize]
+
+# A superseded run of the same PR has nothing to say; a cancelled one is not a failure.
+concurrency:
+  group: platform_tests-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: Tests without Bazel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-26]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version-file: .python-version
+
+      # The build's own recipe, with the test extra: same constraints, so this system's
+      # platform-only packages (`pywin32-ctypes`) are what the tests see here.
+      - name: Create the build environment
+        uses: ./.github/actions/build-venv
+        with:
+          for: test
+
+      - name: Run the platform tests
+        run: >-
+          python -m pytest tests/unit tests/gui -p no:cacheprovider
+          -m "platform and not needs_reader_models and not needs_ollama and not needs_bazel"

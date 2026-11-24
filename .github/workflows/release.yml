@@ -29,6 +29,7 @@ jobs:
   validate:
     name: Validate the tag
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -62,6 +63,7 @@ jobs:
     name: Create the draft release
     needs: [lint, test]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: write
     steps:
@@ -106,12 +108,13 @@ jobs:
   # ── Attach the assets to the draft ────────────────────────────────────────
   # The one job that writes to the release, and it only uploads files: it never flips the
   # draft to published. The maintainer reviews the notes and the assets in the release form
-  # and clicks *Publish* (DC12) — a failed build therefore never leaves a public release
+  # and clicks *Publish* — a failed build therefore never leaves a public release
   # without installers, and immutable releases stay possible.
   publish:
     name: Attach the assets to the draft
     needs: [build-wheel, build-standalone]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
       # `gh run download` lists this run's artifacts.

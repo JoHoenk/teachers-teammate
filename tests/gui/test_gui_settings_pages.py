@@ -1,5 +1,4 @@
 """GUI tests for the Settings pages: AI models, Scan quality, This computer, API keys."""
-# pylint: disable=W0212,W0621,W0613  # protected-access — the tests drive the pages' widgets directly / redefined-outer-name, unused-argument — pytest fixtures are injected by parameter name
 
 from __future__ import annotations
 

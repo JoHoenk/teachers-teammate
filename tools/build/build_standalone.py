@@ -50,48 +50,45 @@ def _ensure_icns(source_png: Path, out_icns: Path) -> None:
     """Create a macOS .icns file from the canonical PNG source (macOS only)."""
     if sys.platform != "darwin":
         return
-    try:
-        with tempfile.TemporaryDirectory(prefix="profpet_iconset_") as td:
-            iconset = Path(td) / "teachers_teammate.iconset"
-            iconset.mkdir(parents=True, exist_ok=True)
-            for size in (16, 32, 64, 128, 256, 512):
-                subprocess.run(
-                    [
-                        "sips",
-                        "-z",
-                        str(size),
-                        str(size),
-                        str(source_png),
-                        "--out",
-                        str(iconset / f"icon_{size}x{size}.png"),
-                    ],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                double = size * 2
-                subprocess.run(
-                    [
-                        "sips",
-                        "-z",
-                        str(double),
-                        str(double),
-                        str(source_png),
-                        "--out",
-                        str(iconset / f"icon_{size}x{size}@2x.png"),
-                    ],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+    with tempfile.TemporaryDirectory(prefix="teachers_teammate_iconset_") as td:
+        iconset = Path(td) / "teachers_teammate.iconset"
+        iconset.mkdir(parents=True, exist_ok=True)
+        for size in (16, 32, 64, 128, 256, 512):
             subprocess.run(
-                ["iconutil", "-c", "icns", str(iconset), "-o", str(out_icns)],
+                [
+                    "sips",
+                    "-z",
+                    str(size),
+                    str(size),
+                    str(source_png),
+                    "--out",
+                    str(iconset / f"icon_{size}x{size}.png"),
+                ],
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-    except Exception:  # noqa: BLE001
-        return
+            double = size * 2
+            subprocess.run(
+                [
+                    "sips",
+                    "-z",
+                    str(double),
+                    str(double),
+                    str(source_png),
+                    "--out",
+                    str(iconset / f"icon_{size}x{size}@2x.png"),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        subprocess.run(
+            ["iconutil", "-c", "icns", str(iconset), "-o", str(out_icns)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 
 def _ensure_icons() -> None:

@@ -54,7 +54,8 @@ class Choice:
     text Qt translates — a yes/no question keeps the wording the rest of the desktop uses.
     ``default`` marks the button Enter presses; exactly one choice should carry it.  ``id``
     names the button for a question with more than two answers, so the caller reads which one
-    was clicked without comparing labels.
+    was clicked without comparing labels.  A platform button's id is its own value
+    (``StandardButton.YES`` → ``"yes"``), so a yes/no question needs no id written out.
     """
 
     label: str = ""
@@ -63,6 +64,10 @@ class Choice:
     default: bool = False
     enabled: bool = True
     id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.id and self.standard is not None:
+            object.__setattr__(self, "id", self.standard.value)
 
     @property
     def declines(self) -> bool:

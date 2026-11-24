@@ -1,5 +1,6 @@
 load("@rules_python//python:defs.bzl", "py_library")
-load("@rules_python//python:packaging.bzl", "py_package", "py_wheel")
+load("@rules_python//python:packaging.bzl", "py_package")
+load(":wheel.bzl", "app_wheel")
 
 # Exposed so //:requirements_{dev,test} can stage it next to pyproject.toml when
 # pip-compile expands the dynamic version (attr = teachers_teammate.__version__).
@@ -350,11 +351,12 @@ _GUI_SRCS = [
     "gui/setup/_flow.py",
     "gui/setup/_pages.py",
     "gui/setup/_summary.py",
-    # Imports GUI modules (the smoke test) and is only run by the installed app.
+    # Import GUI modules (the smoke test) and are only run by the installed app.
+    "frozen_entry.py",
     "frozen_modes.py",
 ]
 
-# Third-party deps used ONLY to give the ty/pylint lint aspects real type
+# Third-party deps used ONLY to give the ty lint aspect real type
 # resolution (PySide6, numpy, spaCy, …). They must NOT be added to ocr_lib/
 # gui_lib: those feed py_package/py_wheel, which would then bundle the packages
 # into the wheel. The *_typed targets below exist purely for the lint targets.
@@ -378,6 +380,8 @@ _TYPED_DEPS_OCR = [
 ]
 
 _TYPED_DEPS_GUI = [
+    # keyring: the credential store, and the uninstaller's key removal in frozen_modes.py.
+    "@ocr_test_dependencies//keyring:pkg",
     "@ocr_test_dependencies//psutil:pkg",
     "@ocr_test_dependencies//pyside6_essentials:pkg",
     "@ocr_test_dependencies//qdarkstyle:pkg",
@@ -499,8 +503,8 @@ py_library(
     ],
 )
 
-# Every Python file of the package, for //:py_pylint (which lints the whole first-party tree in
-# one action so pylint can resolve cross-package imports). Never part of the wheel or of a test.
+# Every Python file of the package, for the tests that scan the whole tree (the user-facing
+# sentence ratchet, the layer imports). Never part of the wheel.
 filegroup(
     name = "all_sources",
     srcs = glob(["**/*.py"]),
@@ -516,7 +520,7 @@ filegroup(
 )
 
 # Lint-only mirrors of ocr_lib/gui_lib that additionally depend on the runtime
-# pip packages, so the rules_lint ty/pylint aspects resolve real types. Tagged
+# pip packages, so the rules_lint ty aspect resolves real types. Tagged
 # "manual" and never referenced by the wheel — keep them out of //:ocr_pkg.
 py_library(
     name = "ocr_lib_typed",
@@ -605,32 +609,20 @@ genrule(
     tools = ["//tools/release:extract_wheel_requires"],
 )
 
-py_wheel(
+# The version in ``teachers_teammate/__init__.py``: an unstamped build is installable, and
+# ``tests/unit/test_wheel.py`` compares the two.
+app_wheel(
     name = "teachers_teammate_wheel",
-    abi = "none",
-    description_content_type = "text/markdown",
-    description_file = "//:README.md",
-    distribution = "teachers-teammate",
-    entry_points = {
-        "console_scripts": [
-            "teachers-teammate = teachers_teammate.cli:main",
-            "teachers-teammate-gui = teachers_teammate.gui:main_gui",
-            "teachers-teammate-benchmark = teachers_teammate.gui.benchmark:main_benchmark",
-        ],
-    },
-    extra_requires_files = {
-        "wheel_requires_llm.txt": "llm",
-        "wheel_requires_privacy.txt": "privacy",
-    },
-    license = "GPL-3.0-or-later",
-    platform = "any",
-    python_requires = ">=3.14",
-    python_tag = "py3",
-    requires_file = "wheel_requires.txt",
-    summary = "OCR pipeline for handwritten documents",
-    version = "0.1.0",
-    visibility = ["//visibility:public"],
-    deps = [":ocr_pkg"],
+    version = "0.0.0.dev0",
+)
+
+# A release build stamps the version: `--stamp --embed_label=<version>`. The file name is fixed
+# before the substitution, so build `:teachers_teammate_release_wheel.dist` and publish the wheel
+# in its folder.
+app_wheel(
+    name = "teachers_teammate_release_wheel",
+    tags = ["manual"],
+    version = "{BUILD_EMBED_LABEL}",
 )
 
 # Every module of the app, for the ratchet test that keeps teacher-facing text in

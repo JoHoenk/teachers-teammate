@@ -1,7 +1,5 @@
 """The Linux launcher check: the entry, its Exec and Icon, and the icon's folder."""
 
-# pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module-scope names by design
-
 from __future__ import annotations
 
 from pathlib import Path

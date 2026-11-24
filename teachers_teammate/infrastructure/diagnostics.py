@@ -244,7 +244,7 @@ def start_if_requested(version: str = "") -> Diagnostics | None:
     Returns the instance, or ``None`` when they are off or the log cannot be opened (the app
     then runs as without them).
     """
-    global _instance  # noqa: PLW0603  # pylint: disable=global-statement  # one log per process
+    global _instance  # noqa: PLW0603
     if _instance is not None:
         return _instance
     if not requested():

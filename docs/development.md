@@ -9,44 +9,46 @@ This guide covers contributor workflows and the codebase. What teachers see is i
 
 - Python 3.14
 - [Bazel](https://bazel.build/) — used as the build and test harness; all `bazel` commands below assume it is on `PATH`
-- [uv](https://docs.astral.sh/uv/) (optional — speeds up venv creation)
 
 ### Set up the development environment
 
 ```bash
-# Create a virtualenv and install all dependencies (including dev and test extras)
-python -m venv .venv
+# A venv with every extra, installed against the pinned constraints
+python tools/build/make_venv.py .venv --for dev
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[dev,test,llm]"
 ```
 
-If you have `uv` installed, use `uv venv` and `uv pip install -e ".[dev,test,llm]"` instead.
+The same script builds the bundle's venv (`--for build`) and the one the tests run in
+(`--for test`), so a developer environment and CI install the same versions. Running it again
+recreates the venv; it refuses a folder that is not one.
 
 ## Development checks
 
 ### Linting
 
 ```bash
-bazel test //:lint          # all three: ruff, pylint and ty
+bazel test //:lint          # ruff, ty, shellcheck, PSScriptAnalyzer
 bazel test //:py_ruff
-bazel test //:py_pylint
+bazel test //:py_ty
+bazel run //:format.fix     # ruff format and the lint-safe fixes
 ```
 
 ruff and ty come with `aspect_rules_lint` (see `MODULE.bazel`), the same ruff the formatter
 uses; a version bump is a rules_lint bump. Run them through Bazel only — a `ruff`/`ty` from a
 local `.venv` can be a different version and report different results.
 
-The linters (ruff, ty, pylint, shellcheck for the `.sh` scripts and PSScriptAnalyzer for the `.ps1`
+The linters (ruff, ty, shellcheck for the `.sh` scripts and PSScriptAnalyzer for the `.ps1`
 scripts, all from `aspect_rules_lint`; `bazel test //:lint` runs them; the PowerShell one is skipped
-off Linux, and its rules are in `third_party/lint/PSScriptAnalyzerSettings.psd1`) cover the whole first-party tree: the app, the tests and every folder of
-`tools/` (the build, packaging and release scripts decide what ships, so they get the same gate as
-the app). A new script in an existing folder is picked up by that folder's `all_lib` /
-`scripts_lib` / `scripts` target; a new folder under `tools/` has to be added to `//:py_ruff`,
-`//:py_ty`, `//:first_party_sources` (or `//:sh_shellcheck`) in the root `BUILD`.
+off Linux, and its rules are in `third_party/lint/PSScriptAnalyzerSettings.psd1`) cover the whole
+first-party tree: the app, the tests and every folder of `tools/` (the build, packaging and release
+scripts decide what ships, so they get the same gate as the app). The libraries they visit are the
+one `_LINTED` list in the root `BUILD`, one per package of Python; `tools/ci/check_lint_coverage.py`
+fails the lint job when a package is missing from it, so a new folder under `tools/` needs no
+second list.
 
-Size is not a lint rule: no linter sees a class or a function that grew into several jobs, and
-pylint's refactoring messages are off. `tests/unit/test_class_size.py` is that gate — one ratchet
-per number, over every layer, and a unit over its limit is listed there at the size it has.
+Size is not a lint rule: no linter sees a class or a function that grew into several jobs.
+`tests/unit/test_class_size.py` is that gate — one ratchet per number, over every layer, and a unit
+over its limit is listed there at the size it has.
 
 The workflow files have their own linters, because rules_lint has none for them (`lint-ci` in
 `.github/workflows/format_lint.yml` runs them):
@@ -100,7 +102,7 @@ Run these after adding, removing, or upgrading a dependency in `pyproject.toml` 
 
 ```bash
 bazel run //:requirements_dev.update
-bazel run //:requirements_test.update
+bazel run //:requirements.update
 ```
 
 
@@ -818,7 +820,7 @@ Nothing known at all gives no figure, which is better than a guess the teacher w
 
 Only the catalog entries with a `reference_speed` get an expected band, and no entry has a
 `read_tps`: a reading model gets no expected band, and `MachineFactors.reading` stays `None` until
-reading models are measured on the reference machine.  `tools/ocr_page_tokens.py` measures them,
+reading models are measured on the reference machine.  `tools/dev/ocr_page_tokens.py` measures them,
 and `report --performance --catalog-lines` prints the `answer_length` lines for the writing models.
 
 ### Who owns what (hardware detection and recommendations)
@@ -1701,7 +1703,7 @@ and **Original page** (`"none"`).  `infrastructure/preprocessing/` holds all of 
 - `recipes.py` — `steps_for(ocr, store)`: `none` → `[]`, anything else → `auto_steps(ocr.engine,
   store)`.  `stage_builder.default_build_preprocessor(tmp_dir, save_steps, ocr, store)` is
   `StepPipeline(steps_for(ocr, store or ModelStore()), …)`; the factory, `preprocess_preview`, the
-  speed probe and `tools/ocr_page_tokens.py` all pass the model store through.
+  speed probe and `tools/dev/ocr_page_tokens.py` all pass the model store through.
 
 **The gates are conservative on purpose.**  Every step acts only where its measurement says so
 and leaves the page alone otherwise, so a clean scan passes unchanged; a thing the steps get
@@ -3410,13 +3412,13 @@ update" below.
 (`paddlepaddle`, `paddleocr`, `paddlex`, `opencv-contrib-python`, which shadowed the app's own
 OpenCV) is deleted by its `RECORD` files only; numpy is left alone.  It is then called:
 
-- At application startup (`run_gui.py`, `gui/__main__.py`, `__main__.py`), so packages
+- At application startup (`frozen_entry.py`, `gui/__main__.py`, `__main__.py`), so packages
   installed during a previous session are immediately available.
 - After every successful install or model download, so the newly installed package is
   usable in the same session without a restart.
 
 The function is idempotent — safe to call multiple times.  Every entry point calls it first
-(`application/composition.inject_addon_packages_dir()`): `run_gui.py` and `__main__.py`,
+(`application/composition.inject_addon_packages_dir()`): `frozen_entry.py` and `__main__.py`,
 and `main_gui()`, `main_benchmark()` and `cli.main()` for a wheel install, so a spaCy model
 downloaded in one session is found after a restart however the app was started.
 
@@ -3515,11 +3517,12 @@ dispatch flag and launches the GUI again instead of pip.
 
 To avoid this, every pip install in a frozen build re-invokes the exe with the custom flag
 `--_pip_install_mode` followed by the normal pip arguments, plus `--target <packages_dir>`.
-The entry script (`tools/build/run_gui.py`) intercepts this flag before any GUI code is loaded
+The entry module (`teachers_teammate/frozen_entry.py`) intercepts this flag before any GUI code
+is loaded
 and calls `pip._internal.cli.main()` directly:
 
 ```python
-# tools/build/run_gui.py
+# teachers_teammate/frozen_entry.py
 if "--_pip_install_mode" in sys.argv:
     _pip_args = sys.argv[sys.argv.index("--_pip_install_mode") + 1:]
     from pip._internal.cli.main import main as _pip_main
@@ -3583,7 +3586,7 @@ In frozen builds pip must run inside the frozen Python interpreter, so the exe i
 with `--_spacy_download_mode <url> --target <packages_dir>`:
 
 ```python
-# tools/build/run_gui.py
+# teachers_teammate/frozen_entry.py
 if "--_spacy_download_mode" in sys.argv:
     _download_url = sys.argv[idx + 1]
     # call pip._internal.cli.main(["install", "--target", ..., _download_url])

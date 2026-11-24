@@ -1,5 +1,4 @@
 """GUI tests for MainWindow orchestration using pytest-qt."""
-# pylint: disable=W0621,W0613  # redefined-outer-name — pytest fixtures shadow module-scope names by design / unused-argument — pytest injects fixtures by parameter name; not all are used in every test
 
 from __future__ import annotations
 
@@ -5066,7 +5065,7 @@ def test_the_run_start_question_only_continues_when_nothing_is_stored(
         cfg, WorkedOn(unbound=(Path("/in/a.png"),)), lambda: started.append(True)
     )
 
-    assert [choice.id for choice in asked[0].choices] == [dlg.CONTINUE, ""]
+    assert [choice.id for choice in asked[0].choices] == [dlg.CONTINUE, "cancel"]
     assert "not stored here" in asked[0].body
     assert started == [True]
 

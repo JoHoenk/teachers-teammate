@@ -1,5 +1,4 @@
 """Unit tests for the writes: the teacher's texts and decisions."""
-# pylint: disable=W0613  # unused-argument — pytest injects fixtures by parameter name; not all are used in every test
 
 from __future__ import annotations
 

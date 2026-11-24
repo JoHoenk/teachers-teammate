@@ -1,0 +1,5 @@
+# The license texts and what is compiled from them are compared byte for byte
+# (tests/unit/test_license_inventory.py): a checkout must not change a line ending.
+third_party_licenses/** -text
+teachers_teammate/assets/third_party_licenses.md -text
+teachers_teammate/assets/third_party_inventory.csv -text

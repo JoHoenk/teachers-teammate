@@ -240,6 +240,34 @@ def test_a_build_of_the_latest_release_is_not_offered_it(installed: str) -> None
         assert fetch_newer_release() is None
 
 
+def test_a_development_build_is_not_offered_a_release() -> None:
+    """
+    Given  a development build (0.0.0.dev0) and a newer release v1.0.0
+    When   the release is fetched
+    Then   nothing is offered: the placeholder sorts below every release
+    """
+    with (
+        patch("teachers_teammate.__version__", "0.0.0.dev0"),
+        patch("urllib.request.urlopen", return_value=_fake_response("v1.0.0")),
+    ):
+        assert fetch_newer_release() is None
+
+
+def test_a_development_build_asks_no_network() -> None:
+    """
+    Given  a development build
+    When   the release is fetched
+    Then   GitHub is not contacted at all
+    """
+    with (
+        patch("teachers_teammate.__version__", "0.0.0.dev0"),
+        patch("urllib.request.urlopen") as urlopen,
+    ):
+        assert fetch_newer_release() is None
+
+    urlopen.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "url",
     [

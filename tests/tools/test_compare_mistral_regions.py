@@ -9,7 +9,7 @@ import urllib.error
 import pytest
 
 from teachers_teammate.infrastructure.providers import _mistral_common as common
-from tools import compare_mistral_regions as tool
+from tools.dev import compare_mistral_regions as tool
 
 TODAY = date(2026, 11, 20)
 KEY = "k-secret-value"

@@ -47,8 +47,7 @@ bazel_dep(name = "rules_java", version = "9.9.0")
 
 # One Python version for the whole repository: `.python-version` holds the full patch, and
 # rules_python reads it here.  CI's setup-python reads the same file, so the Bazel tests and the
-# bundles cannot drift apart.  Bumped by hand (a weekly job that reports a newer patch is still
-# to be written: plans/ci-build-fixes.md, C6).  `python.defaults` alone would register the
+# bundles cannot drift apart.  Bumped by hand.  `python.defaults` alone would register the
 # toolchain without the coverage tool, so the same patch is named again below for
 # `bazel coverage`: change both together.
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
@@ -58,7 +57,7 @@ python.toolchain(
     python_version = "3.14.10",
 )
 
-# Dev-only pip hub: tools required for linting (pylint and deps).
+# Dev-only pip hub: the tools of the [project.optional-dependencies] dev extra.
 pip_dev = use_extension(
     "@rules_python//python/extensions:pip.bzl",
     "pip",
@@ -85,7 +84,7 @@ pip_test = use_extension(
 pip_test.parse(
     hub_name = "ocr_test_dependencies",
     python_version = "3.14",
-    requirements_lock = "//:requirements_test_lock.txt",
+    requirements_lock = "//:requirements_lock.txt",
 )
 use_repo(pip_test, "ocr_test_dependencies")
 

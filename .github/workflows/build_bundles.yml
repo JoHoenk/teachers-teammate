@@ -63,6 +63,7 @@ jobs:
     needs: [build-bundles]
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       actions: write
     steps:

@@ -9,12 +9,13 @@ from __future__ import annotations
 from collections.abc import Callable
 import json
 import re
+from typing import cast
 
 import pytest
 
 from teachers_teammate.domain.model_catalog import RequestProfile
 from teachers_teammate.domain.proofreading.word_diff import tokenize
-from teachers_teammate.infrastructure.ollama_utils import ChatStats
+from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClient
 
 from tools.evaluation.checks.check_rule import CheckRun, Verdict
 from tools.evaluation.checks.structured_check import (
@@ -97,7 +98,7 @@ class _ScriptedChat:
         options: dict | None = None,
         think: bool | str = False,
         timeout: float = 120.0,
-        format: dict | str | None = None,  # pylint: disable=redefined-builtin
+        format: dict | str | None = None,
         total_timeout: float | None = None,
     ) -> tuple[str, ChatStats]:
         """Return the scripted answer for this request."""
@@ -333,6 +334,11 @@ def test_the_budget_fixture_is_within_its_limits() -> None:
     assert all(len(sentence.text) <= 200 for p in fixture.paragraphs for sentence in p)
 
 
+def _as_client(stand_in: _RecordingClient) -> OllamaClient:
+    """Return the stand-in as the client the factory is typed against: it only calls ``chat``."""
+    return cast(OllamaClient, stand_in)
+
+
 class _RecordingClient:
     """An Ollama client that records the request instead of sending it."""
 
@@ -349,7 +355,7 @@ class _RecordingClient:
         options: dict | None = None,
         think: bool | str = False,
         timeout: float = 120.0,
-        format: dict | str | None = None,  # pylint: disable=redefined-builtin
+        format: dict | str | None = None,
         system: str = "",
     ) -> str:
         """Record the request and return the scripted answer."""
@@ -385,7 +391,7 @@ def test_the_gate_sends_the_one_request_correctors_review_request() -> None:
     sent = text_of(fixture)
     client = _RecordingClient()
     corrector = app_corrector_factory(
-        client,
+        _as_client(client),
         timeout=5.0,
         exchange=Exchange.ONE_REQUEST_REVIEW,
         steps=ALL_STEPS,
@@ -422,7 +428,7 @@ def test_gate_one_sends_the_compact_rule_when_the_profile_asks() -> None:
 def _corrector_budget(language: str, text_format, num_ctx: int, profile: RequestProfile) -> int:
     """Return the review budget the one-request corrector reports for *profile*."""
     corrector = app_corrector_factory(
-        _RecordingClient(),
+        _as_client(_RecordingClient()),
         timeout=5.0,
         exchange=Exchange.ONE_REQUEST_REVIEW,
         steps=ALL_STEPS,

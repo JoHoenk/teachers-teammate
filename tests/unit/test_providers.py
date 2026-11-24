@@ -190,7 +190,7 @@ def test_openai_list_models_falls_back_to_static_list_when_api_unavailable() -> 
 
     mock_openai_mod = MagicMock()
     mock_client = MagicMock()
-    mock_client.models.list.side_effect = Exception("no network")  # pylint: disable=no-member
+    mock_client.models.list.side_effect = Exception("no network")
     mock_openai_mod.OpenAI.return_value = mock_client
 
     with patch.dict(sys.modules, {"openai": mock_openai_mod}):
@@ -317,7 +317,6 @@ _MISTRAL_PROVIDERS = [
     ("mistral", "https://api.mistral.ai/v1"),
     ("mistral_eu", "https://api.eu.mistral.ai/v1"),
 ]
-
 
 _URLOPEN = "teachers_teammate.infrastructure.providers._mistral_common.urllib.request.urlopen"
 
@@ -646,7 +645,6 @@ def test_mistral_providers_share_key_and_differ_in_display_name() -> None:
 
 # ── list_models() — google ────────────────────────────────────────────────
 
-
 _GOOGLE_URLOPEN = "teachers_teammate.infrastructure.providers.google.urllib.request.urlopen"
 
 
@@ -762,7 +760,7 @@ def test_openai_list_models_returns_chat_models_from_api() -> None:
     non_chat.id = "dall-e-3"
 
     mock_client = MagicMock()
-    mock_client.models.list.return_value = [gpt4, gpt35, non_chat]  # pylint: disable=no-member
+    mock_client.models.list.return_value = [gpt4, gpt35, non_chat]
     mock_openai_mod = MagicMock()
     mock_openai_mod.OpenAI.return_value = mock_client
 

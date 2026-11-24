@@ -173,7 +173,7 @@ class AddonInstallerDialog(QDialog):
         if not getattr(sys, "frozen", False):
             return False
         try:
-            import pip  # noqa: PLC0415, F401
+            import pip  # noqa: PLC0415, F401  # ty: ignore[unresolved-import]
 
             return True
         except ImportError:

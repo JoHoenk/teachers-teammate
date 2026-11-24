@@ -37,7 +37,7 @@ def sample_png(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def sample_pdf(tmp_path: Path, sample_png: Path) -> Path:  # pylint: disable=redefined-outer-name
+def sample_pdf(tmp_path: Path, sample_png: Path) -> Path:
     """A single-page PDF wrapping the sample PNG."""
     from PIL import Image  # noqa: PLC0415
 
@@ -47,7 +47,7 @@ def sample_pdf(tmp_path: Path, sample_png: Path) -> Path:  # pylint: disable=red
 
 
 @pytest.fixture
-def sample_multipage_pdf(tmp_path: Path, sample_png: Path):  # pylint: disable=redefined-outer-name
+def sample_multipage_pdf(tmp_path: Path, sample_png: Path):
     """A factory for a scanned PDF of *pages* pages, each one the sample PNG.
 
     A scanned PDF has no text layer, so every page is rendered and prepared — the case in
@@ -415,8 +415,48 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line("markers", "gui: exercises PySide6 widgets/event loop")
     config.addinivalue_line(
+        "markers", "platform: covers code that differs per operating system; runs on all three"
+    )
+    config.addinivalue_line(
         "markers", "use_case: links test to a named use case from use_cases.trlc"
     )
+
+
+PLATFORM_TEST_FILES = frozenset(
+    {
+        "test_addon_manager.py",
+        "test_diagnostics.py",
+        "test_frozen_entry.py",
+        "test_frozen_modes.py",
+        "test_gpu_detector.py",
+        "test_gui_bootstrap.py",
+        "test_gui_ollama_status_line.py",
+        "test_language.py",
+        "test_ollama_address.py",
+        "test_ollama_discovery.py",
+        "test_ollama_install.py",
+        "test_ollama_server.py",
+        "test_ollama_utils.py",
+        "test_power.py",
+        "test_recommendation_service.py",
+        "test_state_repository.py",
+        "test_storage_policy.py",
+        "test_subprocess_env.py",
+    }
+)
+"""The test files of the code that differs per operating system (paths, processes, Ollama, locale).
+`platform_tests.yml` runs these on Windows and macOS, so they stay portable."""
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Mark the platform tests; skip the tests that read Bazel's runfiles outside Bazel."""
+    in_bazel = bool(os.environ.get("TEST_SRCDIR"))
+    reason = pytest.mark.skip(reason="reads the Bazel runfiles: run it with `bazel test`")
+    for item in items:
+        if item.path.name in PLATFORM_TEST_FILES:
+            item.add_marker(pytest.mark.platform)
+        if not in_bazel and "needs_bazel" in item.keywords:
+            item.add_marker(reason)
 
 
 READER_MODEL_ENV = {
@@ -447,7 +487,6 @@ skip_no_reader_models = pytest.mark.skipif(
     not _reader_model_files(),
     reason="the built-in reader's model files are only fetched under Bazel",
 )
-
 
 PAGE_MODEL_ENV = {
     "DOC_ORI_ONNX": ("doc-ori", "inference.onnx"),

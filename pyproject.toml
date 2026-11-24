@@ -52,7 +52,7 @@ privacy = [
 ]
 
 # ── Tooling extras ──────────────────────────────────────────────────────────
-# These are the single source of truth for the lin/test toolchains. The Bazel
+# These are the single source of truth for the lint and test toolchains. The Bazel
 # lock files are compiled from them via `bazel run //:requirements_{dev,test}.update`
 # (see //BUILD). Installing the extra also pulls the base runtime deps, so a
 # `pip install -e ".[test]"` env can run the full suite.
@@ -64,16 +64,11 @@ test = [
     "langchain-core>=1.4.7",
 ]
 dev = [
-    # Lint / static analysis
-    "pylint>=4.0",
-    # Test tooling (pytest-qt etc. come via the [test] extra below)
+    # Test tooling. The [test] extra above is not included here, so this lock carries the rest of
+    # what a dev run imports: pytest-qt and langchain-core come with [test].
     "pytest>=8.3",
     "pytest-mock>=3.14",
     "pytest-cov>=6.0",
-    # Build / release helpers
-    "tomlkit",
-    "dill",
-    "pip-licenses>=5.0",
     # Sphinx documentation
     "sphinx>=8.0",
     "furo>=2024.8",
@@ -89,11 +84,26 @@ teachers-teammate-benchmark = "teachers_teammate.gui.benchmark:main_benchmark"
 [build-system]
 # `wheel` is not needed: setuptools builds wheels itself since 70.1.  `license` as an SPDX
 # expression and `license-files` need 77 (PEP 639).
+#
+# The help pages live in `docs/`, outside the package, so a wheel built here has none; the wheel
+# the release ships is Bazel's (//teachers_teammate:teachers_teammate_wheel), which copies them in
+# as `teachers_teammate/_docs/`.  An editable install finds them where they are.
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["teachers_teammate*"]
+
+# What the app shows besides its code.  The list is the one in `wheel_data` of
+# teachers_teammate/BUILD; a glob would also take the `.ico` and `.icns` a build machine generates.
+[tool.setuptools.package-data]
+teachers_teammate = [
+    "assets/LICENSE.txt",
+    "assets/teachers_teammate.png",
+    "assets/teachers_teammate_icon.png",
+    "assets/third_party_inventory.csv",
+    "assets/third_party_licenses.md",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "teachers_teammate.__version__" }
@@ -101,8 +111,7 @@ version = { attr = "teachers_teammate.__version__" }
 # ── Tool configuration ─────────────────────────────────────────────────────
 #
 # Tools configured here:
-#   ruff   — fast linter + formatter (replaces flake8, isort, black)
-#   pylint — deep static analysis
+#   ruff   — linter and formatter (replaces flake8, isort, black, pylint)
 #   ty     — Rust-based type checker (replaces mypy)
 #
 # Compatible with aspect-build/rules_lint which honours these standard config
@@ -157,7 +166,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.pylint]
-# Match the design limits configured for pylint so only one tool reports violations.
+# The design limits of a function: branches, returns, arguments.
 max-branches = 15
 max-returns = 9
 max-args = 8
@@ -176,119 +185,35 @@ indent-style = "space"
 line-ending = "auto"
 docstring-code-format = true
 
-# ── pylint ────────────────────────────────────────────────────────────────
-
-[tool.pylint.main]
-py-version = "3.14"
-jobs = 0                         # auto-detect CPU count
-recursive = true
-source-roots = ["."]
-
-[tool.pylint.typecheck]
-generated-members = ["cv2.*"]
-extension-pkg-allow-list = ["PySide6", "shiboken6", "lxml"]
-# E0401 (import-error) is active so pylint still catches first-party import typos
-# (ty can't — its `unresolved-import` is globally ignored). pylint resolves imports
-# by importing them in its own dev-hub environment, which lacks the runtime packages
-# below, so list them as importable. This keeps E0401 meaningful for first-party /
-# stdlib imports while tolerating the third-party ones pylint can't load.
-ignored-modules = [
-    # Runtime deps present in the typecheck lock but NOT in pylint's dev-hub env.
-    "PySide6",
-    "qdarkstyle",
-    "PIL",
-    "cv2",
-    "docx",
-    "httpx",
-    "keyring",
-    "langchain_core",
-    "lxml",
-    "markdown_it",
-    "packaging",
-    "ollama",
-    "numpy",
-    "psutil",
-    "pydantic",
-    "pypdfium2",
-    "requests",
-    "spacy",
-    "yaml",
-    # Test-only imports not in pylint's binary env.
-    "pytest",
-    # Optional extras intentionally absent from every lock (lazy-imported).
-    "langchain_openai",
-    "langchain_ollama",
-    "langchain_anthropic",
-    "langchain_google_genai",
-    "langchain_mistralai",
-    "langchain_cohere",
-    "openai",
-    "pynvml",
-]
-
-[tool.pylint.messages_control]
-disable = [
-    # ── Whole categories delegated to ruff ────────────────────────────────
-    # ruff PLC / PLR / PLW mirror pylint C / R / W checks exactly.
-    # Running both would double-report the same violation, so pylint's
-    # convention and refactor categories are suppressed here; ruff owns them.
-    "C",      # convention  → ruff E/W/I/UP/PLC
-    "R",      # refactor    → ruff PLR
-    # ── Specific suppressions — ruff owns the equivalent check ────────────
-    "W0212",  # protected-access       → ruff SLF001 (per-line noqa in docx_builder)
-    "W0718",  # broad-exception-caught → ruff BLE001 (per-line noqa throughout)
-    "W0108",  # unnecessary-lambda     → ruff PLW0108 (per-file-ignore in tests)
-    "W0611",  # unused-import          → ruff F401    (per-file-ignore in tests)
-    "W0612",  # unused-variable        → ruff F841
-    "W0613",  # unused-argument        → ruff ARG     (per-file-ignore in tests; per-line noqa where needed in production)
-    # ── Specific suppressions — no ruff equivalent; scoped to test files ──
-    # W0404 (reimported), W0621 (redefined-outer-name) fire on standard pytest
-    # fixture patterns; suppressed per test file via inline pylint: disable comments.
-]
-
-[tool.pylint.basic]
-const-rgx = "[_A-Z][A-Z0-9_]*|__[a-z]+__"
-
-[tool.pylint.classes]
-# The main window's __init__ delegates per-window attribute setup to
-# _init_runtime_state() (keeping __init__ under the statement limit). Treat that
-# helper like __init__ so the attributes it declares are not flagged W0201
-# (attribute-defined-outside-init).
-defining-attr-methods = [
-    "__init__",
-    "__new__",
-    "setUp",
-    "asyncSetUp",
-    "__post_init__",
-    "_init_runtime_state",
-]
-
-[tool.pylint.format]
-max-line-length = 100
-
-[tool.pylint.design]
-max-args = 8
-max-positional-arguments = 6
-max-attributes = 16
-max-bool-expr = 6
-
-[tool.pylint.similarities]
-min-similarity-lines = 8
-ignore-imports = true
-
 # ── ty ────────────────────────────────────────────────────────────────────
-# Astral's Rust-based type checker (successor to mypy in this project).
+# Astral's Rust-based type checker.
 # https://docs.astral.sh/ty/
 
 [tool.ty.environment]
 python-version = "3.14"
 
+[tool.ty.analysis]
+# The runtime packages ARE resolved under Bazel (see //teachers_teammate:*_typed). Two kinds of
+# module ty cannot see stay allowed: the optional extras, which are in no lock because they are
+# installed on request into the app's own folder, and lxml's C extension, which ships no type
+# information. Everything else it must resolve.
+allowed-unresolved-imports = [
+    "anthropic",
+    "cohere",
+    "google.genai",
+    "langchain_anthropic",
+    "langchain_cohere",
+    "langchain_google_genai",
+    "langchain_mistralai",
+    "langchain_ollama",
+    "langchain_openai",
+    "lxml.etree",
+    "mistralai",
+    "openai",
+    "pynvml",
+]
+
 [tool.ty.rules]
-# The runtime packages ARE resolved under Bazel (see //teachers_teammate:*_typed),
-# but the optional extras (LLM providers, GPU libs) are intentionally
-# left out of the typecheck lock, so their lazy imports stay unresolved — tolerate
-# that rather than pin every optional dependency.
-unresolved-import = "ignore"
 # PySide6 stubs use positional 'a0'/'a1' parameter names that differ from our
 # descriptive names; suppress the Liskov-violation noise project-wide.
 invalid-method-override = "ignore"
@@ -310,6 +235,8 @@ addopts = "-v --tb=short"
 markers = [
     "needs_reader_models: runs the built-in reader's real model files (Bazel fetches them)",
     "needs_ollama: requires a running Ollama instance",
+    "needs_bazel: reads the Bazel runfiles, so it runs under `bazel test` and is skipped elsewhere",
     "gui: exercises PySide6 widgets/event loop",
+    "platform: covers code that differs per operating system; runs on all three",
     "use_case: links test to a named use case from use_cases.trlc",
 ]

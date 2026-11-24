@@ -1,7 +1,5 @@
 """GUI tests for the scan pane: every stored page in one scroll."""
 
-# pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module-scope names by design
-
 from __future__ import annotations
 
 from pathlib import Path

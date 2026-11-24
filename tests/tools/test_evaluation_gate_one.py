@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from tools.evaluation.checks import gate1_answers, gate_one
@@ -11,7 +13,7 @@ from tools.evaluation.run.one_request.answer_format import ANSWER_FORMAT_VERSION
 
 def _header(**overrides) -> gate1_answers.Header:
     """Return the header of an answers file made with the current protocol."""
-    values = {
+    values: dict[str, Any] = {
         "date": "2026-11-12T10:00:00Z",
         "eval_version": protocol.current_stamp().eval_version,
         "fingerprint": protocol.fingerprint_sha256(),

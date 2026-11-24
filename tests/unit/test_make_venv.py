@@ -13,7 +13,9 @@ from tools.build import make_venv
 
 def _python(venv: Path) -> str:
     """The interpreter of *venv* on this system."""
-    return str(make_venv.scripts_folder(venv) / ("python.exe" if sys.platform == "win32" else "python"))
+    return str(
+        make_venv.scripts_folder(venv) / ("python.exe" if sys.platform == "win32" else "python")
+    )
 
 
 def test_build_installs_the_base_runtime_and_the_bundler() -> None:

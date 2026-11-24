@@ -67,8 +67,11 @@ def _inject_addon_packages(argv: list[str]) -> None:
 def _splash_image() -> Path:
     """Return the splash image of a frozen bundle, or of this source tree."""
     if getattr(sys, "frozen", False):
-        return Path(getattr(sys, "_MEIPASS", ".")) / "teachers_teammate" / "assets" / (
-            "teachers_teammate.png"
+        return (
+            Path(getattr(sys, "_MEIPASS", "."))
+            / "teachers_teammate"
+            / "assets"
+            / ("teachers_teammate.png")
         )
     return Path(__file__).resolve().parent / "assets" / "teachers_teammate.png"
 

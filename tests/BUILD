@@ -6,7 +6,7 @@ derives the target's name, its folder tag and ``run_test.py`` from it.
 Running tests
 ─────────────
   * Lint targets (ruff / pylint / ty):
-        bazel test //tests:py_ruff //tests:py_pylint //tests:py_ty
+        bazel test //:lint
 
   * Run a single test file:
         bazel test //tests:test_config
@@ -20,7 +20,6 @@ Running tests
 
 load("@rules_python//python:defs.bzl", "py_library")
 load(":defs.bzl", "app_test")
-load("//third_party/lint:linters.bzl", "pylint_test", "ruff_test", "ty_test")
 
 # ── Test files tagged with @pytest.mark.use_case (for doc extraction) ────
 
@@ -289,8 +288,8 @@ app_test(
     deps = _GUI_DEPS +
            _PIPELINE_DEPS +
            _CLI_LIB + [
-               "//teachers_teammate:gui_layer_lib",
-           ],
+        "//teachers_teammate:gui_layer_lib",
+    ],
 )
 
 app_test(
@@ -644,6 +643,11 @@ app_test(
 # The groups CI runs on separate machines (tools/ci/target_groups.py): every test in exactly one.
 app_test(
     "unit/test_target_groups.py",
+    deps = ["//tools/ci:ci_tools_lib"],
+)
+
+app_test(
+    "unit/test_check_lint_coverage.py",
     deps = ["//tools/ci:ci_tools_lib"],
 )
 
@@ -1017,10 +1021,10 @@ app_test(
 # has a 30 s timeout of its own, so the 60 s of ``small`` is too tight on a loaded runner.
 app_test(
     "unit/test_frozen_modes.py",
-    extra_srcs = ["gui/_settings_stubs.py"],
     size = "medium",
     data = ["//tools/build:teachers-teammate.spec"],
     env = {"BUILD_SPEC": "$(rlocationpath //tools/build:teachers-teammate.spec)"},
+    extra_srcs = ["gui/_settings_stubs.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + [
         "//teachers_teammate:gui_layer_lib",
         "@ocr_test_dependencies//keyring:pkg",
@@ -1365,10 +1369,10 @@ app_test(
     "tools/test_evaluation_app_corrector.py",
     deps = _FORMAT_DEPS + _LANGCHAIN_DEPS + _IMAGE_DEPS + _PDF_DEPS + _CV_DEPS +
            _REQUESTS_DEPS + [
-               "//tools/evaluation:core",
-               "//tools/evaluation:run",
-               "@ocr_test_dependencies//python_docx:pkg",
-           ],
+        "//tools/evaluation:core",
+        "//tools/evaluation:run",
+        "@ocr_test_dependencies//python_docx:pkg",
+    ],
 )
 
 # The pass/fail rule a check is judged by: the verdicts, the thresholds and the retry ladder.
@@ -1618,15 +1622,15 @@ app_test(
 
 app_test(
     "gui/test_gui_check_controller.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 app_test(
     "gui/test_gui_main_window.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
@@ -1643,15 +1647,15 @@ app_test(
 
 app_test(
     "gui/test_gui_worker.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 app_test(
     "gui/test_gui_prompt_dialog.py",
-    extra_srcs = ["gui/_settings_stubs.py"],
     size = "medium",
+    extra_srcs = ["gui/_settings_stubs.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
@@ -1663,8 +1667,8 @@ app_test(
 
 app_test(
     "gui/test_gui_general_page.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
@@ -1689,22 +1693,31 @@ app_test(
 
 app_test(
     "gui/test_gui_settings_pages.py",
-    extra_srcs = ["gui/_gui_harness.py", "gui/_settings_stubs.py"],
     size = "medium",
+    extra_srcs = [
+        "gui/_gui_harness.py",
+        "gui/_settings_stubs.py",
+    ],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 app_test(
     "gui/test_gui_settings_window.py",
-    extra_srcs = ["gui/_gui_harness.py", "gui/_settings_stubs.py"],
     size = "medium",
+    extra_srcs = [
+        "gui/_gui_harness.py",
+        "gui/_settings_stubs.py",
+    ],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 app_test(
     "gui/test_gui_setup_assistant.py",
-    extra_srcs = ["gui/_gui_harness.py", "gui/_settings_stubs.py"],
     size = "medium",
+    extra_srcs = [
+        "gui/_gui_harness.py",
+        "gui/_settings_stubs.py",
+    ],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
@@ -1718,8 +1731,11 @@ app_test(
 # conversation with a fake Ollama and the real MainWindow writing a real ocr.toml.
 app_test(
     "gui/test_gui_setup_walkthrough.py",
-    extra_srcs = ["fakes/fake_ollama.py", "gui/_settings_stubs.py"],
     size = "medium",
+    extra_srcs = [
+        "fakes/fake_ollama.py",
+        "gui/_settings_stubs.py",
+    ],
     tags = ["walkthrough"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + [
         "//teachers_teammate:gui_layer_lib",
@@ -1729,8 +1745,11 @@ app_test(
 
 app_test(
     "gui/test_gui_setup_pages.py",
-    extra_srcs = ["gui/_gui_harness.py", "gui/_settings_stubs.py"],
     size = "medium",
+    extra_srcs = [
+        "gui/_gui_harness.py",
+        "gui/_settings_stubs.py",
+    ],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
@@ -1766,8 +1785,11 @@ app_test(
 
 app_test(
     "gui/test_gui_window_geometry.py",
-    extra_srcs = ["gui/_gui_harness.py", "gui/_settings_stubs.py"],
     size = "medium",
+    extra_srcs = [
+        "gui/_gui_harness.py",
+        "gui/_settings_stubs.py",
+    ],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
@@ -1803,15 +1825,15 @@ app_test(
 
 app_test(
     "gui/test_gui_anonymizer_widget.py",
-    extra_srcs = ["gui/_settings_stubs.py"],
     size = "medium",
+    extra_srcs = ["gui/_settings_stubs.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 app_test(
     "gui/test_gui_privacy_settings.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
@@ -1822,8 +1844,8 @@ app_test(
 
 app_test(
     "gui/test_gui_privacy_view.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
@@ -1840,8 +1862,8 @@ app_test(
 
 app_test(
     "gui/test_gui_addon_installer_dialog.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
@@ -1884,22 +1906,25 @@ app_test(
 
 app_test(
     "gui/test_gui_install_round.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 app_test(
     "gui/test_gui_addons_tabs.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 app_test(
     "gui/test_gui_addons_page.py",
-    extra_srcs = ["fakes/fake_ollama.py", "gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = [
+        "fakes/fake_ollama.py",
+        "gui/_gui_harness.py",
+    ],
     deps = _GUI_DEPS + _PIPELINE_DEPS + [
         "//teachers_teammate:gui_layer_lib",
         "@ocr_test_dependencies//ollama:pkg",
@@ -1913,15 +1938,15 @@ app_test(
 
 app_test(
     "gui/test_gui_lifecycle.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 app_test(
     "gui/test_gui_bootstrap.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
@@ -2024,10 +2049,10 @@ app_test(
 
 app_test(
     "integration/test_page_models.py",
-    extra_srcs = ["unit/preprocessing_auto_golden_data.py"],
     size = "medium",
     data = _PAGE_MODEL_DATA,
     env = _PAGE_MODEL_ENV,
+    extra_srcs = ["unit/preprocessing_auto_golden_data.py"],
     deps = _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
@@ -2036,15 +2061,15 @@ app_test(
 # because the run over the documents is the slow part.
 app_test(
     "gui/test_gui_main_walkthrough.py",
+    size = "large",
+    data = _READER_MODEL_DATA + _PAGE_MODEL_DATA,
+    env = _MODEL_ENV,
     extra_srcs = [
         "e2e/__init__.py",
         "e2e/walk_checked.py",
         "e2e/walkthrough.py",
         "fakes/fake_ollama.py",
     ],
-    size = "large",
-    data = _READER_MODEL_DATA + _PAGE_MODEL_DATA,
-    env = _MODEL_ENV,
     tags = ["walkthrough"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + [
         "//teachers_teammate:gui_layer_lib",
@@ -2056,7 +2081,10 @@ app_test(
 # What that script may import: it also runs inside the shipped bundle, which carries no tests.
 app_test(
     "unit/test_walkthrough_imports.py",
-    extra_srcs = ["e2e/__init__.py", "e2e/walkthrough.py"],
+    extra_srcs = [
+        "e2e/__init__.py",
+        "e2e/walkthrough.py",
+    ],
 )
 
 # The tests that play the whole app (tag ``walkthrough``). CI runs them on a machine of their own
@@ -2098,21 +2126,4 @@ test_suite(
         ":tools_tests",
         ":unit_tests",
     ],
-)
-
-# ── Lint targets ──────────────────────────────────────────────────────────
-
-pylint_test(
-    name = "py_pylint",
-    srcs = [":tests_lib"],
-)
-
-ruff_test(
-    name = "py_ruff",
-    srcs = [":tests_lib"],
-)
-
-ty_test(
-    name = "py_ty",
-    srcs = [":tests_lib"],
 )

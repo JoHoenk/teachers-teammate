@@ -36,8 +36,8 @@ py_library(
         "check_smoke.py",
         "fetch_models.py",
         "make_constraints.py",
-        "make_version_resource.py",
         "make_venv.py",
+        "make_version_resource.py",
         "platform_lock.py",
     ],
     visibility = ["//visibility:public"],
@@ -47,10 +47,10 @@ py_library(
     ],
 )
 
-# Every script of this folder, for //:py_ruff and //:py_ty: build_tools_lib above holds only the
-# ones a unit test imports, and the rest (build_standalone.py, ...) is what ships.
+# Every script of this folder, for the lint set in the root BUILD: build_tools_lib above holds
+# only the ones a unit test imports, and the rest (build_standalone.py, ...) is what ships.
 py_library(
-    name = "all_lib",
+    name = "lint_lib",
     srcs = glob(["*.py"]),
     tags = ["manual"],
     visibility = ["//visibility:public"],

@@ -12,8 +12,8 @@ callers read their files and pass them in, which is what makes it testable with 
 
 from __future__ import annotations
 
-import csv
 from collections.abc import Iterable, Mapping
+import csv
 from pathlib import Path
 
 INVENTORY = "third_party_licenses/inventory.csv"

@@ -71,9 +71,7 @@ def test_the_script_mode_does_not_touch_the_add_on_folder(monkeypatch: pytest.Mo
     prepare, inject = MagicMock(), MagicMock()
     frozen_modes = MagicMock()
     frozen_modes.run_script.return_value = 0
-    monkeypatch.setattr(
-        sys, "argv", ["teachers-teammate", "--_run_script", "walk.py", "e2e.json"]
-    )
+    monkeypatch.setattr(sys, "argv", ["teachers-teammate", "--_run_script", "walk.py", "e2e.json"])
 
     with (
         patch("teachers_teammate.infrastructure.addon_manager.prepare_packages_dir", prepare),

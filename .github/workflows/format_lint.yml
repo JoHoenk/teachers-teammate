@@ -28,6 +28,11 @@ jobs:
       - name: Run the linters (Python, shell)
         run: bazel test --config=ci //:lint --test_output=errors
 
+      # The linters visit the libraries the root BUILD's _LINTED names; a package whose files are
+      # in no library of that list would drop out of the run without a word.
+      - name: Check that every Python file is in the lint set
+        run: python3 tools/ci/check_lint_coverage.py
+
   # A lock that contradicts pyproject.toml, or itself, turns the PR red here rather than in a
   # build three minutes later. A PyPI hiccup fails one attempt; a real mismatch fails both.
   locks:

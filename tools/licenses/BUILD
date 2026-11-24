@@ -26,6 +26,15 @@ py_library(
     visibility = ["//visibility:public"],
 )
 
+# Every script of this folder, for the lint set in the root BUILD: licenses_lib below holds the
+# one a unit test imports, and the rest are the checks the build and release jobs run.
+py_library(
+    name = "lint_lib",
+    srcs = glob(["*.py"]),
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+)
+
 py_library(
     name = "licenses_lib",
     srcs = [

@@ -84,7 +84,9 @@ def test_no_target_writes_a_folder_tag_itself() -> None:
            lands in its own folder's suite and in no other
     """
     wrong = {
-        name: tags for name, (_src, _extra, tags) in _calls().items() if set(tags) & set(FOLDER_TAGS)
+        name: tags
+        for name, (_src, _extra, tags) in _calls().items()
+        if set(tags) & set(FOLDER_TAGS)
     }
 
     assert wrong == {}, "these calls write a folder tag the macro already adds"

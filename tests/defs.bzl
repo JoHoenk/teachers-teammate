@@ -36,8 +36,14 @@ COMMON_DEPS = [
 ]
 
 def app_test(
-    src, size = "small", deps = [], data = [], env = {}, tags = [], extra_srcs = [], **kwargs
-):
+        src,
+        size = "small",
+        deps = [],
+        data = [],
+        env = {},
+        tags = [],
+        extra_srcs = [],
+        **kwargs):
     """Add the test target of one test file.
 
     Args:

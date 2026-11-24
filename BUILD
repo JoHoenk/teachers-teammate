@@ -73,64 +73,44 @@ pylint_test(
     srcs = [":first_party_sources"],
 )
 
+# The libraries ruff and ty visit: one per package of Python, each holding every file of its
+# package that the narrow libraries below it do not. A new package adds its library here, and
+# tools/ci/check_lint_coverage.py fails the lint job when one is missing.
+_LINTED = [
+    "//teachers_teammate:gui_lib_typed",
+    "//teachers_teammate:ocr_lib_typed",
+    "//tests:tests_lib",
+    "//tools:evaluate",
+    "//tools:prepare_gec_testset",
+    "//tools:report",
+    "//tools:scripts_lib",
+    "//tools:store",
+    "//tools:verify_model_catalog",
+    "//tools/build:lint_lib",
+    "//tools/ci:lint_lib",
+    "//tools/evaluation:checks",
+    "//tools/evaluation:convert",
+    "//tools/evaluation:core",
+    "//tools/evaluation:input",
+    "//tools/evaluation:metrics",
+    "//tools/evaluation:report",
+    "//tools/evaluation:run",
+    "//tools/evaluation:store",
+    "//tools/evaluation:viewer",
+    "//tools/licenses:lint_lib",
+    "//tools/packaging:lint_lib",
+    "//tools/release:lint_lib",
+    "//tools/user_text:user_text_lib",
+]
+
 ruff_test(
     name = "py_ruff",
-    srcs = [
-        "//teachers_teammate:gui_lib_typed",
-        "//teachers_teammate:ocr_lib_typed",
-        "//tests:tests_lib",
-        "//tools:evaluate",
-        "//tools:prepare_gec_testset",
-        "//tools:report",
-        "//tools:scripts_lib",
-        "//tools:store",
-        "//tools:verify_model_catalog",
-        "//tools/build:all_lib",
-        "//tools/ci:all_lib",
-        "//tools/evaluation:checks",
-        "//tools/evaluation:convert",
-        "//tools/evaluation:core",
-        "//tools/evaluation:input",
-        "//tools/evaluation:metrics",
-        "//tools/evaluation:report",
-        "//tools/evaluation:run",
-        "//tools/evaluation:store",
-        "//tools/evaluation:viewer",
-        "//tools/licenses:licenses_lib",
-        "//tools/packaging:all_lib",
-        "//tools/release:all_lib",
-        "//tools/user_text:user_text_lib",
-    ],
+    srcs = _LINTED,
 )
 
 ty_test(
     name = "py_ty",
-    srcs = [
-        "//teachers_teammate:gui_lib_typed",
-        "//teachers_teammate:ocr_lib_typed",
-        "//tests:tests_lib",
-        "//tools:evaluate",
-        "//tools:prepare_gec_testset",
-        "//tools:report",
-        "//tools:scripts_lib",
-        "//tools:store",
-        "//tools:verify_model_catalog",
-        "//tools/build:all_lib",
-        "//tools/ci:all_lib",
-        "//tools/evaluation:checks",
-        "//tools/evaluation:convert",
-        "//tools/evaluation:core",
-        "//tools/evaluation:input",
-        "//tools/evaluation:metrics",
-        "//tools/evaluation:report",
-        "//tools/evaluation:run",
-        "//tools/evaluation:store",
-        "//tools/evaluation:viewer",
-        "//tools/licenses:licenses_lib",
-        "//tools/packaging:all_lib",
-        "//tools/release:all_lib",
-        "//tools/user_text:user_text_lib",
-    ],
+    srcs = _LINTED,
 )
 
 # Every shell script of the repository (the packaging and build scripts the workflows run).
@@ -215,9 +195,9 @@ compile_pip_requirements(
 test_suite(
     name = "lock_tests",
     tests = [
+        ":requirements.test",
         ":requirements_addons.test",
         ":requirements_dev.test",
-        ":requirements.test",
         "//tests:test_lock_agreement",
     ],
 )

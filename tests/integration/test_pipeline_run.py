@@ -1961,7 +1961,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
         patch.object(StageBuilder, "build_corrector", return_value=first_corrector),
         patch(
-            "teachers_teammate.infrastructure.stage_builder.LangChainEvaluator",
+            "teachers_teammate.infrastructure.stage_builder.PortEvaluator",
             return_value=first_evaluator,
         ),
     ):
@@ -1994,7 +1994,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
         patch.object(StageBuilder, "build_corrector", return_value=second_corrector),
         patch(
-            "teachers_teammate.infrastructure.stage_builder.LangChainEvaluator",
+            "teachers_teammate.infrastructure.stage_builder.PortEvaluator",
             return_value=second_evaluator,
         ),
     ):
@@ -2054,7 +2054,7 @@ def test_pipeline_run_with_different_providers_per_stage_produces_full_state(
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
         patch.object(StageBuilder, "build_corrector", return_value=mock_corrector),
         patch(
-            "teachers_teammate.infrastructure.stage_builder.LangChainEvaluator",
+            "teachers_teammate.infrastructure.stage_builder.PortEvaluator",
             return_value=mock_evaluator,
         ),
     ):

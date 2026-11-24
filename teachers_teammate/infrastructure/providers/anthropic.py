@@ -33,6 +33,12 @@ PROVIDER = ProviderInfo(
 )
 
 
+ANSWER_TOKENS = 4096
+"""The answer allowance every model above serves: ``claude-3-opus`` stops there, the others
+later.  Enough for a long text-mode proofreading answer, and the app reports an answer cut off
+here instead of storing it."""
+
+
 def list_models(**_kwargs: object) -> list[str]:
     """Return the static Anthropic model list (no public listing API available)."""
     return list(PROVIDER.models)
@@ -48,10 +54,18 @@ def create(
     """Return a ``ChatAnthropic`` instance for *model*.
 
     The key comes in as *api_key*; with none, LangChain reads ``$ANTHROPIC_API_KEY`` itself.
+
+    The answer allowance is passed as well: ``ChatAnthropic`` sends 1024 tokens of its own when
+    none is given, which a text-mode proofreading answer overruns on a long text.
     """
     with import_guard("langchain-anthropic"):
         from langchain_anthropic import ChatAnthropic  # noqa: PLC0415
-    return ChatAnthropic(model=model, temperature=temperature, api_key=api_key)
+    return ChatAnthropic(
+        model=model,
+        temperature=temperature,
+        max_tokens=ANSWER_TOKENS,
+        api_key=api_key,
+    )
 
 
 check_connection = api_key_check(PROVIDER.env_key)

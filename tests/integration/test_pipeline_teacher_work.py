@@ -108,7 +108,7 @@ def _run(cfg, *, corrector: MagicMock | None = None, evaluator: MagicMock | None
         if evaluator is not None:
             stack.enter_context(
                 patch(
-                    "teachers_teammate.infrastructure.stage_builder.LangChainEvaluator",
+                    "teachers_teammate.infrastructure.stage_builder.PortEvaluator",
                     return_value=evaluator,
                 )
             )

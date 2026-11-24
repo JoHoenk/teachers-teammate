@@ -9,6 +9,7 @@ import pytest
 
 from teachers_teammate.infrastructure._llm_invoke import (
     _rejected_request,
+    answer_was_cut_off,
     invoke_langchain_structured,
 )
 
@@ -96,3 +97,39 @@ def test_a_rejected_structured_request_is_unsupported_not_a_transport_failure(
     assert result.parsed is None
     if failure == "transport":
         assert result.error.startswith("Correction failed (")
+
+
+# ── A cut-off answer ───────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("metadata", "cut_off"),
+    [
+        ({"finish_reason": "length"}, True),
+        ({"stop_reason": "max_tokens"}, True),
+        ({"finish_reason": "MAX_TOKENS"}, True),
+        ({"finish_reason": "stop"}, False),
+        ({"stop_reason": "end_turn"}, False),
+        ({"model_name": "gpt-4o"}, False),
+        ({}, False),
+    ],
+)
+def test_a_cut_off_answer_is_read_from_the_providers_finish_reason(
+    metadata: dict[str, str], cut_off: bool
+) -> None:
+    """
+    Given  a message whose provider metadata names how its answer ended
+    When   answer_was_cut_off() reads it
+    Then   it is cut off exactly for the three names of a stopped-at-the-limit answer, and a
+           provider that says nothing counts as complete
+    """
+    assert answer_was_cut_off(SimpleNamespace(response_metadata=metadata)) is cut_off
+
+
+def test_an_answer_without_provider_metadata_counts_as_complete() -> None:
+    """
+    Given  a message that carries no response metadata at all
+    When   answer_was_cut_off() reads it
+    Then   the answer counts as complete, because there is nothing that says otherwise
+    """
+    assert answer_was_cut_off(SimpleNamespace(content="half")) is False

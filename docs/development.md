@@ -3153,6 +3153,14 @@ one of them is visible afterwards:
   sending (`ensure_prompt_fits()`) and raises the same error. It applies only to requests that
   set `num_ctx` and carry no image; the estimate errs towards refusing.
 
+An online provider says the same thing in the response metadata, under one of three names
+(`finish_reason == "length"` at OpenAI and Mistral, `stop_reason == "max_tokens"` at Anthropic,
+`finish_reason == "MAX_TOKENS"` at Gemini).  `answer_was_cut_off()` in `_llm_invoke.py` is the one
+place that reads it, and it counts metadata that says nothing as a whole answer, so a provider the
+app cannot read is never reported as cut off.  `LangChainPort.ask_text()` maps it to the same
+`"truncated"` failure as the server does, so a cut-off online answer is reported on both paths and
+never stored as complete.
+
 `_llm_invoke.py` turns the error into the failure kind `"truncated"`, with the warning
 `TRUNCATED_MESSAGE` (*"The text was too long for the model's working memory."*). What it costs
 depends on the step: a cut-off ① fails the file and the source is kept (a half-corrected text is

@@ -553,10 +553,10 @@ def test_the_resolved_window_reaches_the_evaluator(tmp_path: Path) -> None:
     """
     Given  the same computer and an enabled content review that uses another model
     When   the evaluation stage is built
-    Then   the evaluator is built with the resolved evaluation window
+    Then   the port the review asks carries the resolved evaluation window
     """
-    build_evaluator = MagicMock()
-    factory = PipelineComponentFactory(build_native_ollama_evaluator=build_evaluator)
+    from teachers_teammate.infrastructure.proofreading.port import OllamaPort  # noqa: PLC0415
+
     config = make_config(
         tmp_path,
         correction_provider="ollama",
@@ -566,12 +566,16 @@ def test_the_resolved_window_reaches_the_evaluator(tmp_path: Path) -> None:
         evaluate_provider="ollama",
         evaluate_model="gemma4:12b",
     )
-    builder = StageBuilder(config=config, factory=factory, hardware=_hardware())
+    builder = StageBuilder(config=config, factory=PipelineComponentFactory(), hardware=_hardware())
 
-    builder.build_evaluation(MagicMock(), MagicMock())
+    evaluator = builder.build_evaluation(MagicMock(), MagicMock())
 
     windows = builder.resolved_windows()
-    assert build_evaluator.call_args.kwargs["num_ctx"] == windows.evaluation
+    port = evaluator._port
+    assert isinstance(port, OllamaPort)
+    budget = port.window()
+    assert budget is not None
+    assert budget.num_ctx == windows.evaluation
 
 
 def test_without_hardware_the_window_stays_at_the_base_step(tmp_path: Path) -> None:

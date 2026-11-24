@@ -11,6 +11,7 @@ provider manages its own, so it returns ``None`` and the runner skips the window
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import time
 from typing import TYPE_CHECKING, Protocol
@@ -18,7 +19,7 @@ from typing import TYPE_CHECKING, Protocol
 from ...domain.context_budget import ContextBudget
 from ...domain.proofreading.result import FailureKind, StepName
 from ...exceptions import TRUNCATED_MESSAGE
-from ...texts.review import correction_failed
+from ...texts.review import correction_failed, evaluation_failed
 from .._llm_invoke import (
     _rejected_request,
     invoke_langchain_chain,
@@ -49,6 +50,15 @@ def _review_timeout(base_timeout: float, text: str) -> float:
     return max(base_timeout, min(REVIEW_TIMEOUT_CAP, 60.0 + 0.05 * len(text)))
 
 
+def _failed_warning(step: StepName) -> Callable[[BaseException], str]:
+    """Return the words a request of *step* that failed in transport is reported with.
+
+    The port serves proofreading and the content review, so the sentence a teacher reads names
+    the step that failed: a review that could not be written is not a failed correction.
+    """
+    return evaluation_failed if step == "review" else correction_failed
+
+
 @dataclass(frozen=True)
 class StepRequest:
     """One request of one step: the messages, the answer shape, and how to send it."""
@@ -64,6 +74,9 @@ class StepRequest:
     """Sampling values besides the temperature (the step's profile); empty: the tag decides."""
     answer_factor: float = 1.0
     """How long the answer is compared with the request: the window check and the timeout."""
+    answer_tokens: int | None = None
+    """How many tokens the answer may take; ``None`` — as many as the request, which is the
+    proofreading shape.  A content review passes a short fixed allowance."""
     repairable: bool = True
     """Whether an answer that does not match the schema is worth one repair request."""
 
@@ -145,6 +158,7 @@ class OllamaPort:
                 timeout=self._timeout_of(req),
                 format=schema,
                 system=req.system,
+                answer_tokens=req.answer_tokens,
             )
         except RunStoppedError:
             raise  # a stop is not a failed request: the caller leaves the stage
@@ -155,7 +169,7 @@ class OllamaPort:
                 # An older server or a model that refuses ``format``: a plain answer may still
                 # work, so this is an unusable answer, not an unreachable server.
                 return PortAnswer(failure="invalid", error=str(exc))
-            return PortAnswer(failure="transport", error=correction_failed(exc))
+            return PortAnswer(failure="transport", error=_failed_warning(req.step)(exc))
         return self._answer(text, None, started)
 
     def _answer(
@@ -191,15 +205,22 @@ class LangChainPort:
         return None
 
     def ask_text(self, req: StepRequest) -> PortAnswer:
-        """Send *req* as a plain chat request."""
+        """Send *req* as a plain chat request.
+
+        An answer the provider cut off at its output limit is reported as ``truncated``, as the
+        Ollama port does: it repeats the text it was asked about, so half of it must not replace
+        the whole.
+        """
         answer = invoke_langchain_chain(
             self._llm,
             system=escape_braces(req.system),
             human=_TEXT_VARIABLE,
             variables={"text": req.user},
             fallback="",
-            failure=correction_failed,
+            failure=_failed_warning(req.step),
         )
+        if answer.truncated:
+            return PortAnswer(failure="truncated", error=TRUNCATED_MESSAGE)
         if answer.warning is not None:
             return PortAnswer(failure="transport", error=answer.warning)
         return PortAnswer(raw=answer.text)

@@ -455,7 +455,7 @@ app_test(
 
 app_test(
     "unit/test_exchange_text_first.py",
-    deps = _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
+    deps = _FORMAT_DEPS + _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 app_test(

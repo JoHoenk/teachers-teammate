@@ -811,6 +811,26 @@ def test_installed_provider_create_returns_model_instance(
     assert result is fake_instance
 
 
+def test_anthropic_answers_are_not_held_to_langchains_own_limit() -> None:
+    """
+    Given  Anthropic's LangChain package is installed (mocked)
+    When   create('some-model') is called
+    Then   the answer allowance is the app's, not the 1024 tokens the class would send itself,
+           which a long text-mode proofreading answer overruns
+    """
+    import sys  # noqa: PLC0415
+    from langchain_core.language_models import BaseChatModel  # noqa: PLC0415
+
+    fake_mod = MagicMock()
+    fake_mod.ChatAnthropic = MagicMock(return_value=MagicMock(spec=BaseChatModel))
+
+    with patch.dict(sys.modules, {"langchain_anthropic": fake_mod}):
+        mod = _load("anthropic")
+        mod.create("some-model")
+
+    assert fake_mod.ChatAnthropic.call_args.kwargs["max_tokens"] == mod.ANSWER_TOKENS
+
+
 def test_ollama_list_models_returns_models_when_server_reachable() -> None:
     """
     Given  the Ollama server is reachable and OllamaClient.list_models returns a list

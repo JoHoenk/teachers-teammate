@@ -283,11 +283,9 @@ class Corrector(ABC):
 class Evaluator(ABC):
     """Assesses the quality of corrected OCR text.
 
-    Implementations: :class:`~infrastructure.evaluation.LangChainEvaluator`
-    (provider-agnostic) and :class:`~infrastructure.evaluation.NativeOllamaEvaluator`.
-    To add a non-LangChain evaluator, implement this ABC, add a constructor field
-    to :class:`~infrastructure.stage_builder.PipelineComponentFactory`, and select it
-    in :meth:`~infrastructure.stage_builder.StageBuilder.build_evaluation`.
+    Implementation: :class:`~infrastructure.evaluation.PortEvaluator`, which asks over the
+    run's connection to a model.  To review in another way, implement this ABC and swap the
+    :attr:`~infrastructure.stage_builder.PipelineComponentFactory.build_evaluator` field.
     """
 
     @abstractmethod

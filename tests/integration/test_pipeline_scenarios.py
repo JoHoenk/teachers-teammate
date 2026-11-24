@@ -125,7 +125,7 @@ def test_evaluation_stage_runs_and_persists(tmp_path: Path) -> None:
         build_llm_patch,
         corrector_patch,
         patch(
-            "teachers_teammate.infrastructure.stage_builder.LangChainEvaluator",
+            "teachers_teammate.infrastructure.stage_builder.PortEvaluator",
             return_value=evaluator,
         ),
     ):

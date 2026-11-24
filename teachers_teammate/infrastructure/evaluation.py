@@ -1,9 +1,9 @@
-"""Evaluation implementations for corrected OCR text.
+"""The content review: one request about corrected text, over a connection to a model.
 
-:class:`LangChainEvaluator` — accepts any LangChain ``BaseChatModel``; provider-agnostic.
-:class:`NativeOllamaEvaluator` — uses :class:`~.ollama_utils.OllamaClient` directly; no LangChain.
-
-Both implement :class:`~teachers_teammate.interfaces.Evaluator`.
+:class:`PortEvaluator` asks through a :class:`~.proofreading.port.ModelPort`, the same port
+proofreading sends its steps over.  A local Ollama server and an online provider therefore get
+exactly the same messages, and both report a cut-off answer the same way.  It implements
+:class:`~teachers_teammate.interfaces.Evaluator`.
 """
 
 from __future__ import annotations
@@ -11,37 +11,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from langchain_core.language_models import BaseChatModel
+    from ..domain.formatted_text import TextFormat
+    from .proofreading.port import ModelPort
 
-    from .ollama_utils import OllamaClient
-
-from ..domain.context_budget import (
-    EVALUATION_ANSWER_TOKENS,
-    EVALUATION_NUM_CTX_CAP,
-)
+from ..domain.context_budget import EVALUATION_ANSWER_TOKENS
 from ..domain.evaluation import EvaluationOutcome
-from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
+from ..domain.proofreading.result import FailureKind
 from ..domain.stages import Stage
 from ..interfaces import Evaluator
 from ..settings_schema import DEFAULTS
-from ..texts.review import TOO_LONG_FOR_REVIEW_WARNING, evaluation_failed
-from ._llm_invoke import (
-    ChatRequest,
-    InvokeAnswer,
-    invoke_langchain_chain,
-    invoke_ollama_chat,
-    tidy_answer,
-)
-
-
-def _outcome(answer: InvokeAnswer) -> EvaluationOutcome:
-    """Return the review *answer* carries, with the warning of a request that did not answer.
-
-    A review is optional: one that could not be written is reported as a warning on the file,
-    and the proofreading it was asked about is saved all the same.
-    """
-    return EvaluationOutcome(text=answer.text, warning=answer.warning)
+from ..texts.review import TOO_LONG_FOR_REVIEW_WARNING, review_message
+from .proofreading.port import StepRequest
 
 
 def _tidy_review(answer: str) -> str:
@@ -51,76 +32,51 @@ def _tidy_review(answer: str) -> str:
     return clean_llm_answer(answer)
 
 
-class LangChainEvaluator(Evaluator):
-    """Runs the evaluation prompt against corrected text."""
-
-    def __init__(self, llm: BaseChatModel, prompt: str = "") -> None:
-        self._llm = llm
-        self._prompt = prompt or DEFAULTS["evaluate_prompt"]
-
-    def evaluate(
-        self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
-    ) -> EvaluationOutcome:
-        result = invoke_langchain_chain(
-            self._llm,
-            system=with_notation_hint(self._prompt, text_format, task=Stage.EVALUATION),
-            human="Language: {language}\n\nCorrected text:\n\n{text}",
-            variables={"text": corrected_text, "language": language},
-            fallback="",
-            failure=evaluation_failed,
-        )
-        return _outcome(tidy_answer(result, _tidy_review))
-
-
-class NativeOllamaEvaluator(Evaluator):
-    """Ollama-backed evaluation using the native HTTP API (no LangChain).
-
-    Accepts an :class:`~.ollama_utils.OllamaClient` injected by the stage
-    builder — the client is shared across pipeline stages and must not be
-    constructed here.
-    """
+class PortEvaluator(Evaluator):
+    """Asks the review prompt about corrected text, over the run's connection to a model."""
 
     def __init__(
         self,
-        model: str,
-        client: OllamaClient,
+        port: ModelPort,
         prompt: str = "",
-        timeout: float = 120.0,
-        temperature: float = 0.7,
-        num_ctx: int = EVALUATION_NUM_CTX_CAP,
+        *,
+        temperature: float = 0.0,
         think: bool | str = False,
     ) -> None:
-        self._think = think
-        self._model = model
-        self._client = client
+        self._port = port
         self._prompt = prompt or DEFAULTS["evaluate_prompt"]
-        self._timeout = timeout
         self._temperature = temperature
-        self._num_ctx = num_ctx
-
-    def _message(self, corrected_text: str, language: str, text_format: TextFormat) -> str:
-        """Return the review request for this text."""
-        system = with_notation_hint(self._prompt, text_format, task=Stage.EVALUATION)
-        return f"{system}\n\nLanguage: {language}\n\nCorrected text:\n\n{corrected_text}"
+        self._think = think
 
     def evaluate(
         self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
     ) -> EvaluationOutcome:
-        result = invoke_ollama_chat(
-            self._client,
-            ChatRequest(
-                model=self._model,
-                prompt=self._message(corrected_text, language, text_format),
+        answer = self._port.ask_text(
+            StepRequest(
+                step="review",
+                system=with_notation_hint(self._prompt, text_format, task=Stage.EVALUATION),
+                user=review_message(language, corrected_text),
                 temperature=self._temperature,
-                timeout=self._timeout,
-                num_ctx=self._num_ctx,
                 think=self._think,
                 # A review's answer is short and fixed, so the text gets the rest of the window:
                 # a content review cannot be split into pieces the way proofreading can.
+                answer_factor=0.0,
                 answer_tokens=EVALUATION_ANSWER_TOKENS,
-            ),
-            fallback="",
-            failure=evaluation_failed,
-            truncated_warning=TOO_LONG_FOR_REVIEW_WARNING,
+            )
         )
-        return _outcome(tidy_answer(result, _tidy_review))
+        if answer.failure:
+            # A review is optional: one that could not be written is a warning on the file, and
+            # the proofreading it was asked about is stored all the same.
+            return EvaluationOutcome(warning=_warning_of(answer.failure, answer.error))
+        return EvaluationOutcome(text=_tidy_review(answer.raw))
+
+
+def _warning_of(failure: FailureKind, error: str) -> str:
+    """Return what a teacher is told about a review that did not come back whole.
+
+    ``error`` already carries the sentence for a failed request (the port words it as a review);
+    a cut-off answer says why it cannot be reviewed instead.
+    """
+    if failure == "truncated":
+        return TOO_LONG_FOR_REVIEW_WARNING
+    return error

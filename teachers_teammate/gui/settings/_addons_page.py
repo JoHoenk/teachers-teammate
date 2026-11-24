@@ -30,7 +30,7 @@ from ...domain.install_item import (
 )
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...domain.ollama_address import normalize_ollama_url
-from ...settings_schema import DEFAULTS
+from ...settings_schema import DEFAULTS, normalize_saved_ollama_url
 from ...texts import addons as txt
 from ...texts import dialogs as dlg
 from ...texts import settings as st
@@ -96,7 +96,7 @@ class AddonsPage(SettingsPageBase):
         super().__init__(context, parent)
         settings = context.settings
         self._svc = context.app_service
-        self._ollama_url = normalize_ollama_url(str(settings.get("ollama_url", "")))
+        self._ollama_url = normalize_saved_ollama_url(settings.get("ollama_url"))
         self._detect_task = LatestTask(self)
         self._detect_running = False
         self._detect_again = False  # a pull finished while a detection was running

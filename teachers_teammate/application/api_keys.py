@@ -76,7 +76,8 @@ class ApiKeys:
             self._store.migrate(env_key)
             if self.set_outside_app(env_key):
                 continue
-            value = self._store.get(env_key)
+            value = self._store.get(env_key).strip()
+            self._stored[env_key] = value
             if value:
                 self.remember(env_key, value)
 

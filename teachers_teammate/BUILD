@@ -363,6 +363,8 @@ _GUI_SRCS = [
 # into the wheel. The *_typed targets below exist purely for the lint targets.
 _TYPED_DEPS_OCR = [
     "@ocr_test_dependencies//httpx:pkg",
+    # keyring and PySide6: the credential store (infrastructure) reads the keychain and QSettings.
+    "@ocr_test_dependencies//keyring:pkg",
     "@ocr_test_dependencies//langchain_core:pkg",
     "@ocr_test_dependencies//lxml:pkg",
     "@ocr_test_dependencies//markdown_it_py:pkg",
@@ -374,19 +376,17 @@ _TYPED_DEPS_OCR = [
     "@ocr_test_dependencies//psutil:pkg",
     "@ocr_test_dependencies//pydantic:pkg",
     "@ocr_test_dependencies//pypdfium2:pkg",
+    "@ocr_test_dependencies//pyside6_essentials:pkg",
     "@ocr_test_dependencies//python_docx:pkg",
     "@ocr_test_dependencies//pyyaml:pkg",
     "@ocr_test_dependencies//requests:pkg",
+    "@ocr_test_dependencies//shiboken6:pkg",
     "@ocr_test_dependencies//spacy:pkg",
 ]
 
 _TYPED_DEPS_GUI = [
-    # keyring: the credential store, and the uninstaller's key removal in frozen_modes.py.
-    "@ocr_test_dependencies//keyring:pkg",
     "@ocr_test_dependencies//psutil:pkg",
-    "@ocr_test_dependencies//pyside6_essentials:pkg",
     "@ocr_test_dependencies//qdarkstyle:pkg",
-    "@ocr_test_dependencies//shiboken6:pkg",
 ]
 
 # One library per layer, with the real import direction as `deps`, so a test lists the layer it

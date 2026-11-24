@@ -21,7 +21,7 @@ from ..domain.proofreading.result import FailureKind
 from ..domain.stages import Stage
 from ..interfaces import Evaluator
 from ..settings_schema import DEFAULTS
-from ..texts.review import TOO_LONG_FOR_REVIEW_WARNING, review_message
+from ..texts.review import TOO_LONG_FOR_REVIEW_WARNING, evaluation_failed, review_message
 from .proofreading.port import StepRequest
 
 
@@ -62,6 +62,7 @@ class PortEvaluator(Evaluator):
                 # a content review cannot be split into pieces the way proofreading can.
                 answer_factor=0.0,
                 answer_tokens=EVALUATION_ANSWER_TOKENS,
+                failed=evaluation_failed,
             )
         )
         if answer.failure:

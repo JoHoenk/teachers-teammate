@@ -46,7 +46,7 @@ from ..config import Config
 from ..domain.data_location import DataFlow
 from ..domain.install_item import InstallItem
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
-from ..settings_schema import DEFAULTS
+from ..settings_schema import DEFAULTS, normalize_saved_ollama_url
 from ..texts import app as app_text
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
@@ -828,7 +828,7 @@ class MainWindow(QMainWindow):
         show_update(self._update_banner, version, url)
 
     def _current_ollama_url(self) -> str:
-        return str(self._config_panel.get_settings_dict().get("ollama_url", DEFAULTS["ollama_url"]))
+        return normalize_saved_ollama_url(self._config_panel.get_settings_dict().get("ollama_url"))
 
     # ── Settings window ───────────────────────────────────────────────────
 

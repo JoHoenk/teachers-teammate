@@ -25,7 +25,8 @@ from teachers_teammate.infrastructure.ocr_formats import plain_text_of
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.infrastructure.pipeline import OCRPipeline
 from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
-from teachers_teammate.infrastructure.stage_builder import StageBuilder
+from teachers_teammate.infrastructure.spacy_models import SpacyModels
+from teachers_teammate.infrastructure.stage_builder import PipelineComponentFactory, StageBuilder
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from teachers_teammate.interfaces import Corrector
@@ -150,6 +151,13 @@ def test_evaluation_stage_runs_and_persists(tmp_path: Path) -> None:
 # ── anonymization ────────────────────────────────────────────────────────────
 
 
+def _spacy_factory() -> PipelineComponentFactory:
+    """Return the factory the application layer would give a run: spaCy models build the anonymizer."""
+    return PipelineComponentFactory(
+        build_anonymizer=lambda *, language, config: SpacyModels().anonymizer(language, config)
+    )
+
+
 @pytest.mark.use_case("PII_Anonymization_Before_Correction")
 def test_anonymizer_runs_before_correction_and_restores(tmp_path: Path) -> None:
     """
@@ -187,7 +195,7 @@ def test_anonymizer_runs_before_correction_and_restores(tmp_path: Path) -> None:
             OCRPipeline(
                 cfg,
                 FileDiscovery().collect_input_files(cfg),
-                dependencies=pipeline_dependencies(tmp_path),
+                dependencies=pipeline_dependencies(tmp_path, component_factory=_spacy_factory()),
             )
             .run()
             .exit_code
@@ -490,7 +498,7 @@ def test_a_text_with_names_hidden_in_pieces_stores_a_review_that_fits(tmp_path: 
             OCRPipeline(
                 cfg,
                 FileDiscovery().collect_input_files(cfg),
-                dependencies=pipeline_dependencies(tmp_path),
+                dependencies=pipeline_dependencies(tmp_path, component_factory=_spacy_factory()),
             )
             .run()
             .exit_code

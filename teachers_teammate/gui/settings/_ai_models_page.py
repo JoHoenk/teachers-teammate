@@ -43,7 +43,7 @@ from ...domain.install_item import InstallItem, InstallKind
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...domain.ollama_address import normalize_ollama_url
 from ...domain.stages import Stage
-from ...settings_schema import CONTEXT_SETTINGS, DEFAULTS
+from ...settings_schema import CONTEXT_SETTINGS, DEFAULTS, normalize_saved_ollama_url
 from ...texts import models as words
 from ...texts import review as txt
 from ...texts import settings as st
@@ -118,7 +118,7 @@ class AiModelsPage(SettingsPageBase):
         settings = context.settings
         self._app_service = context.app_service
         hardware = profile_setting(settings.get("hardware_profile", DEFAULTS["hardware_profile"]))
-        self._ollama_url = normalize_ollama_url(str(settings.get("ollama_url", "")))
+        self._ollama_url = normalize_saved_ollama_url(settings.get("ollama_url"))
         self._loading = False
         self._drafts = context.key_drafts or ApiKeyDrafts(context.app_service, parent=self)
         # The privacy line (see _refresh_privacy_line).

@@ -121,6 +121,35 @@ def test_start_up_moves_plain_keys_into_the_keychain(
     assert "MISTRAL_API_KEY" not in os.environ
 
 
+def test_a_provider_without_a_stored_key_is_not_asked_again(monkeypatch) -> None:
+    """
+    Given  a store with no key for a provider, read once at start-up
+    When   the key is asked for later
+    Then   the answer is "no key" and the store is not read a second time
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    class CountingStore:
+        reads = 0
+
+        def migrate(self, env_key: str) -> None:
+            """Nothing to move."""
+
+        def get(self, env_key: str) -> str:
+            """Count the read; the store holds nothing."""
+            self.reads += 1
+            return ""
+
+    store = CountingStore()
+    keys = ApiKeys(store)  # ty: ignore[invalid-argument-type]
+
+    keys.load_stored(["OPENAI_API_KEY"])
+    assert keys.key("OPENAI_API_KEY") == ""
+    assert keys.key("OPENAI_API_KEY") == ""
+
+    assert store.reads == 1
+
+
 def test_a_key_in_the_environment_wins_over_the_stored_one(keychain, monkeypatch) -> None:
     """
     Given  a key in the keychain and another one set in the environment before the app started

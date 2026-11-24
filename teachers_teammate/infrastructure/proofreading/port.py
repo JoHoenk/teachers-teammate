@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Protocol
 from ...domain.context_budget import BASE_NUM_CTX, ContextBudget
 from ...domain.proofreading.result import FailureKind, StepName
 from ...exceptions import TRUNCATED_MESSAGE
-from ...texts.review import correction_failed, evaluation_failed
+from ...texts.review import correction_failed
 from .._llm_invoke import (
     _rejected_request,
     invoke_langchain_chain,
@@ -49,15 +49,6 @@ def _review_timeout(base_timeout: float, text: str) -> float:
     return max(base_timeout, min(REVIEW_TIMEOUT_CAP, 60.0 + 0.05 * len(text)))
 
 
-def _failed_warning(step: StepName) -> Callable[[BaseException], str]:
-    """Return the words a request of *step* that failed in transport is reported with.
-
-    The port serves proofreading and the content review, so the sentence a teacher reads names
-    the step that failed: a review that could not be written is not a failed correction.
-    """
-    return evaluation_failed if step == "review" else correction_failed
-
-
 @dataclass(frozen=True)
 class StepRequest:
     """One request of one step: the messages, the answer shape, and how to send it."""
@@ -78,6 +69,8 @@ class StepRequest:
     proofreading shape.  A content review passes a short fixed allowance."""
     repairable: bool = True
     """Whether an answer that does not match the schema is worth one repair request."""
+    failed: Callable[[BaseException], str] = correction_failed
+    """Words the warning of a request that failed in transport; a content review words its own."""
 
 
 @dataclass(frozen=True)
@@ -168,7 +161,7 @@ class OllamaPort:
                 # An older server or a model that refuses ``format``: a plain answer may still
                 # work, so this is an unusable answer, not an unreachable server.
                 return PortAnswer(failure="invalid", error=str(exc))
-            return PortAnswer(failure="transport", error=_failed_warning(req.step)(exc))
+            return PortAnswer(failure="transport", error=req.failed(exc))
         return self._answer(text, None, started)
 
     def _answer(
@@ -216,7 +209,7 @@ class LangChainPort:
             human=_TEXT_VARIABLE,
             variables={"text": req.user},
             fallback="",
-            failure=_failed_warning(req.step),
+            failure=req.failed,
         )
         if answer.truncated:
             return PortAnswer(failure="truncated", error=TRUNCATED_MESSAGE)

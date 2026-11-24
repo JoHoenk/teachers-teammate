@@ -19,6 +19,7 @@ from teachers_teammate.infrastructure.proofreading.port import (
     LangChainPort,
     ModelPort,
     OllamaPort,
+    StepRequest,
 )
 from teachers_teammate.texts.review import TOO_LONG_FOR_REVIEW_WARNING
 from tests.fakes.fake_port import FakePort, answer
@@ -198,3 +199,23 @@ def test_the_review_is_stored_without_reasoning_or_code_fence() -> None:
     port = FakePort(answer(" thinkinghm</think>\n```markdown\n**Good** work\n```"))
 
     assert _evaluator(port).evaluate(TEXT, LANGUAGE) == EvaluationOutcome(text="**Good** work")
+
+
+@pytest.mark.unit
+def test_a_proofreading_request_of_the_review_step_is_not_worded_as_an_evaluation(mocker) -> None:
+    """
+    Given  a proofreading request that carries the review step's name (the R exchange)
+    When   its provider request fails
+    Then   the warning says the correction failed: only a content review words its own failure
+    """
+    mocker.patch(
+        "langchain_core.prompts.ChatPromptTemplate.from_messages",
+        return_value=_FailingChain(),
+    )
+
+    answer_ = LangChainPort(FakeListChatModel(responses=["ok"])).ask_text(
+        StepRequest(step="review", system="s", user="u")
+    )
+
+    assert answer_.failure == "transport"
+    assert answer_.error.startswith("Correction failed (")

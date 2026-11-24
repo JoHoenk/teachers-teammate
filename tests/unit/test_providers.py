@@ -804,12 +804,11 @@ def test_installed_provider_create_returns_model_instance(
     assert result is fake_instance
 
 
-def test_anthropic_answers_are_not_held_to_langchains_own_limit() -> None:
+def test_anthropic_answers_keep_the_librarys_per_model_limit() -> None:
     """
     Given  Anthropic's LangChain package is installed (mocked)
     When   create('some-model', temperature=0.7) is called
-    Then   the answer allowance is the app's, not the 1024 tokens the class would send itself,
-           which a long text-mode proofreading answer overruns
+    Then   no max_tokens is passed, so ChatAnthropic uses the output limit of the model
     """
     import sys  # noqa: PLC0415
     from langchain_core.language_models import BaseChatModel  # noqa: PLC0415
@@ -821,7 +820,7 @@ def test_anthropic_answers_are_not_held_to_langchains_own_limit() -> None:
         mod = _load("anthropic")
         mod.create("some-model", temperature=0.7)
 
-    assert fake_mod.ChatAnthropic.call_args.kwargs["max_tokens"] == mod.ANSWER_TOKENS
+    assert "max_tokens" not in fake_mod.ChatAnthropic.call_args.kwargs
 
 
 def test_ollama_list_models_returns_models_when_server_reachable() -> None:

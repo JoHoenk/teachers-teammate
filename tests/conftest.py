@@ -295,6 +295,7 @@ def pipeline_dependencies(tmp_path: Path, **fields: object):
     The teacher's work and the model folder are the app's own stores, which the autouse fixtures
     point at empty temporary folders: a run and the test that set the work up see one folder.
     """
+    from teachers_teammate.infrastructure.key_facts import MachineKeyFacts  # noqa: PLC0415
     from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
     from teachers_teammate.infrastructure.pipeline import PipelineDependencies  # noqa: PLC0415
     from teachers_teammate.infrastructure.speed_store import SampleStore  # noqa: PLC0415
@@ -308,6 +309,7 @@ def pipeline_dependencies(tmp_path: Path, **fields: object):
         "model_store": ModelStore(),
     }
     values.update(fields)
+    values.setdefault("key_facts", MachineKeyFacts(values["model_store"]))
     return PipelineDependencies(**values)  # ty: ignore[invalid-argument-type]
 
 

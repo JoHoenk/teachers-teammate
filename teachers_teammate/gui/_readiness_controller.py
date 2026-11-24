@@ -25,7 +25,7 @@ from ..domain.ollama_discovery import (
 )
 from ..domain.requirements import IssueKind, RequirementIssue
 from ..domain.stages import Stage
-from ..settings_schema import DEFAULTS
+from ..settings_schema import normalize_saved_ollama_url
 from ..texts import dialogs as dlg
 from ..texts import main_window as txt
 from . import _dialogs
@@ -243,7 +243,7 @@ class ReadinessController(QObject):
         self.update()
 
     def _current_ollama_url(self) -> str:
-        return str(self._panel.get_settings_dict().get("ollama_url", DEFAULTS["ollama_url"]))
+        return normalize_saved_ollama_url(self._panel.get_settings_dict().get("ollama_url"))
 
     # ── Showing ───────────────────────────────────────────────────────────
 

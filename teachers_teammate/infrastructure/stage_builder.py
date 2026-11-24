@@ -68,7 +68,7 @@ from .proofreading.chunking import ChunkingCorrector
 from .proofreading.corrector import ProofreadingSettings, build_exchange_corrector
 from .proofreading.port import LangChainPort, ModelPort, OllamaPort
 from .reporting import StdoutReporter
-from .spacy_models import SpacyModels, installed_spacy_models
+from .spacy_models import installed_spacy_models
 from .system_locale import system_language
 from .workflow.preprocess_service import PreprocessService
 
@@ -151,7 +151,9 @@ def _default_build_doc_creator(*, fmt: str, labels_language: str = "") -> Docume
 
 
 def _default_build_anonymizer(*, language: str, config: AnonymizerConfig) -> Anonymizer:
-    return SpacyModels().anonymizer(language, config)
+    """Fail: the application layer gives a run the builder that owns the spaCy models."""
+    del language, config
+    raise NotImplementedError
 
 
 def _default_check_ocr_model(*, url: str, model: str, reporter: Reporter) -> None:

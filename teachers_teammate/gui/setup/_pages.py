@@ -65,7 +65,7 @@ from ...domain.model_catalog import (
 )
 from ...domain.ollama_address import normalize_ollama_url
 from ...domain.stages import Stage
-from ...settings_schema import DEFAULTS
+from ...settings_schema import DEFAULTS, normalize_saved_ollama_url
 from ...texts import addons as addon_text
 from ...texts import review as txt
 from ...texts.models import compact_suitability_text
@@ -396,7 +396,7 @@ class LocalAiPage(SetupPage):
         self._status_layout.setContentsMargins(0, 0, 0, 4)
         layout.addWidget(self._status_holder)
 
-        saved = normalize_ollama_url(str(context.settings.get("ollama_url", "")))
+        saved = normalize_saved_ollama_url(context.settings.get("ollama_url"))
         local = self._context.app_service.ollama.is_local(saved, include_wsl_host=True)
         self._here = QRadioButton(LOCAL_AI_HERE)
         self._server = QRadioButton(LOCAL_AI_SERVER)
@@ -1215,7 +1215,7 @@ class DonePage(SetupPage):
 
     def _ollama_url(self) -> str:
         """Return the local AI server address the setup plan leaves behind."""
-        return str(self._settings().get("ollama_url", ""))
+        return str(self._settings().get("ollama_url") or "")
 
     def _on_select(self) -> None:
         """Finish, then let the main window choose the folder."""

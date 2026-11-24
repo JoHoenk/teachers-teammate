@@ -30,6 +30,18 @@ ENTRY_POINTS = (
 #: The collaborators a module must be given, never build for itself.
 STORES = ("ModelStore", "TeacherWorkStore", "SpacyModels", "MachineKeyFacts")
 
+#: The modules, besides the composition root, that wire concrete classes for an entry point.
+WIRING = (
+    COMPOSITION,
+    f"{PACKAGE}/gui/composition.py",
+    f"{PACKAGE}/gui/__main__.py",
+    f"{PACKAGE}/gui/benchmark/composition.py",
+    f"{PACKAGE}/gui/benchmark/__main__.py",
+    f"{PACKAGE}/cli_composition.py",
+    f"{PACKAGE}/__main__.py",
+    f"{PACKAGE}/frozen_modes.py",
+)
+
 #: The modules that build the model of an online provider; each is given a temperature.
 MODEL_BUILDERS = (f"{PACKAGE}/infrastructure/llm_factory.py",)
 
@@ -89,21 +101,31 @@ def test_no_module_declares_an_optional_service() -> None:
     )
 
 
+def _calls(text: str) -> set[str]:
+    """Return the names *text* calls as a plain function or class: ``Name(...)``."""
+    return {
+        node.func.id
+        for node in ast.walk(ast.parse(text))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+
 def test_no_module_builds_its_own_store() -> None:
     """
-    Given  every module of the package but the composition root
-    When   its source is read for ``or ModelStore()``, ``or TeacherWorkStore()`` and the like
-    Then   none builds one: the store the app runs with is the one it is given
+    Given  every module of the package but the ones that wire an entry point
+    When   its source is read for a call of ``ModelStore``, ``SpacyModels`` and the like
+    Then   none builds one, in a default or anywhere else: it is given the one the app runs with
     """
     findings = [
-        f"{name}: or {store}()"
+        f"{name}: {store}()"
         for name, text in _sources().items()
-        if name != COMPOSITION
-        for store in STORES
-        if f"or {store}()" in text
+        if name not in WIRING
+        for store in sorted(_calls(text) & set(STORES))
     ]
 
-    assert not findings, "Only application/composition.py builds a store:\n" + "\n".join(findings)
+    assert not findings, "Only the modules that wire an entry point build a store:\n" + "\n".join(
+        findings
+    )
 
 
 def test_every_online_model_is_built_at_the_callers_temperature() -> None:

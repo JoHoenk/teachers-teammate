@@ -133,3 +133,34 @@ def test_an_answer_without_provider_metadata_counts_as_complete() -> None:
     Then   the answer counts as complete, because there is nothing that says otherwise
     """
     assert answer_was_cut_off(SimpleNamespace(content="half")) is False
+
+
+class _AnsweringModel:
+    """A chat model whose bound structured chain answers with *answer*."""
+
+    def __init__(self, answer: object) -> None:
+        self._answer = answer
+
+    def with_structured_output(self, schema: object, **_kwargs: object) -> RunnableLambda:
+        return RunnableLambda(lambda _prompt: self._answer)
+
+
+def test_a_cut_off_structured_answer_is_truncated_not_invalid() -> None:
+    """
+    Given  an online model whose structured answer stopped at the output limit and did not parse
+    When   invoke_langchain_structured() reads it
+    Then   the failure is "truncated", which no repair request can mend, and not "invalid"
+    """
+    raw = SimpleNamespace(content='{"text": "half', response_metadata={"finish_reason": "length"})
+    model = _AnsweringModel({"raw": raw, "parsed": None, "parsing_error": ValueError("bad")})
+
+    result = invoke_langchain_structured(
+        model,  # ty: ignore[invalid-argument-type]
+        system="s",
+        human="{text}",
+        variables={"text": "t"},
+        schema=dict,
+    )
+
+    assert result.failure == "truncated"
+    assert result.parsed is None

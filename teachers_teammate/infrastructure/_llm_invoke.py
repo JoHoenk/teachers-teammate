@@ -202,6 +202,8 @@ def invoke_langchain_structured[T](
             return StructuredResult(error=str(exc), failure="unsupported")
         return StructuredResult(error=correction_failed(exc), failure="transport")
     raw = answer.get("raw") if isinstance(answer, dict) else answer
+    if answer_was_cut_off(raw):
+        return StructuredResult(error=TRUNCATED_MESSAGE, failure="truncated")
     parsed = answer.get("parsed") if isinstance(answer, dict) else answer
     if parsed is None:
         error = answer.get("parsing_error") if isinstance(answer, dict) else None

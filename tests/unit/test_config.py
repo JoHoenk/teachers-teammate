@@ -408,16 +408,21 @@ def test_ocr_config_from_settings_replaces_online_engine() -> None:
     assert ocr.model == DEFAULTS["ocr_model"]
 
 
-def test_load_config_file_passes_through_unknown_provider(tmp_path: Path) -> None:
+def test_load_config_file_ignores_an_unknown_provider(tmp_path: Path) -> None:
     """
     Given  a TOML file with correction_provider = 'nonexistent_xyz'
     When   load_config_file() is called
-    Then   the value is returned as-is (provider validation happens at the CLI layer)
+    Then   the value is left out, so the default provider applies, and a notice names the key
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('correction_provider = "nonexistent_xyz"\n')
-    result = _load(cfg_file)
-    assert result.get("correction_provider") == "nonexistent_xyz"
+
+    loaded = load_config_file(cfg_file)
+
+    assert "correction_provider" not in loaded.values
+    assert [(notice.key, notice.detail) for notice in loaded.notices] == [
+        ("correction_provider", "nonexistent_xyz")
+    ]
 
 
 def test_load_config_file_raises_on_invalid_toml(tmp_path: Path) -> None:

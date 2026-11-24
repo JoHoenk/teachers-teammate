@@ -1300,7 +1300,7 @@ def active_profile(detection: HardwareDetection | None, setting: object) -> Hard
     A profile chosen by hand decides at once: the teacher's choice must not wait for a detection
     that may still be running, and a detection of another computer must not override it.
     *detection* decides only when *setting* leaves the choice to the app; before it lands, the
-    weakest profile is assumed.
+    profile of an 8 GB card is assumed.
     """
     chosen = concrete_profile(setting)
     if chosen is not None:

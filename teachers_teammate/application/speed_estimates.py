@@ -84,7 +84,7 @@ from ..infrastructure.speed_store import (
     StoredSpeed,
     now_stamp,
 )
-from ..settings_schema import DEFAULTS
+from ..settings_schema import DEFAULTS, normalize_saved_ollama_url
 from .ports import OllamaClientFactory, OllamaServer
 
 _logger = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ class SpeedChoices:
         """
         ocr = OcrConfig.from_settings(settings)
         return cls._of(
-            ollama_url=normalize_ollama_url(str(settings.get("ollama_url", ""))),
+            ollama_url=normalize_saved_ollama_url(settings.get("ollama_url")),
             ocr=ocr,
             reading=True,
             correction=(

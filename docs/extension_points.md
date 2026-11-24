@@ -110,8 +110,9 @@ are named constants in `auto.py`. Regenerate the digests of
 
 ## New input file type
 
-Add the suffix to `SUPPORTED_SUFFIXES` in `interfaces.py` **and** a builder to
-`_SUFFIX_TO_BUILDER` in `infrastructure/input_provider_factory.py`.
+Add a line to `INPUT_KINDS` in `interfaces.py` (the suffix and what reads it) **and**, for a
+new kind, a builder to `_BUILDERS` in `infrastructure/input_provider_factory.py`.
+`tests/unit/test_input_provider_factory.py` builds a provider for every offered suffix.
 
 PDF embedded text: thresholds/modes in `domain/pdf_text_layer.py`; measurement in
 `PdfInputProvider` (`infrastructure/input_providers.py`); the setting is

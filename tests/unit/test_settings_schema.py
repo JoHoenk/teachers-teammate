@@ -18,7 +18,14 @@ from teachers_teammate.domain.data_location import DataFlow
 from teachers_teammate.domain.run_summary import RunSummary
 from teachers_teammate.domain.settings_notice import SettingNoticeKind
 from teachers_teammate.gui._types import SettingsDict
-from teachers_teammate.settings_schema import DEFAULTS, SETTINGS, SettingScope, normalize_settings
+from teachers_teammate.domain.ollama_discovery import DEFAULT_SERVER_URL
+from teachers_teammate.settings_schema import (
+    DEFAULTS,
+    SETTINGS,
+    SettingScope,
+    normalize_saved_ollama_url,
+    normalize_settings,
+)
 
 from ..gui._service_stubs import make_config_panel, services_of
 
@@ -380,3 +387,41 @@ def test_a_language_typed_by_hand_survives_a_reload(qtbot) -> None:
 
     assert panel.lookup_language() == "Swahili"
     assert panel.lookup_config().language == "Swahili"
+
+
+@pytest.mark.parametrize("saved", [None, "", "   "])
+def test_a_blank_saved_ollama_address_is_the_default_server(saved: object) -> None:
+    """
+    Given  a saved address that is missing (None), empty or blank
+    When   normalize_saved_ollama_url() reads it
+    Then   it is the default server, never the host called "None"
+    """
+    assert normalize_saved_ollama_url(saved) == DEFAULT_SERVER_URL
+
+
+@pytest.mark.parametrize("key", ["correction_provider", "evaluate_provider"])
+def test_a_saved_provider_the_app_does_not_know_is_ignored_with_a_notice(key: str) -> None:
+    """
+    Given  a settings file that names a provider the app has no default model for
+    When   the settings are normalised
+    Then   the value is left out, so the default applies, and a notice names the key
+    """
+    loaded = normalize_settings({key: "groq", "correction_level": "B1"})
+
+    assert key not in loaded.values
+    assert loaded.values["correction_level"] == "B1"
+    assert [(n.kind, n.key, n.detail) for n in loaded.notices] == [
+        (SettingNoticeKind.VALUE_IGNORED, key, "groq")
+    ]
+
+
+def test_a_known_provider_is_taken_as_saved() -> None:
+    """
+    Given  a settings file that names providers with a default model
+    When   the settings are normalised
+    Then   both are kept and nothing is reported
+    """
+    loaded = normalize_settings({"correction_provider": "openai", "evaluate_provider": "ollama"})
+
+    assert loaded.values == {"correction_provider": "openai", "evaluate_provider": "ollama"}
+    assert loaded.notices == ()

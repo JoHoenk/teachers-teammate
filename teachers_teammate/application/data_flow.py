@@ -28,12 +28,11 @@ from ..domain.data_location import (
     llm_stage_location,
     online_ocr_reason,
 )
-from ..domain.ollama_address import normalize_ollama_url
 from ..domain.providers import ProviderInfo, display_name_of
 from ..domain.stages import Stage
 from ..infrastructure.llm_factory import get_provider_info
 from ..infrastructure.ollama_utils import ollama_server
-from ..settings_schema import DEFAULTS
+from ..settings_schema import DEFAULTS, normalize_saved_ollama_url
 
 #: Answers what a provider is and needs (``None`` for a name that is no provider).
 ProviderLookup = Callable[[str], ProviderInfo | None]
@@ -216,7 +215,7 @@ def text_goes_online(
         bool(settings.get("correction_enabled", DEFAULTS["correction_enabled"])),
         bool(settings.get("evaluation_enabled", DEFAULTS["evaluation_enabled"])),
     )
-    ollama_url = normalize_ollama_url(str(settings.get("ollama_url", "")))
+    ollama_url = normalize_saved_ollama_url(settings.get("ollama_url"))
     for step in steps:
         prefix, task = _LLM_STEP_SETTINGS[step]
         provider = str(settings.get(f"{prefix}_provider") or DEFAULTS[f"{prefix}_provider"])

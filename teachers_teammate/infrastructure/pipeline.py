@@ -36,7 +36,7 @@ Public API
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 import threading
@@ -57,7 +57,6 @@ from ..texts import report as report_text
 from ..texts.dialogs import folder_problem_text
 from . import run_report
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
-from .key_facts import MachineKeyFacts
 from .ollama_utils import OllamaClient
 from .onnx.store import ModelStore
 from .preview_image_store import PreviewImageStore
@@ -113,9 +112,8 @@ class PipelineDependencies:
     # so the run's warning and the window say the same line.
     battery_warning: str = ""
     # What this computer adds to a cache key.  The application layer passes the one its queue and
-    # commands compute keys with, so a run and the queue cannot key differently; ``None`` asks
-    # the computer the run is on, with ``model_store``.
-    key_facts: KeyFacts | None = None
+    # commands compute keys with, so a run and the queue cannot key differently.
+    key_facts: KeyFacts = field(kw_only=True)
 
 
 # ── Public helpers ─────────────────────────────────────────────────────────
@@ -239,7 +237,7 @@ class OCRPipeline:
         self._component_factory = deps.component_factory or PipelineComponentFactory()
         self._hardware: HardwareDetection | None = deps.hardware
         self._model_store: ModelStore = deps.model_store
-        self._key_facts: KeyFacts | None = deps.key_facts
+        self._key_facts = deps.key_facts
         self._work_store: TeacherWorkStore = deps.work_store
         self._samples: SampleStore = deps.samples
         self._artifact_store: PreviewImageStore | None = deps.artifact_store
@@ -499,7 +497,7 @@ class OCRPipeline:
             artifact_store=artifact_store,
             config=cfg,
             windows=builder.resolved_windows(),
-            facts=self._key_facts or MachineKeyFacts(self._model_store),
+            facts=self._key_facts,
             work_store=self._work_store,
         )
         preprocess_service = self._preprocess_service or builder.build_preprocessor_service(tmp_dir)

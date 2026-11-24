@@ -3333,7 +3333,7 @@ that both reads scans and proofreads is reloaded on each switch between the two 
 when a prefix is cached; read it as a lower bound.
 
 The evaluation tools (`tools/verify_model_catalog.py`, `tools/evaluate.py`) pin
-`PROOFREADING_NUM_CTX` (8192) on purpose: their verdicts are compared across models and across
+`BASE_NUM_CTX` (8192) on purpose: their verdicts are compared across models and across
 months, and a window that followed the card of the machine would make two runs incomparable.
 
 ### Logging

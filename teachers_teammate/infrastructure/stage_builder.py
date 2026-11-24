@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 from ..config import Config, OcrConfig
 from ..domain import correction_policy
-from ..domain.anonymization import AnonymizerConfig
+from ..domain.anonymization import AnonymizerConfig, resolve_anonymizer_config
 from ..domain.context_budget import (
     BASE_NUM_CTX,
     RunWindows,
@@ -55,9 +55,9 @@ from ..interfaces import (
 )
 from ..messages import message_of, personal_info_setup_failed
 from ..texts import report as report_text
+from ..texts.addons import anonymizer_notice
 from ..texts.dialogs import cli_warning
 from ..texts.run import personal_info_not_removed
-from .anonymizer import anonymizer_config_from, resolve_anonymizer_config
 from .docx_builder import DocxDocumentCreator
 from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
 from .llm_factory import build_llm, get_provider_info
@@ -587,13 +587,14 @@ class StageBuilder:
     def _build_anonymizer(self) -> Anonymizer:
         cfg = self.config
         try:
-            anon_config = resolve_anonymizer_config(
-                anonymizer_config_from(cfg),
+            anon_config, notice = resolve_anonymizer_config(
+                cfg.anonymizer_config,
                 document_language=cfg.language,
                 system_language=system_language(),
                 installed_models=installed_spacy_models(),
-                warn=self.reporter.warn,
             )
+            if notice is not None:
+                self.reporter.warn(anonymizer_notice(notice))
             return self.factory.build_anonymizer(language=cfg.language, config=anon_config)
         except (ImportError, OSError) as exc:
             raise ProviderNotAvailableError(personal_info_setup_failed(message_of(exc))) from exc

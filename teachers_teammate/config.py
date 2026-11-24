@@ -20,6 +20,11 @@ from typing import Any
 
 from ._model_defaults import default_model_for_task
 from .atomic_file import write_text_atomic
+from .domain.anonymization import (
+    SECONDARY_MODEL_AUTO,
+    AnonymizerConfig,
+    resolve_patterns,
+)
 from .domain.correction_policy import CorrectionOutput
 from .domain.model_catalog import (
     OCR_TEMPERATURE,
@@ -35,7 +40,6 @@ from .domain.stages import Stage
 from .exceptions import ConfigFileParseError
 from .settings_schema import (
     DEFAULTS,
-    SECONDARY_MODEL_AUTO,
     LoadedSettings,
     normalize_ocr_engine,
     normalize_ocr_model,
@@ -290,6 +294,19 @@ class Config:
     def evaluate_temperature(self) -> float:
         """Return the temperature the content review is sent at."""
         return review_temperature(self.effective_evaluate_model, self.evaluate_provider)
+
+    @property
+    def anonymizer_config(self) -> AnonymizerConfig:
+        """Return the anonymizer settings this config asks for, models unresolved.
+
+        The one place the stored settings become an :class:`AnonymizerConfig`, so a run, a
+        preview and the status box all start from the same settings.
+        """
+        return AnonymizerConfig(
+            primary_model=self.anonymizer_primary_model,
+            secondary_model=self.anonymizer_secondary_model,
+            patterns=resolve_patterns(self.anonymizer_patterns),
+        )
 
 
 def override_root() -> Path | None:

@@ -23,9 +23,13 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.composition import AppServices
-from ..domain.anonymization import AnonymizerConfig, pattern_problem
+from ..domain.anonymization import (
+    SECONDARY_MODEL_AUTO,
+    SECONDARY_MODEL_NONE,
+    AnonymizerConfig,
+    pattern_problem,
+)
 from ..domain.local_models import PRIVACY_ADDON_ID
-from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from ..texts import dialogs as dlg
 from ..texts import privacy
 from . import _dialogs

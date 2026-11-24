@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...config import Config, OcrConfig
+from ...domain.anonymization import resolve_anonymizer_config
 from ...domain.context_budget import RunWindows, window_from_setting
 from ...domain.correction_policy import CorrectionOutput
 from ...domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, PROVIDER_OLLAMA, SentRecord
@@ -113,14 +114,13 @@ def anonymization_fingerprint(config: Config) -> tuple[str, ...]:
     """
     if not config.anonymization_enabled:
         return ()
-    from ..anonymizer import anonymizer_config_from, resolve_anonymizer_config  # noqa: PLC0415
     from ..system_locale import system_language  # noqa: PLC0415
 
     # Deliberately without the installed models: hashing must not import spaCy.  So the key
     # holds the model the settings ask for, whether or not it is downloaded; downloading a
     # missing automatic model later does not change it.
-    resolved = resolve_anonymizer_config(
-        anonymizer_config_from(config),
+    resolved, _notice = resolve_anonymizer_config(
+        config.anonymizer_config,
         document_language=config.language,
         system_language=system_language(),
     )

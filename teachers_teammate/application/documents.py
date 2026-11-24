@@ -26,7 +26,6 @@ from ..domain.freshness import (
 from ..domain.notation import with_notation_hint
 from ..domain.stages import Stage
 from ..domain.teacher_work import current_texts
-from ..infrastructure.anonymizer import anonymizer_config_from
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
 from ..infrastructure.teacher_work_store import TeacherWorkStore
@@ -285,7 +284,7 @@ class DocumentQueries:
 
         if not config.anonymization_enabled:
             return None
-        anon_config = anonymizer_config_from(config)
+        anon_config = config.anonymizer_config
         language = config.language
         return lambda text: self._anonymization.anonymize_text(text, language, anon_config)
 

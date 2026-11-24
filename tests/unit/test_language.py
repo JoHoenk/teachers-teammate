@@ -9,17 +9,22 @@ from pathlib import Path
 import pytest
 
 from teachers_teammate.settings_schema import DEFAULTS
-from teachers_teammate.domain.anonymization import AnonymizerConfig
+from teachers_teammate.domain.anonymization import (
+    SECONDARY_MODEL_AUTO,
+    SECONDARY_MODEL_NONE,
+    AnonymizerConfig,
+    AnonymizerNoticeKind,
+    resolve_anonymizer_config,
+)
 from teachers_teammate.domain.language import LANGUAGES, language_from_locale
 from teachers_teammate.domain.name_models import (
     FALLBACK_SPACY_MODEL,
     SPACY_MODELS,
     spacy_model_for,
 )
-from teachers_teammate.infrastructure.anonymizer import resolve_anonymizer_config
 from teachers_teammate.infrastructure.spacy_models import SPACY_MODEL_PINS, spacy_model_url
 from teachers_teammate.infrastructure.system_locale import system_language, system_locale_code
-from teachers_teammate.settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
+from teachers_teammate.texts.addons import anonymizer_notice
 from tests.conftest import make_config
 
 # ── language_from_locale ───────────────────────────────────────────────────
@@ -106,9 +111,9 @@ def test_auto_uses_the_system_language_model() -> None:
     """
     Given  the "auto:system" default, a German document and an English system
     When   the anonymizer config is resolved
-    Then   the English model is added as the extra detection model
+    Then   the English model is added as the extra detection model, and there is nothing to say
     """
-    resolved = resolve_anonymizer_config(
+    resolved, notice = resolve_anonymizer_config(
         AnonymizerConfig(secondary_model=SECONDARY_MODEL_AUTO),
         document_language="German",
         system_language="English",
@@ -116,6 +121,7 @@ def test_auto_uses_the_system_language_model() -> None:
     )
 
     assert resolved.secondary_model == "en_core_web_sm"
+    assert notice is None
 
 
 def test_auto_drops_the_extra_model_for_the_same_language() -> None:
@@ -124,7 +130,7 @@ def test_auto_drops_the_extra_model_for_the_same_language() -> None:
     When   the anonymizer config is resolved
     Then   no extra model is used (a second pass with the same model adds nothing)
     """
-    resolved = resolve_anonymizer_config(
+    resolved, notice = resolve_anonymizer_config(
         AnonymizerConfig(secondary_model=SECONDARY_MODEL_AUTO),
         document_language="German",
         system_language="German",
@@ -132,66 +138,59 @@ def test_auto_drops_the_extra_model_for_the_same_language() -> None:
     )
 
     assert resolved.secondary_model is None
+    assert notice is None
 
 
-def test_auto_missing_model_warns_and_skips() -> None:
+def test_auto_missing_model_reports_the_model_and_skips() -> None:
     """
     Given  "auto:system" but the system language's model is not downloaded
     When   the anonymizer config is resolved
-    Then   a warning names the model and no extra model is used
+    Then   no extra model is used, and the notice names the model in the teacher's words
     """
-    warnings: list[str] = []
-
-    resolved = resolve_anonymizer_config(
+    resolved, notice = resolve_anonymizer_config(
         AnonymizerConfig(secondary_model=SECONDARY_MODEL_AUTO),
         document_language="German",
         system_language="English",
         installed_models=["de_core_news_sm"],
-        warn=warnings.append,
     )
 
     assert resolved.secondary_model is None
-    assert len(warnings) == 1
-    assert "en_core_web_sm" in warnings[0]
+    assert notice is not None and notice.kind is AnonymizerNoticeKind.MODEL_MISSING
+    assert "en_core_web_sm" in anonymizer_notice(notice)
 
 
-def test_auto_without_system_language_warns_and_skips() -> None:
+def test_auto_without_system_language_reports_it_and_skips() -> None:
     """
     Given  "auto:system" and a system language that could not be determined
     When   the anonymizer config is resolved
-    Then   a warning says so and no extra model is used
+    Then   no extra model is used, and the notice says the language is unknown
     """
-    warnings: list[str] = []
-
-    resolved = resolve_anonymizer_config(
+    resolved, notice = resolve_anonymizer_config(
         AnonymizerConfig(secondary_model=SECONDARY_MODEL_AUTO),
         document_language="German",
         system_language=None,
-        warn=warnings.append,
     )
 
     assert resolved.secondary_model is None
-    assert warnings and "could not be determined" in warnings[0]
+    assert notice is not None and notice.kind is AnonymizerNoticeKind.LANGUAGE_UNKNOWN
+    assert "could not be determined" in anonymizer_notice(notice)
 
 
 def test_explicit_model_is_kept_even_when_missing() -> None:
     """
     Given  an explicitly chosen extra model that is not installed
     When   the anonymizer config is resolved
-    Then   it is kept as it is (the anonymizer then fails as before)
+    Then   it is kept as it is (the anonymizer then fails as before), without a notice
     """
-    warnings: list[str] = []
-
-    resolved = resolve_anonymizer_config(
+    resolved, notice = resolve_anonymizer_config(
         AnonymizerConfig(secondary_model="xx_ent_wiki_sm"),
         document_language="German",
         system_language="English",
         installed_models=["de_core_news_sm"],
-        warn=warnings.append,
     )
 
     assert resolved.secondary_model == "xx_ent_wiki_sm"
-    assert warnings == []
+    assert notice is None
 
 
 @pytest.mark.parametrize("configured", [None, SECONDARY_MODEL_NONE, ""])
@@ -199,9 +198,9 @@ def test_explicit_none_means_no_extra_model(configured: str | None) -> None:
     """
     Given  a config that switches the extra pass off (None, "none" or "")
     When   the anonymizer config is resolved
-    Then   no extra model is used
+    Then   no extra model is used, and nothing is said about it
     """
-    resolved = resolve_anonymizer_config(
+    resolved, notice = resolve_anonymizer_config(
         AnonymizerConfig(secondary_model=configured),
         document_language="German",
         system_language="English",
@@ -209,6 +208,7 @@ def test_explicit_none_means_no_extra_model(configured: str | None) -> None:
     )
 
     assert resolved.secondary_model is None
+    assert notice is None
 
 
 def test_resolution_keeps_primary_and_patterns() -> None:
@@ -223,7 +223,7 @@ def test_resolution_keeps_primary_and_patterns() -> None:
         patterns=(("EMAIL", r"\S+@\S+"),),
     )
 
-    resolved = resolve_anonymizer_config(
+    resolved, _notice = resolve_anonymizer_config(
         config, document_language="German", system_language="English", installed_models=()
     )
 
@@ -266,7 +266,7 @@ def test_replacing_a_config_field_keeps_the_resolved_value() -> None:
     When   another field is replaced
     Then   the resolved extra model stays as it was resolved
     """
-    resolved = resolve_anonymizer_config(
+    resolved, _notice = resolve_anonymizer_config(
         AnonymizerConfig(secondary_model=SECONDARY_MODEL_AUTO),
         document_language="German",
         system_language="English",

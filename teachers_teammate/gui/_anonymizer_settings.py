@@ -10,8 +10,12 @@ from __future__ import annotations
 from collections.abc import Mapping, MutableMapping
 from typing import Any
 
-from ..domain.anonymization import DEFAULT_PATTERNS, AnonymizerConfig, resolve_patterns
-from ..settings_schema import SECONDARY_MODEL_NONE
+from ..domain.anonymization import (
+    DEFAULT_PATTERNS,
+    SECONDARY_MODEL_NONE,
+    AnonymizerConfig,
+    resolve_patterns,
+)
 
 
 def build(settings: Mapping[str, Any]) -> AnonymizerConfig:

@@ -47,11 +47,12 @@ Only the maintainer may create or delete `v*` tags (tag ruleset); a tag cannot b
 
 | Workflow | Runs on | What it does |
 |---|---|---|
-| `pull_request_checks.yml` | pushes to `main`, pull requests, merge queue | lint (Bazel format check, ruff, pylint, ty; shellcheck and PSScriptAnalyzer for the scripts), the Bazel tests, the docs build (`build_docs.yml`) and CodeQL; the `check` job is the required status |
+| `pull_request_checks.yml` | pushes to `main`, pull requests, merge queue | lint (Bazel format check, ruff, pylint, ty; shellcheck and PSScriptAnalyzer for the scripts), the three lock files against `pyproject.toml` and each other, the Bazel tests, the docs build (`build_docs.yml`) and CodeQL; the `check` job is the required status |
 | `deploy_docs.yml` | pushes to `main`, manual | builds the Sphinx site and deploys it to GitHub Pages |
 | `release.yml` | a `v*` tag | the release above |
 | `release_dry_run.yml` | manual, with a version | the whole release build without touching a release |
 | `build_bundles.yml` | manual; PRs touching the app (`teachers_teammate/`), `tests/e2e/`, `tools/packaging/`, `tools/build/`, the requirement, `pyproject.toml` and Bazel module files, the build-venv action or `build_*.yml` | the three bundles as workflow artifacts (2 days) |
+| `platform_tests.yml` | pull requests | the unit and GUI tests in a plain venv on Windows and macOS, without Bazel; a trial, not part of the merge gate |
 | `addon_resolution.yml` | weekly | resolves every add-on's requirement against the bundle's versions, so a new `langchain-*` or spaCy release that breaks an add-on shows up before release day |
 | `dependabot.yml` | weekly | dependency bumps, each held back 7 days after its release (security updates are not) |
 

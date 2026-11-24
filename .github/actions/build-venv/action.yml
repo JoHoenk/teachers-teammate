@@ -6,6 +6,14 @@ description: >
 # The caller checks out first, runs actions/setup-python with python-version-file:
 # .python-version, and runs its own checks afterwards (check_pins.py, the build itself).
 
+inputs:
+  install:
+    description: >-
+      What to install on top of the pinned constraints: the build's own requirements by default,
+      the `[test]` extra for the tests that run in this venv.
+    required: false
+    default: -e . pyinstaller pyinstaller-hooks-contrib
+
 runs:
   using: composite
   steps:
@@ -25,6 +33,9 @@ runs:
 
     - name: Install Python dependencies
       shell: bash
+      env:
+        # An input, not a literal below: the tests install `.[test]` through the same recipe.
+        INSTALL: ${{ inputs.install }}
       run: |
         # Base runtime deps only — optional providers (langchain/spacy)
         # are downloaded at runtime by the in-app addon manager, so they are
@@ -35,5 +46,6 @@ runs:
         # check_pins.py fails the build if pip installed anything else.
         python tools/build/make_constraints.py
         python -m pip install --upgrade -c pyinstaller-work/constraints.txt pip
-        python -m pip install -c pyinstaller-work/constraints.txt \
-          -e . pyinstaller pyinstaller-hooks-contrib
+        # Split in the shell, so `.[test]` stays a requirement and is not read as a glob.
+        read -ra install <<< "$INSTALL"
+        python -m pip install -c pyinstaller-work/constraints.txt "${install[@]}"

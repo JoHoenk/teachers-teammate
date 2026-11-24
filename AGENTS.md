@@ -12,6 +12,7 @@ handwritten documents.
 bazel test //tests:unit_tests --test_output=errors   # fast, no external services
 bazel test //tests/... --test_output=errors           # full suite (skips Ollama tests if absent)
 bazel test //tests:test_config --test_output=errors   # one test file
+bazel test //:lock_tests --test_output=errors         # the three locks after a dependency change
 bazel test //:lint --test_output=errors               # ruff + pylint + ty
 bazel run //:format.fix                               # ruff format + lint-safe fixes
 bazel build //docs:html                               # Sphinx docs (serve: bazel run //docs:html.serve)

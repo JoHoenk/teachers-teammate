@@ -21,13 +21,29 @@ THIS_FILE = Path(__file__).resolve()
 SOURCE_TREES = ("teachers_teammate", "tools", "tests")
 """Python and BUILD files below these."""
 
-DOCUMENT_GLOBS = ("docs/*.md", "evaluations/**/*.md", "evaluations/**/*.txt", "AGENTS.md")
+REPOSITORY_FILES = (
+    ".bazelignore",
+    ".bazelrc",
+    ".gitignore",
+    "BUILD",
+    "MODULE.bazel",
+    "pyproject.toml",
+)
+"""The build's own configuration, which a reader of the repository sees as much as a source file."""
+
+DOCUMENT_GLOBS = (
+    "docs/*.md",
+    "evaluations/**/*.md",
+    "evaluations/**/*.txt",
+    "AGENTS.md",
+    ".github/**/*.yml",
+)
 
 REFERENCES: dict[str, re.Pattern[str]] = {
     "a path into plans/": re.compile(r"\bplans/"),
     "a spec file": re.compile(r"\bspec-[a-z0-9-]+"),
     "a finding or decision id": re.compile(
-        r"\b(?:F-W\d+b?-\d+|DW-?c?\d+[ab]?(?:-\d+)?|DF-\d+|CW\d+[a-z]?)\b"
+        r"\b(?:F-W\d+b?-\d+|DW-?c?\d+[ab]?(?:-\d+)?|DC\d+[ab]?(?:-\d+)?|DF-\d+|CW\d+[a-z]?)\b"
     ),
     "a section sign": re.compile(r"§"),
     "a work-package number": re.compile(r"\bW\d{1,2}[abc]?\b"),
@@ -54,7 +70,9 @@ because it is also a CEFR level, and a bare id is caught by its prefix (``F-W``,
 ``CW``) rather than by its shape, because ``MD5``, ``A4`` and ``W3C`` have the same shape.
 """
 
-ALLOWED: dict[str, str] = {}
+ALLOWED: dict[str, str] = {
+    ".gitignore:58": "the ignore rule for the folder itself, which is what keeps it out of the tree",
+}
 """``"path:line"`` of a line that matches by accident, with the reason."""
 
 
@@ -65,6 +83,7 @@ def _files() -> list[Path]:
         base = ROOT / tree
         if base.is_dir():
             found += [*base.rglob("*.py"), *base.rglob("BUILD")]
+    found += [ROOT / name for name in REPOSITORY_FILES if (ROOT / name).is_file()]
     for pattern in DOCUMENT_GLOBS:
         found += ROOT.glob(pattern)
     return sorted({path.resolve() for path in found if path.resolve() != THIS_FILE})

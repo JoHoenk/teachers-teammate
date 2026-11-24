@@ -339,9 +339,23 @@ def bundle_rows(root: Path = ROOT) -> list[Row]:
 
 def platform_pins(root: Path = ROOT) -> dict[str, str]:
     """Return the pins of ``requirements_platform.txt``."""
+    return _pins(root / "tools" / "build" / "requirements_platform.txt")
+
+
+def addon_platform_pins(root: Path = ROOT) -> dict[str, str]:
+    """Return the pins of ``requirements_addons_platform.txt``.
+
+    The add-on lock is resolved on Linux, so a package only Windows or macOS needs (``click``
+    brings ``colorama`` there) is not in it.  This file is where such a package is listed, and
+    the weekly add-on resolution check is what proves it is still the version pip resolves.
+    """
+    return _pins(root / "tools" / "build" / "requirements_addons_platform.txt")
+
+
+def _pins(path: Path) -> dict[str, str]:
+    """Return the ``name → version`` pins of a requirements file of plain pins."""
     pins: dict[str, str] = {}
-    text = (root / "tools" / "build" / "requirements_platform.txt").read_text(encoding="utf-8")
-    for line in text.splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -411,11 +425,16 @@ def expected(policy: Policy, root: Path = ROOT) -> list[Row]:
     """
     bundle = bundle_rows(root)
     shipped = {row.component for row in bundle} | set(platform_pins(root))
+    addons = addon_rows(root / "requirements_addons_lock.txt", shipped) + [
+        Row(name, version, "", "addon")
+        for name, version in addon_platform_pins(root).items()
+        if name not in shipped
+    ]
     return _sorted(
         [
             *bundle,
             *platform_rows(policy, root),
-            *addon_rows(root / "requirements_addons_lock.txt", shipped),
+            *addons,
             interpreter_row(root),
             *model_rows(),
             *spacy_rows(),

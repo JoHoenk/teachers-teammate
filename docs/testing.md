@@ -40,6 +40,16 @@ The built-in reader's model tests (`//tests:test_ppocr_models`, the multi-page P
 
 You can also invoke pytest directly (without Bazel) for quick ad-hoc runs, but Bazel is preferred in CI and for coverage because it applies the correct sandbox and dependency isolation.
 
+The suites take their tests from a tag rather than a list: every `py_test` of `tests/BUILD`
+carries the tag of the folder its file lives in (`unit`, `gui`, `integration`, `tools`), and
+`unit_tests`/`gui_tests`/`integration_tests`/`tools_tests` are one `test_suite` per tag.
+`tests/unit/test_test_targets.py` holds the tags to the folders.
+
+`platform_tests.yml` runs the unit and GUI tests in a plain venv on Windows and macOS: the build
+venv's own recipe with the `[test]` extra, so the versions are the ones the bundle ships there.
+It is a trial and does not block a merge yet; `-m "not needs_reader_models and not needs_ollama
+and not needs_bazel"` leaves out what needs Bazel's runfiles or an Ollama server.
+
 Bazel gives every test file its own process, which hides a test that changes global state (`sys.modules`, `sys.path`, environment) and leaves it changed. A single `pytest tests` run puts all files in one process and is how such a leak between files shows up. A test that evicts or replaces modules must restore them (`with patch.dict(sys.modules):`).
 
 ### Test groups in CI
@@ -131,6 +141,7 @@ than a second library for the modules infrastructure imports.
 | `needs_page_models` | Runs the page models' real model files (Bazel fetches them; skipped without) |
 | `needs_ollama` | Requires a running Ollama instance |
 | `gui` | Exercises PySide6 widgets and the event loop |
+| `needs_bazel` | Reads Bazel's runfiles (the built wheel, the model files); skipped unless `TEST_SRCDIR` is set |
 | `use_case` | Links the test to a use case in `use_cases.trlc` (see below) |
 
 Two test files also read the private evaluation repository (the machine registry and the converter's

@@ -419,6 +419,16 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip the tests that read Bazel's runfiles when the run is not Bazel's."""
+    if os.environ.get("TEST_SRCDIR"):
+        return
+    reason = pytest.mark.skip(reason="reads the Bazel runfiles: run it with `bazel test`")
+    for item in items:
+        if "needs_bazel" in item.keywords:
+            item.add_marker(reason)
+
+
 READER_MODEL_ENV = {
     "PPOCR_SMALL_DET_ONNX": ("ppocr-small-det", "inference.onnx"),
     "PPOCR_SMALL_DET_YML": ("ppocr-small-det", "inference.yml"),

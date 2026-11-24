@@ -80,6 +80,17 @@ def test_the_ready_made_buttons_decline_by_role() -> None:
     assert (yes.declines, no.declines, cancel().declines) == (False, True, True)
 
 
+def test_a_platform_button_carries_its_own_id() -> None:
+    """
+    Given  the question the export asks before it replaces a file a word processor holds open
+    When   its buttons are read
+    Then   each carries the id of the platform button, so a caller branches without the label
+    """
+    question = dlg.replace_existing_files(1, "Anna.docx")
+
+    assert [choice.id for choice in question.choices] == [StandardButton.YES, StandardButton.NO]
+
+
 def test_the_leave_computer_question_lists_the_steps_and_the_advice() -> None:
     """
     Given  a privacy level, two steps that send content away and one tip

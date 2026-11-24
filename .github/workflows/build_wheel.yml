@@ -28,6 +28,7 @@ jobs:
   build-wheel:
     name: Build wheel
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -81,6 +82,31 @@ jobs:
           # LangChain providers are large, and the weekly add-on resolution covers their install).
           wheel-venv/bin/python -m pip install --quiet --dry-run --only-binary :all: \
             -c "$constraints" "${wheel}[llm,privacy]"
+
+      # The other wheel a source install builds: setuptools reads pyproject.toml, so its package
+      # data has to carry the five assets the app shows.  The help pages are not in it (see the
+      # comment at [build-system] in pyproject.toml), so they are not checked here.
+      - name: Build the setuptools wheel and check its assets
+        run: |
+          python -m pip wheel --quiet --no-deps -w setuptools-dist .
+          python - <<'PY'
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          wanted = {
+              "teachers_teammate/assets/LICENSE.txt",
+              "teachers_teammate/assets/teachers_teammate.png",
+              "teachers_teammate/assets/teachers_teammate_icon.png",
+              "teachers_teammate/assets/third_party_inventory.csv",
+              "teachers_teammate/assets/third_party_licenses.md",
+          }
+          built = next(Path("setuptools-dist").glob("*.whl"))
+          missing = wanted - set(zipfile.ZipFile(built).namelist())
+          if missing:
+              sys.exit(f"{built.name} does not carry: {sorted(missing)}")
+          print(f"{built.name} carries the five assets")
+          PY
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

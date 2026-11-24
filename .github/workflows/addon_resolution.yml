@@ -33,6 +33,7 @@ jobs:
   resolve:
     name: Resolve the add-ons (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

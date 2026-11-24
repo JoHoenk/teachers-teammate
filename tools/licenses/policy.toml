@@ -81,6 +81,7 @@ shiboken6 = "LGPL-3.0-only"
 # `BSD License` in the classifier, and the free text says only "BSD": read from the LICENSE file
 # in each wheel.
 blis = "BSD-3-Clause"
+colorama = "BSD-3-Clause"
 httpx = "BSD-3-Clause"
 jinja2 = "BSD-3-Clause"
 pyasn1-modules = "BSD-2-Clause"

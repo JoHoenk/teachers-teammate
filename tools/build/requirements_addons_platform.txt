@@ -1,0 +1,10 @@
+# Packages the add-on scope needs that the Linux-resolved lock cannot hold.
+#
+# requirements_addons_lock.txt is compiled on Linux, so a package only Windows or macOS needs
+# (click brings colorama there) is not in it, and tools/licenses/inventory.py would have no row
+# for it while the Windows resolution installs it. This file names the package with the version
+# pip resolves there, so the licence list covers it; addon_resolution.yml is the run that sees
+# the Windows resolution and fails when the two disagree. A bump arrives as a Dependabot pull
+# request: the pip ecosystem reads requirements*.txt.
+
+colorama==0.4.6

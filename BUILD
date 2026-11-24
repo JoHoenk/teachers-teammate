@@ -13,8 +13,24 @@ exports_files(
         "pyproject.toml",
         "README.md",
         "requirements_addons_lock.txt",
+        "requirements_dev_lock.txt",
         "requirements_test_lock.txt",
     ],
+    visibility = ["//visibility:public"],
+)
+
+# The repository's own configuration, for //tests:test_no_plan_references: a comment in these
+# files is as visible to a reader as one in a source file.
+filegroup(
+    name = "repo_config",
+    srcs = [
+        ".bazelignore",
+        ".bazelrc",
+        ".gitignore",
+        "BUILD",
+        "MODULE.bazel",
+        "pyproject.toml",
+    ] + glob([".github/**/*.yml"]),
     visibility = ["//visibility:public"],
 )
 
@@ -189,6 +205,17 @@ compile_pip_requirements(
         "--extra=privacy",
     ],
     requirements_txt = "requirements_addons_lock.txt",
+)
+
+# The lock files checked against pyproject.toml and against one another, as CI runs them: one
+# label to hold a dependency change against before pushing it.
+test_suite(
+    name = "lock_tests",
+    tests = [
+        ":requirements_addons.test",
+        ":requirements_dev.test",
+        ":requirements_test.test",
+    ],
 )
 
 alias(

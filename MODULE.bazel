@@ -47,8 +47,7 @@ bazel_dep(name = "rules_java", version = "9.9.0")
 
 # One Python version for the whole repository: `.python-version` holds the full patch, and
 # rules_python reads it here.  CI's setup-python reads the same file, so the Bazel tests and the
-# bundles cannot drift apart.  Bumped by hand (a weekly job that reports a newer patch is still
-# to be written: plans/ci-build-fixes.md, C6).  `python.defaults` alone would register the
+# bundles cannot drift apart.  Bumped by hand.  `python.defaults` alone would register the
 # toolchain without the coverage tool, so the same patch is named again below for
 # `bazel coverage`: change both together.
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")

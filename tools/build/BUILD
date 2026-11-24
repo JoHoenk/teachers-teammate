@@ -14,6 +14,7 @@ load("@rules_shell//shell:sh_library.bzl", "sh_library")
 # smoke test's unit test, which keeps its GPL-only Qt list equal to the one in frozen_modes.py.
 exports_files(
     [
+        "requirements_addons_platform.txt",
         "requirements_platform.txt",
         "teachers-teammate.spec",
     ],

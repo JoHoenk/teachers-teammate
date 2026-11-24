@@ -89,11 +89,26 @@ teachers-teammate-benchmark = "teachers_teammate.gui.benchmark:main_benchmark"
 [build-system]
 # `wheel` is not needed: setuptools builds wheels itself since 70.1.  `license` as an SPDX
 # expression and `license-files` need 77 (PEP 639).
+#
+# The help pages live in `docs/`, outside the package, so a wheel built here has none; the wheel
+# the release ships is Bazel's (//teachers_teammate:teachers_teammate_wheel), which copies them in
+# as `teachers_teammate/_docs/`.  An editable install finds them where they are.
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["teachers_teammate*"]
+
+# What the app shows besides its code.  The list is the one in `wheel_data` of
+# teachers_teammate/BUILD; a glob would also take the `.ico` and `.icns` a build machine generates.
+[tool.setuptools.package-data]
+teachers_teammate = [
+    "assets/LICENSE.txt",
+    "assets/teachers_teammate.png",
+    "assets/teachers_teammate_icon.png",
+    "assets/third_party_inventory.csv",
+    "assets/third_party_licenses.md",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "teachers_teammate.__version__" }
@@ -310,6 +325,7 @@ addopts = "-v --tb=short"
 markers = [
     "needs_reader_models: runs the built-in reader's real model files (Bazel fetches them)",
     "needs_ollama: requires a running Ollama instance",
+    "needs_bazel: reads the Bazel runfiles, so it runs under `bazel test` and is skipped elsewhere",
     "gui: exercises PySide6 widgets/event loop",
     "use_case: links test to a named use case from use_cases.trlc",
 ]

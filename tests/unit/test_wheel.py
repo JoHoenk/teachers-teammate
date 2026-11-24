@@ -20,6 +20,10 @@ import zipfile
 from packaging.requirements import Requirement
 import pytest
 
+# The wheel the tests read is the one Bazel built (``//teachers_teammate:teachers_teammate_wheel``)
+# and its paths come from the runfiles, so there is nothing to check outside a `bazel test` run.
+pytestmark = pytest.mark.needs_bazel
+
 #: Everything besides Python files that a wheel install needs (see ``wheel_data`` in
 #: ``teachers_teammate/BUILD``).
 _DATA_FILES = (

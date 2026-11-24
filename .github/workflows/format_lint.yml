@@ -10,6 +10,7 @@ jobs:
   lint:
     name: Format & Lint
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -27,11 +28,32 @@ jobs:
       - name: Run the linters (Python, shell)
         run: bazel test --config=ci //:lint --test_output=errors
 
+  # A lock that contradicts pyproject.toml, or itself, turns the PR red here rather than in a
+  # build three minutes later. A PyPI hiccup fails one attempt; a real mismatch fails both.
+  locks:
+    name: Check the lock files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Bazel
+        uses: ./.github/actions/setup-bazel
+        with:
+          disk-cache: locks
+
+      - name: Check the lock files
+        run: bazel test --config=ci //:lock_tests --flaky_test_attempts=2 --test_output=errors
+
   # The workflow files. rules_lint has no linter for them (the Python and the shell scripts are
   # in //:lint above); a broken `run:` block or an unpinned action would first show on release day.
   lint-ci:
     name: Lint the workflows
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

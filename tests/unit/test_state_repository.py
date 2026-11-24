@@ -22,6 +22,7 @@ from teachers_teammate.infrastructure.state_repository import (
     StateRepository,
     compute_file_hash,
 )
+from teachers_teammate.infrastructure import storage_root
 from teachers_teammate.infrastructure.storage_root import document_stem
 
 
@@ -158,6 +159,41 @@ def test_load_or_create_returns_existing_state_after_save(tmp_path: Path) -> Non
     loaded = repo.load_or_create(source, source_hash)
     assert loaded.raw_text == "hello world"
     assert loaded.ocr_done is True
+
+
+def test_a_state_is_found_through_another_spelling_of_the_folder(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a file system that ignores case, so two spellings of a folder hold one document
+    When   the state stored through one spelling is loaded through the other
+    Then   it is the same document's state, with its text
+    """
+    monkeypatch.setattr(storage_root, "_spelled_as_stored", str.lower)
+    (tmp_path / "in").mkdir()
+    first = _source_file(tmp_path / "in", "doc.txt")
+    other = tmp_path / "IN"
+    other.mkdir()
+    (other / "doc.txt").write_bytes(first.read_bytes())
+    repo = _repo(tmp_path)
+    source_hash = compute_file_hash(first)
+    repo.record_ocr_result(
+        first,
+        repo.create(first, source_hash),
+        OcrResultRecord(
+            source_hash=source_hash,
+            raw_text="hello world",
+            preview_img="",
+            source_image="",
+            ocr_config_hash="h1",
+            preview_config_hash="",
+        ),
+    )
+
+    loaded = repo.load_valid(other / "doc.txt")
+
+    assert loaded is not None
+    assert loaded.raw_text == "hello world"
 
 
 # ── record_ocr_result ─────────────────────────────────────────────────────

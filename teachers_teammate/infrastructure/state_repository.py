@@ -32,7 +32,7 @@ from ..domain.document_state import (
 )
 from ..domain.freshness import should_invalidate_preview_artifact
 from ..domain.stages import Stage, normalize_stage
-from .storage_root import document_stem
+from .storage_root import document_identity, document_stem
 
 _logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def _inconsistent(state: DocumentState) -> bool:
 
 def _is_current(state: DocumentState, input_file: Path) -> bool:
     """Return whether *state* was stored for exactly this file, as it is now."""
-    if state.source_path != str(input_file.resolve()):
+    if state.source_path != document_identity(input_file):
         return False
     try:
         return state.source_hash == compute_file_hash_cached(input_file)
@@ -200,7 +200,7 @@ class StateRepository:
         """Create a new empty state record for *input_file*."""
         return DocumentState(
             schema_version=self._SCHEMA_VERSION,
-            source_path=str(input_file.resolve()),
+            source_path=document_identity(input_file),
             source_hash=source_hash,
         )
 

@@ -597,10 +597,13 @@ class Answers:
             return None
         if asked.call == "choose":
             choices = getattr(asked.item, "choices", ())
-            chosen = next((one for one in choices if one.id == expected.choice), None)
+            chosen = next(
+                (one for one in choices if expected.choice in (one.id, one.standard)), None
+            )
             if chosen is None:
                 raise _Failed(
-                    f"the question has no button {expected.choice!r}: {[one.id for one in choices]}"
+                    f"the question has no button {expected.choice!r}: "
+                    f"{[one.id or one.standard or one.label for one in choices]}"
                 )
             return Answer(chosen, checked=False)
         if asked.call == "pick_files":

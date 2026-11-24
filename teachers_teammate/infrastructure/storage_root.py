@@ -94,15 +94,17 @@ def document_stem(path: Path) -> str:
     resolved path is part of every name derived from it — the state file and the stored images
     alike.  Without it the second ``Anna.pdf`` would overwrite the first one's pages.
     """
-    return f"{path.stem}_{compute_cache_key(_identity(path))}"
+    return f"{path.stem}_{compute_cache_key(document_identity(path))}"
 
 
 #: How long a path may be, for the system call that asks the volume for its spelling.
 _MAX_PATH = 1024
 
 
-def _identity(path: Path) -> str:
-    """Return what a document's cache key is made from: its path as the volume spells it.
+def document_identity(path: Path) -> str:
+    """Return the path a document is known by, as the volume spells it.
+
+    Its cache key and the path its stored state records are made from it.
 
     A file system that ignores case hands out one file however its folder is spelled, so two
     spellings have to give one key, or the second run would read every page again and keep a
@@ -282,7 +284,7 @@ def resolve_artifact_dir(output_dir: Path) -> Path:
     Returns:
         ``<storage_root>/artifacts/<key>`` as a :class:`~pathlib.Path`.
     """
-    return artifacts_root() / compute_cache_key(_identity(output_dir))
+    return artifacts_root() / compute_cache_key(document_identity(output_dir))
 
 
 def resolve_storage_root() -> StorageRoot:

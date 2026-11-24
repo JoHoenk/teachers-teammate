@@ -12,6 +12,7 @@ import pytest
 from teachers_teammate.exceptions import StageError, StageErrorKind
 from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.stage_builder import PipelineComponentFactory, StageBuilder
 from teachers_teammate.interfaces import Corrector
 from tests.conftest import make_config
@@ -86,7 +87,7 @@ def test_the_exchange_factory_builds_the_same_chain_as_the_stage_builder(tmp_pat
     client = OllamaClient("http://capture.invalid")
 
     built, _ = StageBuilder(
-        config=config, factory=PipelineComponentFactory()
+        config=config, factory=PipelineComponentFactory(), model_store=ModelStore(tmp_path / "m")
     ).build_correction_and_anonymizer(ollama_client=client)
     ours = app_corrector_factory(
         client, timeout=5.0, exchange=Exchange.TEXT_FIRST, steps=ALL_STEPS

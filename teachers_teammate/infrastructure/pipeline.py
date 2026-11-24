@@ -90,6 +90,12 @@ class PipelineDependencies:
     # application layer passes the store its speed estimates also write to; a second store would
     # be a second lock on one file.
     samples: SampleStore
+    # Where the teacher's work is.  The application layer passes the store the window writes to,
+    # so a run reads the corrections the teacher made.
+    work_store: TeacherWorkStore
+    # Where the built-in reader's model files live; the application layer passes the store its
+    # readiness check looks at, so the run reads the folder that was checked.
+    model_store: ModelStore
     artifact_store: PreviewImageStore | None = None
     state_repo: StateRepository | None = None
     cache_service: CacheReconciliationService | None = None
@@ -106,16 +112,10 @@ class PipelineDependencies:
     # The sentence the banner and the window warn with on battery power; the adapter passes it,
     # so the run's warning and the window say the same line.
     battery_warning: str = ""
-    # Where the built-in reader's model files live; the application layer passes the store its
-    # readiness check looks at, so the run reads the folder that was checked.
-    model_store: ModelStore | None = None
     # What this computer adds to a cache key.  The application layer passes the one its queue and
     # commands compute keys with, so a run and the queue cannot key differently; ``None`` asks
     # the computer the run is on, with ``model_store``.
     key_facts: KeyFacts | None = None
-    # Where the teacher's work is.  The application layer passes the store the window writes
-    # to, so a run reads the corrections the teacher made; ``None`` builds the default one.
-    work_store: TeacherWorkStore | None = None
 
 
 # ── Public helpers ─────────────────────────────────────────────────────────
@@ -125,8 +125,8 @@ def preprocess_preview(
     source_path: Path,
     ocr: OcrConfig,
     tmp_dir: Path,
+    model_store: ModelStore,
     build_preprocessor: PreprocessorBuilder = default_build_preprocessor,
-    model_store: ModelStore | None = None,
 ) -> PreparedPreview:
     """Preprocess *source_path* and return paths for both the original and processed image.
 
@@ -145,10 +145,9 @@ def preprocess_preview(
         source_path: Path to a supported input file (PDF or image).
         ocr:         The OCR config slice (method, PDF DPI) to preview.
         tmp_dir:     Temporary directory for any intermediate and output files.
+        model_store: Where the page models of the automatic preparation are.
         build_preprocessor: Preprocessor constructor; defaults to
             :func:`stage_builder.default_build_preprocessor`.
-        model_store: Where the page models of the automatic preparation are; ``None`` = the
-            default folder.
 
     Returns:
         The original page, the prepared page, and the steps that were applied.
@@ -239,9 +238,9 @@ class OCRPipeline:
         self._reporter: Reporter = deps.reporter or StdoutReporter()
         self._component_factory = deps.component_factory or PipelineComponentFactory()
         self._hardware: HardwareDetection | None = deps.hardware
-        self._model_store: ModelStore | None = deps.model_store
+        self._model_store: ModelStore = deps.model_store
         self._key_facts: KeyFacts | None = deps.key_facts
-        self._work_store: TeacherWorkStore | None = deps.work_store
+        self._work_store: TeacherWorkStore = deps.work_store
         self._samples: SampleStore = deps.samples
         self._artifact_store: PreviewImageStore | None = deps.artifact_store
         self._state_repo: StateRepository | None = deps.state_repo
@@ -361,7 +360,7 @@ class OCRPipeline:
         run_report.preview_banner(cfg, reporter, tmp_dir)
 
         builder = StageBuilder(
-            cfg, self._component_factory, self._reporter, self._hardware, self._model_store
+            cfg, self._component_factory, self._model_store, self._reporter, self._hardware
         )
         preprocess_service = builder.build_preprocessor_service(tmp_dir)
         return preprocess_service, self._files, tmp_dir
@@ -463,7 +462,7 @@ class OCRPipeline:
         cfg = self._config
         reporter = self._reporter
         builder = StageBuilder(
-            cfg, self._component_factory, self._reporter, self._hardware, self._model_store
+            cfg, self._component_factory, self._model_store, self._reporter, self._hardware
         )
 
         # Build one shared OllamaClient for all Ollama-backed stages so URL
@@ -501,9 +500,7 @@ class OCRPipeline:
             config=cfg,
             windows=builder.resolved_windows(),
             facts=self._key_facts or MachineKeyFacts(self._model_store),
-            # A run always reads the teacher's work: the window's writes and the run's reads
-            # must see the same folder, so the default store is the one the window uses.
-            work_store=self._work_store or TeacherWorkStore(),
+            work_store=self._work_store,
         )
         preprocess_service = self._preprocess_service or builder.build_preprocessor_service(tmp_dir)
         ocr_stage_service = self._ocr_stage_service or OCRStageService(

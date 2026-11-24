@@ -18,6 +18,7 @@ from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.stages import Stage
 import tempfile
 import threading
+from typing import TYPE_CHECKING
 
 from teachers_teammate._model_defaults import default_model_for_task
 from teachers_teammate.application.api_keys import ApiKeys
@@ -53,6 +54,10 @@ from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.performance_estimate import ProbeResult, TimeRange
 from teachers_teammate.domain.providers import ProviderInfo, display_name_of
 
+if TYPE_CHECKING:
+    # The panel pulls Qt in, which the domain- and CLI-level tests' deps do not carry.
+    from teachers_teammate.gui._config_panel import ConfigPanel
+
 
 def services_of(stub: object) -> AppServices:
     """Hand one flat stub to a widget as the grouped services it asks for.
@@ -63,6 +68,17 @@ def services_of(stub: object) -> AppServices:
     return AppServices(
         **{field.name: stub for field in dataclasses.fields(AppServices)}  # ty: ignore[invalid-argument-type]
     )
+
+
+def make_config_panel(service: object | None = None) -> ConfigPanel:
+    """Return a config panel whose data flow and requirement checks ask *service*.
+
+    Without one the panel asks :class:`LocalDataFlowStub`: every step runs on this computer and
+    every requirement is met, so a test that cares about neither names neither.
+    """
+    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
+
+    return ConfigPanel(services_of(service if service is not None else LocalDataFlowStub()))
 
 
 def context_choice_from(settings: Mapping[str, object], card_gb: float | None) -> ContextChoice:
@@ -163,6 +179,11 @@ class LocalDataFlowStub:
                 DataFlowStage(Stage.EVALUATION, here, "text"),
             )
         )
+
+    def check_stage_requirements(self, config, stage: str) -> list:
+        """Every requirement of *stage* is met in a test unless a stub says otherwise."""
+        _ = config, stage
+        return []
 
     def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation:
         _ = model, ollama_url

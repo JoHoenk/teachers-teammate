@@ -20,7 +20,7 @@ from teachers_teammate.domain.settings_notice import SettingNoticeKind
 from teachers_teammate.gui._types import SettingsDict
 from teachers_teammate.settings_schema import DEFAULTS, SETTINGS, SettingScope, normalize_settings
 
-from ..gui._service_stubs import services_of
+from ..gui._service_stubs import make_config_panel, services_of
 
 _SCHEMA_KEYS = frozenset(setting.key for setting in SETTINGS)
 _FILE_KEYS = frozenset(setting.key for setting in SETTINGS if setting.scope is SettingScope.FILE)
@@ -277,8 +277,6 @@ def test_the_window_and_the_command_line_read_one_file_the_same(
     When   the command line (through run_cli) and the window each build their Config from it
     Then   the two are equal field by field, so a run does not depend on who started it
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
-
     input_dir = tmp_path / "in"
     output_dir = tmp_path / "out"
     input_dir.mkdir()
@@ -299,7 +297,7 @@ def test_the_window_and_the_command_line_read_one_file_the_same(
     )
     values = load_config_file(path).values
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.load_from_dict(values)
 
@@ -318,9 +316,7 @@ def test_the_panel_writes_no_key_outside_the_schema(qtbot) -> None:
     When   it hands its settings to the file
     Then   every key it writes is a settings key
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
-
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     assert frozenset(panel.to_dict()) <= _SCHEMA_KEYS
@@ -333,9 +329,7 @@ def test_restoring_the_defaults_resets_the_anonymizer_patterns(qtbot) -> None:
     When   the defaults are restored
     Then   the list is the anonymizer's own again, not the teacher's earlier choice
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
-
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.load_from_dict({"anonymizer_patterns": []})
     assert panel.to_dict().get("anonymizer_patterns") == []
@@ -352,9 +346,7 @@ def test_a_loaded_recursive_is_not_kept_by_the_panel(qtbot) -> None:
     When   the panel loads it and hands its settings back
     Then   it writes no ``recursive``: the window always searches subfolders and has no toggle
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
-
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.load_from_dict({"recursive": True, "debug": True})
@@ -370,9 +362,7 @@ def test_a_language_typed_by_hand_survives_a_reload(qtbot) -> None:
     When   the panel loads it
     Then   the language box shows it and the Config carries it
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
-
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.load_from_dict({"language": "Swahili"})

@@ -7,9 +7,9 @@ from PySide6.QtWidgets import QDialog
 
 from teachers_teammate.domain.correction_prompts import NOTES_LIMIT
 from teachers_teammate.texts import review as txt
-from teachers_teammate.gui._config_panel import ConfigPanel, _ProofreadingDialog, _PromptDialog
+from teachers_teammate.gui._config_panel import _ProofreadingDialog, _PromptDialog
 
-from ._service_stubs import services_of
+from ._service_stubs import make_config_panel
 from ._settings_stubs import DummyAppService
 
 _BUILTIN = "Review the content of the text."
@@ -264,9 +264,8 @@ def test_explanations_options_round_trip_in_the_dialog(qtbot) -> None:
 
 def _capture_fixed_text(qtbot, monkeypatch, open_dialog) -> str:
     """Open a dialog from the panel; return what its "always added" box shows."""
-    panel = ConfigPanel()
+    panel = make_config_panel(DummyAppService())
     qtbot.addWidget(panel)
-    panel._service = services_of(DummyAppService())
     shown: list[str] = []
 
     def fake_exec(dlg: _PromptDialog) -> QDialog.DialogCode:
@@ -295,13 +294,13 @@ def test_the_review_dialog_lists_the_notation_hint(qtbot, monkeypatch) -> None:
 
 
 @pytest.mark.gui
-def test_the_review_note_needs_no_service(qtbot) -> None:
+def test_the_review_note_is_a_fixed_text(qtbot) -> None:
     """
-    Given  a panel without an application service
+    Given  a panel
     When   the review note is asked for
     Then   it still names the notation the review asks for (a fixed text, not a live query)
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     assert txt.FORMATTED_TEXT_NOTE in panel._evaluation_fixed_text()

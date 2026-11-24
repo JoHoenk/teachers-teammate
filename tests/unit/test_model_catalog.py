@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from teachers_teammate._model_defaults import _DEFAULT_MODELS
+from teachers_teammate._model_defaults import _DEFAULT_MODELS, default_model_for_task
 from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain import model_catalog
 from teachers_teammate.domain.model_catalog import (
@@ -605,6 +605,18 @@ def test_default_writing_models_equal_the_default_writing_model() -> None:
     assert DEFAULTS["evaluate_model"] == expected
     assert _DEFAULT_MODELS[Stage.CORRECTION]["ollama"] == expected
     assert _DEFAULT_MODELS[Stage.EVALUATION]["ollama"] == expected
+
+
+def test_an_unknown_provider_or_task_has_no_default_model() -> None:
+    """
+    Given  the per-task model defaults
+    When   a default model is asked for a name no provider declares, or for text recognition
+    Then   it raises instead of answering with another service's model
+    """
+    with pytest.raises(ValueError, match="provider"):
+        default_model_for_task("no_such_provider", Stage.CORRECTION)
+    with pytest.raises(ValueError, match="task"):
+        default_model_for_task("ollama", Stage.OCR)
 
 
 def test_hardware_detection_dataclass_defaults() -> None:

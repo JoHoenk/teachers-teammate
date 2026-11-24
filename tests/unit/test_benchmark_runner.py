@@ -9,7 +9,8 @@ import threading
 import pytest
 
 from teachers_teammate.exceptions import OCRError
-from teachers_teammate.infrastructure.benchmark.runner import run_ocr
+from teachers_teammate.infrastructure.benchmark.runner import OcrRunResult, run_ocr
+from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.stage_builder import PipelineComponentFactory
 from teachers_teammate.interfaces import OCRProcessor
 
@@ -25,6 +26,11 @@ class _StubOCR(OCRProcessor):
         if self._raises:
             raise OCRError("engine exploded")
         return self._text
+
+
+def _ocr_only(tmp_path: Path, config, source: Path, **kwargs) -> OcrRunResult:
+    """Run the OCR-only path with a model folder inside the test."""
+    return run_ocr(config, source, model_store=ModelStore(tmp_path / "models"), **kwargs)
 
 
 def _factory_with(stub: _StubOCR) -> PipelineComponentFactory:
@@ -47,7 +53,9 @@ def test_run_ocr_returns_extracted_text(tmp_path: Path, sample_png: Path) -> Non
     Then   the extracted text and a preview image path are returned, no error
     """
     config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
-    result = run_ocr(config, sample_png, component_factory=_factory_with(_StubOCR("recognised")))
+    result = _ocr_only(
+        tmp_path, config, sample_png, component_factory=_factory_with(_StubOCR("recognised"))
+    )
 
     assert result.error is None
     assert result.raw_text == "recognised"
@@ -61,7 +69,9 @@ def test_run_ocr_reports_engine_error_without_raising(tmp_path: Path, sample_png
     Then   the failure is returned on the result rather than propagated
     """
     config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
-    result = run_ocr(config, sample_png, component_factory=_factory_with(_StubOCR(raises=True)))
+    result = _ocr_only(
+        tmp_path, config, sample_png, component_factory=_factory_with(_StubOCR(raises=True))
+    )
 
     assert result.raw_text == ""
     assert result.error is not None
@@ -78,8 +88,12 @@ def test_run_ocr_reports_a_stop_as_stopped_by_user(tmp_path: Path, sample_png: P
     stop.set()
     config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
 
-    result = run_ocr(
-        config, sample_png, component_factory=_factory_with(_StubOCR("x")), stop_event=stop
+    result = _ocr_only(
+        tmp_path,
+        config,
+        sample_png,
+        component_factory=_factory_with(_StubOCR("x")),
+        stop_event=stop,
     )
 
     assert result.raw_text == ""
@@ -97,7 +111,7 @@ def test_run_ocr_uses_text_input_directly(tmp_path: Path) -> None:
     txt.write_text("plain text content", encoding="utf-8")
     config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
 
-    result = run_ocr(config, txt, component_factory=_factory_with(_StubOCR("UNUSED")))
+    result = _ocr_only(tmp_path, config, txt, component_factory=_factory_with(_StubOCR("UNUSED")))
     assert result.error is None
     assert result.raw_text == "plain text content"
 
@@ -114,7 +128,9 @@ def test_run_ocr_parses_layout_html_into_markdown(tmp_path: Path, sample_png: Pa
     )
     config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
 
-    result = run_ocr(config, sample_png, component_factory=_factory_with(_StubOCR(html)))
+    result = _ocr_only(
+        tmp_path, config, sample_png, component_factory=_factory_with(_StubOCR(html))
+    )
 
     assert result.error is None
     assert result.raw_text == "my ~~backpack~~ bag"
@@ -129,7 +145,9 @@ def test_run_ocr_keeps_plain_engine_output_plain(tmp_path: Path, sample_png: Pat
     """
     config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
 
-    result = run_ocr(config, sample_png, component_factory=_factory_with(_StubOCR("- a\n- b")))
+    result = _ocr_only(
+        tmp_path, config, sample_png, component_factory=_factory_with(_StubOCR("- a\n- b"))
+    )
 
     assert result.raw_text == "- a\n- b"
     assert result.raw_text_format == "plain"

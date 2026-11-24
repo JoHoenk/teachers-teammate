@@ -18,11 +18,10 @@ from teachers_teammate.infrastructure.state_repository import (
 )
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore, WorkTooNewError
 from teachers_teammate.cache_keys import correction_key
-from teachers_teammate.infrastructure.key_facts import MachineKeyFacts
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheReconciliationService,
 )
-from tests.conftest import make_config
+from tests.conftest import make_config, make_key_facts
 from ._service_helpers import (
     _change_work,
     _commands_for,
@@ -280,7 +279,7 @@ def test_a_teachers_transcription_survives_reconcile(tmp_path: Path) -> None:
     work_store = TeacherWorkStore(tmp_path / "work")
     commands = DocumentCommands(
         state_store_factory=lambda _c: repo,
-        facts=MachineKeyFacts(),
+        facts=make_key_facts(),
         work_store=work_store,
     )
     repo.record_ocr_result(
@@ -298,6 +297,7 @@ def test_a_teachers_transcription_survives_reconcile(tmp_path: Path) -> None:
     commands.edit_transcription(cfg, source=source, text="MANUAL")
 
     recon = CacheReconciliationService(
+        facts=make_key_facts(),
         state_repo=repo,
         artifact_store=PreviewImageStore(tmp_path / "art"),
         config=cfg,
@@ -477,7 +477,7 @@ def test_keeping_the_changes_stamps_the_settings_on_corrections_that_apply(tmp_p
     assert stamped.corrections.kept_under == correction_key(
         other,
         windows_for(other, recommendations=svc.recommendations),
-        MachineKeyFacts(),
+        make_key_facts(),
     )
 
 

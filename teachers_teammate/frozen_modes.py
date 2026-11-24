@@ -668,9 +668,10 @@ def _check_addon_imports() -> list[str]:
 
 def _check_name_detection() -> str | None:
     """Hide a name with spaCy the way a run does."""
-    from teachers_teammate.infrastructure.anonymizer import SpacyAnonymizer  # noqa: PLC0415
+    from teachers_teammate.infrastructure.spacy_models import SpacyModels  # noqa: PLC0415
 
-    anonymized, _mapping = SpacyAnonymizer(_ADDON_CHECK_LANGUAGE).anonymize(_ADDON_CHECK_TEXT)
+    anonymizer = SpacyModels().anonymizer(_ADDON_CHECK_LANGUAGE)
+    anonymized, _mapping = anonymizer.anonymize(_ADDON_CHECK_TEXT)
     if _ADDON_CHECK_NAME in anonymized:
         return f"the name was not hidden: {anonymized!r}"
     return None

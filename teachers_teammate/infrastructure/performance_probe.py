@@ -216,9 +216,7 @@ def draw_test_page(path: Path, *, dpi: int) -> Path:
     return path
 
 
-def sample_page_image(
-    tmp_dir: Path, *, ocr: OcrConfig, store: ModelStore | None = None
-) -> tuple[Path, Path]:
+def sample_page_image(tmp_dir: Path, *, ocr: OcrConfig, store: ModelStore) -> tuple[Path, Path]:
     """Draw the test page and run it through *ocr*'s preprocessing.
 
     Returns ``(drawn, preprocessed)``.  The preprocessing is the one a run applies, so the image
@@ -228,7 +226,7 @@ def sample_page_image(
     from .preprocessing.steps import StepPipeline  # noqa: PLC0415
 
     drawn = draw_test_page(tmp_dir / "speed-test-page.png", dpi=ocr.pdf_render_dpi)
-    preprocessor = StepPipeline(steps_for(ocr, store or ModelStore()), tmp_dir=tmp_dir)
+    preprocessor = StepPipeline(steps_for(ocr, store), tmp_dir=tmp_dir)
     processed, _steps = preprocessor.preprocess(drawn)
     return drawn, processed
 
@@ -269,6 +267,7 @@ class PerformanceProbe:
         self,
         client: OllamaClient,
         *,
+        model_store: ModelStore,
         cancel_event: threading.Event | None = None,
         gpu_found: bool = False,
         on_battery: bool | None = None,
@@ -281,6 +280,7 @@ class PerformanceProbe:
             client: The server to measure.  Build it with the same *cancel_event* (the client
                 abandons a request that is waiting when the event is set); the probe itself
                 only checks the event between requests.
+            model_store: Where the page models of the reading step's preparation are.
             cancel_event: Set by the panel's Stop button and by closing the window.
             gpu_found: Whether this computer has a graphics card, so a share of 0 on it means
                 Ollama did not use the card.
@@ -290,6 +290,7 @@ class PerformanceProbe:
                 its model, its number and how many steps there are.
         """
         self._client = client
+        self._model_store = model_store
         self._cancel_event = cancel_event
         self._gpu_found = gpu_found
         self._on_battery = on_battery
@@ -416,7 +417,7 @@ class PerformanceProbe:
         if not _is_installed(model, installed):
             return StepResult(SpeedStep.READING, model, StepOutcome.SKIPPED)
         load_s = self._warm_up(model, before=before)
-        _drawn, page = sample_page_image(tmp_dir, ocr=request.ocr)
+        _drawn, page = sample_page_image(tmp_dir, ocr=request.ocr, store=self._model_store)
         image = base64.b64encode(page.read_bytes()).decode("utf-8")
         stats, outcome, message = self._measure(
             model,

@@ -31,7 +31,7 @@ from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.domain.stages import Stage
 from teachers_teammate.infrastructure.key_facts import MachineKeyFacts
 from teachers_teammate.infrastructure.onnx.store import ModelStore
-from tests.conftest import fake_page_models_store, make_config
+from tests.conftest import fake_page_models_store, make_config, make_key_facts
 
 _PNG = Path("page.png")
 _PDF = Path("worksheet.pdf")
@@ -246,7 +246,7 @@ def _correction_keys(tmp_path: Path) -> dict[str, str]:
         "ollama/windows-wide": _WIDE,
     }
     return {
-        name: correction_key(config, windows.get(name), MachineKeyFacts())
+        name: correction_key(config, windows.get(name), make_key_facts())
         for name, config in _proofreading_configs(tmp_path).items()
     }
 
@@ -262,7 +262,7 @@ def _review_keys(tmp_path: Path) -> dict[str, str]:
 
 def _privacy_keys(tmp_path: Path) -> dict[str, str]:
     """Return the privacy fingerprint of every case of the matrix."""
-    facts = MachineKeyFacts()
+    facts = make_key_facts()
     return {name: privacy_key(config, facts) for name, config in _hidden_configs(tmp_path).items()}
 
 
@@ -281,13 +281,11 @@ def _sent_records(tmp_path: Path) -> dict[str, str]:
     )
     return {
         "proofreading": json.dumps(
-            sent_record(
-                config, Stage.CORRECTION, names_hidden=3, facts=MachineKeyFacts()
-            ).to_dict(),
+            sent_record(config, Stage.CORRECTION, names_hidden=3, facts=make_key_facts()).to_dict(),
             sort_keys=True,
         ),
         "content-review": json.dumps(
-            sent_record(config, Stage.EVALUATION, facts=MachineKeyFacts()).to_dict(),
+            sent_record(config, Stage.EVALUATION, facts=make_key_facts()).to_dict(),
             sort_keys=True,
         ),
     }

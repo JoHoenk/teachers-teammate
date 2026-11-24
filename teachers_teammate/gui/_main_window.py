@@ -269,8 +269,7 @@ class MainWindow(QMainWindow):
 
     def _build_widgets(self) -> None:
         """Build what the window shows and the controllers work on."""
-        self._config_panel = ConfigPanel()
-        self._config_panel.set_service(self._app_service)
+        self._config_panel = ConfigPanel(self._app_service)
         self._results_table = ResultsTable()
         self._results_table.setObjectName(_handles.RESULTS_TABLE)
         self._log = LogWidget()

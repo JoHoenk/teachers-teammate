@@ -51,7 +51,7 @@ OVERSIZED_ATTRIBUTES: dict[str, int] = {}
 OVERSIZED_METHODS: dict[str, int] = {
     "teachers_teammate/application/providers.py::ProviderService": 25,
     "teachers_teammate/gui/_check_controller.py::CheckController": 27,
-    "teachers_teammate/gui/_config_panel.py::ConfigPanel": 33,
+    "teachers_teammate/gui/_config_panel.py::ConfigPanel": 32,
     "teachers_teammate/gui/_results_table.py::ResultsTable": 27,
 }
 
@@ -60,7 +60,7 @@ OVERSIZED_FUNCTIONS: dict[str, int] = {
     "teachers_teammate/application/setup_plan.py::_downloads_plan": 81,
     "teachers_teammate/cli.py::_add_correction_args": 91,
     "teachers_teammate/cli.py::_add_ocr_args": 85,
-    "teachers_teammate/gui/_config_panel.py::ConfigPanel.__init__": 81,
+    "teachers_teammate/gui/_config_panel.py::ConfigPanel.__init__": 48,
     "teachers_teammate/gui/_fix_targets.py::fix_for": 73,
     "teachers_teammate/gui/_main_window.py::main_gui": 80,
     "teachers_teammate/gui/settings/_ai_service_section.py::AiServiceSection._build": 88,
@@ -72,7 +72,7 @@ OVERSIZED_FUNCTIONS: dict[str, int] = {
         "teachers_teammate/infrastructure/ollama_utils.py"
         "::_consume_iterator_with_first_token_timeout"
     ): 82,
-    "teachers_teammate/infrastructure/pipeline.py::OCRPipeline._setup_services": 81,
+    "teachers_teammate/infrastructure/pipeline.py::OCRPipeline._setup_services": 79,
 }
 
 #: The functions still over the branch limit, at the number of branches they have today.

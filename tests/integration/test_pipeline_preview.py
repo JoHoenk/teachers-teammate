@@ -32,7 +32,7 @@ def test_preprocess_preview_returns_existing_paths(
     Then   both the original and the preprocessed image paths exist on disk
     """
     original, processed, _steps = preprocess_preview(
-        sample_png, OcrConfig(preprocess_method=method), tmp_path
+        sample_png, OcrConfig(preprocess_method=method), tmp_path, ModelStore(tmp_path / "models")
     )
     assert original.exists(), f"Original image path does not exist for method={method}"
     assert processed.exists(), f"Processed image path does not exist for method={method}"
@@ -48,7 +48,10 @@ def test_preprocess_preview_none_returns_same_path_for_original_and_processed(
     Then   original and processed paths are equal (no processing) and steps is empty
     """
     original, processed, steps = preprocess_preview(
-        sample_png, OcrConfig(preprocess_method=PreprocessMethod.NONE), tmp_path
+        sample_png,
+        OcrConfig(preprocess_method=PreprocessMethod.NONE),
+        tmp_path,
+        ModelStore(tmp_path / "models"),
     )
     assert original == processed
     assert steps == []
@@ -64,7 +67,10 @@ def test_preprocess_preview_of_the_automatic_preparation_writes_a_new_image(
     Then   the processed path differs from the original and the gray conversion is recorded
     """
     original, processed, steps = preprocess_preview(
-        sample_png, OcrConfig(engine="ollama", preprocess_method=PreprocessMethod.AUTO), tmp_path
+        sample_png,
+        OcrConfig(engine="ollama", preprocess_method=PreprocessMethod.AUTO),
+        tmp_path,
+        ModelStore(tmp_path / "models"),
     )
     assert original != processed
     assert steps == ["grayscale"]
@@ -78,7 +84,10 @@ def test_preprocess_preview_works_with_pdf_input(tmp_path: Path, sample_pdf: Pat
     Then   both returned paths exist and the original is a PNG (first page rendered from PDF)
     """
     original, processed, _steps = preprocess_preview(
-        sample_pdf, OcrConfig(preprocess_method=PreprocessMethod.AUTO), tmp_path
+        sample_pdf,
+        OcrConfig(preprocess_method=PreprocessMethod.AUTO),
+        tmp_path,
+        ModelStore(tmp_path / "models"),
     )
     assert original.exists()
     assert processed.exists()
@@ -102,7 +111,10 @@ def test_preprocess_preview_applies_the_steps_a_page_needs(tmp_path: Path) -> No
     Image.fromarray((np.asarray(page, dtype=np.float32) * gradient).astype(np.uint8)).save(source)
 
     _original, _processed, steps = preprocess_preview(
-        source, OcrConfig(preprocess_method=PreprocessMethod.AUTO), tmp_path
+        source,
+        OcrConfig(preprocess_method=PreprocessMethod.AUTO),
+        tmp_path,
+        ModelStore(tmp_path / "models"),
     )
 
     assert "light" in steps
@@ -122,7 +134,7 @@ def test_preprocess_preview_uses_the_given_build_preprocessor(
     PipelineComponentFactory expects the preview to match what that pipeline would
     actually run; calling the default constructor directly would silently diverge.
     """
-    calls: list[tuple[Path, bool, OcrConfig, ModelStore | None]] = []
+    calls: list[tuple[Path, bool, OcrConfig, ModelStore]] = []
     ocr = OcrConfig(preprocess_method=PreprocessMethod.AUTO)
 
     class _StubPreprocessor:
@@ -132,13 +144,13 @@ def test_preprocess_preview_uses_the_given_build_preprocessor(
     store = ModelStore(tmp_path / "models")
 
     def _stub_build_preprocessor(
-        *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore | None
+        *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore
     ):
         calls.append((tmp_dir, save_steps, ocr, store))
         return _StubPreprocessor()
 
     _original, _processed, steps = preprocess_preview(
-        sample_png, ocr, tmp_path, _stub_build_preprocessor, model_store=store
+        sample_png, ocr, tmp_path, store, _stub_build_preprocessor
     )
     assert steps == ["stub_step"]
     assert calls == [(tmp_path, False, ocr, store)]
@@ -158,10 +170,16 @@ def test_preprocess_preview_uses_configured_pdf_dpi(tmp_path: Path, sample_pdf: 
     low_dir.mkdir()
     high_dir.mkdir()
     default_original, _p, _s = preprocess_preview(
-        sample_pdf, OcrConfig(preprocess_method=PreprocessMethod.NONE, pdf_render_dpi=100), low_dir
+        sample_pdf,
+        OcrConfig(preprocess_method=PreprocessMethod.NONE, pdf_render_dpi=100),
+        low_dir,
+        ModelStore(tmp_path / "models"),
     )
     high_original, _p2, _s2 = preprocess_preview(
-        sample_pdf, OcrConfig(preprocess_method=PreprocessMethod.NONE, pdf_render_dpi=300), high_dir
+        sample_pdf,
+        OcrConfig(preprocess_method=PreprocessMethod.NONE, pdf_render_dpi=300),
+        high_dir,
+        ModelStore(tmp_path / "models"),
     )
     with Image.open(default_original) as low_img, Image.open(high_original) as high_img:
         assert high_img.size[0] > low_img.size[0]

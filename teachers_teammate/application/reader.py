@@ -31,11 +31,11 @@ class ReaderService:
     def __init__(
         self,
         *,
-        model_store: ModelStore | None = None,
+        model_store: ModelStore,
         component_factory: PipelineComponentFactory | None = None,
         providers: ProviderService,
     ) -> None:
-        self._model_store = model_store or ModelStore()
+        self._model_store = model_store
         # Used only to keep preprocess_preview() in sync with a non-default factory a test
         # swaps a stage builder into.
         self._component_factory = component_factory or PipelineComponentFactory()
@@ -76,8 +76,8 @@ class ReaderService:
             source_path,
             ocr,
             tmp_dir,
-            self._component_factory.build_preprocessor,
             self._model_store,
+            self._component_factory.build_preprocessor,
         )
 
     def resolve_preview_tmp_dir(self) -> Path:

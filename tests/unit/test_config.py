@@ -116,17 +116,16 @@ def test_effective_correction_model_honours_explicit_model() -> None:
     assert cfg.effective_correction_model == "gpt-3.5-turbo"
 
 
-def test_effective_correction_model_unknown_provider_falls_back() -> None:
+def test_effective_correction_model_unknown_provider_raises() -> None:
     """
     Given  a Config with an unrecognised correction_provider and no correction_model
     When   effective_correction_model is read
-    Then   a non-empty fallback string is returned without raising
+    Then   ValueError is raised: another provider's model would answer for a typo
     """
     cfg = _cfg(correction_provider="unknown_provider", correction_model="")
-    # Should not raise; returns a fallback string
-    result = cfg.effective_correction_model
-    assert isinstance(result, str)
-    assert len(result) > 0
+
+    with pytest.raises(ValueError, match="unknown_provider"):
+        _ = cfg.effective_correction_model
 
 
 # ── effective_evaluate_model ───────────────────────────────────────────────

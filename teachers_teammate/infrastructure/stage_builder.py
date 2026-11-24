@@ -68,7 +68,7 @@ from .proofreading.chunking import ChunkingCorrector
 from .proofreading.corrector import ProofreadingSettings, build_exchange_corrector
 from .proofreading.port import LangChainPort, ModelPort, OllamaPort
 from .reporting import StdoutReporter
-from .spacy_models import installed_spacy_models
+from .spacy_models import SpacyModels, installed_spacy_models
 from .system_locale import system_language
 from .workflow.preprocess_service import PreprocessService
 
@@ -76,16 +76,13 @@ from .workflow.preprocess_service import PreprocessService
 
 
 def default_build_preprocessor(
-    *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore | None = None
+    *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore
 ) -> ImagePreprocessor:
     """Build the preprocessor for *ocr*'s settings; shared by real runs and the GUI preview.
 
-    *store* is where the page models of the automatic preparation are (``None`` = the default
-    folder).
+    *store* is where the page models of the automatic preparation are.
     """
-    return StepPipeline(
-        steps_for(ocr, store or ModelStore()), tmp_dir=tmp_dir, save_steps=save_steps
-    )
+    return StepPipeline(steps_for(ocr, store), tmp_dir=tmp_dir, save_steps=save_steps)
 
 
 def _default_build_ppocr_ocr(
@@ -154,9 +151,7 @@ def _default_build_doc_creator(*, fmt: str, labels_language: str = "") -> Docume
 
 
 def _default_build_anonymizer(*, language: str, config: AnonymizerConfig) -> Anonymizer:
-    from .anonymizer import SpacyAnonymizer  # noqa: PLC0415
-
-    return SpacyAnonymizer(language, config)
+    return SpacyModels().anonymizer(language, config)
 
 
 def _default_check_ocr_model(*, url: str, model: str, reporter: Reporter) -> None:
@@ -201,7 +196,7 @@ class PreprocessorBuilder(Protocol):
     """Builds the image preprocessor of a run."""
 
     def __call__(
-        self, *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore | None
+        self, *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore
     ) -> ImagePreprocessor:
         """Return the preprocessor for *ocr*'s settings."""
         ...
@@ -333,15 +328,14 @@ class StageBuilder:
 
     config: Config
     factory: PipelineComponentFactory
+    #: Where the built-in reader's model files are looked for.  The application layer passes
+    #: the store its readiness check uses, so a run reads the folder that was checked.
+    model_store: ModelStore
     reporter: Reporter = field(default_factory=StdoutReporter)
     #: The hardware of the computer that runs Ollama, resolved by the application layer.  Only
     #: needed to size the context window of the local models; ``None`` means "not known" and
     #: keeps the base window.
     hardware: HardwareDetection | None = None
-    #: Where the built-in reader's model files are looked for.  The application layer passes
-    #: the store its readiness check uses, so a run reads the folder that was checked;
-    #: ``None`` means the default folder.
-    model_store: ModelStore | None = None
 
     def _build_ollama_client(self) -> OllamaClient:
         """Create the shared OllamaClient for all Ollama-backed stages."""
@@ -436,9 +430,7 @@ class StageBuilder:
         if reason and cfg.recognition_enabled:
             raise OnlineOcrNotAllowedError(reason)
         if ocr.engine == ENGINE_PPOCR:
-            return factory.build_ppocr_ocr(
-                store=self.model_store or ModelStore(), stop_event=stop_event
-            )
+            return factory.build_ppocr_ocr(store=self.model_store, stop_event=stop_event)
         client = ollama_client or self._build_ollama_client()
         return factory.build_ollama_ocr(
             model=ocr.model, client=client, timeout=cfg.ocr_timeout, temperature=ocr.temperature

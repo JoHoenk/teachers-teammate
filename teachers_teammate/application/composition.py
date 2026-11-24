@@ -26,6 +26,7 @@ from ..infrastructure.gpu_detector import SystemHardwareProbe
 from ..infrastructure.key_facts import MachineKeyFacts
 from ..infrastructure.ollama_utils import OllamaClient
 from ..infrastructure.onnx.store import ModelStore
+from ..infrastructure.performance_probe import PerformanceProbe
 from ..infrastructure.pipeline import OCRPipeline
 from ..infrastructure.spacy_models import SpacyModels
 from ..infrastructure.speed_store import SampleStore
@@ -226,6 +227,8 @@ def _speed_estimates(parts: _Parts, providers: ProviderService) -> SpeedEstimate
         ollama=parts.ollama,
         client_factory=lambda url, cancel_event: OllamaClient(url, cancel_event=cancel_event),
         samples=parts.samples,
+        # The reading step prepares its test page with the page models a run reads with.
+        probe_factory=functools.partial(PerformanceProbe, model_store=parts.model_store),
     )
 
 

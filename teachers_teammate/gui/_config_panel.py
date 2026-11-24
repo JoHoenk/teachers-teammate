@@ -284,12 +284,13 @@ class ConfigPanel(QScrollArea):
     #: The last rendered data flow, so cells elsewhere can say where a step's text goes.
     data_flow_changed = Signal(object)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, services: AppServices, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._service: AppServices | None = None
-        # True while load_from_dict applies saved state: stage requirement guards only
-        # make sense for a user ticking a box, not for restoring settings at startup.
-        self._loading = False
+        self._services = services
+        # True while load_from_dict applies saved state and while the panel is being built:
+        # stage requirement guards only make sense for a user ticking a box, not for restoring
+        # settings at startup or for the boxes the panel creates ticked.
+        self._loading = True
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setMinimumWidth(340)
@@ -297,7 +298,44 @@ class ConfigPanel(QScrollArea):
 
         # The one store of every setting: the widgets write their key here on change, and
         # ``to_dict`` is this dict plus the input folder.
-        self._settings_dict: SettingsDict = {
+        self._settings_dict: SettingsDict = self._initial_settings()
+
+        inner = QWidget()
+        self._layout = QVBoxLayout(inner)
+        self._layout.setContentsMargins(8, 8, 8, 8)
+        self._layout.setSpacing(6)
+
+        self._data_flow: DataFlow | None = None
+        self._data_flow_summary = DataFlowSummary()
+        self._selection = InputSelection(
+            SelectionHooks(changed=self.paths_changed.emit, dialog_parent=self), self
+        )
+        self._results = ResultsStep(self._results_hooks(), self)
+        self._stage_guard = StageGuard(self._guard_hooks(), self)
+        self._layout.addWidget(self._data_flow_summary)
+        self._layout.addWidget(separator())
+        self._build_step1_select_input()
+        self._layout.addWidget(separator())
+        self._build_step2_language()
+        self._layout.addWidget(separator())
+        self._build_step3_what_should_happen()
+        self._layout.addWidget(separator())
+        self._build_step4_results()
+        self._layout.addStretch()
+
+        self.setWidget(inner)
+
+        self._language.currentTextChanged.connect(self._on_language_changed)
+        self._correction_level.currentTextChanged.connect(self._on_level_changed)
+        self._on_language_changed(self._language.currentText())
+
+        self._update_correction_visibility()
+        self._loading = False
+        self.refresh_data_flow()
+
+    def _initial_settings(self) -> SettingsDict:
+        """Return the settings a fresh panel holds: the defaults, and the empty paths."""
+        settings: SettingsDict = {
             "ocr_engine": DEFAULTS["ocr_engine"],
             "ocr_model": DEFAULTS["ocr_model"],
             "ollama_url": DEFAULTS["ollama_url"],
@@ -330,41 +368,11 @@ class ConfigPanel(QScrollArea):
             "check_for_updates": DEFAULTS["check_for_updates"],
             "results_keep_days": DEFAULTS["results_keep_days"],
         }
-        self._settings_dict["anonymizer_primary_model"] = None
+        settings["anonymizer_primary_model"] = None
         # SECONDARY_MODEL_AUTO by default; SECONDARY_MODEL_NONE = the user chose "(none)".
-        self._settings_dict["anonymizer_secondary_model"] = DEFAULTS["anonymizer_secondary_model"]
-        self._settings_dict["anonymizer_patterns"] = None
-
-        inner = QWidget()
-        self._layout = QVBoxLayout(inner)
-        self._layout.setContentsMargins(8, 8, 8, 8)
-        self._layout.setSpacing(6)
-
-        self._data_flow: DataFlow | None = None
-        self._data_flow_summary = DataFlowSummary()
-        self._selection = InputSelection(
-            SelectionHooks(changed=self.paths_changed.emit, dialog_parent=self), self
-        )
-        self._results = ResultsStep(self._results_hooks(), self)
-        self._stage_guard = StageGuard(self._guard_hooks(), self)
-        self._layout.addWidget(self._data_flow_summary)
-        self._layout.addWidget(separator())
-        self._build_step1_select_input()
-        self._layout.addWidget(separator())
-        self._build_step2_language()
-        self._layout.addWidget(separator())
-        self._build_step3_what_should_happen()
-        self._layout.addWidget(separator())
-        self._build_step4_results()
-        self._layout.addStretch()
-
-        self.setWidget(inner)
-
-        self._language.currentTextChanged.connect(self._on_language_changed)
-        self._correction_level.currentTextChanged.connect(self._on_level_changed)
-        self._on_language_changed(self._language.currentText())
-
-        self._update_correction_visibility()
+        settings["anonymizer_secondary_model"] = DEFAULTS["anonymizer_secondary_model"]
+        settings["anonymizer_patterns"] = None
+        return settings
 
     # ── hooks ─────────────────────────────────────────────────────────────────────
 
@@ -630,12 +638,11 @@ class ConfigPanel(QScrollArea):
         Does nothing while settings are being loaded: :meth:`load_from_dict` renders once
         at the end instead of once per restored checkbox.
         """
-        if self._service is None or self._loading:
+        if self._loading:
             return
-        service = self._service
         config = self.lookup_config()
         # Ask once: the box shows the ticked steps, the lines under the steps show every step.
-        steps = service.data_flow.describe_steps(config)
+        steps = self._services.data_flow.describe_steps(config)
         self._data_flow = ticked_steps(
             steps,
             correction_enabled=config.correction_enabled,
@@ -975,11 +982,6 @@ class ConfigPanel(QScrollArea):
                 continue
             self._settings_dict[key] = value
 
-    def set_service(self, service: AppServices) -> None:
-        """Inject the application service so the panel can run requirement checks."""
-        self._service = service
-        self.refresh_data_flow()
-
     def _stage_checkbox(self, stage: str) -> QCheckBox:
         """Return the enable checkbox of pipeline *stage*."""
         if stage == Stage.OCR:
@@ -993,7 +995,8 @@ class ConfigPanel(QScrollArea):
     def _guard_hooks(self) -> GuardHooks:
         """Return what the requirement guard asks of the panel."""
         return GuardHooks(
-            service=lambda: self._service,
+            run=self._services.run,
+            providers=self._services.providers,
             config=self.lookup_config,
             loading=lambda: self._loading,
             checkbox=self._stage_checkbox,

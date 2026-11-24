@@ -61,7 +61,7 @@ def list_models(*, api_key: str | None = None, **_kwargs: object) -> list[str]:
 def create(
     model: str,
     *,
-    temperature: float = 0.7,
+    temperature: float,
     api_key: str | None = None,
     **_kwargs: object,
 ) -> BaseChatModel:

@@ -48,7 +48,7 @@ def check_connection(*, base_url: str = DEFAULT_SERVER_URL, **_kwargs: object) -
 
 
 def create(
-    model: str, *, base_url: str = DEFAULT_SERVER_URL, temperature: float = 0.7, **_kwargs: object
+    model: str, *, base_url: str = DEFAULT_SERVER_URL, temperature: float, **_kwargs: object
 ) -> BaseChatModel:
     """Return a ``ChatOllama`` instance for *model*.
 

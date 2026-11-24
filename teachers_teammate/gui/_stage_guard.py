@@ -14,7 +14,8 @@ import dataclasses
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QCheckBox, QWidget
 
-from ..application.composition import AppServices
+from ..application.providers import ProviderService
+from ..application.run import RunService
 from ..config import Config
 from ..domain.install_item import InstallItem
 from ..domain.requirements import RequirementIssue
@@ -39,8 +40,10 @@ _STAGE_STEP_TITLES: dict[str, str] = {
 class GuardHooks:
     """What the requirement guard asks its owner for."""
 
-    #: The application service, or ``None`` before one was injected: no service, no check.
-    service: Callable[[], AppServices | None]
+    #: The run service, which answers what a stage needs before it can run.
+    run: RunService
+    #: The provider service, for the name of a provider in a fix's wording.
+    providers: ProviderService
     #: The config of the live panel values, for the check and for its answer's age.
     config: Callable[[], Config]
     #: ``True`` while saved settings are being restored: a restored box is not a teacher's tick.
@@ -69,19 +72,16 @@ class StageGuard(QObject):
     def check(self, stage: str) -> None:
         """Check the requirements of *stage* and untick it with an explanation if unmet.
 
-        Nothing is checked while saved settings are being restored, for a box the teacher
-        unticked meanwhile, or before a service was injected.
+        Nothing is checked while saved settings are being restored, or for a box the teacher
+        unticked meanwhile.
         """
         hooks = self._hooks
         if hooks.loading() or not hooks.checkbox(stage).isChecked():
             return
-        service = hooks.service()
-        if service is None:
-            return
         config = hooks.config()
         task = self._tasks.setdefault(stage, LatestTask(self))
         task.submit(
-            lambda: service.run.check_stage_requirements(config, stage),
+            lambda: hooks.run.check_stage_requirements(config, stage),
             lambda result, error: self._on_result(config, stage, result, error),
         )
 
@@ -114,13 +114,10 @@ class StageGuard(QObject):
         hooks.unticked(stage)
 
         title = win.guard_title(_STAGE_STEP_TITLES.get(stage, stage))
-        service = hooks.service()
-        if service is None:
-            return  # no service, no check that could have failed
         fix = fix_for(
             stage,
             issues[0],
-            service.providers.display_name,
+            hooks.providers.display_name,
             language=hooks.language(),
         )
         dialog = DependencyGuardDialog(title, issues, fix.actions, hooks.dialog_parent)

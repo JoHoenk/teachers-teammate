@@ -16,6 +16,7 @@ from teachers_teammate.gui._anonymizer_config_widget import AnonymizerConfigWidg
 from teachers_teammate.texts import privacy
 from teachers_teammate.texts._types import Notice
 
+from ._service_stubs import make_config_panel
 from ._settings_stubs import InertLatestTask
 
 
@@ -658,9 +659,8 @@ def test_privacy_rules_button_asks_for_the_privacy_page(qtbot) -> None:
     Then   the panel asks for the rules of its document language and current anonymizer config
            (the main window opens Settings → Privacy on the detection tab for it)
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel._anonymization_enabled.setChecked(True)
 
@@ -679,9 +679,8 @@ def test_changed_rules_update_the_config_panel(qtbot) -> None:
     When   its anonymizer_config is handed to the config panel
     Then   the panel's anonymizer config holds the new patterns
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     widget = _make_dialog(qtbot, config=AnonymizerConfig(patterns=(("TEST", r"\d+"),)))
 
@@ -807,9 +806,8 @@ def test_primary_model_survives_save_and_reload(qtbot, tmp_path) -> None:
     Then   the primary model is restored and reaches both the pipeline Config and the dialog
     """
     from teachers_teammate.config import dump_config_file, load_config_file  # noqa: PLC0415
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     (tmp_path / "in").mkdir()
     (tmp_path / "out").mkdir()
@@ -819,7 +817,7 @@ def test_primary_model_survives_save_and_reload(qtbot, tmp_path) -> None:
     config_path = tmp_path / "ocr.toml"
     config_path.write_text(dump_config_file(panel.to_dict()), encoding="utf-8")
 
-    reloaded = ConfigPanel()
+    reloaded = make_config_panel()
     qtbot.addWidget(reloaded)
     reloaded.load_from_dict(load_config_file(config_path).values)
 
@@ -834,9 +832,8 @@ def test_primary_auto_is_not_persisted_as_a_model(qtbot, tmp_path) -> None:
     When   it is written back into the config panel
     Then   no primary model is stored and the language decides the model again
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     (tmp_path / "in").mkdir()
     (tmp_path / "out").mkdir()
@@ -850,10 +847,9 @@ def test_primary_auto_is_not_persisted_as_a_model(qtbot, tmp_path) -> None:
 
 
 def _panel_with_dirs(qtbot, tmp_path):
-    """Return a ConfigPanel with valid input and output folders."""
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
+    """Return a config panel with valid input and output folders."""
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     (tmp_path / "in").mkdir()
     (tmp_path / "out").mkdir()
@@ -903,7 +899,6 @@ def test_empty_pattern_list_survives_save_and_reload(qtbot, tmp_path) -> None:
     Then   the list stays empty in the panel, the pipeline Config and the anonymizer config
     """
     from teachers_teammate.config import dump_config_file, load_config_file  # noqa: PLC0415
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
 
     panel = _panel_with_dirs(qtbot, tmp_path)
     panel.update_anonymizer_config(AnonymizerConfig(patterns=()))
@@ -911,7 +906,7 @@ def test_empty_pattern_list_survives_save_and_reload(qtbot, tmp_path) -> None:
     config_path = tmp_path / "ocr.toml"
     config_path.write_text(dump_config_file(panel.to_dict()), encoding="utf-8")
 
-    reloaded = ConfigPanel()
+    reloaded = make_config_panel()
     qtbot.addWidget(reloaded)
     reloaded.load_from_dict(load_config_file(config_path).values)
 

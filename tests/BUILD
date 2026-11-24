@@ -724,6 +724,12 @@ app_test(
     data = ["//teachers_teammate:all_sources"],
 )
 
+# No default stands in for a forgotten argument.
+app_test(
+    "unit/test_no_hidden_defaults.py",
+    data = ["//teachers_teammate:all_sources"],
+)
+
 app_test(
     "unit/test_layer_imports.py",
     data = ["//teachers_teammate:all_sources"],

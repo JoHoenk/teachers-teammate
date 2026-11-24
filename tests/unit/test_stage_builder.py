@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,6 +26,12 @@ from teachers_teammate.infrastructure.stage_builder import (
 from tests.conftest import make_config
 
 
+def _stage_builder(tmp_path: Path, *args: Any, **kwargs: Any) -> StageBuilder:
+    """A stage builder whose model folder stays inside the test, unless the test names one."""
+    kwargs.setdefault("model_store", ModelStore(tmp_path / "models"))
+    return StageBuilder(*args, **kwargs)
+
+
 @pytest.mark.use_case("Batch_OCR_Processing")
 @pytest.mark.parametrize(
     ("method", "first_step"),
@@ -40,7 +46,7 @@ def test_build_preprocessor_builds_the_steps_of_the_chosen_method(
     Then   the preprocessor is a step pipeline of the automatic steps, or of none at all
     """
     config = make_config(tmp_path, ocr=OcrConfig(engine="ppocr", preprocess_method=method))
-    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+    builder = _stage_builder(tmp_path, config=config, factory=PipelineComponentFactory())
 
     pre = builder.build_preprocessor(tmp_path)
 
@@ -58,8 +64,11 @@ def test_build_preprocessor_gives_the_run_s_model_store_to_the_factory(tmp_path:
     store = ModelStore(tmp_path / "models")
     build = MagicMock()
     config = make_config(tmp_path)
-    builder = StageBuilder(
-        config=config, factory=PipelineComponentFactory(build_preprocessor=build), model_store=store
+    builder = _stage_builder(
+        tmp_path,
+        config=config,
+        factory=PipelineComponentFactory(build_preprocessor=build),
+        model_store=store,
     )
 
     builder.build_preprocessor(tmp_path)
@@ -81,7 +90,7 @@ def test_build_preprocessor_service_uses_configured_pdf_dpi(tmp_path: Path) -> N
     )
 
     config = make_config(tmp_path, ocr=OcrConfig(engine="ppocr", pdf_render_dpi=150))
-    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+    builder = _stage_builder(tmp_path, config=config, factory=PipelineComponentFactory())
 
     service = builder.build_preprocessor_service(tmp_path)
     provider = service._provider_factory(".pdf", tmp_path)
@@ -100,7 +109,7 @@ def test_build_preprocessor_service_passes_configured_pdf_text_layer(
     Then   the PDF provider uses the configured mode
     """
     config = make_config(tmp_path, ocr=OcrConfig(engine="ppocr", pdf_text_layer="always"))
-    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+    builder = _stage_builder(tmp_path, config=config, factory=PipelineComponentFactory())
 
     provider = builder.build_preprocessor_service(tmp_path)._provider_factory(".pdf", tmp_path)
 
@@ -119,7 +128,7 @@ def test_build_ocr_postprocessor_uses_factory_callable(tmp_path: Path) -> None:
     factory = dataclasses.replace(
         PipelineComponentFactory(), build_ocr_postprocessor=lambda: sentinel
     )
-    builder = StageBuilder(make_config(tmp_path), factory)
+    builder = _stage_builder(tmp_path, make_config(tmp_path), factory)
 
     assert builder.build_ocr_postprocessor() is sentinel
 
@@ -130,7 +139,7 @@ def test_default_ocr_postprocessor_understands_layout_html(tmp_path: Path) -> No
     When   its postprocessor processes Chandra-style HTML
     Then   Markdown is produced
     """
-    builder = StageBuilder(make_config(tmp_path), PipelineComponentFactory())
+    builder = _stage_builder(tmp_path, make_config(tmp_path), PipelineComponentFactory())
 
     result = builder.build_ocr_postprocessor().process_pages(
         ['<div data-label="Text"><p><b>x</b></p></div>']
@@ -149,7 +158,7 @@ def test_build_ocr_refuses_online_engines(tmp_path: Path, engine: str) -> None:
     build_llm = MagicMock()
     factory = PipelineComponentFactory(build_llm=build_llm)
     config = make_config(tmp_path, ocr=OcrConfig(engine=engine, model="gpt-4o"))
-    builder = StageBuilder(config=config, factory=factory)
+    builder = _stage_builder(tmp_path, config=config, factory=factory)
 
     with pytest.raises(OnlineOcrNotAllowedError, match="whole page"):
         builder.build_ocr()
@@ -173,7 +182,7 @@ def test_build_ocr_refuses_ollama_cloud(tmp_path: Path, model: str, url: str) ->
     build_ollama_ocr = MagicMock()
     factory = PipelineComponentFactory(build_ollama_ocr=build_ollama_ocr)
     config = make_config(tmp_path, ocr=OcrConfig(engine="ollama", model=model), ollama_url=url)
-    builder = StageBuilder(config=config, factory=factory)
+    builder = _stage_builder(tmp_path, config=config, factory=factory)
 
     with pytest.raises(OnlineOcrNotAllowedError, match="Ollama's servers"):
         builder.build_ocr(MagicMock())
@@ -197,7 +206,7 @@ def test_build_ocr_refuses_ollama_on_the_internet(tmp_path: Path, url: str) -> N
     )
 
     with pytest.raises(OnlineOcrNotAllowedError, match="over the internet"):
-        StageBuilder(config=config, factory=factory).build_ocr(MagicMock())
+        _stage_builder(tmp_path, config=config, factory=factory).build_ocr(MagicMock())
 
     build_ollama_ocr.assert_not_called()
 
@@ -225,7 +234,7 @@ def test_build_ocr_allows_downloaded_ollama_model_on_another_computer(
         tmp_path, ocr=OcrConfig(engine="ollama", model="deepseek-ocr:latest"), ollama_url=url
     )
 
-    StageBuilder(config=config, factory=factory).build_ocr(MagicMock())
+    _stage_builder(tmp_path, config=config, factory=factory).build_ocr(MagicMock())
 
     build_ollama_ocr.assert_called_once()
 
@@ -259,7 +268,7 @@ def test_proofreading_is_online_by_where_its_server_is(
         ollama_url=url,
     )
 
-    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+    builder = _stage_builder(tmp_path, config=config, factory=PipelineComponentFactory())
 
     assert builder._correction_is_online() is online
 
@@ -279,14 +288,18 @@ def test_build_ocr_builds_the_built_in_reader_with_the_stop_event(tmp_path: Path
     factory = PipelineComponentFactory(
         build_ppocr_ocr=build_ppocr, build_ollama_ocr=build_ollama_ocr
     )
-    builder = StageBuilder(config=make_config(tmp_path, ocr_engine="ppocr"), factory=factory)
+    store = ModelStore(tmp_path / "models")
+    builder = _stage_builder(
+        tmp_path,
+        config=make_config(tmp_path, ocr_engine="ppocr"),
+        factory=factory,
+        model_store=store,
+    )
     stop = threading.Event()
 
     assert builder.build_ocr(None, stop) is reader
 
-    assert build_ppocr.call_args.kwargs["store"].root == Path(
-        os.environ["TEACHERS_TEAMMATE_MODELS_DIR"]
-    )
+    assert build_ppocr.call_args.kwargs["store"] is store
     assert build_ppocr.call_args.kwargs["stop_event"] is stop
     build_ollama_ocr.assert_not_called()
 
@@ -298,8 +311,10 @@ def test_the_default_reader_builder_constructs_the_processor(tmp_path: Path) -> 
     Then   PpOcrProcessor is constructed with the store and the stop event
     """
     with patch("teachers_teammate.infrastructure.stage_builder.PpOcrProcessor") as processor:
-        StageBuilder(
-            config=make_config(tmp_path, ocr_engine="ppocr"), factory=PipelineComponentFactory()
+        _stage_builder(
+            tmp_path,
+            config=make_config(tmp_path, ocr_engine="ppocr"),
+            factory=PipelineComponentFactory(),
         ).build_ocr()
 
     processor.assert_called_once()
@@ -316,8 +331,10 @@ def test_build_text_anonymizer_only_when_enabled(tmp_path: Path) -> None:
     build_anonymizer = MagicMock(return_value=anonymizer)
     factory = PipelineComponentFactory(build_anonymizer=build_anonymizer)
 
-    off = StageBuilder(config=make_config(tmp_path), factory=factory)
-    on = StageBuilder(config=make_config(tmp_path, text_anonymized_enabled=True), factory=factory)
+    off = _stage_builder(tmp_path, config=make_config(tmp_path), factory=factory)
+    on = _stage_builder(
+        tmp_path, config=make_config(tmp_path, text_anonymized_enabled=True), factory=factory
+    )
 
     assert off.build_text_anonymizer() is None
     assert on.build_text_anonymizer() is anonymizer
@@ -333,8 +350,8 @@ def test_build_text_anonymizer_reuses_shared_anonymizer(tmp_path: Path) -> None:
     build_anonymizer = MagicMock()
     factory = PipelineComponentFactory(build_anonymizer=build_anonymizer)
     shared = MagicMock()
-    builder = StageBuilder(
-        config=make_config(tmp_path, text_anonymized_enabled=True), factory=factory
+    builder = _stage_builder(
+        tmp_path, config=make_config(tmp_path, text_anonymized_enabled=True), factory=factory
     )
 
     assert builder.build_text_anonymizer(shared) is shared
@@ -362,7 +379,7 @@ def test_anonymizer_receives_models_and_current_default_patterns(tmp_path: Path)
         anonymizer_patterns=list(_LEGACY_DEFAULT_PATTERNS),
     )
 
-    StageBuilder(config=config, factory=factory).build_text_anonymizer()
+    _stage_builder(tmp_path, config=config, factory=factory).build_text_anonymizer()
 
     anon_config = build_anonymizer.call_args.kwargs["config"]
     assert build_anonymizer.call_args.kwargs["language"] == config.language
@@ -382,7 +399,7 @@ def test_anonymizer_keeps_custom_and_empty_pattern_lists(tmp_path: Path) -> None
 
     for patterns in ([("ID", r"\d+")], []):
         config = make_config(tmp_path, text_anonymized_enabled=True, anonymizer_patterns=patterns)
-        StageBuilder(config=config, factory=factory).build_text_anonymizer()
+        _stage_builder(tmp_path, config=config, factory=factory).build_text_anonymizer()
         assert build_anonymizer.call_args.kwargs["config"].patterns == tuple(patterns)
 
 
@@ -399,7 +416,7 @@ def test_correction_settings_carry_what_the_teacher_set(tmp_path: Path) -> None:
         correction_notes="Year 9, second foreign language.",
         correction_output="text",
     )
-    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+    builder = _stage_builder(tmp_path, config=config, factory=PipelineComponentFactory())
 
     settings = builder._correction_settings()
 
@@ -416,7 +433,7 @@ def test_correction_settings_ask_for_the_review_by_default(tmp_path: Path) -> No
     Then   the exchange runs all three steps
     """
     config = make_config(tmp_path, correction_output="review")
-    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+    builder = _stage_builder(tmp_path, config=config, factory=PipelineComponentFactory())
 
     assert builder._correction_settings().corrections_only is False
 
@@ -436,8 +453,8 @@ def test_anonymizer_is_built_when_only_anonymization_is_on(tmp_path: Path) -> No
         text_anonymized_enabled=False,
     )
 
-    correction, built = StageBuilder(
-        config=config, factory=factory
+    correction, built = _stage_builder(
+        tmp_path, config=config, factory=factory
     ).build_correction_and_anonymizer()
 
     assert correction is None
@@ -454,7 +471,9 @@ def test_anonymizer_is_not_built_without_anonymization(tmp_path: Path) -> None:
     factory = PipelineComponentFactory(build_anonymizer=build_anonymizer)
     config = make_config(tmp_path, correction_enabled=False, anonymization_enabled=False)
 
-    _, built = StageBuilder(config=config, factory=factory).build_correction_and_anonymizer()
+    _, built = _stage_builder(
+        tmp_path, config=config, factory=factory
+    ).build_correction_and_anonymizer()
 
     assert built is None
     build_anonymizer.assert_not_called()
@@ -478,8 +497,8 @@ def test_missing_spacy_without_proofreading_warns_and_continues(tmp_path: Path) 
     reporter = MagicMock()
     config = make_config(tmp_path, correction_enabled=False, anonymization_enabled=True)
 
-    correction, built = StageBuilder(
-        config=config, factory=_failing_anonymizer_factory(), reporter=reporter
+    correction, built = _stage_builder(
+        tmp_path, config=config, factory=_failing_anonymizer_factory(), reporter=reporter
     ).build_correction_and_anonymizer()
 
     assert correction is None
@@ -503,8 +522,8 @@ def test_missing_spacy_with_proofreading_stops_the_run(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ProviderNotAvailableError):
-        StageBuilder(
-            config=config, factory=_failing_anonymizer_factory()
+        _stage_builder(
+            tmp_path, config=config, factory=_failing_anonymizer_factory()
         ).build_correction_and_anonymizer()
 
 
@@ -535,7 +554,9 @@ def test_the_resolved_window_reaches_the_correction_request(tmp_path: Path) -> N
         correction_provider="ollama",
         correction_model="qwen3:4b",
     )
-    builder = StageBuilder(config=config, factory=PipelineComponentFactory(), hardware=_hardware())
+    builder = _stage_builder(
+        tmp_path, config=config, factory=PipelineComponentFactory(), hardware=_hardware()
+    )
 
     windows = builder.resolved_windows()
     correction = builder.build_corrector(MagicMock())
@@ -566,7 +587,9 @@ def test_the_resolved_window_reaches_the_evaluator(tmp_path: Path) -> None:
         evaluate_provider="ollama",
         evaluate_model="gemma4:12b",
     )
-    builder = StageBuilder(config=config, factory=PipelineComponentFactory(), hardware=_hardware())
+    builder = _stage_builder(
+        tmp_path, config=config, factory=PipelineComponentFactory(), hardware=_hardware()
+    )
 
     evaluator = builder.build_evaluation(MagicMock(), MagicMock())
 
@@ -586,7 +609,9 @@ def test_without_hardware_the_window_stays_at_the_base_step(tmp_path: Path) -> N
     """
     config = make_config(tmp_path, correction_provider="ollama")
 
-    windows = StageBuilder(config=config, factory=PipelineComponentFactory()).resolved_windows()
+    windows = _stage_builder(
+        tmp_path, config=config, factory=PipelineComponentFactory()
+    ).resolved_windows()
 
     assert windows.proofreading == windows.evaluation == 8192
 
@@ -605,7 +630,8 @@ def test_an_online_provider_keeps_the_base_window(tmp_path: Path) -> None:
         evaluate_model="gpt-4o",
     )
 
-    windows = StageBuilder(
+    windows = _stage_builder(
+        tmp_path,
         config=config,
         factory=PipelineComponentFactory(),
         hardware=_hardware(),
@@ -654,8 +680,8 @@ def test_content_review_is_sized_from_its_own_model(tmp_path: Path, monkeypatch)
         evaluate_model="large:9b",
     )
 
-    windows = StageBuilder(
-        config=config, factory=PipelineComponentFactory(), hardware=_hardware()
+    windows = _stage_builder(
+        tmp_path, config=config, factory=PipelineComponentFactory(), hardware=_hardware()
     ).resolved_windows()
 
     assert windows.proofreading == 8192
@@ -681,7 +707,9 @@ def test_the_window_setting_reaches_a_local_review_behind_an_online_proofreader(
         proofreading_context="32768",
     )
 
-    windows = StageBuilder(config=config, factory=PipelineComponentFactory()).resolved_windows()
+    windows = _stage_builder(
+        tmp_path, config=config, factory=PipelineComponentFactory()
+    ).resolved_windows()
 
     assert windows.proofreading == 8192
     assert windows.evaluation == 32768
@@ -705,7 +733,7 @@ def test_a_local_corrector_runs_the_exchange_on_the_local_server(tmp_path: Path)
     config = make_config(
         tmp_path, correction_enabled=True, correction_provider="ollama", ocr_timeout=90
     )
-    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+    builder = _stage_builder(tmp_path, config=config, factory=PipelineComponentFactory())
 
     correction, _ = builder.build_correction_and_anonymizer(MagicMock())
 
@@ -738,8 +766,8 @@ def test_an_online_corrector_runs_the_exchange_on_the_provider(tmp_path: Path) -
         correction_model="gpt-4o-mini",
     )
 
-    correction, _ = StageBuilder(
-        config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
+    correction, _ = _stage_builder(
+        tmp_path, config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
     ).build_correction_and_anonymizer()
 
     assert isinstance(correction, ExchangeCorrector)
@@ -764,8 +792,8 @@ def test_a_provider_without_a_strict_schema_is_asked_without_one(tmp_path: Path)
         correction_model="claude-sonnet-4-5",
     )
 
-    correction, _ = StageBuilder(
-        config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
+    correction, _ = _stage_builder(
+        tmp_path, config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
     ).build_correction_and_anonymizer()
 
     port = correction.exchange._port
@@ -781,8 +809,8 @@ def test_no_corrector_is_built_when_proofreading_is_off(tmp_path: Path) -> None:
     """
     config = make_config(tmp_path, correction_enabled=False)
 
-    correction, _ = StageBuilder(
-        config=config, factory=PipelineComponentFactory()
+    correction, _ = _stage_builder(
+        tmp_path, config=config, factory=PipelineComponentFactory()
     ).build_correction_and_anonymizer()
 
     assert correction is None
@@ -819,8 +847,8 @@ def test_only_a_model_that_is_not_billed_is_asked_again_after_a_cut_off(
         ollama_url=url,
     )
 
-    correction, _ = StageBuilder(
-        config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
+    correction, _ = _stage_builder(
+        tmp_path, config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
     ).build_correction_and_anonymizer(MagicMock())
 
     assert correction is not None
@@ -849,11 +877,11 @@ def test_the_request_profile_reaches_every_kind_of_corrector(tmp_path: Path) -> 
         tmp_path, correction_enabled=True, correction_provider="openai", correction_model="gpt-4o"
     )
 
-    local_corrector, _ = StageBuilder(
-        config=local, factory=factory
+    local_corrector, _ = _stage_builder(
+        tmp_path, config=local, factory=factory
     ).build_correction_and_anonymizer(MagicMock())
-    online_corrector, _ = StageBuilder(
-        config=online, factory=factory
+    online_corrector, _ = _stage_builder(
+        tmp_path, config=online, factory=factory
     ).build_correction_and_anonymizer()
 
     assert local_corrector.inner._profile == request_profile("gemma4:e4b")
@@ -880,8 +908,8 @@ def test_the_teacher_settings_reach_the_exchange(tmp_path: Path) -> None:
         correction_output="text",
     )
 
-    correction, _ = StageBuilder(
-        config=config, factory=PipelineComponentFactory()
+    correction, _ = _stage_builder(
+        tmp_path, config=config, factory=PipelineComponentFactory()
     ).build_correction_and_anonymizer(MagicMock())
 
     context = correction.inner._context("English", "plain")
@@ -933,7 +961,9 @@ def test_the_privacy_badge_and_the_number_of_tries_agree(
     )
 
     where = llm_location("ownserver", "m", url, get_provider_info)
-    online = StageBuilder(config=config, factory=PipelineComponentFactory())._correction_is_online()
+    online = _stage_builder(
+        tmp_path, config=config, factory=PipelineComponentFactory()
+    )._correction_is_online()
 
     assert (where.location is DataLocation.ONLINE) is expected_online
     assert online is expected_online

@@ -90,7 +90,7 @@ def test_build_llm_calls_provider_create(mocker) -> None:
     mocker.patch(
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
     )
-    result = build_llm("openai", "gpt-4o-mini", base_url="")
+    result = build_llm("openai", "gpt-4o-mini", base_url="", temperature=0.7)
     assert result is fake
     mock_provider.create.assert_called_once()
 
@@ -111,7 +111,7 @@ def test_build_llm_hands_the_key_it_was_given_to_the_provider(mocker, monkeypatc
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
     )
 
-    build_llm("openai", "gpt-4o-mini", base_url="", api_key="sk-from-the-app")
+    build_llm("openai", "gpt-4o-mini", base_url="", api_key="sk-from-the-app", temperature=0.7)
 
     mock_provider.create.assert_called_once_with(
         "gpt-4o-mini", temperature=0.7, api_key="sk-from-the-app"
@@ -133,7 +133,7 @@ def test_build_llm_falls_back_on_the_environment_when_given_no_key(mocker, monke
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
     )
 
-    build_llm("openai", "gpt-4o-mini", base_url="")
+    build_llm("openai", "gpt-4o-mini", base_url="", temperature=0.7)
 
     mock_provider.create.assert_called_once_with(
         "gpt-4o-mini", temperature=0.7, api_key="sk-from-the-environment"
@@ -156,7 +156,7 @@ def test_build_llm_with_an_empty_key_does_not_fall_back_on_the_environment(
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
     )
 
-    build_llm("openai", "gpt-4o-mini", base_url="", api_key="")
+    build_llm("openai", "gpt-4o-mini", base_url="", api_key="", temperature=0.7)
 
     mock_provider.create.assert_called_once_with("gpt-4o-mini", temperature=0.7, api_key="")
 
@@ -225,7 +225,7 @@ def test_build_llm_raises_value_error_for_unknown_provider() -> None:
     Then   a ValueError naming the unknown provider and the known ones is raised
     """
     with pytest.raises(ValueError, match="nonexistent_provider_xyz") as raised:
-        build_llm("nonexistent_provider_xyz", "some-model", base_url="")
+        build_llm("nonexistent_provider_xyz", "some-model", base_url="", temperature=0.7)
 
     assert raised.value.args[0].key is MessageKey.UNKNOWN_PROVIDER_ERROR
     assert raised.value.args[0].args["provider"] == "nonexistent_provider_xyz"
@@ -240,7 +240,7 @@ def test_build_llm_says_so_when_a_listed_provider_cannot_be_imported(mocker) -> 
     mocker.patch("teachers_teammate.infrastructure.llm_factory._load_provider", return_value=None)
 
     with pytest.raises(RuntimeError, match="could not be loaded"):
-        build_llm("openai", "gpt-4o", base_url="")
+        build_llm("openai", "gpt-4o", base_url="", temperature=0.7)
 
 
 def test_build_llm_catches_system_exit_from_provider(mocker) -> None:
@@ -257,7 +257,7 @@ def test_build_llm_catches_system_exit_from_provider(mocker) -> None:
     )
 
     with pytest.raises(RuntimeError) as raised:
-        build_llm("openai", "gpt-4o", base_url="")
+        build_llm("openai", "gpt-4o", base_url="", temperature=0.7)
 
     assert raised.value.args[0].key is MessageKey.PROVIDER_NOT_LOADED
 
@@ -276,7 +276,7 @@ def test_build_llm_passes_base_url_when_provider_needs_it(mocker) -> None:
         "teachers_teammate.infrastructure.llm_factory._load_provider", return_value=mock_provider
     )
 
-    result = build_llm("ollama", "llama3", base_url="http://custom:11434")
+    result = build_llm("ollama", "llama3", base_url="http://custom:11434", temperature=0.7)
 
     assert result is fake
     mock_provider.create.assert_called_once_with(

@@ -328,7 +328,10 @@ class RunService:
         """Preprocess *files* and return what happened to each; nothing is read or proofread."""
         with self.running():
             dependencies = PipelineDependencies(
-                samples=self._samples, model_store=self._model_store, key_facts=self._key_facts
+                samples=self._samples,
+                work_store=self._work_store,
+                model_store=self._model_store,
+                key_facts=self._key_facts,
             )
             return self._pipeline_factory(
                 config, files, dependencies=dependencies

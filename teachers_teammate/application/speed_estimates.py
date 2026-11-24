@@ -415,7 +415,7 @@ class SpeedEstimateService:
         client_factory: OllamaClientFactory,
         store: SpeedStore | None = None,
         samples: SampleStore,
-        probe_factory: Callable[..., PerformanceProbe] | None = None,
+        probe_factory: Callable[..., PerformanceProbe],
     ) -> None:
         """Create the service.
 
@@ -430,14 +430,15 @@ class SpeedEstimateService:
             store: Where measurements live; the default store under the storage root.
             samples: Where the samples of real runs live: the one store of the process, so the
                 estimates read what a run wrote.
-            probe_factory: Builds the probe; a test replaces it.
+            probe_factory: Builds the probe, given the page models it prepares a page with; a
+                test replaces it.
         """
         self._effective_model = effective_model
         self._ollama = ollama
         self._client_factory = client_factory
         self._store = store or SpeedStore()
         self._samples = samples
-        self._probe_factory: Callable[..., PerformanceProbe] = probe_factory or PerformanceProbe
+        self._probe_factory = probe_factory
         self._lock = threading.RLock()
         self._facts: dict[str, ServerFacts] = {}
 

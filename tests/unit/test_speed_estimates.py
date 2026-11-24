@@ -215,6 +215,11 @@ def _client_factory(_url: str, _cancel: threading.Event | None) -> object:
     return _FakeClient()
 
 
+def _no_probe_built(*_args: object, **_kwargs: object) -> PerformanceProbe:
+    """Fail a test that measures the machine without a probe of its own."""
+    raise AssertionError("this test uses no probe")
+
+
 class _FakeProbe:
     """A stand-in for :class:`PerformanceProbe` that returns a scripted result."""
 
@@ -249,7 +254,9 @@ def _service(
         store=store,
         samples=samples if samples is not None else SampleStore(tmp_path / "samples.json"),
         probe_factory=(
-            (lambda *_a, **_k: cast(PerformanceProbe, probe)) if probe is not None else None
+            (lambda *_a, **_k: cast(PerformanceProbe, probe))
+            if probe is not None
+            else _no_probe_built
         ),
     )
     return service, store, server

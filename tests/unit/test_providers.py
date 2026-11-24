@@ -1,7 +1,7 @@
 """Unit tests for each provider module in teachers_teammate.infrastructure.providers.*
 
-Tests are parametrized over every .py file found in the providers directory,
-so newly added providers are automatically covered without any changes here.
+Tests are parametrized over the names the factory offers, so a newly added provider is
+covered without any changes here.
 """
 
 from __future__ import annotations
@@ -9,24 +9,21 @@ from __future__ import annotations
 import importlib
 import io
 import json
-from pathlib import Path
 from types import ModuleType
 import urllib.error
 from unittest.mock import MagicMock, patch
 
-from teachers_teammate._model_defaults import _DEFAULT_MODELS
+from teachers_teammate._model_defaults import default_model_for_task
 from teachers_teammate.domain.data_location import DataRegion
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.domain.stages import Stage
 from teachers_teammate.infrastructure.addon_manager import addon_requirements
+from teachers_teammate.infrastructure.llm_factory import list_providers
 from teachers_teammate.messages import MessageKey
 
 import pytest
 
-_PROVIDERS_DIR = (
-    Path(__file__).parent.parent.parent / "teachers_teammate" / "infrastructure" / "providers"
-)
-_PROVIDER_NAMES = sorted(p.stem for p in _PROVIDERS_DIR.glob("*.py") if not p.stem.startswith("_"))
+_PROVIDER_NAMES = list_providers()
 
 
 def _load(name: str) -> ModuleType:
@@ -97,16 +94,12 @@ def test_the_app_installs_the_package_the_provider_declares(name: str) -> None:
 @pytest.mark.parametrize("name", _PROVIDER_NAMES)
 def test_every_provider_has_a_default_model_for_both_tasks(name: str) -> None:
     """
-    Given  a provider module
-    When   the default models of the pipeline tasks are read
-    Then   it has one for each task, so a model picker never falls back to another service's
+    Given  a provider the factory offers
+    When   the default model of each pipeline task is asked for
+    Then   it answers, so a model picker never falls back to another service's
     """
-    missing = [
-        stage
-        for stage in (Stage.CORRECTION, Stage.EVALUATION)
-        if name not in _DEFAULT_MODELS[stage]
-    ]
-    assert not missing, f"Provider '{name}' has no default model for {missing}"
+    for stage in (Stage.CORRECTION, Stage.EVALUATION):
+        assert default_model_for_task(name, stage)
 
 
 @pytest.mark.parametrize("name", _PROVIDER_NAMES)
@@ -208,8 +201,8 @@ def test_openai_list_models_falls_back_to_static_list_when_api_unavailable() -> 
 def test_openai_create_returns_base_chat_model() -> None:
     """
     Given  langchain-openai is installed
-    When   openai.create('gpt-4o-mini') is called
-    Then   create() calls ChatOpenAI with the correct model name
+    When   openai.create('gpt-4o-mini', temperature=0.2) is called
+    Then   create() calls ChatOpenAI with that model name and temperature
     """
     import sys  # noqa: PLC0415
 
@@ -221,16 +214,16 @@ def test_openai_create_returns_base_chat_model() -> None:
     # ChatOpenAI is imported lazily inside create(); inject a fake module.
     with patch.dict(sys.modules, {"langchain_openai": fake_mod}):
         mod = _load("openai")
-        result = mod.create("gpt-4o-mini")
+        result = mod.create("gpt-4o-mini", temperature=0.2)
 
-    fake_mod.ChatOpenAI.assert_called_once_with(model="gpt-4o-mini", temperature=0.7, api_key=None)
+    fake_mod.ChatOpenAI.assert_called_once_with(model="gpt-4o-mini", temperature=0.2, api_key=None)
     assert result is mock_instance
 
 
 def test_ollama_create_returns_base_chat_model() -> None:
     """
     Given  langchain-ollama is installed
-    When   ollama.create('llama3', base_url='http://...') is called
+    When   ollama.create('llama3', base_url='http://...', temperature=0.2) is called
     Then   a BaseChatModel instance is returned (no server connection at construction time)
     """
     import sys  # noqa: PLC0415
@@ -243,12 +236,12 @@ def test_ollama_create_returns_base_chat_model() -> None:
 
     with patch.dict(sys.modules, {"langchain_ollama": fake_mod}):
         mod = _load("ollama")
-        model = mod.create("llama3", base_url="http://127.0.0.1:11434")
+        model = mod.create("llama3", base_url="http://127.0.0.1:11434", temperature=0.2)
 
     fake_mod.ChatOllama.assert_called_once_with(
         model="llama3",
         base_url="http://127.0.0.1:11434",
-        temperature=0.7,
+        temperature=0.2,
     )
     assert model is fake_instance
 
@@ -280,7 +273,7 @@ def test_uninstalled_provider_create_raises_runtime_error(
     with patch.dict(sys.modules, {package_name: None}):
         mod = _load(provider_name)
         with pytest.raises(RuntimeError) as raised:
-            mod.create("some-model")
+            mod.create("some-model", temperature=0.7)
 
     assert raised.value.args[0].key is MessageKey.PACKAGE_NOT_INSTALLED
 
@@ -303,7 +296,7 @@ def test_the_install_hint_fits_the_kind_of_app(
     with patch.dict(sys.modules, {"langchain_anthropic": None}):
         mod = _load("anthropic")
         with pytest.raises(RuntimeError) as raised:
-            mod.create("some-model")
+            mod.create("some-model", temperature=0.7)
 
     sentence = wording.render(raised.value.args[0])
 
@@ -791,8 +784,8 @@ def test_installed_provider_create_returns_model_instance(
 ) -> None:
     """
     Given  the provider's LangChain package is installed (mocked)
-    When   create('some-model') is called
-    Then   the provider-specific Chat class is instantiated with model='some-model'
+    When   create('some-model', temperature=0.2) is called
+    Then   the provider-specific Chat class is instantiated with that model and temperature
     """
     import sys  # noqa: PLC0415
     from langchain_core.language_models import BaseChatModel  # noqa: PLC0415
@@ -803,18 +796,18 @@ def test_installed_provider_create_returns_model_instance(
 
     with patch.dict(sys.modules, {package_name: fake_mod}):
         mod = _load(provider_name)
-        result = mod.create("some-model")
+        result = mod.create("some-model", temperature=0.2)
 
     chat_cls = getattr(fake_mod, class_name)
     assert chat_cls.call_args.kwargs["model"] == "some-model"
-    assert chat_cls.call_args.kwargs["temperature"] == 0.7
+    assert chat_cls.call_args.kwargs["temperature"] == 0.2
     assert result is fake_instance
 
 
 def test_anthropic_answers_are_not_held_to_langchains_own_limit() -> None:
     """
     Given  Anthropic's LangChain package is installed (mocked)
-    When   create('some-model') is called
+    When   create('some-model', temperature=0.7) is called
     Then   the answer allowance is the app's, not the 1024 tokens the class would send itself,
            which a long text-mode proofreading answer overruns
     """
@@ -826,7 +819,7 @@ def test_anthropic_answers_are_not_held_to_langchains_own_limit() -> None:
 
     with patch.dict(sys.modules, {"langchain_anthropic": fake_mod}):
         mod = _load("anthropic")
-        mod.create("some-model")
+        mod.create("some-model", temperature=0.7)
 
     assert fake_mod.ChatAnthropic.call_args.kwargs["max_tokens"] == mod.ANSWER_TOKENS
 
@@ -867,6 +860,6 @@ def test_uninstalled_openai_ollama_provider_create_raises_runtime_error(
     with patch.dict(sys.modules, {package_name: None}):
         mod = _load(provider_name)
         with pytest.raises(RuntimeError) as raised:
-            mod.create("some-model", base_url="http://127.0.0.1:11434")
+            mod.create("some-model", base_url="http://127.0.0.1:11434", temperature=0.7)
 
     assert raised.value.args[0].key is MessageKey.PACKAGE_NOT_INSTALLED

@@ -31,13 +31,13 @@ from ..domain.teacher_work import (
     without_work_for_reading,
 )
 from ..infrastructure.onnx.store import ModelStore
-from ..infrastructure.stage_builder import resolve_run_windows
 from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
 from ..infrastructure.teacher_work_store import TeacherWorkStore
 from ..infrastructure.workflow.cache_service import (
     compute_correction_config_hash,
     expected_hashes,
 )
+from ..run_rules import resolve_run_windows
 from .document_view import DocumentStateView
 from .merged_view import reconciled_view
 

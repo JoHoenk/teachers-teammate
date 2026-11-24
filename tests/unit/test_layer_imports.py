@@ -37,7 +37,14 @@ _COMPOSITION_MODULES: frozenset[str] = frozenset(
 _PACKAGE = "teachers_teammate"
 _PKG_MODULES = {"exceptions", "__version__", "messages"}
 """The package root's own modules (``_PKG_SRCS`` in ``teachers_teammate/BUILD``)."""
-_CORE_MODULES = {"atomic_file", "config", "interfaces", "settings_schema", "_model_defaults"}
+_CORE_MODULES = {
+    "atomic_file",
+    "config",
+    "interfaces",
+    "run_rules",
+    "settings_schema",
+    "_model_defaults",
+}
 _CLI_MODULES = {"cli", "cli_composition", "__main__"}
 
 

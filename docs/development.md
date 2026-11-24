@@ -3203,7 +3203,7 @@ window that changes between files makes Ollama reload the model for every file.
   the default setup the setting changes nothing.
 - `run_windows()` resolves both stages once per run, each from **its own** model
   (`proofreading_spec`, `evaluation_spec`), so a larger review model is not sized from the
-  smaller proofreading model; `stage_builder.resolve_run_windows()` applies it to a `Config`, and
+  smaller proofreading model; `run_rules.resolve_run_windows()` applies it to a `Config`, and
   a stage whose provider is online reports the base window (the app does not set one). When
   proofreading and content review use the same Ollama model, both get the smaller window: one reload per file between the stages would cost
   seconds on every run, and content review still gains from its own answer allowance.
@@ -3216,7 +3216,7 @@ window that changes between files makes Ollama reload the model for every file.
 The resolved window is passed down (`OllamaPort(num_ctx=…)`, `StageBuilder.resolved_windows()`)
 and used by `proofreading_options()`, `ContextBudget`, the chunk budget below, the correction
 cache fingerprint and the memory rating and run-start warning (`memory_at_context_gb`, per
-model via `stage_builder.window_of_model()`). The
+model via `run_rules.window_of_model()`). The
 fingerprint part `num-ctx-{…}` exists only for an Ollama corrector and holds the window the run
 really uses (`RunWindows.proofreading`, resolved once and passed to the cache service), so results
 made at 8192 and at 16384 cannot share a cache entry; the evaluation hash carries

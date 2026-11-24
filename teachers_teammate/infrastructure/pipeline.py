@@ -43,7 +43,7 @@ import threading
 from typing import NamedTuple
 
 from ..config import Config, OcrConfig
-from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
+from ..domain.data_location import ENGINE_OLLAMA
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import output_folder_problem
@@ -51,6 +51,7 @@ from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..exceptions import OllamaUnreachableError, ProviderNotAvailableError
 from ..interfaces import ImageUnit, PreparedPreview, ProgressCallbacks, Reporter
 from ..messages import preview_needs_images
+from ..run_rules import uses_ollama
 from ..texts import report as report_text
 from ..texts.dialogs import folder_problem_text
 from . import run_report
@@ -465,9 +466,7 @@ class OCRPipeline:
         run_stats = RunStatsCollector(cfg.ollama_url, self._samples.add)
         ollama_client = (
             OllamaClient(cfg.ollama_url, cancel_event=self._stop_event, stats_sink=run_stats.record)
-            if (cfg.recognition_enabled and cfg.ocr.engine == ENGINE_OLLAMA)
-            or (cfg.correction_enabled and cfg.correction_provider == PROVIDER_OLLAMA)
-            or (cfg.evaluation_enabled and cfg.evaluate_provider == PROVIDER_OLLAMA)
+            if uses_ollama(cfg)
             else None
         )
         if ollama_client is not None:

@@ -20,6 +20,7 @@ from teachers_teammate.domain.run_summary import RunSummary
 from teachers_teammate.domain.teacher_work import MachineTexts, with_transcription
 from teachers_teammate.infrastructure.power import KEEP_AWAKE_REASON
 from teachers_teammate.interfaces import ProgressCallbacks, SleepBlocker
+from teachers_teammate.run_rules import ollama_models
 from teachers_teammate.texts.issues import issue_text
 from tests.conftest import fake_reader_store, make_config
 from ._service_helpers import (
@@ -1541,7 +1542,7 @@ def test_cloud_ocr_settings_are_not_refused_while_recognition_is_off(tmp_path: P
     result = svc.run.check_run_preflight(cfg)
 
     assert result.ocr_not_allowed == ""
-    assert svc.run._configured_ollama_models(cfg) == []
+    assert ollama_models(cfg) == ()
 
 
 @pytest.mark.unit

@@ -66,6 +66,7 @@ _CORE_SRCS = [
     "atomic_file.py",
     "config.py",
     "interfaces.py",
+    "run_rules.py",
     "settings_schema.py",
 ]
 

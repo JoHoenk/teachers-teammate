@@ -19,7 +19,7 @@ import threading
 
 from ..config import Config
 from ..domain.context_budget import RunWindows, memory_at_context_gb
-from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, PROVIDER_OLLAMA
+from ..domain.data_location import ENGINE_PPOCR, PROVIDER_OLLAMA
 from ..domain.model_catalog import (
     RUN_MEMORY_MARGIN_GB,
     DetectionReason,
@@ -41,15 +41,12 @@ from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline, PipelineDependencies
 from ..infrastructure.power import KEEP_AWAKE_REASON, NullSleepBlocker, on_battery
 from ..infrastructure.speed_store import SampleStore
-from ..infrastructure.stage_builder import (
-    PipelineComponentFactory,
-    resolve_run_windows,
-    window_of_model,
-)
+from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
 from ..infrastructure.storage_root import resolve_artifact_dir
 from ..infrastructure.teacher_work_store import TeacherWorkStore
 from ..interfaces import SUPPORTED_SUFFIXES, ProgressCallbacks, SleepBlocker
+from ..run_rules import ollama_models, resolve_run_windows, uses_ollama, window_of_model
 from .addons import AddonService
 from .anonymization import AnonymizationService
 from .data_flow import ocr_refusal
@@ -559,7 +556,7 @@ class RunService:
             ocr_reason = ocr_refusal(config.ocr.engine, config.ocr.model, config.ollama_url)
             if ocr_reason:
                 return RunPreflight(ocr_not_allowed=ocr_reason)
-        if self._ollama_needed(config):
+        if uses_ollama(config):
             if fresh:
                 self._providers.forget_ollama_model_list(config.ollama_url)
             installed, unreachable = self._installed_ollama_models(config.ollama_url)
@@ -568,7 +565,7 @@ class RunService:
                     ollama_unreachable=unreachable,
                     ollama_issue=self._ollama_issue(config.ollama_url, unreachable),
                 )
-            configured = self._configured_ollama_models(config)
+            configured = ollama_models(config)
             missing = [m for m in configured if not models_include(m, installed)]
             if missing:
                 return RunPreflight(missing_models=tuple(missing))
@@ -589,31 +586,6 @@ class RunService:
             page_models_skipped=self._page_models_skipped(config, recognition=recognition),
             ollama_wait=self._ollama_wait(config) if memory else WaitDetail(),
         )
-
-    @staticmethod
-    def _ollama_needed(config: Config) -> bool:
-        """Return whether any enabled stage of *config* talks to Ollama."""
-        return (
-            (config.recognition_enabled and config.ocr.engine == ENGINE_OLLAMA)
-            or (config.correction_enabled and config.correction_provider == PROVIDER_OLLAMA)
-            or (config.evaluation_enabled and config.evaluate_provider == PROVIDER_OLLAMA)
-        )
-
-    @staticmethod
-    def _configured_ollama_models(config: Config) -> list[str]:
-        """Return the deduplicated Ollama models the enabled stages of *config* use."""
-        models: list[str] = []
-        if config.recognition_enabled and config.ocr.engine == ENGINE_OLLAMA and config.ocr.model:
-            models.append(config.ocr.model)
-        if config.correction_enabled and config.correction_provider == PROVIDER_OLLAMA:
-            model = config.effective_correction_model or ""
-            if model and model not in models:
-                models.append(model)
-        if config.evaluation_enabled and config.evaluate_provider == PROVIDER_OLLAMA:
-            model = config.effective_evaluate_model or ""
-            if model and model not in models:
-                models.append(model)
-        return models
 
     def _installed_ollama_models(self, url: str) -> tuple[list[str], str]:
         """Return ``(installed, unreachable)`` for the Ollama server at *url*.
@@ -654,11 +626,11 @@ class RunService:
         this one before the first answer.  Makes one request, so only the check that starts a
         run asks for it.
         """
-        if not self._ollama_needed(config):
+        if not uses_ollama(config):
             return WaitDetail()
         if not self._ollama.is_local(config.ollama_url):
             return WaitDetail()
-        models = self._configured_ollama_models(config)
+        models = ollama_models(config)
         if not models:
             return WaitDetail()
         return self._ollama.wait_for(config.ollama_url, models[0])
@@ -682,7 +654,7 @@ class RunService:
         ever shows the memory is taken out of "available", the fix is to count the RAM part of
         other loaded models as free; see docs/development.md.
         """
-        if not self._ollama_needed(config):
+        if not uses_ollama(config):
             return None
         if not self._ollama.is_local(config.ollama_url):
             return None
@@ -693,7 +665,7 @@ class RunService:
             config.hardware_profile, config.ollama_url
         )
         unified = self._runs_on_apple_silicon(detection)
-        for tag in self._configured_ollama_models(config):
+        for tag in ollama_models(config):
             spec = find_spec(tag)
             if spec is None:
                 continue

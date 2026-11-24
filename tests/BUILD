@@ -1301,6 +1301,15 @@ py_test(
 )
 
 py_test(
+    name = "test_run_rules",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_run_rules.py"],
+    args = ["unit/test_run_rules.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _CORE_LIB,
+)
+
+py_test(
     name = "test_run_summary",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_run_summary.py"],
@@ -3242,6 +3251,7 @@ test_suite(
         ":test_run_gui",
         ":test_run_service",
         ":test_run_stats",
+        ":test_run_rules",
         ":test_run_summary",
         ":test_sent_text",
         ":test_sentences",

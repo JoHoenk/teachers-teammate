@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stamp release version into pyproject and Bazel wheel metadata."""
+"""Stamp the release version into the package's __init__.py and the py_wheel version in BUILD."""
 
 from __future__ import annotations
 

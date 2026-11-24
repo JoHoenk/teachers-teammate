@@ -52,7 +52,7 @@ privacy = [
 ]
 
 # ── Tooling extras ──────────────────────────────────────────────────────────
-# These are the single source of truth for the lin/test toolchains. The Bazel
+# These are the single source of truth for the lint and test toolchains. The Bazel
 # lock files are compiled from them via `bazel run //:requirements_{dev,test}.update`
 # (see //BUILD). Installing the extra also pulls the base runtime deps, so a
 # `pip install -e ".[test]"` env can run the full suite.
@@ -66,14 +66,14 @@ test = [
 dev = [
     # Lint / static analysis
     "pylint>=4.0",
-    # Test tooling (pytest-qt etc. come via the [test] extra below)
+    # pylint reads its configuration and its plugins through these two.
+    "tomlkit",
+    "dill",
+    # Test tooling. The [test] extra above is not included here, so this lock carries the rest of
+    # what a dev run imports: pytest-qt and langchain-core come with [test].
     "pytest>=8.3",
     "pytest-mock>=3.14",
     "pytest-cov>=6.0",
-    # Build / release helpers
-    "tomlkit",
-    "dill",
-    "pip-licenses>=5.0",
     # Sphinx documentation
     "sphinx>=8.0",
     "furo>=2024.8",

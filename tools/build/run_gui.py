@@ -1,8 +1,8 @@
-"""Entry-point wrapper used by PyInstaller for the GUI executable.
+"""Entry point of the GUI executable: PyInstaller freezes this file.
 
-When running from source (e.g. ``python tools/build/run_gui.py``), this script
-adds the project root to ``sys.path`` so that the ``src`` package is importable.
-In a frozen PyInstaller bundle the path is managed automatically.
+A source run starts the GUI with ``python -m teachers_teammate.gui``; run as a script, this file
+puts the repository root on ``sys.path`` itself. In a frozen bundle PyInstaller provides the import
+path.
 
 Frozen-build pip dispatch
 -------------------------

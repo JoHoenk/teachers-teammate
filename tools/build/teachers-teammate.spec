@@ -130,11 +130,12 @@ _DROPPED_LIBS = (
     "libkrb5support.so",
     "libcom_err.so",
     "libkeyutils.so",
-    # Found by `check_linux_bundle.py --unused` on the ubuntu-22.04 runner. libbsd is what
-    # libXdmcp pulls in there (dropped above), and libmd is what libbsd pulls in; Qt compiles its
+    # `check_linux_bundle.py --unused` reports these as dead weight of the build image: libbsd is
+    # what libXdmcp pulls in (dropped above) and libmd is what libbsd pulls in; Qt compiles its
     # own pcre2 and libjpeg into the libraries it ships, and Pillow carries its own libjpeg in
-    # pillow.libs/. The build image is ubuntu-24.04 now, whose sonames differ (the t64 rename);
-    # `--unused` re-measures the list on every build and fails when something new is dead weight.
+    # pillow.libs/. The image is Ubuntu 24.04, whose t64 rename gives some libraries another
+    # soname; `--unused` re-measures the list on every build and fails when something new is dead
+    # weight.
     "libbsd.so",
     "libmd.so",
     "libjpeg.so",
@@ -277,9 +278,9 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     # setuptools is a build tool, not a runtime dependency: pip uses its own vendored copy.
-    # readline would bundle the build machine's GPL-licensed libreadline; nothing in a windowed
-    # app has a terminal to complete in.  dbm.gnu is the same story with libgdbm, and nothing
-    # opens a gdbm database.
+    # readline and dbm.gnu stay out because nothing in a windowed app has a terminal to complete
+    # in or opens a gdbm database, and because the host-library policy keeps the build machine's
+    # copies out of the bundle — not because of their license.
     excludes=["setuptools", "_distutils_hack", "pkg_resources", "readline", "dbm.gnu"],
     noarchive=False,
     optimize=0,

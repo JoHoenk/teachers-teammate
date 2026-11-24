@@ -45,7 +45,7 @@ jobs:
         with:
           disk-cache: wheel
 
-      - name: Stamp pyproject and Bazel wheel version
+      - name: Stamp the version into the package and the wheel
         env:
           VERSION: ${{ inputs.version }}
         run: |

@@ -69,6 +69,9 @@ jobs:
       - name: Install Qt system libraries (Linux)
         if: runner.os == 'Linux'
         run: |
+          # A slow mirror retries and times out instead of holding the job.
+          echo 'Acquire::Retries "3"; Acquire::http::Timeout "20";' |
+            sudo tee /etc/apt/apt.conf.d/99ci-timeouts > /dev/null
           sudo apt-get update -qq
           # Qt's xcb platform plugin links these; make_deb.sh measures the .deb's Depends: line
           # from what the bundle needs, which only works when they are installed here.

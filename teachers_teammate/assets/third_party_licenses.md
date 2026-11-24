@@ -25,9 +25,9 @@ changing the application for your own use or reverse engineering it to debug suc
 changes. The complete source code of Teacher's Teammate is publicly available at
 https://github.com/JoHoenk/teachers-teammate.
 
-Only Qt modules that the LGPL covers are bundled. The build leaves out the modules
-that Qt offers only under the GPL-3.0 or a commercial license (for example Qt
-Charts), and the smoke test fails if one is still in the finished bundle.
+The build carries only the Qt modules the app uses. Qt Charts and the other modules that Qt offers
+only under the GPL-3.0 or a commercial license stay out because nothing uses them, and the smoke
+test fails if one is still in the finished bundle.
 
 FFmpeg inside OpenCV (LGPL-2.1)
 -------------------------------

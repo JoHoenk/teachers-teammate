@@ -60,4 +60,3 @@ jobs:
           bazel test --config=ci --target_pattern_file="${RUNNER_TEMP}/targets.txt" --test_output=errors
         env:
           GROUP: ${{ matrix.group }}
-          QT_QPA_PLATFORM: offscreen

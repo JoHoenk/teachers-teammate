@@ -6,8 +6,10 @@ rules:
     ignore:
       # Writes the build venv's folder to GITHUB_PATH. The folder is under RUNNER_TEMP, which the
       # runner owns and no input of a pull request reaches, so nothing attacker-controlled can
-      # end up on the PATH. (zizmor matches the file name; build-venv is the only composite
-      # action that writes to GITHUB_PATH.)
+      # end up on the PATH. zizmor matches a bare file name here, not a path, so this covers
+      # every composite action named action.yml; build-venv is the only one that writes to
+      # GITHUB_PATH, and an inline ignore does not apply to a finding that spans a whole `run:`
+      # block (zizmor 1.32.0).
       - action.yml
 
   # Style only: it prefers another spelling of `uses: ./.github/...` for a workflow of this

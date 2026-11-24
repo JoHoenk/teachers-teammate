@@ -82,7 +82,7 @@ def test_the_ready_made_buttons_decline_by_role() -> None:
 
 def test_a_platform_button_carries_its_own_id() -> None:
     """
-    Given  the question the export asks before it replaces a file a word processor holds open
+    Given  the question a folder export asks before it replaces files that already exist
     When   its buttons are read
     Then   each carries the id of the platform button, so a caller branches without the label
     """

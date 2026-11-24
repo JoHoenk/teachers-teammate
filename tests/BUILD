@@ -1308,6 +1308,7 @@ py_test(
     env = {"LOCKS_ROOT": "$(rlocationpath //:requirements_test_lock.txt)"},
     main = "run_test.py",
     tags = ["unit"],
+    visibility = ["//:__pkg__"],
     deps = _COMMON_DEPS,
 )
 
@@ -3444,6 +3445,7 @@ test_suite(
     name = "coverage_tests",
     tests = [
         ":gui_tests",
+        ":tools_tests",
         ":unit_tests",
     ],
 )

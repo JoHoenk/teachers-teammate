@@ -425,10 +425,12 @@ def expected(policy: Policy, root: Path = ROOT) -> list[Row]:
     """
     bundle = bundle_rows(root)
     shipped = {row.component for row in bundle} | set(platform_pins(root))
-    addons = addon_rows(root / "requirements_addons_lock.txt", shipped) + [
+    addons = addon_rows(root / "requirements_addons_lock.txt", shipped)
+    locked = {row.component for row in addons}
+    addons += [
         Row(name, version, "", "addon")
         for name, version in addon_platform_pins(root).items()
-        if name not in shipped
+        if name not in shipped and name not in locked
     ]
     return _sorted(
         [

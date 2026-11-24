@@ -215,6 +215,7 @@ test_suite(
         ":requirements_addons.test",
         ":requirements_dev.test",
         ":requirements_test.test",
+        "//tests:test_lock_agreement",
     ],
 )
 

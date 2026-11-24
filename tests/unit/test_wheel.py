@@ -96,6 +96,20 @@ def test_every_source_module_is_in_the_wheel(wheel: zipfile.ZipFile, package_dir
     assert sorted(expected - in_wheel) == []
 
 
+def test_pyproject_package_data_lists_the_assets(pyproject: dict) -> None:
+    """
+    Given  the assets the wheel carries and pyproject.toml's package data (what a source install
+           ships)
+    When   the two lists are compared
+    Then   they name the same files; the help pages are the wheel's alone
+    """
+    declared = pyproject["tool"]["setuptools"]["package-data"]["teachers_teammate"]
+
+    assert sorted(f"teachers_teammate/{name}" for name in declared) == sorted(
+        name for name in _DATA_FILES if "/assets/" in name
+    )
+
+
 @pytest.mark.parametrize("name", _DATA_FILES)
 def test_the_wheel_carries_the_assets_and_the_help_pages(wheel: zipfile.ZipFile, name: str) -> None:
     """

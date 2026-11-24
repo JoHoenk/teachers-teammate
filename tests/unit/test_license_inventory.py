@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 from tools.licenses import inventory, notice
 from tools.release import mirror_sources
@@ -40,6 +41,24 @@ def test_the_inventory_lists_exactly_what_the_locks_and_the_app_say() -> None:
     assert committed == expected, (
         "the inventory is out of date: run python tools/licenses/inventory.py"
     )
+
+
+def test_a_package_the_add_on_lock_and_the_platform_pins_share_is_one_row() -> None:
+    """
+    Given  a package that the add-on lock carries and the platform pins list again
+    When   the expected rows are worked out
+    Then   the package has one add-on row, at the lock's version
+    """
+    locked = next(
+        row
+        for row in inventory.expected(inventory.load_policy(), _ROOT)
+        if row.scope == "addon" and row.kind == "package"
+    )
+
+    with patch.object(inventory, "addon_platform_pins", return_value={locked.component: "0.0"}):
+        rows = inventory.expected(inventory.load_policy(), _ROOT)
+
+    assert [row.version for row in rows if row.component == locked.component] == [locked.version]
 
 
 def test_every_row_passes_the_deny_rules_or_is_accepted() -> None:

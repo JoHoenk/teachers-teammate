@@ -25,7 +25,7 @@ ALLOWED: dict[str, str] = {
 }
 """A package two locks may disagree on, with the reason the difference is intended."""
 
-_PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+)")
+_PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==([^\s;\\]+)")
 
 #: The checkout as Bazel's runfiles see it, or the source tree when the test runs directly.
 _ROOT = (
@@ -60,3 +60,19 @@ def test_no_package_is_pinned_to_two_versions() -> None:
             disagreements[package] = seen
 
     assert disagreements == {}, "these packages are pinned to two versions"
+
+
+def test_a_pin_with_an_extra_is_read() -> None:
+    """
+    Given  lock lines that pin a package with an extra, and one without
+    When   the lines are matched
+    Then   the name is the package's and the version is the pin's
+    """
+    lines = ["smart-open[http]==9.0.6 \\", "tenacity==9.1.2 \\", "    --hash=sha256:ab"]
+
+    found = [_PIN.match(line) for line in lines]
+
+    assert [(m.group(1), m.group(2)) for m in found if m] == [
+        ("smart-open", "9.0.6"),
+        ("tenacity", "9.1.2"),
+    ]

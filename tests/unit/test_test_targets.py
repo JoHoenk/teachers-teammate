@@ -1,6 +1,6 @@
 """The test targets of ``tests/BUILD``: one per test file, each tagged by its folder.
 
-A suite in ``tests/BUILD`` takes its tests by tag, so nothing lists them one by one any more. What
+A suite in ``tests/BUILD`` takes its tests by tag, so no suite lists its tests one by one. What
 keeps that honest is this test: a file no target runs, a target that runs no file, or a tag that
 names another folder than the file's would otherwise fall out of every suite silently.
 """

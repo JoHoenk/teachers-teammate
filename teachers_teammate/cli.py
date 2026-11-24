@@ -200,7 +200,7 @@ class _VersionNotice(argparse.Action):
 
 def _add_version_arg(parser: argparse.ArgumentParser) -> None:
     """Add ``--version``: the notice with the copyright and the license, then exit 0."""
-    parser.add_argument("--version", action=_VersionNotice, nargs=0)
+    parser.add_argument("--version", action=_VersionNotice, nargs=0, help=cli_text.HELP_VERSION)
 
 
 def exit_on_version(argv: Sequence[str] | None) -> None:

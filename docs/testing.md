@@ -47,7 +47,7 @@ carries the tag of the folder its file lives in (`unit`, `gui`, `integration`, `
 
 `platform_tests.yml` runs the unit and GUI tests in a plain venv on Windows and macOS: the build
 venv's own recipe with the `[test]` extra, so the versions are the ones the bundle ships there.
-It is a trial and does not block a merge yet; `-m "not needs_reader_models and not needs_ollama
+It blocks no merge; `-m "not needs_reader_models and not needs_ollama
 and not needs_bazel"` leaves out what needs Bazel's runfiles or an Ollama server.
 
 Bazel gives every test file its own process, which hides a test that changes global state (`sys.modules`, `sys.path`, environment) and leaves it changed. A single `pytest tests` run puts all files in one process and is how such a leak between files shows up. A test that evicts or replaces modules must restore them (`with patch.dict(sys.modules):`).
@@ -80,7 +80,7 @@ bazel test //tests:walkthrough_tests --test_output=errors
 ### Coverage report
 
 ```bash
-# Bazel coverage across unit + GUI suites (preferred)
+# Bazel coverage across the unit, GUI and tools suites (preferred)
 bazel coverage //tests:coverage_tests \
     --instrumentation_filter="//teachers_teammate" \
     --combined_report=lcov

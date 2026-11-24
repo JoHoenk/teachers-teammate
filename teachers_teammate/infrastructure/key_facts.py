@@ -26,8 +26,8 @@ class MachineKeyFacts:
         return available_page_steps(self.model_store or ModelStore())
 
     def system_language(self) -> str:
-        # An unsupported locale is as good as unknown: the automatic extra model then follows
-        # the document's language, and the key says so.
+        # An unsupported locale is as good as unknown: the automatic extra model is then left
+        # out, and the key says so.
         return system_language() or ""
 
     def exchange_identity(self, profile: RequestProfile, *, corrections_only: bool) -> str:

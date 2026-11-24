@@ -549,3 +549,29 @@ def test_worked_on_documents_is_empty_without_work(tmp_path: Path) -> None:
     result = svc.documents.worked_on_documents(made, [source], run_proofreads=True)
 
     assert result.empty is True
+
+
+@pytest.mark.unit
+def test_a_reading_made_with_other_settings_is_not_a_recognised_file(tmp_path: Path) -> None:
+    """
+    Given  a scan read with one image preparation and a transcription the teacher did not touch
+    When   the files whose stored text a run would use are asked for, with the same settings
+           and with another image preparation
+    Then   the scan counts with the same settings and does not with the other, because the run
+           would read it again
+    """
+    source = tmp_path / "scan.png"
+    source.write_bytes(b"page")
+    made = make_config(tmp_path, preprocess_method="none")
+    now = make_config(tmp_path, preprocess_method="auto")
+
+    repo = StateRepository(tmp_path / "state")
+    recon = CacheReconciliationService(
+        state_repo=repo, artifact_store=PreviewImageStore(tmp_path / "art"), config=made
+    )
+    ctx = recon.prepare(source)
+    recon.record_ocr(source, ctx, raw_text="page text", preview_img="", source_image="")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    assert svc.documents.recognised_files(made, [source]) == {source}
+    assert svc.documents.recognised_files(now, [source]) == set()

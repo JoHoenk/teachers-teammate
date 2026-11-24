@@ -23,11 +23,11 @@ from ...domain.freshness import (
     first_stale_stage_for_hashes,
     stage_hashes,
 )
+from ...domain.key_facts import KeyFacts
 from ...domain.ocr_prompt import get_ocr_prompt
 from ...domain.stages import Stage
 from ...domain.teacher_work import TeacherWork, text_identity
 from ..key_facts import MachineKeyFacts
-from ..onnx.store import ModelStore
 from ..preview_image_store import PreviewImageStore
 from ..state_repository import OcrResultRecord, StateRepository, compute_file_hash
 from ..storage_root import document_stem
@@ -67,7 +67,7 @@ class CacheReconciliationService:
         artifact_store: PreviewImageStore,
         config: Config,
         windows: RunWindows | None = None,
-        model_store: ModelStore | None = None,
+        facts: KeyFacts | None = None,
         work_store: TeacherWorkStore | None = None,
     ) -> None:
         self._repo = state_repo
@@ -75,8 +75,8 @@ class CacheReconciliationService:
         #: wants the machine's results asks for.
         self._work_store = work_store
         #: What this computer adds to a cache key: its page models, its system language, the
-        #: proofreading exchange.  Built here from the folder the run was given.
-        self._facts = MachineKeyFacts(model_store)
+        #: proofreading exchange.  The default is the computer the app runs on.
+        self._facts: KeyFacts = facts or MachineKeyFacts()
         self._artifacts = artifact_store
         self._config = config
         #: The context windows this run resolved from the settings and the computer, so the

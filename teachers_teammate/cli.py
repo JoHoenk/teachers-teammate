@@ -40,6 +40,7 @@ from .settings_schema import (
     LoadedSettings,
 )
 from .texts import addons as addon_text
+from .texts import check as check_text
 from .texts import cli as cli_text
 from .texts import dialogs as dlg
 from .texts import run as run_text
@@ -542,8 +543,8 @@ def _preflight_exit(
     """Print what the preflight found on stderr; return the exit code, or ``None`` to go on.
 
     A blocker stops the run and names the way to fix it; a memory shortfall stops it unless
-    *ignore_memory_check* says the teacher decided otherwise; the page models and the skipped
-    scans are notices before a run that goes ahead.
+    *ignore_memory_check* says the teacher decided otherwise; the page models, the skipped
+    scans and a wait for Ollama are notices before a run that goes ahead.
     """
     blocker = preflight.blocker
     if blocker is not None:
@@ -563,6 +564,9 @@ def _preflight_exit(
         print(dlg.cli_warning(shortfall), file=sys.stderr)
     if preflight.page_models_skipped:
         print(addon_text.PAGE_MODELS_SKIPPED_NOTICE, file=sys.stderr)
+    wait = check_text.wait_detail_text(preflight.ollama_wait)
+    if wait:
+        print(wait, file=sys.stderr)
     if preflight.skipped:
         print(dlg.cli_warning(run_text.scans_skipped_note(len(preflight.skipped))), file=sys.stderr)
     return None

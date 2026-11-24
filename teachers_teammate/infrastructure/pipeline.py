@@ -44,6 +44,7 @@ from typing import NamedTuple
 
 from ..config import Config, OcrConfig
 from ..domain.data_location import ENGINE_OLLAMA
+from ..domain.key_facts import KeyFacts
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import output_folder_problem
@@ -56,6 +57,7 @@ from ..texts import report as report_text
 from ..texts.dialogs import folder_problem_text
 from . import run_report
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
+from .key_facts import MachineKeyFacts
 from .ollama_utils import OllamaClient
 from .onnx.store import ModelStore
 from .preview_image_store import PreviewImageStore
@@ -107,6 +109,10 @@ class PipelineDependencies:
     # Where the built-in reader's model files live; the application layer passes the store its
     # readiness check looks at, so the run reads the folder that was checked.
     model_store: ModelStore | None = None
+    # What this computer adds to a cache key.  The application layer passes the one its queue and
+    # commands compute keys with, so a run and the queue cannot key differently; ``None`` asks
+    # the computer the run is on, with ``model_store``.
+    key_facts: KeyFacts | None = None
     # Where the teacher's work is.  The application layer passes the store the window writes
     # to, so a run reads the corrections the teacher made; ``None`` builds the default one.
     work_store: TeacherWorkStore | None = None
@@ -234,6 +240,7 @@ class OCRPipeline:
         self._component_factory = deps.component_factory or PipelineComponentFactory()
         self._hardware: HardwareDetection | None = deps.hardware
         self._model_store: ModelStore | None = deps.model_store
+        self._key_facts: KeyFacts | None = deps.key_facts
         self._work_store: TeacherWorkStore | None = deps.work_store
         self._samples: SampleStore = deps.samples
         self._artifact_store: PreviewImageStore | None = deps.artifact_store
@@ -493,7 +500,7 @@ class OCRPipeline:
             artifact_store=artifact_store,
             config=cfg,
             windows=builder.resolved_windows(),
-            model_store=self._model_store,
+            facts=self._key_facts or MachineKeyFacts(self._model_store),
             # A run always reads the teacher's work: the window's writes and the run's reads
             # must see the same folder, so the default store is the one the window uses.
             work_store=self._work_store or TeacherWorkStore(),

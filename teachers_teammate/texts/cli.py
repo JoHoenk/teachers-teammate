@@ -231,6 +231,10 @@ _FIXED_HINTS: dict[IssueKind, str] = {
     IssueKind.NOTHING_TO_READ: "Run again with --recognition, or queue files that have text.",
     IssueKind.OLLAMA_NOT_RUNNING: "Start Ollama, then run again.",
     IssueKind.OLLAMA_NOT_FOUND: f"Install Ollama from {OLLAMA_DOWNLOAD_URL}, then run again.",
+    IssueKind.OLLAMA_UNREACHABLE: (
+        "Check that the server answers at the address of --ollama-url, then run again."
+    ),
+    IssueKind.ADDON_RESTART_NEEDED: "Run the command again: the installation finishes at the start.",
     IssueKind.OUTPUT_IN_INPUT_FOLDER: (
         "Choose an output folder with -o/--output that is not the input folder."
     ),

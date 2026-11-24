@@ -22,6 +22,7 @@ from ..domain.formatted_text import TextFormat, normalize_text_format
 from ..domain.freshness import (
     ExpectedHashes,
     correction_kept_over_settings,
+    first_stale_stage_for_hashes,
     stage_hashes,
 )
 from ..domain.key_facts import KeyFacts
@@ -169,13 +170,29 @@ class DocumentQueries:
         return check_document_of(view)
 
     def recognised_files(self, config: Config, files: Collection[Path]) -> set[Path]:
-        """Return the *files* whose recognised text is already stored (best effort)."""
+        """Return the *files* whose stored text the next run would use instead of reading again.
+
+        A reading made with other settings, or by an older reader, is not among them: the run
+        reads that document again.  Best effort: a lookup that fails means "read it again".
+        """
         try:
             store = self._state_store(config)
-            states = [(file, store.load_valid(file)) for file in files]
+            windows = self._windows_for(config)
+            found: set[Path] = set()
+            for file in files:
+                state = store.load_valid(file)
+                if state is None or not state.ocr_done:
+                    continue
+                flags = stage_hashes(
+                    state,
+                    self._work_store.load(state.source_hash),
+                    expected_hashes(config, file, windows, self._facts),
+                )
+                if first_stale_stage_for_hashes(flags) is not Stage.OCR:
+                    found.add(file)
         except Exception:  # noqa: BLE001  # a lookup that fails only means "read it again"
             return set()
-        return {file for file, state in states if state is not None and state.ocr_done}
+        return found
 
     def worked_on_documents(
         self, config: Config, files: Collection[Path], *, run_proofreads: bool

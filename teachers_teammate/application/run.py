@@ -20,6 +20,7 @@ import threading
 from ..config import Config
 from ..domain.context_budget import RunWindows, memory_at_context_gb
 from ..domain.data_location import ENGINE_PPOCR, PROVIDER_OLLAMA
+from ..domain.key_facts import KeyFacts
 from ..domain.model_catalog import (
     RUN_MEMORY_MARGIN_GB,
     DetectionReason,
@@ -185,6 +186,8 @@ class RunParts:
     #: Held around a run only (see run_selected): a fake in tests, the platform's own here.
     sleep_blocker: SleepBlocker
     model_store: ModelStore
+    #: What this computer adds to a cache key: the queue and the run key a result the same way.
+    key_facts: KeyFacts
     #: The teacher's work: one store for the window's writes and every run's reads, so both see
     #: the same folder.
     work_store: TeacherWorkStore
@@ -218,6 +221,7 @@ class RunService:
         self._component_factory = parts.component_factory
         self._sleep_blocker = parts.sleep_blocker
         self._model_store = parts.model_store
+        self._key_facts = parts.key_facts
         self._work_store = parts.work_store
         self._samples = parts.samples
         self._ollama = services.ollama
@@ -306,6 +310,7 @@ class RunService:
                         keep_awake=awake,
                         battery_warning=battery_warning,
                         model_store=self._model_store,
+                        key_facts=self._key_facts,
                         work_store=self._work_store,
                         samples=self._samples,
                     ),
@@ -323,7 +328,7 @@ class RunService:
         """Preprocess *files* and return what happened to each; nothing is read or proofread."""
         with self.running():
             dependencies = PipelineDependencies(
-                samples=self._samples, model_store=self._model_store
+                samples=self._samples, model_store=self._model_store, key_facts=self._key_facts
             )
             return self._pipeline_factory(
                 config, files, dependencies=dependencies

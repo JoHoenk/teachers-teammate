@@ -151,7 +151,9 @@ against a fake Ollama). See {doc}`development` → "Setup Assistant"
    the module's functions by name keeps those functions patchable in a test, and no second
    construction is needed (see `SystemHardwareProbe`, `AddonPackages`, `SpacyModels`).
 4. Lower `BUDGET` in `tests/unit/test_lazy_import_budget.py` if the change removed a
-   `# noqa: PLC0415`; the test fails when the number no longer matches.
+   `# noqa: PLC0415`, and the count of that module in `PINNED` of
+   `tests/unit/test_application_infrastructure_budget.py` if the module imports `infrastructure`
+   no more; both tests fail when a number no longer matches.
 
 What stays a lazy import: installs with progress and their own errors, the facts of the process
 (`inject_packages_dir()`, `can_install_addons()`), and pure helpers on strings and names.

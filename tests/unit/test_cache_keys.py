@@ -166,7 +166,9 @@ def test_a_downloaded_page_model_changes_the_automatic_key_once(tmp_path: Path) 
     When   its OCR key is computed without and with the page models downloaded
     Then   the two keys differ, and the same facts give the same key every time
     """
-    config = make_config(tmp_path, ocr=OcrConfig(engine="ollama", preprocess_method=PreprocessMethod.AUTO))
+    config = make_config(
+        tmp_path, ocr=OcrConfig(engine="ollama", preprocess_method=PreprocessMethod.AUTO)
+    )
 
     without = ocr_key(config, _PDF, _FakeFacts())
     with_models = ocr_key(config, _PDF, _FakeFacts(steps=("turn", "flatten")))
@@ -195,6 +197,32 @@ def test_the_system_language_is_the_only_thing_the_extra_model_leaves_open(
 
     assert german != english
     assert german == anonymization_fingerprint(config, _FakeFacts(language="German"))
+
+
+@pytest.mark.unit
+def test_the_automatic_extra_model_keys_like_the_model_it_resolves_to(tmp_path: Path) -> None:
+    """
+    Given  an English document with the extra model set to the system's language
+    When   the privacy key is computed for a German computer, one with the document's own
+           language and one whose language is unknown
+    Then   the German key equals the key of that model chosen by hand, and the other two equal
+           the key of no extra model
+    """
+    from teachers_teammate.domain.name_models import spacy_model_for  # noqa: PLC0415
+
+    def key(secondary: str, facts: _FakeFacts) -> str:
+        config = make_config(
+            tmp_path, anonymization_enabled=True, anonymizer_secondary_model=secondary
+        )
+        return privacy_key(config, facts)
+
+    by_hand = key(spacy_model_for("German"), _FakeFacts())
+    without = key("none", _FakeFacts())
+
+    assert key("auto:system", _FakeFacts(language="German")) == by_hand
+    assert key("auto:system", _FakeFacts(language="English")) == without
+    assert key("auto:system", _FakeFacts(language="")) == without
+    assert by_hand != without
 
 
 @pytest.mark.unit

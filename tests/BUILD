@@ -1065,6 +1065,17 @@ py_test(
     deps = _COMMON_DEPS,
 )
 
+# The application layer reaches into infrastructure only where the pinned table says it does.
+py_test(
+    name = "test_application_infrastructure_budget",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_application_infrastructure_budget.py"],
+    args = ["unit/test_application_infrastructure_budget.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
 # The layer's lazy imports only go down: the count of `# noqa: PLC0415` is the ratchet.
 py_test(
     name = "test_lazy_import_budget",
@@ -3130,6 +3141,7 @@ test_suite(
         ":test_anonymization_service",
         ":test_anonymizer",
         ":test_api_keys",
+        ":test_application_infrastructure_budget",
         ":test_artifact_licenses",
         ":test_benchmark_domain",
         ":test_benchmark_run_store",

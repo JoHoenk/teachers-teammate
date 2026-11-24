@@ -858,6 +858,27 @@ def test_run_cli_stops_when_ollama_is_not_running(tmp_path: Path, capsys) -> Non
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_says_when_the_first_file_waits_for_another_model(tmp_path: Path, capsys) -> None:
+    """
+    Given  a preflight that found Ollama busy with another model
+    When   run_cli() is called
+    Then   it prints the note that the first file waits, and the run goes ahead
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.domain.ollama_discovery import WaitDetail, WaitKind  # noqa: PLC0415
+    from teachers_teammate.texts.check import wait_detail_text  # noqa: PLC0415
+
+    wait = WaitDetail(WaitKind.QUEUED, model="qwen3:8b", other="gemma3:4b")
+    service = _TextFlagsAppService(preflight=RunPreflight(ollama_wait=wait))
+
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=services_of(service))
+
+    assert rc == 0
+    assert wait_detail_text(wait) in capsys.readouterr().err
+    assert len(service.configs) == 1
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
 def test_run_cli_stops_when_no_queued_file_can_be_used_without_recognition(
     tmp_path: Path, capsys
 ) -> None:
@@ -1400,12 +1421,29 @@ def test_the_hint_for_no_model_at_all_has_no_placeholder() -> None:
 
 
 @pytest.mark.unit
-def test_an_add_on_that_waits_for_a_restart_gets_no_install_hint() -> None:
+def test_an_add_on_that_waits_for_a_restart_says_to_run_again() -> None:
     """
     Given  an add-on that is installed and waits for the next start
     When   the command line asks for its hint
-    Then   there is none: the sentence already says to restart
+    Then   it says to run the command again, and does not send the teacher to the Add-ons page
     """
     from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
 
-    assert cli_issue_hint(RequirementIssue(IssueKind.ADDON_RESTART_NEEDED, name="spaCy")) == ""
+    hint = cli_issue_hint(RequirementIssue(IssueKind.ADDON_RESTART_NEEDED, name="spaCy"))
+
+    assert "again" in hint
+    assert "Add-ons" not in hint
+
+
+@pytest.mark.unit
+def test_an_ollama_that_does_not_answer_names_the_address_flag() -> None:
+    """
+    Given  an Ollama address that does not answer and nothing to start from here
+    When   the command line asks for its hint
+    Then   the hint names --ollama-url
+    """
+    from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
+
+    hint = cli_issue_hint(RequirementIssue(IssueKind.OLLAMA_UNREACHABLE, reason="timed out"))
+
+    assert "--ollama-url" in hint

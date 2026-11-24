@@ -149,7 +149,9 @@ def build_app_services(
     setup = _setup(parts, providers, reader, recommendations, anonymization, addons)
     key_facts = MachineKeyFacts(parts.model_store)
     documents, commands = _documents(parts, recommendations, data_flow, anonymization, key_facts)
-    run = _run(parts, providers, reader, recommendations, anonymization, addons, documents)
+    run = _run(
+        parts, providers, reader, recommendations, anonymization, addons, documents, key_facts
+    )
     return AppServices(
         run=run,
         ollama=parts.ollama,
@@ -324,6 +326,7 @@ def _run(
     anonymization: AnonymizationService,
     addons: AddonService,
     documents: DocumentQueries,
+    key_facts: KeyFacts,
 ) -> RunService:
     """Return the run itself: the service the adapters start a batch on."""
     return RunService(
@@ -333,6 +336,7 @@ def _run(
             component_factory=parts.component_factory,
             sleep_blocker=parts.sleep_blocker,
             model_store=parts.model_store,
+            key_facts=key_facts,
             work_store=parts.work_store,
             samples=parts.samples,
         ),

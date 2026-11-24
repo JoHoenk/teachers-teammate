@@ -22,6 +22,7 @@ from ..config import Config
 from ..domain.requirements import MemoryShortfall
 from ..domain.stages import Stage
 from ..texts import app as app_text
+from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts.privacy import advice_text, level_text, stage_badge
 from . import _dialogs
@@ -33,7 +34,7 @@ from ._privacy_settings import FlowAcknowledgements
 from ._readiness_controller import ReadinessController
 from ._results_table import ResultsTable
 from ._run_controller import RunController
-from ._run_session import RunSession, wait_detail_text
+from ._run_session import RunSession
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,8 @@ class RunStartController(QObject):
         in, Run is disabled and :attr:`preflight_running` reports busy, so no second
         worker can be started from the Run button or the right-click menu.
         """
+        # The preflight checks the folder too; asking first answers on the spot, without the
+        # background check and the "checking" state it would show.
         problem = self._app_service.run.output_problem_for_run(config)
         if problem is not None:
             _dialogs.notify(self._view.window, dlg.output_folder_refused(problem))
@@ -174,7 +177,7 @@ class RunStartController(QObject):
         if result.blocked:
             self._hooks.readiness_controller.show_blocking(result)
             return
-        note = wait_detail_text(result.ollama_wait)
+        note = check_text.wait_detail_text(result.ollama_wait)
         if note:
             # A note, not a question: the run works, the first file just waits.
             self._view.log.append_text(note + "\n")

@@ -131,7 +131,11 @@ needs of a module comes in through its constructor, typed by a `Protocol` in
 `application/composition.py` hands over the class of the running app, a test hands over a fake.
 What still needs a lazy import — an add-on package that must not be imported at start-up, a
 module that imports back — carries `# noqa: PLC0415`, and the count of those in `application/`
-is the ratchet of `tests/unit/test_lazy_import_budget.py`.
+is the ratchet of `tests/unit/test_lazy_import_budget.py`. The modules that still import
+`infrastructure` at all, and how often each does, are pinned the same way by
+`tests/unit/test_application_infrastructure_budget.py`: a store, the pipeline or a subprocess the
+service starts. A pure rule is never among them — it is imported from `domain` or the core.
+`application/composition.py` is not in the table: naming the concrete classes is its job.
 
 ```{uml} assets/component_diagram.puml
 :align: center
@@ -1649,8 +1653,8 @@ Off, the layers behave like this:
   (exit code 0).  `ProcessingResult.skipped` -> `FileOutcome(status=SKIPPED)`; a file that is
   gone since it was queued is skipped the same way.  The main window opens
   no error dialog for it and `ResultsTable.add_result` shows "skipped" in grey.
-- The refusal of settings that would read pages online, `_ollama_needed` and
-  `_configured_ollama_models` ignore the OCR model, the pipeline does not check it, and
+- The refusal of settings that would read pages online, `run_rules.uses_ollama` and
+  `run_rules.ollama_models` ignore the OCR model, the pipeline does not check it, and
   `describe_data_flow` leaves the recognition stage out (no page leaves anywhere).
   `describe_steps` forces it back on so the line under the step can still say what ticking it
   would use.
@@ -2225,8 +2229,9 @@ never only a sentence; `check_run_preflight(config, for_run=..., recognition=...
 `recognition=False` leaves the engine check out for a run that reads no page
 (`needs_text_recognition(files, recognised=...)`: only text files, or text already stored; a PDF
 counts as reading, because its text layer is only known by opening it).  Given `files`, the
-preflight adds the documents whose recognised text an earlier run stored to `recognised`, so the
-command line, which passes none, answers like the window.  `for_run=False` is the bare
+preflight adds the documents whose recognised text an earlier run stored to `recognised`
+(`DocumentQueries.recognised_files()`: a reading made with other settings is not among them), so
+the command line, which passes none, answers like the window.  `for_run=False` is the bare
 readiness question: it leaves out the memory, the wait for Ollama and the output folder (the
 line shows that problem on its own, and with no input folder chosen yet both folders are the
 current one).  `fresh=True` asks Ollama

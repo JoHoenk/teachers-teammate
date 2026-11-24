@@ -39,7 +39,6 @@ from ._run_session import (
     PROGRESS_TICK_MS,
     RunSession,
     StopStage,
-    wait_detail_text,
 )
 from ._run_status import RunProgress, RunTone, describe_run
 from ._types import FileDoneEvent
@@ -435,7 +434,7 @@ class RunController(QObject):
         """Say what Ollama is doing with the request, in the bar and in the Check tab."""
         if not isinstance(detail, WaitDetail):
             return
-        text = self._session.stage_detail(source_id, wait_detail_text(detail))
+        text = self._session.stage_detail(source_id, check_text.wait_detail_text(detail))
         if text is None:
             return
         self._set_progress_text(text)

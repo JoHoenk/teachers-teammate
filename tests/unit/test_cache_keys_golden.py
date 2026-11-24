@@ -201,7 +201,7 @@ def _hidden_configs(tmp_path: Path) -> dict[str, Config]:
     return {
         "hiding-off": make_config(tmp_path),
         # Not ``auto:system``: which language this computer is set to is not part of the key
-        # written here, so the automatic extra model is resolved by another test.
+        # written here (``test_cache_keys.py`` holds the automatic extra model).
         "hiding-on/patterns": make_config(
             tmp_path,
             anonymization_enabled=True,

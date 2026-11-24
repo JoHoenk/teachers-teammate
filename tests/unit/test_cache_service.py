@@ -111,6 +111,40 @@ def test_prepare_calls_load_or_create_and_reconcile(tmp_path: Path) -> None:
     assert ctx.preview_config_hash != ""
 
 
+def test_prepare_keys_with_the_facts_it_was_given(tmp_path: Path) -> None:
+    """
+    Given  a cache service handed the facts of a made-up computer with a page model downloaded
+    When   prepare() computes the keys of an automatically prepared page
+    Then   the OCR and preview keys are the ones those facts make, not the ones this computer makes
+    """
+    from teachers_teammate.cache_keys import ocr_key, preview_key  # noqa: PLC0415
+
+    class _Facts:
+        def page_steps(self) -> tuple[str, ...]:
+            return ("turn", "flatten")
+
+        def system_language(self) -> str:
+            return "English"
+
+        def exchange_identity(self, profile: object, *, corrections_only: bool) -> str:
+            return "exchange"
+
+    src = tmp_path / "doc.png"
+    src.write_bytes(b"fake image data")
+    cfg = make_config(tmp_path, preprocess_method="auto")
+    repo = MagicMock()
+    repo.load_or_create.return_value = _make_state()
+    repo.reconcile.return_value = _make_state()
+    svc = CacheReconciliationService(
+        state_repo=repo, artifact_store=MagicMock(), config=cfg, facts=_Facts()
+    )
+
+    ctx = svc.prepare(src)
+
+    assert ctx.ocr_config_hash == ocr_key(cfg, src, _Facts())
+    assert ctx.preview_config_hash == preview_key(cfg, src, ctx.source_hash, _Facts())
+
+
 def test_prepare_writes_the_state_file_once(tmp_path: Path, monkeypatch) -> None:
     """
     Given  a stored document whose reading is stale and whose preview image is invalid
@@ -1078,6 +1112,7 @@ def test_a_pinned_window_without_resolved_windows_keeps_todays_key(
     so the setting alone gives 8192, and this test is about the key.
     """
     from teachers_teammate.domain import context_budget  # noqa: PLC0415
+
     monkeypatch.setattr(context_budget, "PROOFREADING_NUM_CTX_CAP", 16384)
     config = make_config(
         tmp_path,

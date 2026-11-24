@@ -25,9 +25,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...config import DEFAULTS
 from ...domain.install_item import InstallItem
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
+from ...settings_schema import DEFAULTS
 from ...texts import models as mdl
 from ...texts import review as txt
 from ...texts import servers as srv

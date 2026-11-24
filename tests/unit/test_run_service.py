@@ -13,13 +13,14 @@ import pytest
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.application.composition import inject_addon_packages_dir
 from teachers_teammate.application.run import RunPreflight, RunService
+from teachers_teammate.domain.output_files import FolderProblem
 from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.requirements import IssueKind, RequirementIssue
 from teachers_teammate.domain.run_summary import RunSummary
 from teachers_teammate.domain.teacher_work import MachineTexts, with_transcription
-from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.power import KEEP_AWAKE_REASON
 from teachers_teammate.interfaces import ProgressCallbacks, SleepBlocker
+from teachers_teammate.run_rules import ollama_models
 from teachers_teammate.texts.issues import issue_text
 from tests.conftest import fake_reader_store, make_config
 from ._service_helpers import (
@@ -284,74 +285,146 @@ def test_page_models_are_reported_skipped_only_for_an_automatic_run_that_reads_p
     tmp_path: Path,
 ) -> None:
     """
-    Given  a service whose model store has no page models
-    When   page_models_skipped() is asked for an automatic run, an "Original page" run and a
-           run with recognition off
+    Given  a service whose model store holds the reader's models but no page models
+    When   the preflight is asked for an automatic run, an "Original page" run and a run with
+           recognition off
     Then   only the automatic run that reads pages reports the page models as skipped
     """
     from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
-    svc = _build_services(
-        pipeline_factory=MagicMock(),
-        state_repository_factory=MagicMock(),
-        model_store=ModelStore(tmp_path / "models"),
-    )
+    svc = _make_svc()
 
-    auto = make_config(tmp_path, ocr=OcrConfig(preprocess_method=PreprocessMethod.AUTO))
-    original = make_config(tmp_path, ocr=OcrConfig(preprocess_method=PreprocessMethod.NONE))
+    auto = make_config(
+        tmp_path, ocr=OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.AUTO)
+    )
+    original = make_config(
+        tmp_path, ocr=OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.NONE)
+    )
     off = make_config(
-        tmp_path, ocr=OcrConfig(preprocess_method=PreprocessMethod.AUTO), recognition_enabled=False
+        tmp_path,
+        ocr=OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.AUTO),
+        recognition_enabled=False,
     )
 
-    assert svc.run.page_models_skipped(auto) is True
-    assert svc.run.page_models_skipped(original) is False
-    assert svc.run.page_models_skipped(off) is False
+    text = tmp_path / "essay.txt"
+
+    assert svc.run.check_run_preflight(auto).page_models_skipped is True
+    assert svc.run.check_run_preflight(auto, files=[text]).page_models_skipped is False
+    assert svc.run.check_run_preflight(original).page_models_skipped is False
+    assert svc.run.check_run_preflight(off).page_models_skipped is False
 
 
 # ── _invalidate_from_stage (static helper) ────────────────────────────────
 
 
 @pytest.mark.unit
-def test_reader_refusal_names_the_download_flag(tmp_path: Path) -> None:
+def test_preflight_reports_a_reader_that_is_not_downloaded(tmp_path: Path) -> None:
     """
-    Given  a run with the built-in reader and no model files, and one with Ollama
-    When   reader_refusal_for_run() is asked
-    Then   the first is refused with a sentence that names --download-reader, the second is not
-    """
-    svc = _reader_service(tmp_path)
-    config = make_config(tmp_path / "r", ocr_engine="ppocr")
-    config.input_dir.mkdir(parents=True, exist_ok=True)
-    (config.input_dir / "scan.png").write_bytes(b"x")
-
-    ollama = make_config(tmp_path / "o", ocr_engine="ollama")
-    off = make_config(tmp_path / "s", ocr_engine="ppocr", recognition_enabled=False)
-    files = [config.input_dir / "scan.png"]
-
-    refusal = svc.run.reader_refusal_for_run(config, files)
-
-    assert "--download-reader" in refusal
-    assert svc.run.reader_refusal_for_run(ollama, files) == ""
-    assert svc.run.reader_refusal_for_run(off, files) == ""
-
-
-@pytest.mark.unit
-def test_reader_refusal_lets_a_run_over_text_files_start(tmp_path: Path) -> None:
-    """
-    Given  the built-in reader without model files and an input folder with only a text file
-    When   reader_refusal_for_run() is asked
-    Then   the run over the text file is not refused (no page is read), but it is once the image is in
+    Given  a run with the built-in reader, no model files and a file that has to be read
+    When   the run preflight is computed
+    Then   the blocker says the reader is not downloaded, which names the download in texts
     """
     svc = _reader_service(tmp_path)
     config = make_config(tmp_path / "r", ocr_engine="ppocr")
-    config.input_dir.mkdir(parents=True, exist_ok=True)
-    (config.input_dir / "essay.txt").write_text("Hello", encoding="utf-8")
-
-    text = config.input_dir / "essay.txt"
     scan = config.input_dir / "scan.png"
     scan.write_bytes(b"x")
 
-    assert svc.run.reader_refusal_for_run(config, [text]) == ""
-    assert "--download-reader" in svc.run.reader_refusal_for_run(config, [text, scan])
+    result = svc.run.check_run_preflight(config, files=[scan])
+
+    blocker = result.blocker
+    assert blocker is not None
+    assert blocker[1].kind is IssueKind.READER_MODEL_MISSING
+
+
+@pytest.mark.unit
+def test_a_missing_reader_does_not_stop_other_engines_or_a_run_without_recognition(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  no reader model files, a run with Ollama as the reading engine and one with
+           recognition switched off, each over a scan
+    When   the run preflight is computed
+    Then   neither is blocked because the reader is not downloaded
+    """
+    svc = _reader_service(tmp_path)
+    ollama = _ollama_config(tmp_path / "o", correction_enabled=False)
+    off = make_config(
+        tmp_path / "s", ocr_engine="ppocr", recognition_enabled=False, correction_enabled=False
+    )
+    (ollama.input_dir / "scan.png").write_bytes(b"x")
+    (off.input_dir / "scan.png").write_bytes(b"x")
+
+    with _server_answers(["qwen3-vl:8b"]):
+        with_ollama = svc.run.check_run_preflight(ollama, files=[ollama.input_dir / "scan.png"])
+    without_recognition = svc.run.check_run_preflight(off, files=[off.input_dir / "scan.png"])
+
+    assert with_ollama.blocked is False
+    kinds = [blocker[1].kind for blocker in (without_recognition.blocker,) if blocker]
+    assert IssueKind.READER_MODEL_MISSING not in kinds
+
+
+@pytest.mark.unit
+def test_a_run_over_files_that_were_read_before_needs_no_reader(tmp_path: Path) -> None:
+    """
+    Given  no reader model files and a scan whose recognised text an earlier run stored
+    When   the run preflight is computed over that scan
+    Then   nothing blocks it: no page is read again
+    """
+    svc = _reader_service(tmp_path)
+    config = make_config(tmp_path / "r", ocr_engine="ppocr")
+    scan = config.input_dir / "scan.png"
+    scan.write_bytes(b"x")
+
+    with patch.object(svc.documents, "recognised_files", return_value={scan}):
+        result = svc.run.check_run_preflight(config, files=[scan])
+
+    assert result.blocked is False
+
+
+@pytest.mark.unit
+def test_a_scan_read_before_is_usable_with_recognition_off(tmp_path: Path) -> None:
+    """
+    Given  recognition switched off and a scan whose recognised text an earlier run stored
+    When   the run preflight is computed over that scan
+    Then   the run is not "nothing to read", and the scan is not left out
+    """
+    svc = _make_svc()
+    config = make_config(tmp_path, ocr_engine="ppocr", recognition_enabled=False)
+    scan = config.input_dir / "scan.png"
+    scan.write_bytes(b"x")
+
+    with patch.object(svc.documents, "recognised_files", return_value={scan}):
+        result = svc.run.check_run_preflight(config, files=[scan])
+
+    assert result.nothing_to_read is False
+    assert result.skipped == ()
+
+
+@pytest.mark.unit
+def test_a_run_over_text_files_needs_no_reader(tmp_path: Path) -> None:
+    """
+    Given  the built-in reader without model files and an input folder with only a text file
+    When   the run preflight is computed for the text file, and again once a scan is in
+    Then   the text file needs no page reading, so nothing blocks; the scan does
+    """
+    svc = _reader_service(tmp_path)
+    config = make_config(tmp_path / "r", ocr_engine="ppocr")
+    text = config.input_dir / "essay.txt"
+    text.write_text("Hello", encoding="utf-8")
+    scan = config.input_dir / "scan.png"
+    scan.write_bytes(b"x")
+
+    assert svc.run.check_run_preflight(config, files=[text]).blocked is False
+    assert svc.run.check_run_preflight(config, files=[text, scan]).blocker is not None
+
+
+_ALL_MODELS = ["qwen3-vl:8b", "qwen3.5:9b", "gemma4:12b", "my-own:latest"]
+
+
+def _memory_shortfall_of(svc, config):
+    """Return the memory shortfall the run preflight reports, with every model downloaded."""
+    with _server_answers(_ALL_MODELS):
+        return svc.run.check_run_preflight(config).memory_shortfall
 
 
 @pytest.fixture(autouse=True)
@@ -383,31 +456,32 @@ def _no_real_ollama_program(monkeypatch) -> None:
 def test_a_run_is_refused_when_the_model_would_have_to_swap(tmp_path: Path, monkeypatch) -> None:
     """
     Given  a computer without a graphics card and 6 GB of free memory, and qwen3.5:9b (7.2 GB)
-    When   the run is checked
-    Then   the problem names the model and the memory, so the run does not start and swap
+    When   the memory before a run is checked
+    Then   the shortfall names the model, what it needs and what is free, so the run would swap
     """
     svc = _make_svc()
     cfg = _ollama_config(tmp_path, ocr_engine="ppocr")
     _computer(svc, monkeypatch, profile="cpu", free_gb=6.0)
 
-    problem = svc.run.memory_warning_for_run(cfg)
+    shortfall = _memory_shortfall_of(svc, cfg)
 
-    assert "qwen3.5:9b" in problem and "7 GB of free memory" in problem
-    assert "6 GB are free" in problem and "smaller model" in problem
+    assert shortfall is not None
+    assert shortfall.model == "qwen3.5:9b"
+    assert (round(shortfall.needed_gb), round(shortfall.free_gb)) == (7, 6)
 
 
 @pytest.mark.unit
 def test_a_run_is_allowed_when_enough_memory_is_free(tmp_path: Path, monkeypatch) -> None:
     """
     Given  the same model and 12 GB of free memory (7.2 + the 2 GB margin fit)
-    When   the run is checked
-    Then   there is no problem
+    When   the memory before a run is checked
+    Then   there is no shortfall
     """
     svc = _make_svc()
     cfg = _ollama_config(tmp_path, ocr_engine="ppocr")
     _computer(svc, monkeypatch, profile="cpu", free_gb=12.0)
 
-    assert svc.run.memory_warning_for_run(cfg) == ""
+    assert _memory_shortfall_of(svc, cfg) is None
 
 
 @pytest.mark.unit
@@ -423,9 +497,10 @@ def test_only_what_does_not_fit_the_card_has_to_fit_the_free_memory(
     cfg = _ollama_config(tmp_path, ocr_engine="ppocr", correction_model="gemma4:12b")
 
     _computer(svc, monkeypatch, profile="8gb", free_gb=4.0, card_gb=8.0 * 0.85)
-    assert "gemma4:12b" in svc.run.memory_warning_for_run(cfg)
+    shortfall = _memory_shortfall_of(svc, cfg)
+    assert shortfall is not None and shortfall.model == "gemma4:12b"
     _computer(svc, monkeypatch, profile="8gb", free_gb=6.0, card_gb=8.0 * 0.85)
-    assert svc.run.memory_warning_for_run(cfg) == ""
+    assert _memory_shortfall_of(svc, cfg) is None
 
 
 @pytest.mark.unit
@@ -450,7 +525,8 @@ def test_apple_silicon_needs_the_whole_model_from_the_shared_memory(
         reason=DetectionReason.APPLE_UNIFIED_MEMORY,
     )
 
-    assert "qwen3.5:9b" in svc.run.memory_warning_for_run(cfg)
+    shortfall = _memory_shortfall_of(svc, cfg)
+    assert shortfall is not None and shortfall.model == "qwen3.5:9b"
 
 
 @pytest.mark.unit
@@ -469,9 +545,9 @@ def test_the_memory_check_leaves_other_cases_alone(tmp_path: Path, monkeypatch) 
     remote = _ollama_config(tmp_path, ocr_engine="ppocr", ollama_url="http://gpu-box.lan:11434")
     no_ollama = _ollama_config(tmp_path, ocr_engine="ppocr", correction_enabled=False)
 
-    assert svc.run.memory_warning_for_run(unknown) == ""
-    assert svc.run.memory_warning_for_run(remote) == ""
-    assert svc.run.memory_warning_for_run(no_ollama) == ""
+    assert _memory_shortfall_of(svc, unknown) is None
+    assert _memory_shortfall_of(svc, remote) is None
+    assert _memory_shortfall_of(svc, no_ollama) is None
 
 
 @pytest.mark.unit
@@ -518,7 +594,7 @@ def test_preflight_reports_missing_memory_as_a_warning_the_user_may_accept(
     """
     Given  all models downloaded but too little free memory
     When   the run preflight is computed
-    Then   nothing blocks the run, but it needs the user's confirmation (the memory warning)
+    Then   nothing blocks the run, but the result carries the shortfall for the user's answer
     """
     svc = _make_svc()
     cfg = _ollama_config(tmp_path)
@@ -528,11 +604,15 @@ def test_preflight_reports_missing_memory_as_a_warning_the_user_may_accept(
         result = svc.run.check_run_preflight(cfg)
 
     assert result.blocked is False
-    assert "free memory" in result.memory_warning
+    shortfall = result.memory_shortfall
+    assert shortfall is not None
+    # The reading model comes first in the run's model list, so it is the one reported.
+    assert shortfall.model == "qwen3-vl:8b"
+    assert shortfall.needed_gb > shortfall.free_gb == 6.0
 
 
 @pytest.mark.unit
-def test_a_stage_issue_wins_over_the_memory_warning(tmp_path: Path, monkeypatch) -> None:
+def test_a_stage_issue_wins_over_the_memory_shortfall(tmp_path: Path, monkeypatch) -> None:
     """
     Given  a computer with too little free memory and a proofreading provider package that is
            not installed
@@ -552,7 +632,7 @@ def test_a_stage_issue_wins_over_the_memory_warning(tmp_path: Path, monkeypatch)
 
     assert result.blocked is True
     assert result.stage == "correction"
-    assert result.memory_warning == ""
+    assert result.memory_shortfall is None
 
 
 @pytest.mark.unit
@@ -606,15 +686,18 @@ def test_preflight_refuses_cloud_ocr_settings_whatever_the_files(tmp_path: Path)
 
 
 @pytest.mark.unit
-def test_ocr_refusal_for_run_is_empty_for_a_local_model(tmp_path: Path) -> None:
+def test_preflight_allows_a_local_ocr_model(tmp_path: Path) -> None:
     """
     Given  OCR settings with a model downloaded to Ollama
-    When   ocr_refusal_for_run is asked
-    Then   nothing is refused
+    When   the run preflight is computed
+    Then   nothing about text recognition is refused
     """
     cfg = _ollama_config(tmp_path, ocr_model="qwen3-vl:8b")
 
-    assert _make_svc().run.ocr_refusal_for_run(cfg) == ""
+    with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]):
+        result = _make_svc().run.check_run_preflight(cfg)
+
+    assert result.ocr_not_allowed == ""
 
 
 @pytest.mark.unit
@@ -835,24 +918,66 @@ def test_unreachable_server_is_asked_again_on_the_next_check(tmp_path: Path) -> 
 
 
 @pytest.mark.unit
-def test_output_refusal_for_text_files_in_input_folder(tmp_path: Path) -> None:
+def test_output_problem_for_text_files_in_input_folder(tmp_path: Path) -> None:
     """
     Given  text output enabled with the output folder inside the input folder
-    When   output_refusal_for_run() is asked
-    Then   the run is refused; outside the input folder, or without text files, it is fine
+    When   output_problem_for_run() is asked
+    Then   the folder is a problem; outside the input folder, or without text files, it is fine
     """
     inputs = tmp_path / "in"
     (inputs / "out").mkdir(parents=True)
     (tmp_path / "out").mkdir()
-    refusal = RunService.output_refusal_for_run
+    problem = RunService.output_problem_for_run
     inside = make_config(
         tmp_path, input_dir=inputs, output_dir=inputs / "out", recursive=True, text_enabled=True
     )
 
-    assert "input folder" in refusal(inside)
-    assert refusal(dataclasses.replace(inside, text_enabled=False, docx_enabled=True)) == ""
-    assert refusal(dataclasses.replace(inside, output_dir=tmp_path / "out")) == ""
-    assert refusal(dataclasses.replace(inside, text_enabled=False, text_anonymized_enabled=True))
+    assert problem(inside) is FolderProblem.TEXT_IN_INPUT
+    assert problem(dataclasses.replace(inside, text_enabled=False, docx_enabled=True)) is None
+    assert problem(dataclasses.replace(inside, output_dir=tmp_path / "out")) is None
+    assert problem(dataclasses.replace(inside, text_enabled=False, text_anonymized_enabled=True))
+
+
+@pytest.mark.unit
+def test_the_bare_readiness_question_leaves_the_output_folder_out(tmp_path: Path) -> None:
+    """
+    Given  text output into the input folder, as a window with no folder chosen yet has it
+    When   the run preflight is computed with for_run=False
+    Then   the output folder is not reported, so the other blockers still are
+    """
+    cfg = make_config(tmp_path, text_enabled=True, output_dir=tmp_path, input_dir=tmp_path)
+    svc = _make_svc()
+
+    result = svc.run.check_run_preflight(cfg, for_run=False)
+
+    assert result.output_problem is None
+
+
+@pytest.mark.unit
+def test_the_output_folder_blocks_before_a_missing_model(tmp_path: Path) -> None:
+    """
+    Given  text output into the input folder and a model that is not downloaded
+    When   the run preflight is computed
+    Then   the output folder is the first blocker: it is the first thing a teacher can fix
+    """
+    inputs = tmp_path / "in"
+    (inputs / "out").mkdir(parents=True)
+    cfg = _ollama_config(
+        tmp_path,
+        input_dir=inputs,
+        output_dir=inputs / "out",
+        recursive=True,
+        text_enabled=True,
+    )
+    svc = _make_svc()
+
+    with _server_answers([]):
+        result = svc.run.check_run_preflight(cfg)
+
+    blocker = result.blocker
+    assert blocker is not None
+    assert blocker[1].kind is IssueKind.OUTPUT_IN_INPUT_FOLDER
+    assert result.missing_models == ()
 
 
 @pytest.mark.unit
@@ -1123,17 +1248,19 @@ def test_a_fresh_preflight_sees_a_model_pulled_since_the_list_was_cached(tmp_pat
 def test_preflight_without_memory_never_asks_the_memory_question(tmp_path: Path) -> None:
     """
     Given  a config the readiness line checks
-    When   the preflight runs with memory=False
-    Then   memory_warning_for_run is never called, so a bare readiness question stays cheap
+    When   the preflight runs with for_run=False
+    Then   the memory is never looked at, so a bare readiness question stays cheap
     """
     svc = _make_svc()
     cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False)
 
-    with patch.object(svc.run, "memory_warning_for_run", side_effect=AssertionError("asked")):
-        result = svc.run.check_run_preflight(cfg, memory=False)
+    with patch.object(
+        svc.recommendations, "available_memory_gb", side_effect=AssertionError("asked")
+    ):
+        result = svc.run.check_run_preflight(cfg, for_run=False)
 
     assert result.blocked is False
-    assert result.memory_warning == ""
+    assert result.memory_shortfall is None
 
 
 @pytest.mark.unit
@@ -1152,6 +1279,8 @@ def test_the_blocker_is_the_first_unmet_requirement_in_one_shape() -> None:
         return found
 
     assert RunPreflight().blocker is None
+    stage, found = blocker(output_problem=FolderProblem.TEXT_IN_INPUT)
+    assert (stage, found.kind) == ("", IssueKind.OUTPUT_IN_INPUT_FOLDER)
     stage, found = blocker(ocr_not_allowed="Cloud model.")
     assert (stage, found.kind) == ("ocr", IssueKind.OCR_NOT_ALLOWED)
     assert issue_text(found) == "Cloud model."
@@ -1399,7 +1528,7 @@ def test_preflight_with_recognition_on_lists_no_skipped_scans(tmp_path: Path) ->
 def test_cloud_ocr_settings_are_not_refused_while_recognition_is_off(tmp_path: Path) -> None:
     """
     Given  an OCR model that would read pages on Ollama's servers, but recognition switched off
-    When   the refusal for the run is asked
+    When   the run preflight is computed
     Then   nothing is refused: no page is read, so no page can leave the computer
     """
     svc = _make_svc()
@@ -1410,8 +1539,10 @@ def test_cloud_ocr_settings_are_not_refused_while_recognition_is_off(tmp_path: P
         correction_enabled=False,
     )
 
-    assert svc.run.ocr_refusal_for_run(cfg) == ""
-    assert svc.run._configured_ollama_models(cfg) == []
+    result = svc.run.check_run_preflight(cfg)
+
+    assert result.ocr_not_allowed == ""
+    assert ollama_models(cfg) == ()
 
 
 @pytest.mark.unit
@@ -1488,4 +1619,4 @@ def test_the_memory_check_does_not_probe_the_graphics_cards(tmp_path: Path, monk
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
     monkeypatch.setattr(gpu_detector, "detect_gpus", _no_probe)
 
-    assert svc.run.memory_warning_for_run(cfg) != ""
+    assert _memory_shortfall_of(svc, cfg) is not None

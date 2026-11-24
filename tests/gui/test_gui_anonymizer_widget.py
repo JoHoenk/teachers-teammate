@@ -6,8 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.domain.anonymization import AnonymizerConfig, DEFAULT_PATTERNS
-from teachers_teammate.settings_schema import SECONDARY_MODEL_AUTO
+from teachers_teammate.domain.anonymization import (
+    SECONDARY_MODEL_AUTO,
+    DEFAULT_PATTERNS,
+    AnonymizerConfig,
+)
 from teachers_teammate.gui import _anonymizer_config_widget, _dialogs
 from teachers_teammate.gui._anonymizer_config_widget import AnonymizerConfigWidget
 from teachers_teammate.texts import privacy

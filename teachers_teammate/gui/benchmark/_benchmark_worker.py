@@ -9,7 +9,8 @@ import threading
 from PySide6.QtCore import QThread, Signal
 
 from ...application.benchmark_service import BenchmarkApplicationService, BenchmarkRunStopped
-from ...config import DEFAULTS, OcrConfig
+from ...config import OcrConfig
+from ...settings_schema import DEFAULTS
 from ...texts.run import STOPPED_BY_USER
 from .._qt_stream import QtStream
 

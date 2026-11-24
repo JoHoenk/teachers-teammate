@@ -12,15 +12,21 @@ The map is the one an anonymizer produces: placeholder → original surface text
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import re
 import unicodedata
 
+from .name_models import spacy_model_for
 from .offset_map import OffsetMap
 
 #: A mapping from a placeholder token to the text it stands for.
 PlaceholderMap = Mapping[str, str]
+
+#: Value of ``anonymizer_secondary_model`` meaning "the model of the system language".
+SECONDARY_MODEL_AUTO = "auto:system"
+#: Value meaning "no extra detection model" (what an explicit "(none)" in the GUI stores).
+SECONDARY_MODEL_NONE = "none"
 
 
 def restore(text: str, mapping: PlaceholderMap) -> str:
@@ -389,3 +395,83 @@ class AnonymizerConfig:
     secondary_model: str | None = None
     primary_model: str | None = None
     patterns: tuple[tuple[str, str], ...] = field(default_factory=lambda: tuple(DEFAULT_PATTERNS))
+
+
+class AnonymizerNoticeKind(StrEnum):
+    """Why an automatic extra detection model was left out."""
+
+    LANGUAGE_UNKNOWN = "language_unknown"
+    """The language of this computer could not be determined."""
+    MODEL_MISSING = "model_missing"
+    """The model of that language is not downloaded."""
+
+
+@dataclass(frozen=True)
+class AnonymizerNotice:
+    """What a run should tell the teacher about an automatic extra model it did not use."""
+
+    kind: AnonymizerNoticeKind
+    document_language: str
+    system_language: str = ""
+    """The language this computer is set to; empty when it could not be determined."""
+    missing_model: str = ""
+    """The model of :attr:`system_language` that is not downloaded."""
+    primary_model: str = ""
+    """The model the first pass loads; the second one would stand next to it."""
+
+
+def resolve_anonymizer_config(
+    config: AnonymizerConfig,
+    *,
+    document_language: str,
+    system_language: str | None = None,
+    installed_models: Collection[str] | None = None,
+) -> tuple[AnonymizerConfig, AnonymizerNotice | None]:
+    """Return *config* with the models that will actually be loaded, and what to say about it.
+
+    ``secondary_model`` of :data:`SECONDARY_MODEL_AUTO` means "the model of the language the
+    operating system is set to".  It is resolved here, once, so a run, a preview and an export
+    all use the same models:
+
+    * no system language could be determined → no extra pass (:data:`SECONDARY_MODEL_NONE`),
+      and a notice says why;
+    * the system language has the same model as the primary pass → no extra pass (a second
+      pass with the same model would only repeat the first one), and nothing to say;
+    * the model is missing while *installed_models* is known → no extra pass and a notice
+      (an automatic default must never make a run fail);
+    * an explicitly chosen model is kept as it is, missing or not: the anonymizer then fails
+      with the same error as before, which is what the teacher asked for.
+
+    The wording of a notice is :func:`~teachers_teammate.texts.addons.anonymizer_notice`.
+    """
+    secondary = config.secondary_model
+    if secondary is None or str(secondary).strip().lower() in ("", SECONDARY_MODEL_NONE):
+        return replace(config, secondary_model=None), None
+    if str(secondary) != SECONDARY_MODEL_AUTO:
+        return config, None
+
+    primary = config.primary_model or spacy_model_for(document_language)
+    if not system_language:
+        return (
+            replace(config, secondary_model=None),
+            AnonymizerNotice(
+                AnonymizerNoticeKind.LANGUAGE_UNKNOWN,
+                document_language=document_language,
+                primary_model=primary,
+            ),
+        )
+    system_model = spacy_model_for(system_language)
+    if system_model == primary:
+        return replace(config, secondary_model=None), None
+    if installed_models is not None and system_model not in installed_models:
+        return (
+            replace(config, secondary_model=None),
+            AnonymizerNotice(
+                AnonymizerNoticeKind.MODEL_MISSING,
+                document_language=document_language,
+                system_language=system_language,
+                missing_model=system_model,
+                primary_model=primary,
+            ),
+        )
+    return replace(config, secondary_model=system_model), None

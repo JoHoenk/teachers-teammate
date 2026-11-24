@@ -36,8 +36,8 @@ from ..application.correction_options import (
     proofreading_prompts,
 )
 from ..application.data_flow import ticked_steps
-from ..config import DEFAULTS, Config
-from ..domain.anonymization import AnonymizerConfig
+from ..config import Config
+from ..domain.anonymization import SECONDARY_MODEL_NONE, AnonymizerConfig
 from ..domain.correction_policy import LEVELS, CorrectionOutput
 from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import (
@@ -48,10 +48,11 @@ from ..domain.data_location import (
 from ..domain.install_item import InstallItem
 from ..domain.output_files import folder_problem
 from ..domain.stages import Stage
-from ..settings_schema import SECONDARY_MODEL_NONE, normalize_notes, normalize_settings
+from ..settings_schema import DEFAULTS, normalize_notes, normalize_settings
 from ..texts import dialogs as dlg
 from ..texts import main_window as win
 from ..texts import review as txt
+from ..texts import run as run_text
 from ..texts.privacy import uses_tooltip
 from . import _anonymizer_settings
 from ._constants import _LANGUAGES
@@ -705,7 +706,7 @@ class ConfigPanel(QScrollArea):
         the note is hidden.
         """
         if not self._recognition_enabled.isChecked() and skipped:
-            self._recognition_note.setText(win.scans_skipped_note(skipped))
+            self._recognition_note.setText(run_text.scans_skipped_note(skipped))
             self._recognition_note.setStyleSheet("color: #e67e22; font-size: 8pt;")
             self._recognition_note.setVisible(True)
         elif self._recognition_enabled.isChecked() and not_needed:

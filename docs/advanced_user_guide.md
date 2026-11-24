@@ -302,3 +302,22 @@ teachers-teammate -i ./scans -o ./results --docx
 
 It exits with `0` when no file failed and `1` when a file failed or the run could not start. A
 scan skipped because recognition is off does not change the exit code.
+
+Before the first file, the command line asks the same question the window asks above Run: can
+this run start? When something is missing it says what, together with the way to fix it, and
+exits with `1` without touching a file:
+
+- the built-in reader's model files are not downloaded: the command that downloads them;
+- a model is not downloaded in Ollama: `ollama pull <model>`;
+- no API key for an online service: the environment variable to set, or the key in Settings;
+- Ollama is not running, not installed, or does not answer at `--ollama-url`: start it, where to
+  download it, or the address to check;
+- an add-on is missing or out of date: install it on the Add-ons page; one that waits for a
+  restart: run the command again;
+- text files would be saved in the input folder: `-o` with another folder;
+- text recognition is off and no queued file has text to use without it: run again with
+  `--recognition`, or queue text files.
+
+Free memory is checked as well, but there it only warns: the run goes ahead with
+`--ignore-memory-check`. When Ollama is busy with another model, a line says the first file
+waits.

@@ -38,11 +38,11 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.correction_options import review_has_own_model
-from ...config import DEFAULTS, OcrConfig
+from ...config import OcrConfig
 from ...domain.install_item import InstallItem, InstallKind
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...domain.stages import Stage
-from ...settings_schema import CONTEXT_SETTINGS
+from ...settings_schema import CONTEXT_SETTINGS, DEFAULTS
 from ...texts import models as words
 from ...texts import review as txt
 from ...texts import settings as st

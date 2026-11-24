@@ -14,7 +14,8 @@ import pytest
 
 from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.install_item import InstallItem, InstallKind
-from teachers_teammate.config import DEFAULTS, OcrConfig
+from teachers_teammate.config import OcrConfig
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _anonymizer_config_widget, _model_fetch
 from teachers_teammate.gui._background import wait_for_background_tasks

@@ -8,8 +8,11 @@ differently.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 import math
+
+from .data_location import ENGINE_PPOCR
 
 HUGGING_FACE_HOST = "huggingface.co"
 """The one host the files come from; named in the download error so an IT department knows what
@@ -183,4 +186,32 @@ def reader_fingerprint() -> str:
     return (
         f"PP-OCRv6_small@{PPOCR_SMALL_DET.short_revision}+{PPOCR_SMALL_REC.short_revision}"
         f"/v{READER_VERSION}"
+    )
+
+
+#: Bump whenever a step, a threshold or a page model revision of the automatic preparation
+#: changes (``infrastructure/preprocessing/auto.py``): it is part of the cache identity of a
+#: prepared page, so stored pages are then read again.
+AUTO_VERSION = 1
+
+
+def auto_output(engine: str) -> str:
+    """Return what the automatic preparation hands to *engine*: ``"colour"`` or ``"gray"``.
+
+    The built-in reader wants colour; Ollama gets a gray page.
+    """
+    return "colour" if engine == ENGINE_PPOCR else "gray"
+
+
+def auto_identity(engine: str, page_steps: Sequence[str]) -> tuple[str, ...]:
+    """Return what decides the pixels of a prepared page: version, output, available steps.
+
+    Changes when the steps change (:data:`AUTO_VERSION`), when the engine wants another colour,
+    and when the page models are downloaded or removed (*page_steps*) — so every one of those
+    reads the stored pages again.
+    """
+    return (
+        f"v{AUTO_VERSION}",
+        auto_output(engine),
+        *(f"+{name}" for name in page_steps),
     )

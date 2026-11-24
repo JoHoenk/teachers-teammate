@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from ..domain.anonymization import AnonymizerNotice, AnonymizerNoticeKind
 from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR
 from ..domain.local_models import (
     HUGGING_FACE_HOST,
@@ -425,3 +426,15 @@ def extra_model_missing(
 def package_pip_hint(pip: str) -> str:
     """Return the line that offers the pip command for the package *pip*."""
     return PACKAGE_PIP_HINT.format(pip=pip)
+
+
+def anonymizer_notice(notice: AnonymizerNotice) -> str:
+    """Return the warning for an automatic extra detection model that was left out."""
+    if notice.kind is AnonymizerNoticeKind.MODEL_MISSING:
+        return extra_model_missing(
+            notice.missing_model,
+            notice.system_language,
+            notice.primary_model,
+            notice.document_language,
+        )
+    return extra_model_language_unknown(notice.document_language)

@@ -14,10 +14,9 @@ import base64
 from pathlib import Path
 
 from ..domain.data_location import LOCAL_OCR_ENGINES
+from ..domain.ocr_prompt import get_ocr_prompt
 from ..interfaces import OCRProcessor
 from .ollama_utils import OllamaClient
-
-_OCR_PROMPT = "Extract all visible text from this image in {language} exactly as written."
 
 OCR_ANSWER_TOKENS = 2048
 """Tokens a page's answer may take.  A page of handwriting needs more than a short answer, and a
@@ -25,11 +24,6 @@ page that runs into the limit keeps the text read so far."""
 
 # Every engine reads pages on a computer the user controls (see domain/data_location.py).
 SUPPORTED_OCR_ENGINES: list[str] = list(LOCAL_OCR_ENGINES)
-
-
-def get_ocr_prompt(language: str) -> str:
-    """Return the OCR extraction prompt for *language*."""
-    return _OCR_PROMPT.format(language=language)
 
 
 class OllamaOCRProcessor(OCRProcessor):

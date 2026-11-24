@@ -24,12 +24,12 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QWidget
 
 from ...application.composition import AppServices
-from ...config import DEFAULTS
 from ...domain.data_location import PROVIDER_OLLAMA, DataLocation, DataRegion
 from ...domain.model_catalog import HardwareProfile, HardwareProfileSetting
 from ...domain.model_listing import ListedModel, ModelListing
 from ...domain.providers import ProviderInfo
 from ...domain.stages import Stage
+from ...settings_schema import DEFAULTS
 from ...texts.addons import PACKAGE_BUTTON, PACKAGE_BUTTON_TOOLTIP
 from ...texts.models import (
     AI_MODEL_LABEL,

@@ -15,9 +15,8 @@ from .domain.stages import Stage
 
 _OLLAMA_GENERAL_DEFAULT = DEFAULT_WRITING_MODEL
 
-#: The online correction defaults must answer the review JSON schema.  All of
-#: them support structured output; ``claude-3-haiku-20240307`` was retired by the provider
-#: and is replaced by its current small model.
+#: The online correction defaults must answer the review JSON schema, so each of them
+#: supports structured output.
 _DEFAULT_MODELS: dict[Stage, dict[str, str]] = {
     Stage.CORRECTION: {
         PROVIDER_OLLAMA: _OLLAMA_GENERAL_DEFAULT,

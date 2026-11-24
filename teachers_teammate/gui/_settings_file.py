@@ -16,8 +16,9 @@ from PySide6.QtWidgets import QMainWindow, QSplitter
 
 from ..application.composition import AppServices
 from ..application.stored_results import RunInProgressError
-from ..config import DEFAULTS, broken_settings_copy, load_config_file, save_settings_file
+from ..config import broken_settings_copy, load_config_file, save_settings_file
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
+from ..settings_schema import DEFAULTS
 from ..texts import dialogs as dlg
 from ..texts import main_window as win
 from ..texts._types import Notice

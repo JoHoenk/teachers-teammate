@@ -8,6 +8,8 @@ the source dialog's button, the side panel's tabs and its filter row.
 
 from __future__ import annotations
 
+from ..domain.ollama_discovery import WaitDetail, WaitKind
+
 MORE = "\u22ef"
 """The label of the ⋯ button: everything else that can be done with this document."""
 
@@ -167,3 +169,14 @@ def run_queued_for_model(other: str, model: str) -> str:
 def filter_category_tip(category: str) -> str:
     """Return the tooltip of the filter chip of the correction *category*."""
     return FILTER_CATEGORY_TIP.format(category=category)
+
+
+def wait_detail_text(detail: WaitDetail) -> str:
+    """Return what to say about a request to Ollama that has no answer yet."""
+    if detail.kind is WaitKind.BUSY:
+        return run_waiting_for_model(detail.other)
+    if detail.kind is WaitKind.LOADING:
+        return run_loading_model(detail.model)
+    if detail.kind is WaitKind.QUEUED:
+        return run_queued_for_model(detail.other, detail.model)
+    return ""

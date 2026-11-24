@@ -1,19 +1,11 @@
 """Per-file processing state persistence.
 
-This module owns the JSON-backed key-value store that tracks what has been
-computed for each source document.
-
-Responsibilities
-----------------
-- Define `DocumentState` — the versioned dataclass stored as JSON on disk.
-- Implement `StateRepository` — load, validate, save, and invalidate state
-  records while delegating all *policy* decisions (which stages become stale,
-  what a reset clears) to the domain layer.
-- Provide `compute_file_hash` and `compute_config_hash` — SHA-256 helpers
-  used by both this module and `CacheReconciliationService`.
+The JSON-backed key-value store that tracks what has been computed for each source document: it
+loads, validates, saves and invalidates the records, and turns them into JSON and back.
 
 What this module does NOT do
 -----------------------------
+- It does not define what a record holds — that is ``domain/document_state.py``.
 - It does not decide *when* to invalidate stages — that is `domain/freshness.py`.
 - It does not manage preview image paths — that is `PreviewImageStore`.
 - It does not select the storage root directory — that is `storage_root.py`.
@@ -21,9 +13,9 @@ What this module does NOT do
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 import dataclasses
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 import logging
@@ -32,12 +24,15 @@ import threading
 
 from ..atomic_file import write_text_atomic
 from ..domain.data_location import SentRecord
-from ..domain.formatted_text import normalize_text_format
-from ..domain.freshness import reset_policy_from_stage, should_invalidate_preview_artifact
-from ..domain.proofreading.review import CorrectionReview
+from ..domain.document_state import (
+    DocumentState,
+    cleared_fields,
+    cleared_preview_fields,
+    reset_fields,
+)
+from ..domain.freshness import should_invalidate_preview_artifact
 from ..domain.stages import Stage, normalize_stage
-from ..domain.teacher_work import MachineTexts
-from .storage_root import document_stem
+from .storage_root import document_identity, document_stem
 
 _logger = logging.getLogger(__name__)
 
@@ -84,115 +79,6 @@ def compute_file_hash_cached(path: Path) -> str:
     return digest
 
 
-def compute_config_hash(*parts: str) -> str:
-    """Return SHA-256 hash over ordered configuration parts."""
-    hasher = hashlib.sha256()
-    for part in parts:
-        hasher.update(part.encode("utf-8"))
-        hasher.update(b"\0")
-    return hasher.hexdigest()
-
-
-def machine_texts(state: DocumentState) -> MachineTexts:
-    """Return what the cache holds for *state*, as the domain reads it.
-
-    The machine's own texts, untouched by the teacher: the merge point
-    (``domain.teacher_work.current_texts``) puts their work over them.
-    """
-    return MachineTexts(
-        raw_text=state.raw_text,
-        raw_text_format=normalize_text_format(state.raw_text_format),
-        corrected_text=state.correction_text,
-        review=state.correction_review,
-        correction_source_hash=state.correction_source_hash,
-    )
-
-
-@dataclass(frozen=True)
-class DocumentState:
-    """Versioned processing state record for one source document."""
-
-    schema_version: int
-    source_path: str
-    source_hash: str
-    source_image: str = ""
-    raw_text: str = ""
-    correction_text: str = ""
-    # Explanations and unclear expressions of the proofreading (``CorrectionReview.to_dict``);
-    # empty/None when the file was corrected without a review (corrections-only mode).  The
-    # offsets are in the plain text of ``raw_text``, crossed-out words included.
-    correction_review: dict | None = None
-    # Why ``correction_review`` is missing or incomplete (e.g. the fallback to corrections only,
-    # or suggestions that could not be placed); replayed when the cached correction is reused.
-    correction_warning: str = ""
-    # The text the stored proofreading was made from, with its placeholder map, and how it was
-    # sent (``SentRecord.to_dict()``).  Only when names were hidden: with hiding off the text
-    # that was sent is ``raw_text`` itself, and an edit of ``raw_text`` clears the result, so
-    # the two cannot drift apart.  Stored with the result and never overwritten while it
-    # exists, so the window can show what really went out after the settings changed.
-    correction_sent_text: str = ""
-    correction_sent_map: dict[str, str] | None = None
-    correction_sent: dict | None = None
-    evaluation_text: str = ""
-    # What the content review's run reported, replayed when the cached review is reused.
-    evaluation_warning: str = ""
-    # How the stored content review was sent (``SentRecord.to_dict()``).  Its text is not
-    # stored: the content review is being redesigned, and what it sends is stored with that.
-    evaluation_sent: dict | None = None
-    # Notation of ``raw_text`` and ``correction_text`` (the corrector answers in the notation
-    # it was given): "plain" (verbatim) or "markdown".  The default keeps state written
-    # before this field existed rendering as plain text.
-    raw_text_format: str = "plain"
-    ocr_done: bool = False
-    correction_done: bool = False
-    evaluation_done: bool = False
-    ocr_config_hash: str = ""
-    correction_config_hash: str = ""
-    # ``text_identity`` of the transcription the stored proofreading was made from.  A stored
-    # proofreading is stale when that differs from the current transcription, whatever the
-    # settings: it guards against a store emptied on one side only (the teacher's transcription
-    # gone while the cache still holds a proofreading made from it).  Empty means "made from
-    # ``raw_text``", which is what state written before this field existed holds.
-    correction_source_hash: str = ""
-    eval_config_hash: str = ""
-    preview_config_hash: str = ""
-    # Every prepared page of the document, in page order.  The first entry is the preview the
-    # window shows; a document read before the app kept more than one page has the one page it
-    # had (``load`` folds an old ``preview_img`` into this list).
-    page_images: list[str] = field(default_factory=list)
-    # The page as it was scanned, for every prepared page, in the same order.  Empty when
-    # preparation changed nothing.
-    original_images: list[str] = field(default_factory=list)
-    # Preprocessing steps applied to produce ``preview_img``.  ``None`` means unknown
-    # (state written before this field existed); ``[]`` means none were applied.
-    preprocess_steps: list[str] | None = None
-
-    @property
-    def review(self) -> CorrectionReview | None:
-        """Return the stored proofreading review, or ``None`` when there is none to show."""
-        return CorrectionReview.from_dict(self.correction_review)
-
-    @property
-    def preview_img(self) -> str:
-        """Return the prepared page the window shows: the first of :attr:`page_images`."""
-        return self.page_images[0] if self.page_images else ""
-
-    @property
-    def original_img(self) -> str:
-        """Return the scanned page next to the preview: the first of :attr:`original_images`."""
-        return self.original_images[0] if self.original_images else ""
-
-    @property
-    def pages(self) -> tuple[str, ...]:
-        """Return the stored pages in page order."""
-        return tuple(self.page_images)
-
-    @property
-    def originals(self) -> tuple[str, ...]:
-        """Return the stored original pages in page order."""
-        return tuple(self.original_images)
-
-
 @dataclass(frozen=True)
 class OcrResultRecord:
     """OCR output payload persisted by `StateRepository.record_ocr_result`."""
@@ -204,79 +90,6 @@ class OcrResultRecord:
     ocr_config_hash: str
     preview_config_hash: str
     raw_text_format: str = "plain"
-
-
-#: The fields that describe the preview artifact.  They are cleared together: a page image
-#: without its steps, or the other way round, says nothing true.
-_PREVIEW_FIELDS: Mapping[str, object] = {
-    "page_images": (),
-    "original_images": (),
-    "source_image": "",
-    "preprocess_steps": None,
-    "preview_config_hash": "",
-}
-
-#: What a reset of each stage clears.  One entry per stage, so a field added to
-#: ``DocumentState`` for a stage belongs here — ``tests/unit/test_state_repository.py`` fails
-#: on a stage field the table does not name.  ``()`` stands for an empty list;
-#: :func:`_fresh` makes it a new one.
-_CLEARED: Mapping[Stage, Mapping[str, object]] = {
-    Stage.OCR: {
-        **_PREVIEW_FIELDS,
-        "ocr_done": False,
-        "ocr_config_hash": "",
-        "raw_text": "",
-        "raw_text_format": "plain",
-    },
-    Stage.CORRECTION: {
-        "correction_done": False,
-        "correction_config_hash": "",
-        "correction_source_hash": "",
-        "correction_text": "",
-        "correction_review": None,
-        "correction_warning": "",
-        "correction_sent_text": "",
-        "correction_sent_map": None,
-        "correction_sent": None,
-    },
-    Stage.EVALUATION: {
-        "evaluation_done": False,
-        "eval_config_hash": "",
-        "evaluation_text": "",
-        "evaluation_warning": "",
-        "evaluation_sent": None,
-    },
-}
-
-
-def _fresh(fields: Mapping[str, object]) -> dict[str, object]:
-    """Return *fields* with a new list for every ``()`` placeholder."""
-    return {
-        name: list(value) if isinstance(value, tuple) else value for name, value in fields.items()
-    }
-
-
-def _cleared(stage: Stage) -> dict[str, object]:
-    """Return the fields a reset of *stage* clears, with fresh values."""
-    return _fresh(_CLEARED[stage])
-
-
-def _cleared_preview() -> dict[str, object]:
-    """Return the fields that describe the preview artifact, cleared."""
-    return _fresh(_PREVIEW_FIELDS)
-
-
-def reset_fields(stage: Stage) -> dict[str, object]:
-    """Return the fields a reset from *stage* onward clears, with fresh values."""
-    policy = reset_policy_from_stage(stage)
-    cleared: dict[str, object] = {}
-    if policy.clear_ocr:
-        cleared.update(_cleared(Stage.OCR))
-    if policy.clear_correction:
-        cleared.update(_cleared(Stage.CORRECTION))
-    if policy.clear_evaluation:
-        cleared.update(_cleared(Stage.EVALUATION))
-    return cleared
 
 
 def _inconsistent(state: DocumentState) -> bool:
@@ -299,7 +112,7 @@ def _inconsistent(state: DocumentState) -> bool:
 
 def _is_current(state: DocumentState, input_file: Path) -> bool:
     """Return whether *state* was stored for exactly this file, as it is now."""
-    if state.source_path != str(input_file.resolve()):
+    if state.source_path != document_identity(input_file):
         return False
     try:
         return state.source_hash == compute_file_hash_cached(input_file)
@@ -387,7 +200,7 @@ class StateRepository:
         """Create a new empty state record for *input_file*."""
         return DocumentState(
             schema_version=self._SCHEMA_VERSION,
-            source_path=str(input_file.resolve()),
+            source_path=document_identity(input_file),
             source_hash=source_hash,
         )
 
@@ -488,8 +301,8 @@ class StateRepository:
             ocr_config_hash=record.ocr_config_hash,
             preview_config_hash=record.preview_config_hash,
             page_images=pages,
-            **_cleared(Stage.CORRECTION),
-            **_cleared(Stage.EVALUATION),
+            **cleared_fields(Stage.CORRECTION),
+            **cleared_fields(Stage.EVALUATION),
         )
         self.save(input_file, new_state)
         return new_state
@@ -531,7 +344,7 @@ class StateRepository:
             correction_sent=sent.to_dict() if sent is not None else None,
             correction_config_hash=correction_config_hash,
             correction_source_hash=source_hash,
-            **_cleared(Stage.EVALUATION),
+            **cleared_fields(Stage.EVALUATION),
         )
         self.save(input_file, new_state)
         return new_state
@@ -586,15 +399,9 @@ class StateRepository:
             expected_preview_config_hash=preview_config_hash,
             has_preview_artifact=bool(state.preview_img or state.source_image),
         ):
-            updates.update(_cleared_preview())
+            updates.update(cleared_preview_fields())
         updates["preview_config_hash"] = preview_config_hash
         new_state = dataclasses.replace(state, **updates)
-        self.save(input_file, new_state)
-        return new_state
-
-    def invalidate_preview_artifact(self, input_file: Path, state: DocumentState) -> DocumentState:
-        """Clear preview artifact paths while keeping textual stage data intact."""
-        new_state = dataclasses.replace(state, **_cleared_preview())
         self.save(input_file, new_state)
         return new_state
 

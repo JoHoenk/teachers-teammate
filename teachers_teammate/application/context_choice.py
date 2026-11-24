@@ -4,10 +4,11 @@ The Settings page has to say two things about the context choice: whether it cha
 at all, and what ``"auto"`` resolves to right now.  Both are pure decisions over the settings and
 the graphics card, so they live here rather than in the widget.
 
-With proofreading capped at the base window (``spec-cw-followup.md`` CW7) the setting only sizes
-the content review, and only when that runs on its own Ollama model.  ``applies`` is therefore
-*computed* from the windows rather than written out by hand: it stays right when the cap is
-raised again or the ``same_model`` rule changes.
+With proofreading capped at the base window
+(:data:`~teachers_teammate.domain.context_budget.PROOFREADING_NUM_CTX_CAP`) the setting only
+sizes the content review, and only when that runs on its own Ollama model.  ``applies`` is
+therefore *computed* from the windows rather than written out by hand: it stays right when the
+cap is raised or the ``same_model`` rule changes.
 """
 
 from __future__ import annotations

@@ -13,30 +13,25 @@ import functools
 import logging
 from pathlib import Path
 
-from ..config import DEFAULTS, Config
+from ..cache_keys import correction_key, expected_hashes, privacy_key
+from ..config import Config
 from ..domain.context_budget import RunWindows
 from ..domain.correction_prompts import notes_block
+from ..domain.document_state import DocumentState, machine_texts
 from ..domain.formatted_text import TextFormat, normalize_text_format
-from ..domain.freshness import correction_kept_over_settings
+from ..domain.freshness import (
+    ExpectedHashes,
+    correction_kept_over_settings,
+    first_stale_stage_for_hashes,
+    stage_hashes,
+)
+from ..domain.key_facts import KeyFacts
 from ..domain.notation import with_notation_hint
 from ..domain.stages import Stage
 from ..domain.teacher_work import current_texts
-from ..infrastructure.anonymizer import anonymizer_config_from
-from ..infrastructure.onnx.store import ModelStore
-from ..infrastructure.state_repository import (
-    DocumentState,
-    StateRepository,
-    compute_file_hash_cached,
-    machine_texts,
-)
+from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
 from ..infrastructure.teacher_work_store import TeacherWorkStore
-from ..infrastructure.workflow.cache_service import (
-    ExpectedHashes,
-    compute_correction_config_hash,
-    expected_hashes,
-    privacy_fingerprint,
-    stage_hashes,
-)
+from ..settings_schema import DEFAULTS
 from .anonymization import AnonymizationService
 from .check_document import CheckDocument, check_document_of
 from .correction_options import proofreading_prompts
@@ -90,14 +85,14 @@ class DocumentQueries:
         *,
         state_store_factory: Callable[[Config], StateRepository],
         work_store: TeacherWorkStore,
-        model_store: ModelStore,
+        facts: KeyFacts,
         windows_for: Callable[[Config], RunWindows],
         data_flow: DataFlowService,
         anonymization: AnonymizationService,
     ) -> None:
         self._state_store = state_store_factory
         self._work_store = work_store
-        self._model_store = model_store
+        self._facts = facts
         # The context windows a run would use; the run service owns them.
         self._windows_for = windows_for
         # Where each step takes place, and the shared anonymizer used to show what is sent.
@@ -111,14 +106,14 @@ class DocumentQueries:
 
         The one place a stored document becomes a view.  *reconciled* marks the stages the next
         run would read again, worked out exactly as the run works them out
-        (:func:`~teachers_teammate.infrastructure.workflow.cache_service.stage_hashes`), so the
+        (:func:`~teachers_teammate.domain.freshness.stage_hashes`), so the
         queue and the next run agree on what is stale and what the teacher's work keeps; without
         it the view says what is stored.  A file the store has no result for yields ``None`` for
         both.
         """
         store = self._state_store(config)
         windows = self._windows_for(config) if reconciled else None
-        current_privacy = functools.cache(lambda: privacy_fingerprint(config))
+        current_privacy = functools.cache(lambda: privacy_key(config, self._facts))
         for file in files:
             state = store.load_valid(file)
             if state is None:
@@ -129,7 +124,7 @@ class DocumentQueries:
                     file,
                     state,
                     self._work_store.load(state.source_hash),
-                    expected_hashes(config, file, windows, self._model_store),
+                    expected_hashes(config, file, windows, self._facts),
                 )
             else:
                 view = self._merged(to_view(file, state), state)
@@ -156,10 +151,6 @@ class DocumentQueries:
             rows.append(queue_row(view, stored))
         return rows
 
-    def queue_row(self, config: Config, source: Path) -> QueueRow:
-        """Return what the queue shows for one file, read from the store."""
-        return self.queue_rows(config, [source])[0]
-
     def load_view(self, config: Config, source: Path) -> DocumentStateView | None:
         """Return the view of *source*, with the texts the document has now."""
         for _file, _state, view in self._documents(config, [source], reconciled=False):
@@ -179,13 +170,29 @@ class DocumentQueries:
         return check_document_of(view)
 
     def recognised_files(self, config: Config, files: Collection[Path]) -> set[Path]:
-        """Return the *files* whose recognised text is already stored (best effort)."""
+        """Return the *files* whose stored text the next run would use instead of reading again.
+
+        A reading made with other settings, or by an older reader, is not among them: the run
+        reads that document again.  Best effort: a lookup that fails means "read it again".
+        """
         try:
             store = self._state_store(config)
-            states = [(file, store.load_valid(file)) for file in files]
+            windows = self._windows_for(config)
+            found: set[Path] = set()
+            for file in files:
+                state = store.load_valid(file)
+                if state is None or not state.ocr_done:
+                    continue
+                flags = stage_hashes(
+                    state,
+                    self._work_store.load(state.source_hash),
+                    expected_hashes(config, file, windows, self._facts),
+                )
+                if first_stale_stage_for_hashes(flags) is not Stage.OCR:
+                    found.add(file)
         except Exception:  # noqa: BLE001  # a lookup that fails only means "read it again"
             return set()
-        return {file for file, state in states if state is not None and state.ocr_done}
+        return found
 
     def worked_on_documents(
         self, config: Config, files: Collection[Path], *, run_proofreads: bool
@@ -199,7 +206,7 @@ class DocumentQueries:
         """
 
         store = self._state_store(config)
-        expected_correction_hash = compute_correction_config_hash(config, self._windows_for(config))
+        expected_correction_hash = correction_key(config, self._windows_for(config), self._facts)
 
         kept_stale: list[Path] = []
         unanswered: list[Path] = []
@@ -290,7 +297,7 @@ class DocumentQueries:
 
         if not config.anonymization_enabled:
             return None
-        anon_config = anonymizer_config_from(config)
+        anon_config = config.anonymizer_config
         language = config.language
         return lambda text: self._anonymization.anonymize_text(text, language, anon_config)
 

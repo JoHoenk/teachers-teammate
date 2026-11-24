@@ -36,10 +36,10 @@ BASE_NUM_CTX = CONTEXT_STEPS[0]
 #: Largest window used for proofreading.  A review answer repeats the text it was given, and
 #: small models drift or start to loop on long answers, so the window stops growing early.
 #:
-#: Held at :data:`BASE_NUM_CTX` (2026-11-12): a window of 16384 sends a long text in one request
-#: instead of two, and the answer is then about twice as long — the case small models drift on,
-#: and the reason this cap exists.  No gate measures that case yet, so the app does not use a
-#: larger window for proofreading until one does.  Raise it together with a gate run at 16384.
+#: Held at :data:`BASE_NUM_CTX`: a window of 16384 sends a long text in one request instead of
+#: two, and the answer is then about twice as long — the case small models drift on, and the
+#: reason this cap exists.  No gate measures that case yet, so the app does not use a larger
+#: window for proofreading until one does.  Raise it together with a gate run at 16384.
 PROOFREADING_NUM_CTX_CAP = BASE_NUM_CTX
 
 #: Largest window used for a content review.  Its answer is short and it cannot be split into
@@ -57,17 +57,10 @@ EVALUATION_ANSWER_TOKENS = 1536
 #: changes with explanations, plus the JSON keys, so on an error-dense text it is several times
 #: as long.  Text mode answers with about the text.
 #:
-#: Calibrated on 2026-11-11 on the server (RX 9070 XT, Ollama 0.40.15) with one review-mode run
-#: each of ``gemma4:e4b`` and ``qwen3:4b`` at 0.2 over ``gec-2026-12``, window 8192: no request
-#: ended with ``done_reason: "length"``, and the largest request was 6,838 tokens of 8,192
-#: (``qwen3:4b``, ``de-10`` piece 1: 1,197 prompt and 5,641 answer tokens for about 730 text
-#: tokens, 7.8 times).  At page length the answers were 7.2 to 7.8 times the text's tokens; the
-#: largest ratio of all was 19.4 on a 114-token text, where the fixed JSON skeleton dominates.
-#: Neither model reliably follows the compact rule (``gemma4:e4b`` pretty-printed ``de-09`` in
-#: 378 lines), so the factor has to cover a pretty answer, and the margin comes from the request
-#: side's 3 characters per token against the 4.3 to 5 of real German at page length.  A wordier
-#: model can still overflow; it then falls back to text mode, which the comparison's fallback
-#: floor catches.
+#: It has to cover a pretty-printed answer, not only a compact one: no model reliably follows
+#: the compact rule.  The margin comes from the request side, which counts 3 characters per
+#: token against the 4.3 to 5 of real German at page length.  A wordier model can still
+#: overflow; it then falls back to text mode, which the comparison's fallback floor catches.
 REVIEW_ANSWER_FACTOR = 7.0
 
 

@@ -42,10 +42,11 @@ from ..application.composition import (
 )
 from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
-from ..config import DEFAULTS, Config
+from ..config import Config
 from ..domain.data_location import DataFlow
 from ..domain.install_item import InstallItem
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
+from ..settings_schema import DEFAULTS
 from ..texts import app as app_text
 from ..texts import check as check_text
 from ..texts import dialogs as dlg

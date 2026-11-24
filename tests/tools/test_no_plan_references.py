@@ -1,9 +1,9 @@
 """The repository explains itself: no source, test, document or record points into working notes.
 
 ``plans/`` is git-ignored, so a reference to a file in it, or to a decision number from it
-(``DW6b-2``, ``F-W6b-13``, ``§4.4``, ``W8``, ``(R4)``, ``A1-A5``, ``S0b``), points nowhere for
-anyone else.  The reason for a rule is written where the rule is.  This test fails on the first
-such reference, so it cannot grow back.
+(``DW6b-2``, ``F-W6b-13``, ``CW7``, ``§4.4``, ``W8``, ``(R4)``, ``A1-A5``, ``S0b``, a
+``spec-cw-followup.md``), points nowhere for anyone else.  The reason for a rule is written where
+the rule is.  This test fails on the first such reference, so it cannot grow back.
 """
 
 from __future__ import annotations
@@ -25,8 +25,10 @@ DOCUMENT_GLOBS = ("docs/*.md", "evaluations/**/*.md", "evaluations/**/*.txt", "A
 
 REFERENCES: dict[str, re.Pattern[str]] = {
     "a path into plans/": re.compile(r"\bplans/"),
-    "a spec file": re.compile(r"\bspec-w[a-z0-9-]+"),
-    "a finding or decision id": re.compile(r"\b(?:F-W\d+b?-\d+|DW-?c?\d+[ab]?(?:-\d+)?|DF-\d+)\b"),
+    "a spec file": re.compile(r"\bspec-[a-z0-9-]+"),
+    "a finding or decision id": re.compile(
+        r"\b(?:F-W\d+b?-\d+|DW-?c?\d+[ab]?(?:-\d+)?|DF-\d+|CW\d+[a-z]?)\b"
+    ),
     "a section sign": re.compile(r"§"),
     "a work-package number": re.compile(r"\bW\d{1,2}[abc]?\b"),
     "a work-package step": re.compile(r"\bWP\d{1,2}(?:\.\d+)?\b"),
@@ -48,7 +50,8 @@ keeps every fact)``, ``A1-A5``, ``S0b``, ``WP2.2``, a ``# ── R11: … ──
 named ``test_a1_…`` after an acceptance id, and ``acceptance test A3``.  ``S`` is left out of every
 rule that would take a bare ``S<n>``, because the setup walkthrough numbers its own scenarios
 ``S1`` to ``S9``; the plan's step id ``S0b`` is caught by its own rule.  A bare ``A1`` is left out
-because it is also a CEFR level.
+because it is also a CEFR level, and a bare id is caught by its prefix (``F-W``, ``DW``, ``DF``,
+``CW``) rather than by its shape, because ``MD5``, ``A4`` and ``W3C`` have the same shape.
 """
 
 ALLOWED: dict[str, str] = {}
@@ -106,9 +109,11 @@ def test_the_rule_recognises_what_it_forbids(tmp_path):
     cited = [
         "see plans/open-work.md",
         "(spec-w6b-gate2.md)",
+        "(spec-cw-followup.md)",
         "per F-W6b-13",
         "the verdict of DW6a-12",
         "the DF-2 rule",
+        "the cap (CW7)",
         "as §4.4 says",
         "after W8",
         "as the plan's first idea",
@@ -130,6 +135,7 @@ def test_the_rule_recognises_what_it_forbids(tmp_path):
         "the CEFR level C1",
         "a plan for the run",
         "MD5 and W3C",
+        "the corpora CC0 and SHA1",
         "a tuple of (str, ...)",
         "the run of 2026-11-16",
         "F0.5 and GLEU",

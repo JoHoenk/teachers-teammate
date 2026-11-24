@@ -173,52 +173,34 @@ def test_the_preparation_and_the_content_review_are_carried() -> None:
     assert doc.sent == sent
 
 
-def test_realigned_keeps_the_machines_own_text() -> None:
+def test_a_change_the_teacher_typed_is_their_own_and_not_the_machines() -> None:
     """
-    Given  a stored document and two new texts typed into it
-    When   the document is realigned
-    Then   the machine's own text stays what the store holds, so a change the model made
-           without an explanation is still the model's and the teacher's own is theirs
+    Given  a stored document whose texts the teacher typed over, with the machine's own text
+           still what the store holds
+    When   the Check tab's data is built
+    Then   the explained change is the model's, and the one the teacher typed is their own
     """
-    doc = check_document_of(_view())
-    new_raw = "Der bunte Hund bellt laut. Er lauft."
-    new_corrected = "Der braune Hund bellt laut. Er läuft."
+    doc = check_document_of(
+        _view(
+            raw_text="Der bunte Hund bellt laut. Er lauft.",
+            correction_text="Der braune Hund bellt laut. Er läuft.",
+            machine_correction_text=CORRECTED,
+        )
+    )
 
-    realigned = doc.realigned(new_raw, new_corrected)
-
-    assert realigned.machine_corrected_text == doc.machine_corrected_text
-    assert realigned.raw_plain == new_raw
-    assert realigned.corrected_plain == new_corrected
-    assert [item.kind for item in realigned.items] == [ItemKind.CORRECTION, ItemKind.OWN]
+    assert doc.machine_corrected_text == CORRECTED
+    assert [item.kind for item in doc.items] == [ItemKind.CORRECTION, ItemKind.OWN]
 
 
-def test_realigned_keeps_the_pages_and_the_content_review() -> None:
+def test_a_correction_the_teacher_undid_is_a_taken_out_item() -> None:
     """
-    Given  a stored document with pages and a content review
-    When   it is realigned after a typed edit
-    Then   the pages, the originals and the content review are unchanged
+    Given  a stored document whose proofread text was typed back to what the teacher wants
+    When   the Check tab's data is built
+    Then   the correction the review explains is a taken-out item
     """
-    doc = check_document_of(_view(evaluation_text="Gut geschrieben."))
+    doc = check_document_of(_view(correction_text=RAW))
 
-    realigned = doc.realigned(RAW, "Der braune Hund bellt laut. Er läuft.")
-
-    assert realigned.pages == doc.pages
-    assert realigned.original_pages == doc.original_pages
-    assert realigned.content_review == "Gut geschrieben."
-    assert realigned.preprocess == doc.preprocess
-
-
-def test_realigned_marks_a_taken_out_correction() -> None:
-    """
-    Given  a stored document whose correction the teacher undid by typing
-    When   it is realigned against the student's text
-    Then   the correction is a taken-out item
-    """
-    doc = check_document_of(_view())
-
-    realigned = doc.realigned(RAW, RAW)
-
-    assert [item.kind for item in realigned.items] == [ItemKind.TAKEN_OUT]
+    assert [item.kind for item in doc.items] == [ItemKind.TAKEN_OUT]
 
 
 def test_a_markdown_document_is_aligned_on_its_plain_text() -> None:
@@ -256,14 +238,12 @@ def test_a_markdown_document_is_aligned_on_its_plain_text() -> None:
 
 def test_aligning_the_same_texts_twice_gives_the_same_review() -> None:
     """
-    Given  a stored document
-    When   the same texts are realigned twice
-    Then   the second answer is the first one, so typing does not re-diff needlessly
+    Given  the same stored document read twice
+    When   the Check tab's data is built for each read
+    Then   the second answer is the first one, so reopening a document does not re-diff it
     """
-    doc = check_document_of(_view())
-
-    first = doc.realigned(RAW, CORRECTED)
-    second = doc.realigned(RAW, CORRECTED)
+    first = check_document_of(_view())
+    second = check_document_of(_view())
 
     assert first.aligned is second.aligned
     assert first.aligned == align(RAW, CORRECTED, _review())

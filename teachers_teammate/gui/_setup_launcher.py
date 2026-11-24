@@ -16,9 +16,9 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QWidget
 
 from ..application.composition import AppServices
-from ..config import DEFAULTS
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import HardwareDetection
+from ..settings_schema import DEFAULTS
 from ..texts.models import first_start_log
 from ._background import LatestTask
 from ._config_panel import ConfigPanel

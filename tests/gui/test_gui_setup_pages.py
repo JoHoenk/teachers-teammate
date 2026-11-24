@@ -19,7 +19,7 @@ from teachers_teammate.application.setup_plan import (
     ProofreadingPlace,
     SetupPlan,
 )
-from teachers_teammate.config import DEFAULTS
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.data_location import DataRegion
 from teachers_teammate.domain.install_item import (
     PAGE_MODELS_ITEM,

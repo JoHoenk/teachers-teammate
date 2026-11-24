@@ -25,7 +25,6 @@ import logging
 import threading
 from urllib.parse import urlparse
 
-from ..config import DEFAULTS
 from ..domain.model_catalog import (
     OLLAMA_CATALOG,
     DetectionReason,
@@ -51,6 +50,7 @@ from ..domain.model_catalog import (
 from ..domain.ollama_address import normalize_ollama_url
 from ..domain.stages import Stage
 from ..exceptions import OllamaUnreachableError
+from ..settings_schema import DEFAULTS
 from .context_choice import ContextChoice, context_choice
 from .ports import HardwareProbe, OllamaServer
 
@@ -145,10 +145,6 @@ class ModelRecommendationService:
     def local_hardware(self, *, refresh: bool = False) -> LocalHardware:
         """Return the raw hardware of this computer (probed once per process)."""
         return self._ensure_probe(refresh=refresh).as_local_hardware()
-
-    def detected_gpus(self, *, refresh: bool = False) -> list[GpuInfo]:
-        """Return the GPUs of this computer (probed once per process)."""
-        return list(self._ensure_probe(refresh=refresh).gpus)
 
     def available_memory_gb(self) -> float | None:
         """Return the main memory free right now in GB, or ``None`` when it cannot be read.

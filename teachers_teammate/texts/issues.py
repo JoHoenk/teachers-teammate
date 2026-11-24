@@ -9,6 +9,7 @@ so a teacher never sees two wordings of the same gap.
 from __future__ import annotations
 
 from ..domain.requirements import IssueKind, RequirementIssue
+from .dialogs import TEXT_IN_INPUT_FOLDER
 
 NOTHING_TO_READ = (
     "Text recognition is switched off, and none of these files has text to use without it."
@@ -56,6 +57,7 @@ _SENTENCES: dict[IssueKind, str] = {
     IssueKind.NO_OLLAMA_MODEL: NO_OLLAMA_MODEL,
     IssueKind.PRIVACY_ADDON_MISSING: PRIVACY_ADDON_MISSING,
     IssueKind.ADDONS_OUTDATED: ADDONS_OUTDATED,
+    IssueKind.OUTPUT_IN_INPUT_FOLDER: TEXT_IN_INPUT_FOLDER,
     IssueKind.PACKAGE_MISSING: PACKAGE_MISSING,
     IssueKind.KEY_MISSING: KEY_MISSING,
     IssueKind.NAME_DETECTION_MISSING: NAME_DETECTION_MISSING,

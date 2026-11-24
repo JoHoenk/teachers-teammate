@@ -31,7 +31,6 @@ from .storage_root import resolve_data_folder
 
 __all__ = [
     "TeacherWorkStore",
-    "WorkTooNewError",
     "default_work_root",
 ]
 

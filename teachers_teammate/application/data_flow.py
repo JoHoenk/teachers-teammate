@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
-from ..config import DEFAULTS, Config
+from ..config import Config
 from ..domain.data_location import (
     ENGINE_OLLAMA,
     OCR_ENGINE_NAMES,
@@ -32,6 +32,7 @@ from ..domain.providers import ProviderInfo, display_name_of
 from ..domain.stages import Stage
 from ..infrastructure.llm_factory import get_provider_info
 from ..infrastructure.ollama_utils import ollama_server
+from ..settings_schema import DEFAULTS
 
 #: Answers what a provider is and needs (``None`` for a name that is no provider).
 ProviderLookup = Callable[[str], ProviderInfo | None]

@@ -6,17 +6,18 @@ from pathlib import Path
 
 import pytest
 
+from teachers_teammate.domain.document_state import reset_policy_from_stage
 from teachers_teammate.domain.freshness import (
     StageHashes,
     correction_kept_over_settings,
     first_stale_stage_for_hashes,
-    reset_policy_from_stage,
     should_invalidate_preview_artifact,
 )
 from teachers_teammate.domain.pdf_text_layer import (
     MAX_IMAGE_COVERAGE,
     MIN_FREEHAND_PATHS,
     PageTextStats,
+    input_fingerprint,
     normalize_pdf_text_layer,
     parse_pdf_text_layer,
     page_has_usable_text,
@@ -24,9 +25,9 @@ from teachers_teammate.domain.pdf_text_layer import (
     use_text_layer,
 )
 from teachers_teammate.domain.output_files import (
-    TEXT_IN_INPUT_FOLDER,
+    FolderProblem,
     feeds_inputs,
-    output_folder_refusal,
+    output_folder_problem,
     output_path,
 )
 from teachers_teammate.domain.stages import normalize_stage
@@ -418,23 +419,23 @@ def test_feeds_inputs() -> None:
         (False, "/in", True, False),
     ],
 )
-def test_output_folder_refusal(
+def test_output_folder_problem(
     writes_text: bool, output_dir: str, recursive: bool, refused: bool
 ) -> None:
     """
     Given  an input folder and an output folder, with or without text files
-    When   output_folder_refusal() is asked
+    When   output_folder_problem() is asked
     Then   only text files in a folder the next run reads (the input folder, or below it when
-           subfolders are read) are refused, with the reason
+           subfolders are read) are a problem, and the reason is data, not a sentence
     """
-    reason = output_folder_refusal(
+    problem = output_folder_problem(
         writes_text_files=writes_text,
         output_dir=Path(output_dir),
         input_dir=Path("/in"),
         recursive=recursive,
     )
 
-    assert reason == (TEXT_IN_INPUT_FOLDER if refused else "")
+    assert problem is (FolderProblem.TEXT_IN_INPUT if refused else None)
 
 
 # ── how often a cut-off review request is sent ──────────────────────────────
@@ -462,3 +463,24 @@ def test_a_cut_off_review_is_sent_again_only_where_it_is_free_and_can_differ(
     from teachers_teammate.domain.correction_policy import cut_off_tries  # noqa: PLC0415
 
     assert cut_off_tries(online=online, temperature=temperature) == tries
+
+
+@pytest.mark.parametrize(
+    ("suffix", "mode", "expected"),
+    [
+        (".pdf", "auto", ()),
+        (".PDF", "never", ("pdf_text_layer=never",)),
+        (".pdf", "always", ("pdf_text_layer=always",)),
+        (".png", "never", ()),
+        (".txt", "always", ()),
+    ],
+)
+def test_input_fingerprint_only_covers_affected_formats(
+    suffix: str, mode: str, expected: tuple[str, ...]
+) -> None:
+    """
+    Given  an input suffix and a PDF text-layer mode
+    When   input_fingerprint is called
+    Then   only a non-default mode on a PDF contributes, other formats and "auto" give ()
+    """
+    assert input_fingerprint(suffix, mode) == expected  # ty: ignore[invalid-argument-type]

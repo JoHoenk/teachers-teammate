@@ -14,7 +14,7 @@ from teachers_teammate.application.setup_plan import (
     ProofreadingPlace,
     SetupAnswers,
 )
-from teachers_teammate.config import DEFAULTS
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.model_catalog import (
     DetectionReason,
     HardwareDetection,

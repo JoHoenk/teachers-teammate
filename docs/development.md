@@ -120,8 +120,10 @@ The presentation layer never imports `infrastructure`. The modules that wire con
 are the exception, and the only one: `gui/composition.py`, `gui/__main__.py`,
 `gui/benchmark/composition.py`, `gui/benchmark/__main__.py`, `cli_composition.py`,
 `__main__.py` and `frozen_modes.py`. `tests/unit/test_layer_imports.py` holds both rules, and a
-third: a module does not re-export a name of another layer (`from … import Name as Name`) — a
-name has one home, and a caller imports it from there.
+third: a module publishes only the names it defines, neither with `from … import Name as Name`
+nor as an `__all__` entry it imported from another layer (a subpackage's `__init__.py` lists the
+names of its own modules, which is that package's API) — a name has one home, and a caller
+imports it from there.
 
 A service in `application/` does not reach into `infrastructure` from a method body. What it
 needs of a module comes in through its constructor, typed by a `Protocol` in
@@ -129,7 +131,11 @@ needs of a module comes in through its constructor, typed by a `Protocol` in
 `application/composition.py` hands over the class of the running app, a test hands over a fake.
 What still needs a lazy import — an add-on package that must not be imported at start-up, a
 module that imports back — carries `# noqa: PLC0415`, and the count of those in `application/`
-is the ratchet of `tests/unit/test_lazy_import_budget.py`.
+is the ratchet of `tests/unit/test_lazy_import_budget.py`. The modules that still import
+`infrastructure` at all, and how many names each imports, are pinned the same way by
+`tests/unit/test_application_infrastructure_budget.py`: a store, the pipeline or a subprocess the
+service starts. A pure rule is never among them — it is imported from `domain` or the core.
+`application/composition.py` is not in the table: naming the concrete classes is its job.
 
 ```{uml} assets/component_diagram.puml
 :align: center
@@ -645,8 +651,8 @@ measured where possible (*Model sizes*, above).
 The two share thresholds come from speeds measured on one 8 GB card and one processor; they are
 ratios, so they scale with the computer.
 
-`RunService.memory_warning_for_run()` is the run-time counterpart, used by
-`check_run_preflight()` (GUI) and the command line before a run: for an Ollama on this computer,
+`RunService._memory_shortfall()` is the run-time counterpart, used by
+`check_run_preflight()` (both adapters) before a run: for an Ollama on this computer,
 the part of every catalogued model that does not fit the card (all of it on Apple Silicon) has to
 fit the main memory that is free *right now*, minus `RUN_MEMORY_MARGIN_GB` (2 GB).  It reads
 `ModelRecommendationService.available_memory_gb()` (`psutil`'s `available`, never swap).  It is a
@@ -654,7 +660,7 @@ fit the main memory that is free *right now*, minus `RUN_MEMORY_MARGIN_GB` (2 GB
 the command line needs `--ignore-memory-check`.  `check_run_preflight()` therefore runs the memory
 check last, after the stage requirements (reading, anonymizing, correcting, evaluating), and reports
 a memory warning and a blocking issue separately.  A model that is not catalogued, a remote server
-and an unreadable memory give `""`.  It rates the models through
+and an unreadable memory give `None`.  It rates the models through
 `resolve_hardware_profile()`, so a hand-picked profile counts as it will at run time, and at the
 window the run really gives the model (`memory_at_context_gb`).  The wording of all this is in
 `texts/models.py`.
@@ -988,9 +994,9 @@ so it is stored with the result:
   one of ours — including a record without a provider, which would otherwise read as an
   unnamed online service.
 - `SentStatus` pairs the record with `other_privacy_settings`, the comparison with the current
-  `privacy_fingerprint(config)`.  The comparison is by settings, not by text: working out the
-  text would need a spaCy pass per document.
-- `cache_service.py:sent_record(config, stage, *, names_hidden)` builds it (it holds the
+  `privacy_key(config)` of `cache_keys.py`.  The comparison is by settings, not by text: working
+  out the text would need a spaCy pass per document.
+- `cache_keys.py:sent_record(config, stage, *, names_hidden, facts)` builds it (it holds the
   `Config`); `application/data_flow.py:sent_location(record)` classifies it through the same
   `llm_location()` the box uses, so the two cannot disagree.
 - `DocumentState` keeps `correction_sent_text`, `correction_sent_map`, `correction_sent` and
@@ -1633,7 +1639,7 @@ back to the default.
 
 `Config.recognition_enabled` (default `True`, setting key of the same name, CLI `--no-recognition`)
 says whether scans are read at all.  It lives on `Config`, **not** on `OcrConfig`: `OcrConfig` says
-*how* pages are read and feeds `compute_ocr_config_hash` (an explicit field list), so a flag that
+*how* pages are read and feeds `cache_keys.ocr_key` (an explicit field list), so a flag that
 decides *whether* a file is read changes no cache key.
 
 Off, the layers behave like this:
@@ -1647,10 +1653,11 @@ Off, the layers behave like this:
   (exit code 0).  `ProcessingResult.skipped` -> `FileOutcome(status=SKIPPED)`; a file that is
   gone since it was queued is skipped the same way.  The main window opens
   no error dialog for it and `ResultsTable.add_result` shows "skipped" in grey.
-- `_ollama_needed` / `_configured_ollama_models` / `ocr_refusal_for_run` ignore the OCR model, the
-  pipeline does not check it, and `describe_data_flow` leaves the recognition stage out (no page
-  leaves anywhere).  `describe_steps` forces it back on so the line under the step can still say
-  what ticking it would use.
+- The refusal of settings that would read pages online, `run_rules.uses_ollama` and
+  `run_rules.ollama_models` ignore the OCR model, the pipeline does not check it, and
+  `describe_data_flow` leaves the recognition stage out (no page leaves anywhere).
+  `describe_steps` forces it back on so the line under the step can still say what ticking it
+  would use.
 - `check_run_preflight(config, files=..., recognised=...)` asks `_plan_recognition()` (images are
   scans; PDFs are opened with `pdf_has_text_layer()`, cached by path/size/mtime/mode, so call it from
   a background thread) and returns `RunPreflight.skipped`; when no file is readable it is blocked by
@@ -1688,9 +1695,9 @@ and **Original page** (`"none"`).  `infrastructure/preprocessing/` holds all of 
   returns `acted=False`, reason "page models not downloaded", and `PageModels.note_missing()`
   logs that once per run (info), not per page.  A model that fails at run time never fails the
   page: the step declines and the failure is logged.
-- `identity.py` — `AUTO_VERSION`, `auto_output(engine)`, `available_page_steps(store)` and
-  `auto_identity(engine, store)`, without importing OpenCV (the cache key needs them for every
-  page).
+- `identity.py` — `available_page_steps(store)`: which page models a store can run, without
+  importing OpenCV (the cache key needs it for every page).  The identity itself is
+  `domain/local_models.py` (`AUTO_VERSION`, `auto_output`, `auto_identity`).
 - `recipes.py` — `steps_for(ocr, store)`: `none` → `[]`, anything else → `auto_steps(ocr.engine,
   store)`.  `stage_builder.default_build_preprocessor(tmp_dir, save_steps, ocr, store)` is
   `StepPipeline(steps_for(ocr, store or ModelStore()), …)`; the factory, `preprocess_preview`, the
@@ -1711,14 +1718,17 @@ them; the CLI prints one notice line (`texts/addons.py:PAGE_MODELS_SKIPPED_NOTIC
 answers an image at
 the size it was given, so the page goes to it scaled to at most `FLATTEN_MAX_SIDE` (2048).
 
-**Identity.**  `cache_service._preprocess_fingerprint(ocr, source, store)` is the method; for
-`auto` also `v<AUTO_VERSION>`, `colour` / `gray`, and `+turn` / `+flatten` for the page models
-that are downloaded; then the PDF DPI and text-layer entries.  Downloading the page models, a
+**Identity.**  `domain/local_models.auto_identity(engine, page_steps)` is the identity; for
+`auto` it adds `v<AUTO_VERSION>`, `colour` / `gray`, and `+turn` / `+flatten` for the page models
+that are downloaded, and `cache_keys.preprocess_fingerprint(ocr, source, facts)` puts the
+method in front of it, then the PDF DPI and text-layer entries.  Downloading the page models, a
 new `AUTO_VERSION` or another engine's output re-reads pages **once**, and that is intended.
-Bump `AUTO_VERSION` whenever a step, a threshold or a page model revision changes.  The model
-store reaches the key through `CacheReconciliationService(model_store=…)`,
-`DocumentCommands(model_store=…)` and `compute_ocr_config_hash(…, store)`; with `None` it is
-the default folder (the tests point that at an empty temporary one).
+Bump `AUTO_VERSION` (`domain/local_models.py`) whenever a step, a threshold or a page model
+revision changes.  The model
+store reaches the key through the `KeyFacts` port
+(`domain/key_facts.py`), which `infrastructure/key_facts.py:MachineKeyFacts` answers with the
+`ModelStore` it was given; with `None` that is the default folder (the tests point that at an
+empty temporary one).
 
 **How to change it.**  A new step is a `Step` in `auto_steps`, with its gate and a named
 constant, a `STEP_LABELS` entry in `texts/review.py` if it is worth a word in the preview
@@ -1771,8 +1781,9 @@ SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
 - A run reads the store its service checks (`RunService(model_store=)` →
   `PipelineDependencies.model_store` / `run_ocr(model_store=)` → `StageBuilder.model_store`), so
   the readiness check and the run never look at different folders.
-- `reader_refusal_for_run` (CLI) refuses only a run that has a file to read: a folder of text
-  files, or of files whose text is stored, starts without the model files, as in the main window.
+- `check_run_preflight()` reports `IssueKind.READER_MODEL_MISSING` (the built-in reader's model
+  files are not downloaded) only for a run that has a file to read: a folder of text files, or of
+  files whose text is stored, starts without the model files, as in the main window.
 - Errors are sentences a teacher or an IT department can act on (`ModelDownloadError`): the
   host that could not be reached (`huggingface.co`), a damaged download, no space, a folder that
   cannot be written.
@@ -1790,7 +1801,7 @@ SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
   models** of the automatic image preparation (`PAGE_MODELS`) are pinned the
   same way; their four `http_file`s are `doc_ori_*` and `uvdoc_*`, their test helpers
   `conftest.page_models_store()` and `fake_page_models_store()`, and a new revision means a
-  bump of `AUTO_VERSION` (`preprocessing/identity.py`) and a look at `test_page_models.py`.
+  bump of `AUTO_VERSION` (`domain/local_models.py`) and a look at `test_page_models.py`.
 
 ## Storage, hashing & caching
 
@@ -1835,9 +1846,15 @@ settings switch removes `ocr.toml`, `benchmark\`, `speed\` and `work\` there.
 
 ### Hashing scheme
 
+Every stage key and the keys of the stored results are computed by `cache_keys.py`, a module of the
+core: pure functions of the settings, the windows a run resolved and a `KeyFacts` port
+(`domain/key_facts.py`) that `infrastructure/key_facts.py:MachineKeyFacts` answers for the computer
+the app runs on.  So a key can be computed and tested without a file system, a server or a model
+store, and `tests/unit/test_cache_keys_golden.py` holds the digests that must not move.
+
 - `compute_file_hash(path)` (`state_repository.py`) — SHA-256 of the file
   contents; the **identity of a document** regardless of its path or name.
-- `compute_ocr_config_hash(config, ocr_prompt)` (`workflow/cache_service.py`) — a
+- `ocr_key(config, source, facts)` (`cache_keys.py`) — a
   fingerprint of the OCR stage configuration (engine, model, preprocess
   method — for `auto` with its version, output and available page models —, language, prompt,
   temperature). The engine is hashed twice (the shape of the hash is kept so cached OCR results stay
@@ -1848,11 +1865,11 @@ settings switch removes `ocr.toml`, `benchmark\`, `speed\` and `work\` there.
   `READER_VERSION` does. A test pins an Ollama key, so the Ollama shape cannot drift.
   The models themselves live in the user data folder (`models/`), not in the cache. Used by the cache to detect stale stages and by the benchmark store to label
   runs.
-- `compute_correction_config_hash` / `compute_eval_config_hash` deliberately leave the
+- `correction_key` / `review_key` deliberately leave the
   anonymizer settings out: a text proofread with names hidden is the same text, so
   switching *Remove personal information* on or off does not send it again.  What was sent
   is recorded with the result instead (`SentRecord`, see *How a stored result was sent*),
-  and `privacy_fingerprint(config)` — the hash of the anonymizer settings alone, computed
+  and `privacy_key(config)` — the hash of the anonymizer settings alone, computed
   without importing spaCy — says whether a stored result was made with other settings than
   the current ones.  The resolved anonymizer settings (primary and secondary spaCy model plus every
   regex pattern, `tag=pattern`) are part of that fingerprint, so a changed pattern shows up
@@ -1945,7 +1962,7 @@ is sent* and `check_document` read the view.  **Nothing outside the cache's own 
 `DocumentState` text** for display or output: `tests/unit/test_teacher_work_readers.py` holds the
 package to that, and the GUI may not name the type at all.
 
-**One helper for the flags.**  `cache_service.stage_hashes(state, work, expected)` is the only
+**One helper for the flags.**  `domain/freshness.py:stage_hashes(state, work, expected)` is the only
 place that turns a work into the three flags freshness needs: `ocr_frozen` (a transcription part
 exists, or a corrections part was worked on), `expected_correction_source` (`text_identity` of the current transcription) and
 `correction_kept` (the corrections part applies and was worked on).  The run
@@ -2207,11 +2224,17 @@ pipeline would drop (`StageBuilder.build_evaluation`).  The tick itself is kept 
 
 **Requirements and their fixes.**  `check_stage_requirements(config, stage)` (stages `ocr`,
 `anonymizer`, `correction`, `evaluation`) returns `RequirementIssue`s that carry an `IssueKind`,
-never only a sentence; `check_run_preflight(config, memory=..., recognition=..., fresh=...)` runs
+never only a sentence; `check_run_preflight(config, for_run=..., recognition=..., fresh=...)` runs
 `ocr` first and exposes the first blocker as `RunPreflight.blocker -> (stage, issue)`.
 `recognition=False` leaves the engine check out for a run that reads no page
 (`needs_text_recognition(files, recognised=...)`: only text files, or text already stored; a PDF
-counts as reading, because its text layer is only known by opening it); `fresh=True` asks Ollama
+counts as reading, because its text layer is only known by opening it).  Given `files`, the
+preflight adds the documents whose recognised text an earlier run stored to `recognised`
+(`DocumentQueries.recognised_files()`: a reading made with other settings is not among them), so
+the command line, which passes none, answers like the window.  `for_run=False` is the bare
+readiness question: it leaves out the memory, the wait for Ollama and the output folder (the
+line shows that problem on its own, and with no input folder chosen yet both folders are the
+current one).  `fresh=True` asks Ollama
 for its models again instead of using the cached list ("Check again", a returning window).
 The engine probes (`AddonService.is_module_importable`, `ReaderService.reader_installed`) are
 shared with the connection check, so a package or the reader's models installed from Add-ons are
@@ -2270,10 +2293,10 @@ result (`ResultsTable.checkable_source_ids()`), and the tab labels carry the sta
 texts and their plain forms, the review aligned with them, the items the list numbers, the pages
 of the scan, how the results were sent.  The window asks for it once per document
 (`_load_check`) and once per stored edit (`_store_edit`), and never assembles that state itself.
-`CheckDocument.realigned(raw_text, corrected_text)` re-aligns after a typing pause without
-touching the disk, memoised on the two plain texts and the review.  The document also carries
-`sent` and `preprocess`, so the queue row's *sent* cells come from the same read; the queue
-keeps no preprocessing info of its own.
+A typed text is stored and read back through the same query; the alignment is memoised on the
+two plain texts and the review (`_align_cached`).  The document also carries `sent` and
+`preprocess`, so the queue row's *sent* cells come from the same read; the queue keeps no
+preprocessing info of its own.
 
 **Showing a document again.**  `CheckBody.show_document` fills the scan and both texts from the
 `CheckDocument`, also for the document that is already open: a run may have read it again.  Only
@@ -2718,8 +2741,8 @@ and only up to the first one that rules the text layer out.
 Where the setting applies:
 
 - Input options travel as one `InputOptions` object (`infrastructure/input_provider_factory.py`);
-  builders pick what they need.  The factory also answers which options affect a suffix
-  (`input_settings_fingerprint`), so the OCR config hash only contains the mode for PDF
+  builders pick what they need.  `domain/pdf_text_layer.input_fingerprint(suffix, mode)` answers
+  which of them affects a suffix, so the OCR config hash only contains the mode for PDF
   sources and only when it is not `auto` — caches from before the setting existed, and every
   image/TXT result, stay valid.
 - `InputPayload.text_origin` says whether text came from a TXT file or a PDF text layer; the
@@ -3035,9 +3058,8 @@ The codebase follows three principles for error handling:
 
 ### Exception hierarchy
 
-All custom exceptions live in `teachers_teammate/exceptions.py` and are
-re-exported from the package root for convenience. A stage error is raised with a text or with a
-`Message` (see "Where text lives"); `str(exc)` gives the sentence either way.
+All custom exceptions live in `teachers_teammate/exceptions.py`. A stage error is raised with a
+text or with a `Message` (see "Where text lives"); `str(exc)` gives the sentence either way.
 
 ```{uml} assets/error_handling.puml
 :align: center
@@ -3193,7 +3215,7 @@ window that changes between files makes Ollama reload the model for every file.
   the default setup the setting changes nothing.
 - `run_windows()` resolves both stages once per run, each from **its own** model
   (`proofreading_spec`, `evaluation_spec`), so a larger review model is not sized from the
-  smaller proofreading model; `stage_builder.resolve_run_windows()` applies it to a `Config`, and
+  smaller proofreading model; `run_rules.resolve_run_windows()` applies it to a `Config`, and
   a stage whose provider is online reports the base window (the app does not set one). When
   proofreading and content review use the same Ollama model, both get the smaller window: one reload per file between the stages would cost
   seconds on every run, and content review still gains from its own answer allowance.
@@ -3206,7 +3228,7 @@ window that changes between files makes Ollama reload the model for every file.
 The resolved window is passed down (`OllamaPort(num_ctx=…)`, `StageBuilder.resolved_windows()`)
 and used by `proofreading_options()`, `ContextBudget`, the chunk budget below, the correction
 cache fingerprint and the memory rating and run-start warning (`memory_at_context_gb`, per
-model via `stage_builder.window_of_model()`). The
+model via `run_rules.window_of_model()`). The
 fingerprint part `num-ctx-{…}` exists only for an Ollama corrector and holds the window the run
 really uses (`RunWindows.proofreading`, resolved once and passed to the cache service), so results
 made at 8192 and at 16384 cannot share a cache entry; the evaluation hash carries

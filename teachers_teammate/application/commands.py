@@ -12,12 +12,17 @@ from collections.abc import Callable, Collection, Sequence
 import logging
 from pathlib import Path
 
+from ..cache_keys import correction_key, expected_hashes
 from ..config import Config
 from ..domain.context_budget import RunWindows
+from ..domain.document_state import machine_texts
 from ..domain.formatted_text import normalize_text_format
+from ..domain.freshness import ExpectedHashes
+from ..domain.key_facts import KeyFacts
 from ..domain.stages import Stage, normalize_stage
 from ..domain.teacher_work import (
     TeacherWork,
+    WorkTooNewError,
     current_texts,
     kept_over,
     with_checked,
@@ -27,19 +32,9 @@ from ..domain.teacher_work import (
     without_corrections,
     without_work_for_reading,
 )
-from ..infrastructure.onnx.store import ModelStore
-from ..infrastructure.stage_builder import resolve_run_windows
-from ..infrastructure.state_repository import (
-    StateRepository,
-    compute_file_hash_cached,
-    machine_texts,
-)
-from ..infrastructure.teacher_work_store import TeacherWorkStore, WorkTooNewError
-from ..infrastructure.workflow.cache_service import (
-    ExpectedHashes,
-    compute_correction_config_hash,
-    expected_hashes,
-)
+from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
+from ..infrastructure.teacher_work_store import TeacherWorkStore
+from ..run_rules import resolve_run_windows
 from .document_view import DocumentStateView
 from .merged_view import reconciled_view
 
@@ -74,15 +69,15 @@ class DocumentCommands:
         *,
         state_store_factory: Callable[[Config], StateRepository],
         windows_for: Callable[[Config], RunWindows] | None = None,
-        model_store: ModelStore | None = None,
+        facts: KeyFacts,
         work_store: TeacherWorkStore | None = None,
     ) -> None:
         self._state_store_factory = state_store_factory
         #: The context windows a run with a config uses on this computer, so a hash written
         #: here matches the one the run writes.  Without it only the settings are known.
         self._windows_for = windows_for or (lambda config: resolve_run_windows(config, None))
-        #: Where the page models are: the automatic preparation's cache key depends on them.
-        self._model_store = model_store
+        #: What this computer adds to the cache keys it writes.
+        self._facts = facts
         #: The teacher's work: the same store the runs read, so both see one folder.
         self._work_store = work_store or TeacherWorkStore()
 
@@ -205,7 +200,7 @@ class DocumentCommands:
         The answer is stamped with the correction hash it was kept over, so the same settings
         never ask again.  A document whose work could not be stored is asked about again.
         """
-        expected = compute_correction_config_hash(config, self._windows_for(config))
+        expected = correction_key(config, self._windows_for(config), self._facts)
         store = self._state_store_factory(config)
         for file in files:
             state = store.load_valid(file)
@@ -299,7 +294,7 @@ class DocumentCommands:
 
     def _expected(self, config: Config, source: Path) -> ExpectedHashes:
         """Return the stage hashes the settings of *config* ask for, for *source*."""
-        return expected_hashes(config, source, self._windows_for(config), self._model_store)
+        return expected_hashes(config, source, self._windows_for(config), self._facts)
 
     @staticmethod
     def _invalidate_from_stage(

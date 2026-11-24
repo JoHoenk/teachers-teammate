@@ -1065,6 +1065,17 @@ py_test(
     deps = _COMMON_DEPS,
 )
 
+# The application layer reaches into infrastructure only where the pinned table says it does.
+py_test(
+    name = "test_application_infrastructure_budget",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_application_infrastructure_budget.py"],
+    args = ["unit/test_application_infrastructure_budget.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
 # The layer's lazy imports only go down: the count of `# noqa: PLC0415` is the ratchet.
 py_test(
     name = "test_lazy_import_budget",
@@ -1296,6 +1307,15 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_interfaces.py"],
     args = ["unit/test_interfaces.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _CORE_LIB,
+)
+
+py_test(
+    name = "test_run_rules",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_run_rules.py"],
+    args = ["unit/test_run_rules.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _CORE_LIB,
 )
@@ -2226,6 +2246,24 @@ py_test(
 )
 
 py_test(
+    name = "test_cache_keys",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_cache_keys.py"],
+    args = ["unit/test_cache_keys.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _CORE_LIB,
+)
+
+py_test(
+    name = "test_cache_keys_golden",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_cache_keys_golden.py"],
+    args = ["unit/test_cache_keys_golden.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+py_test(
     name = "test_file_processor",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_file_processor.py"],
@@ -2318,6 +2356,23 @@ py_test(
     args = ["gui/test_gui_check_page.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+py_test(
+    name = "test_gui_run_start",
+    size = "medium",
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_run_start.py",
+    ],
+    args = ["gui/test_gui_run_start.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS +
+           _GUI_DEPS +
+           _PIPELINE_DEPS +
+           _CLI_LIB + [
+        "//teachers_teammate:gui_layer_lib",
+    ],
 )
 
 py_test(
@@ -3086,11 +3141,14 @@ test_suite(
         ":test_anonymization_service",
         ":test_anonymizer",
         ":test_api_keys",
+        ":test_application_infrastructure_budget",
         ":test_artifact_licenses",
         ":test_benchmark_domain",
         ":test_benchmark_run_store",
         ":test_benchmark_runner",
         ":test_benchmark_service",
+        ":test_cache_keys",
+        ":test_cache_keys_golden",
         ":test_cache_service",
         ":test_check_desktop_entry",
         ":test_check_document",
@@ -3213,6 +3271,7 @@ test_suite(
         ":test_request_profile",
         ":test_review_v2",
         ":test_run_gui",
+        ":test_run_rules",
         ":test_run_service",
         ":test_run_stats",
         ":test_run_summary",
@@ -3282,6 +3341,7 @@ test_suite(
         ":test_gui_readiness",
         ":test_gui_results_table",
         ":test_gui_run_session",
+        ":test_gui_run_start",
         ":test_gui_run_status",
         ":test_gui_scan_view",
         ":test_gui_settings_pages",

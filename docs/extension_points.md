@@ -84,7 +84,7 @@ only, the event is the truth. Wording in `gui/_run_status.py`. See {doc}`develop
 
 Id in `OCR_ENGINE_NAMES` (`domain/data_location.py`); a `build_<engine>_ocr` field and branch in
 `PipelineComponentFactory` / `StageBuilder.build_ocr` (`infrastructure/stage_builder.py`); its
-cache identity in `compute_ocr_config_hash` (`workflow/cache_service.py`); a check in
+cache identity in `ocr_key` (`cache_keys.py`); a check in
 `_check_engine` / `_ocr_engine_issues`, an `IssueKind` and its row in
 `gui/_fix_targets.py:fix_for`; its label in `texts/addons.py:OCR_ENGINE_LABELS`. The built-in
 reader is `ppocr` (`infrastructure/ppocr/`), its version `READER_VERSION` in
@@ -102,7 +102,7 @@ as Bazel `http_file`s (`MODULE.bazel`). See {doc}`development` → "Local model 
 ## New image preparation step
 
 Add a `Step` (`name`, `apply(image, ctx) -> StepResult`) to `auto_steps` in
-`infrastructure/preprocessing/auto.py` (bump `AUTO_VERSION` in `preprocessing/identity.py`). The
+`infrastructure/preprocessing/auto.py` (bump `AUTO_VERSION` in `domain/local_models.py`). The
 settings get **no switch of its own** (teachers see "Automatic" or "Original page"). Thresholds
 are named constants in `auto.py`. Regenerate the digests of
 `tests/unit/test_preprocessing_auto_golden.py` only when the pixel change is on purpose. See
@@ -151,7 +151,9 @@ against a fake Ollama). See {doc}`development` → "Setup Assistant"
    the module's functions by name keeps those functions patchable in a test, and no second
    construction is needed (see `SystemHardwareProbe`, `AddonPackages`, `SpacyModels`).
 4. Lower `BUDGET` in `tests/unit/test_lazy_import_budget.py` if the change removed a
-   `# noqa: PLC0415`; the test fails when the number no longer matches.
+   `# noqa: PLC0415`, and the count of that module in `PINNED` of
+   `tests/unit/test_application_infrastructure_budget.py` if the module imports `infrastructure`
+   no more; both tests fail when a number no longer matches.
 
 What stays a lazy import: installs with progress and their own errors, the facts of the process
 (`inject_packages_dir()`, `can_install_addons()`), and pure helpers on strings and names.

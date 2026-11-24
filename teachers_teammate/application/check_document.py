@@ -1,10 +1,9 @@
 """Everything the Check tab shows about one document, in one query.
 
-The tab used to be fed from the queue row: eight fields pushed by hand after every edit, and a
-panel that reloaded itself from them.  This module is the one place that reads a stored document
-and says what the tab shows — the texts, the review aligned with them, the items the list numbers,
-the pages of the scan, how the results were sent.  The window asks for it once per document and
-once per stored edit; nothing else assembles that state.
+This module is the one place that reads a stored document and says what the tab shows — the
+texts, the review aligned with them, the items the list numbers, the pages of the scan, how the
+results were sent.  The window asks for it once per document and once per stored edit; nothing
+else assembles that state.
 
 Pure apart from the state it is built from: no Qt, no I/O of its own.
 """
@@ -12,7 +11,7 @@ Pure apart from the state it is built from: no Qt, no I/O of its own.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -88,33 +87,6 @@ class CheckDocument:
     def has_proofreading(self) -> bool:
         """Whether the document has a proofread text to show."""
         return bool(self.corrected_text.strip())
-
-    def realigned(self, raw_text: str, corrected_text: str) -> CheckDocument:
-        """Return this document with new texts, aligned and itemised again.
-
-        The path while the teacher types: the pages, the content review and how the results were
-        sent stay as they are, and nothing is read from or written to the disk.
-        """
-        raw_plain = TextFormatter.plain_text(raw_text, self.text_format)
-        corrected_plain = TextFormatter.plain_text(corrected_text, self.text_format)
-        aligned = _aligned(
-            raw_plain,
-            corrected_plain,
-            self.review,
-            corrected_text,
-            TextFormatter.plain_text(self.machine_corrected_text, self.text_format),
-        )
-        items = _items(aligned)
-        return replace(
-            self,
-            raw_text=raw_text,
-            corrected_text=corrected_text,
-            raw_plain=raw_plain,
-            corrected_plain=corrected_plain,
-            aligned=aligned,
-            items=items,
-            looked_at_progress=looked_at_progress(countable_keys(items), self.work.looked_at),
-        )
 
 
 def check_document_of(view: DocumentStateView) -> CheckDocument:

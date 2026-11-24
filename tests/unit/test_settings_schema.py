@@ -8,10 +8,10 @@ tests fail when a key is added to one of the places that read it and not to the 
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from teachers_teammate.application.run import RunPreflight
 from teachers_teammate.cli import run_cli
 from teachers_teammate.config import Config, OcrConfig, dump_config_file, load_config_file
 from teachers_teammate.domain.data_location import DataFlow
@@ -87,20 +87,8 @@ class _RecordingService:
     def describe_data_flow(self, config: Config) -> DataFlow:
         return DataFlow(())
 
-    def ocr_refusal_for_run(self, config: Config) -> str:
-        return ""
-
-    def reader_refusal_for_run(self, config: Config, files: Sequence[Path]) -> str:
-        return ""
-
-    def output_refusal_for_run(self, config: Config) -> str:
-        return ""
-
-    def memory_warning_for_run(self, config: Config) -> str:
-        return ""
-
-    def page_models_skipped(self, config: Config) -> bool:
-        return False
+    def check_run_preflight(self, config: Config, **kwargs: object) -> RunPreflight:
+        return RunPreflight()
 
     def collect_input_files(self, config: Config) -> list[Path]:
         return []

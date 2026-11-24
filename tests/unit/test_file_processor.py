@@ -28,7 +28,7 @@ from teachers_teammate.infrastructure.proofreading.exchanges import TextFirstExc
 from teachers_teammate.infrastructure.ollama_utils import ChatStats
 from teachers_teammate.infrastructure.run_stats import RunStatsCollector
 from teachers_teammate.infrastructure.speed_store import RunSample, SampleKey
-from teachers_teammate.infrastructure.state_repository import DocumentState
+from teachers_teammate.domain.document_state import DocumentState
 from teachers_teammate.infrastructure.workflow.cache_service import CacheContext
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
 from teachers_teammate.exceptions import (

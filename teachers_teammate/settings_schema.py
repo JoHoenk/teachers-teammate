@@ -17,7 +17,11 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
-from .domain.anonymization import pattern_problem
+from .domain.anonymization import (
+    SECONDARY_MODEL_AUTO,
+    SECONDARY_MODEL_NONE,
+    pattern_problem,
+)
 from .domain.correction_policy import (
     DEFAULT_LEVEL,
     CorrectionOutput,
@@ -44,11 +48,6 @@ from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES, parse_pdf_text_layer
 from .domain.prompt_text import migrate_saved_default
 from .domain.setting_values import ContextSetting, PreprocessMethod
 from .domain.settings_notice import SettingNotice, SettingNoticeKind
-
-#: Value of ``anonymizer_secondary_model`` meaning "the model of the system language".
-SECONDARY_MODEL_AUTO = "auto:system"
-#: Value meaning "no extra detection model" (what an explicit "(none)" in the GUI stores).
-SECONDARY_MODEL_NONE = "none"
 
 #: Values accepted for ``proofreading_context``: ``"auto"`` or a window from this ladder.
 CONTEXT_SETTINGS: tuple[ContextSetting, ...] = tuple(ContextSetting)

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 
-from ..config import DEFAULTS, Config
+from ..config import Config
 from ..domain.correction_policy import CorrectionOutput
 from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
 from ..domain.prompt_text import migrate_saved_default
 from ..domain.stages import Stage
+from ..settings_schema import DEFAULTS
 
 
 def proofreading_prompts(config: Config) -> tuple[tuple[str, str], ...]:

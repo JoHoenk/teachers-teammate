@@ -37,6 +37,8 @@ class IssueKind(StrEnum):
     ADDONS_OUTDATED = "addons_outdated"
     #: An install could not replace a file the running app has loaded: a restart finishes it.
     ADDON_RESTART_NEEDED = "addon_restart_needed"
+    #: Text files would be saved where the run looks for inputs.
+    OUTPUT_IN_INPUT_FOLDER = "output_in_input_folder"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -55,3 +57,15 @@ class RequirementIssue:
     #: What the service answered where the sentence quotes it: the refusal of text recognition,
     #: or the connection error of an Ollama that does not answer.
     reason: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class MemoryShortfall:
+    """An Ollama model that does not fit in the memory this computer has free right now."""
+
+    #: The Ollama tag that would not fit.
+    model: str
+    #: The memory (GB) it needs at the context window this run gives it.
+    needed_gb: float
+    #: The memory (GB) the computer has free right now.
+    free_gb: float

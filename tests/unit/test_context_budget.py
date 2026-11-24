@@ -270,8 +270,8 @@ def test_content_review_may_use_a_larger_window_than_proofreading() -> None:
     When   both windows are asked, with a proofreading cap of 16384
     Then   proofreading stops at that cap and content review uses the full step
 
-    The cap is passed explicitly: the shipped one is the base window (CW7), and this test is
-    about the ladder, not about the cap the app ships.
+    The cap is passed explicitly: the shipped one is the base window, and this test is about
+    the ladder, not about the cap the app ships.
     """
     spec = _spec(memory_gb=4.0, context_gb_per_8k=0.5)
     need = memory_at_context_gb(spec, 32768)
@@ -302,8 +302,8 @@ def test_a_fixed_setting_overrides_the_automatic_rule(setting: str, expected: in
     When   the window is resolved for a computer without a card, with a cap of 16384
     Then   a value from the ladder is used as it is (capped), anything else falls back to auto
 
-    The cap is passed explicitly: the shipped one is the base window (CW7), and this test is
-    about the setting, not about the cap the app ships.
+    The cap is passed explicitly: the shipped one is the base window, and this test is about
+    the setting, not about the cap the app ships.
     """
     spec = _spec(memory_gb=4.0, context_gb_per_8k=0.5)
 
@@ -334,8 +334,8 @@ def test_the_run_window_follows_the_size_of_the_graphics_card(
     When   the windows of a run are resolved on a small and on a large card
     Then   the small card keeps the base window and the large one gets the larger steps
 
-    The proofreading cap is raised to 16384 for this test: the shipped one is the base window
-    (CW7), and this test is about the ladder, not about the cap the app ships.
+    The proofreading cap is raised to 16384 for this test: the shipped one is the base window,
+    and this test is about the ladder, not about the cap the app ships.
     """
     monkeypatch.setattr(context_budget, "PROOFREADING_NUM_CTX_CAP", 16384)
     spec = _spec(memory_gb=5.0, context_gb_per_8k=3.0)
@@ -392,8 +392,8 @@ def test_a_measured_model_grows_on_a_large_card_and_not_on_a_small_one(
     Then   the small card keeps 8192 and the large one proofreads at 16384, and a run that
            uses the same model for both stages gets one window for both
 
-    The proofreading cap is raised to 16384 for this test: the shipped one is the base window
-    (CW7), and this test is about the ladder, not about the cap the app ships.
+    The proofreading cap is raised to 16384 for this test: the shipped one is the base window,
+    and this test is about the ladder, not about the cap the app ships.
     """
     monkeypatch.setattr(context_budget, "PROOFREADING_NUM_CTX_CAP", 16384)
     spec = _spec(memory_gb=5.0, context_gb_per_8k=3.0)
@@ -476,8 +476,8 @@ def test_settings_above_the_proofreading_cap_give_the_same_window(
     When   the window the settings determine is worked out
     Then   both give the capped window, so they are the same cache key
 
-    The cap is raised to 16384 for this test: the shipped one is the base window (CW7), and
-    this test is about the cache key, not about the cap the app ships.
+    The cap is raised to 16384 for this test: the shipped one is the base window, and this
+    test is about the cache key, not about the cap the app ships.
     """
     monkeypatch.setattr(context_budget, "PROOFREADING_NUM_CTX_CAP", 16384)
 

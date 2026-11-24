@@ -29,12 +29,8 @@ if TYPE_CHECKING:
 
 from ..config import Config, OcrConfig
 from ..domain import correction_policy
-from ..domain.anonymization import AnonymizerConfig
-from ..domain.context_budget import (
-    BASE_NUM_CTX,
-    RunWindows,
-    stage_windows,
-)
+from ..domain.anonymization import AnonymizerConfig, resolve_anonymizer_config
+from ..domain.context_budget import RunWindows
 from ..domain.data_location import (
     ENGINE_PPOCR,
     PROVIDER_OLLAMA,
@@ -54,10 +50,11 @@ from ..interfaces import (
     Reporter,
 )
 from ..messages import message_of, personal_info_setup_failed
+from ..run_rules import resolve_run_windows
 from ..texts import report as report_text
+from ..texts.addons import anonymizer_notice
 from ..texts.dialogs import cli_warning
 from ..texts.run import personal_info_not_removed
-from .anonymizer import anonymizer_config_from, resolve_anonymizer_config
 from .docx_builder import DocxDocumentCreator
 from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
 from .llm_factory import build_llm, get_provider_info
@@ -214,48 +211,6 @@ def _chunked(corrector: Corrector, language: str) -> Corrector:
     if corrector.max_text_chars(language) is None:
         return corrector
     return ChunkingCorrector(corrector)
-
-
-def resolve_run_windows(config: Config, hardware: HardwareDetection | None) -> RunWindows:
-    """Return the context windows of a run, resolved once from the settings and the computer.
-
-    The window is a property of the computer and the models, not of the file, so it is
-    resolved once and passed down: a window that changed per file would make Ollama reload the
-    model for every file.  Each stage is sized from its own provider and model; an online
-    provider brings its own window, which the app does not set.  *hardware* is ``None`` when
-    the computer is not known, which keeps the base window.  The rules live in
-    :func:`~teachers_teammate.domain.context_budget.stage_windows`.
-    """
-    return stage_windows(
-        config.proofreading_context,
-        proofreading_model=config.effective_correction_model,
-        evaluation_model=config.effective_evaluate_model,
-        proofreading_local=config.correction_provider == PROVIDER_OLLAMA,
-        evaluation_local=config.evaluate_provider == PROVIDER_OLLAMA,
-        evaluation_runs=config.evaluation_enabled,
-        card_gb=hardware.card_gb if hardware is not None else None,
-    )
-
-
-def window_of_model(config: Config, windows: RunWindows, tag: str) -> int:
-    """Return the largest window a run gives the Ollama model *tag*.
-
-    A model that only reads scans keeps the base window: OCR requests do not set one.
-    """
-    sizes = [BASE_NUM_CTX]
-    if (
-        config.correction_enabled
-        and config.correction_provider == PROVIDER_OLLAMA
-        and config.effective_correction_model == tag
-    ):
-        sizes.append(windows.proofreading)
-    if (
-        config.evaluation_enabled
-        and config.evaluate_provider == PROVIDER_OLLAMA
-        and config.effective_evaluate_model == tag
-    ):
-        sizes.append(windows.evaluation)
-    return max(sizes)
 
 
 # ── Factory ────────────────────────────────────────────────────────────────
@@ -426,7 +381,7 @@ class StageBuilder:
         return OllamaClient(self.config.ollama_url)
 
     def resolved_windows(self) -> RunWindows:
-        """Return the context windows of this run (see :func:`resolve_run_windows`)."""
+        """Return the context windows of this run (see :func:`~teachers_teammate.run_rules.resolve_run_windows`)."""
         return resolve_run_windows(self.config, self.hardware)
 
     def build_preprocessor(self, output_dir: Path) -> ImagePreprocessor:
@@ -587,13 +542,14 @@ class StageBuilder:
     def _build_anonymizer(self) -> Anonymizer:
         cfg = self.config
         try:
-            anon_config = resolve_anonymizer_config(
-                anonymizer_config_from(cfg),
+            anon_config, notice = resolve_anonymizer_config(
+                cfg.anonymizer_config,
                 document_language=cfg.language,
                 system_language=system_language(),
                 installed_models=installed_spacy_models(),
-                warn=self.reporter.warn,
             )
+            if notice is not None:
+                self.reporter.warn(anonymizer_notice(notice))
             return self.factory.build_anonymizer(language=cfg.language, config=anon_config)
         except (ImportError, OSError) as exc:
             raise ProviderNotAvailableError(personal_info_setup_failed(message_of(exc))) from exc

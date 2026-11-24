@@ -43,25 +43,33 @@ import threading
 from typing import NamedTuple
 
 from ..config import Config, OcrConfig
-from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
+from ..domain.data_location import ENGINE_OLLAMA
+from ..domain.key_facts import KeyFacts
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import WaitDetail
-from ..domain.output_files import output_folder_refusal
+from ..domain.output_files import output_folder_problem
 from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..exceptions import OllamaUnreachableError, ProviderNotAvailableError
 from ..interfaces import ImageUnit, PreparedPreview, ProgressCallbacks, Reporter
 from ..messages import preview_needs_images
+from ..run_rules import uses_ollama
 from ..texts import report as report_text
+from ..texts.dialogs import folder_problem_text
 from . import run_report
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
+from .key_facts import MachineKeyFacts
 from .ollama_utils import OllamaClient
 from .onnx.store import ModelStore
 from .preview_image_store import PreviewImageStore
 from .reporting import StdoutReporter
 from .run_stats import RunStatsCollector
 from .speed_store import SampleStore
-from .stage_builder import PipelineComponentFactory as PipelineComponentFactory  # noqa: PLC0414
-from .stage_builder import PreprocessorBuilder, StageBuilder, default_build_preprocessor
+from .stage_builder import (
+    PipelineComponentFactory,
+    PreprocessorBuilder,
+    StageBuilder,
+    default_build_preprocessor,
+)
 from .state_repository import StateRepository
 from .storage_root import resolve_artifact_dir, resolve_storage_root
 from .teacher_work_store import TeacherWorkStore
@@ -101,6 +109,10 @@ class PipelineDependencies:
     # Where the built-in reader's model files live; the application layer passes the store its
     # readiness check looks at, so the run reads the folder that was checked.
     model_store: ModelStore | None = None
+    # What this computer adds to a cache key.  The application layer passes the one its queue and
+    # commands compute keys with, so a run and the queue cannot key differently; ``None`` asks
+    # the computer the run is on, with ``model_store``.
+    key_facts: KeyFacts | None = None
     # Where the teacher's work is.  The application layer passes the store the window writes
     # to, so a run reads the corrections the teacher made; ``None`` builds the default one.
     work_store: TeacherWorkStore | None = None
@@ -228,6 +240,7 @@ class OCRPipeline:
         self._component_factory = deps.component_factory or PipelineComponentFactory()
         self._hardware: HardwareDetection | None = deps.hardware
         self._model_store: ModelStore | None = deps.model_store
+        self._key_facts: KeyFacts | None = deps.key_facts
         self._work_store: TeacherWorkStore | None = deps.work_store
         self._samples: SampleStore = deps.samples
         self._artifact_store: PreviewImageStore | None = deps.artifact_store
@@ -270,12 +283,13 @@ class OCRPipeline:
     def _refuse_folders(self) -> str:
         """Return why a run may not write there, or ``""`` when both folders are fine."""
         cfg = self._config
-        return output_folder_refusal(
+        problem = output_folder_problem(
             writes_text_files=cfg.writes_text_files,
             output_dir=cfg.output_dir.resolve(),
             input_dir=cfg.input_dir.resolve(),
             recursive=cfg.recursive,
         )
+        return folder_problem_text(problem) if problem is not None else ""
 
     def _prepare_run(self) -> _RunStart:
         """Create the run's folders and stores, and say where the teacher's work is kept."""
@@ -459,9 +473,7 @@ class OCRPipeline:
         run_stats = RunStatsCollector(cfg.ollama_url, self._samples.add)
         ollama_client = (
             OllamaClient(cfg.ollama_url, cancel_event=self._stop_event, stats_sink=run_stats.record)
-            if (cfg.recognition_enabled and cfg.ocr.engine == ENGINE_OLLAMA)
-            or (cfg.correction_enabled and cfg.correction_provider == PROVIDER_OLLAMA)
-            or (cfg.evaluation_enabled and cfg.evaluate_provider == PROVIDER_OLLAMA)
+            if uses_ollama(cfg)
             else None
         )
         if ollama_client is not None:
@@ -488,7 +500,7 @@ class OCRPipeline:
             artifact_store=artifact_store,
             config=cfg,
             windows=builder.resolved_windows(),
-            model_store=self._model_store,
+            facts=self._key_facts or MachineKeyFacts(self._model_store),
             # A run always reads the teacher's work: the window's writes and the run's reads
             # must see the same folder, so the default store is the one the window uses.
             work_store=self._work_store or TeacherWorkStore(),

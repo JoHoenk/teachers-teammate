@@ -14,6 +14,7 @@ import pytest
 from teachers_teammate.config import Config
 from teachers_teammate.application.composition import AppServices, build_app_services
 from teachers_teammate.application.commands import DocumentCommands
+from teachers_teammate.domain.document_state import machine_texts
 from teachers_teammate.domain.teacher_work import text_identity
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.infrastructure.onnx.store import ModelStore
@@ -22,8 +23,8 @@ from teachers_teammate.infrastructure.state_repository import (
     OcrResultRecord,
     StateRepository,
     compute_file_hash,
-    machine_texts,
 )
+from teachers_teammate.infrastructure.key_facts import MachineKeyFacts
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore
 from teachers_teammate.infrastructure.workflow.cache_service import CacheReconciliationService
 from tests.conftest import fake_reader_store, make_config
@@ -53,7 +54,9 @@ def _make_svc(
     model_store=None,
 ) -> AppServices:
     mock_pipeline_factory = pipeline_factory or MagicMock(return_value=MagicMock(run=lambda: 0))
-    mock_state_factory = state_repository_factory or MagicMock(return_value=MagicMock())
+    mock_state_factory = state_repository_factory or MagicMock(
+        return_value=MagicMock(load_valid=MagicMock(return_value=None))
+    )
     mock_discovery = discovery or MagicMock()
     return _build_services(
         discovery=mock_discovery,
@@ -139,6 +142,7 @@ def _commands_for(repo: StateRepository, **kwargs) -> DocumentCommands:
     """The window's write commands over *repo*, with the teacher's work in a temporary folder."""
     return DocumentCommands(
         state_store_factory=lambda _config: repo,
+        facts=MachineKeyFacts(),
         **kwargs,
     )
 

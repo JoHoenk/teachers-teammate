@@ -14,13 +14,13 @@ import threading
 from typing import TYPE_CHECKING
 
 from ..config import Config
-from ..domain.anonymization import AnonymizerConfig
-from ..domain.name_models import FALLBACK_SPACY_MODEL, SPACY_MODELS, spacy_model_for
-from ..infrastructure.anonymizer import (
-    AnonymizationResultCache,
-    CachedAnonymizer,
-    anonymizer_config_from,
+from ..domain.anonymization import (
+    AnonymizerConfig,
+    AnonymizerNotice,
+    resolve_anonymizer_config,
 )
+from ..domain.name_models import FALLBACK_SPACY_MODEL, SPACY_MODELS, spacy_model_for
+from ..infrastructure.anonymizer import AnonymizationResultCache, CachedAnonymizer
 from .ports import NameModels
 
 _logger = logging.getLogger(__name__)
@@ -145,11 +145,16 @@ class AnonymizationService:
             self._installed_models = self.list_installed_spacy_models()
         return list(self._installed_models)
 
-    def _warn_once(self, message: str) -> None:
-        """Log *message* unless it was logged before for the same settings."""
-        if message not in self._warned:
-            self._warned.add(message)
-            _logger.warning("%s", message)
+    def _warn_once(self, notice: AnonymizerNotice) -> None:
+        """Log *notice* unless the same settings were reported before.
+
+        One diagnostic line, said once: the sentence a teacher reads for it is worded in
+        ``texts/addons.py`` by the run, which has a reporter.
+        """
+        key = repr(notice)
+        if key not in self._warned:
+            self._warned.add(key)
+            _logger.warning("Extra detection model not used: %s", notice)
 
     def anonymizer_available(self, language: str, config: AnonymizerConfig | None = None) -> bool:
         """Return whether personal information can be hidden for *language* right now.
@@ -195,16 +200,17 @@ class AnonymizationService:
         building the anonymizer fails as before.
         """
         anon_config = config if config is not None else AnonymizerConfig()
-        from ..infrastructure.anonymizer import resolve_anonymizer_config  # noqa: PLC0415
         from ..infrastructure.system_locale import system_language  # noqa: PLC0415
 
-        return resolve_anonymizer_config(
+        resolved, notice = resolve_anonymizer_config(
             anon_config,
             document_language=language,
             system_language=system_language(),
             installed_models=self._remembered_installed_models(),
-            warn=self._warn_once,
         )
+        if notice is not None:
+            self._warn_once(notice)
+        return resolved
 
     def anonymizer_models(self, language: str, config: AnonymizerConfig | None = None) -> list[str]:
         """Return the spaCy models personal-info removal loads for *language* and *config*.
@@ -213,11 +219,10 @@ class AnonymizationService:
         automatic extra model that is not downloaded is left out.  No warning: this answers
         "would it work?", and the run itself warns when a model is missing.
         """
-        from ..infrastructure.anonymizer import resolve_anonymizer_config  # noqa: PLC0415
         from ..infrastructure.system_locale import system_language  # noqa: PLC0415
 
         anon_config = config if config is not None else AnonymizerConfig()
-        resolved = resolve_anonymizer_config(
+        resolved, _notice = resolve_anonymizer_config(
             anon_config,
             document_language=language,
             system_language=system_language(),
@@ -237,7 +242,7 @@ class AnonymizationService:
         """
         if not config.anonymization_enabled:
             return []
-        return self.anonymizer_models(config.language, anonymizer_config_from(config))
+        return self.anonymizer_models(config.language, config.anonymizer_config)
 
     def reread_installed_models(self) -> None:
         """Ask spaCy again which models are installed, without forgetting what was warned."""

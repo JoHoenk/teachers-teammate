@@ -16,11 +16,6 @@ DOCX_SUFFIX = ".docx"
 TEXT_SUFFIX = ".txt"
 ANONYMIZED_TEXT_SUFFIX = "_anonymized.txt"
 
-TEXT_IN_INPUT_FOLDER = (
-    "Text files cannot be saved in the input folder: the next run would read them as new "
-    "documents. Choose a different output folder."
-)
-
 
 class DocxFormat(StrEnum):
     """The layout of a generated Word document."""
@@ -43,6 +38,10 @@ class FolderProblem(StrEnum):
 
     INPUT_MISSING = "input_missing"
     """The chosen input folder is not there."""
+
+    TEXT_IN_INPUT = "text_in_input"
+    """Text files would be saved where the run looks for inputs, so the next run would read
+    them as new documents."""
 
 
 def folder_problem(
@@ -85,14 +84,14 @@ def feeds_inputs(folder: Path, input_dir: Path, *, recursive: bool) -> bool:
     return folder == input_dir or (recursive and input_dir in folder.parents)
 
 
-def output_folder_refusal(
+def output_folder_problem(
     *, writes_text_files: bool, output_dir: Path, input_dir: Path, recursive: bool
-) -> str:
-    """Return why a run must not use *output_dir*, or ``""`` when it is fine.
+) -> FolderProblem | None:
+    """Return why a run must not use *output_dir*, or ``None`` when it is fine.
 
     Text files (unlike Word documents) are input types, so saving them where the run looks for
     inputs would make the next run read them as new documents.
     """
     if writes_text_files and feeds_inputs(output_dir, input_dir, recursive=recursive):
-        return TEXT_IN_INPUT_FOLDER
-    return ""
+        return FolderProblem.TEXT_IN_INPUT
+    return None

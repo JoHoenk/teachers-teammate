@@ -8,8 +8,12 @@ import pytest
 
 from ..gui._service_stubs import services_of
 from teachers_teammate.application.composition import build_app_services
+from teachers_teammate.application.run import RunPreflight
 from teachers_teammate.domain.data_location import DataFlow
+from teachers_teammate.domain.output_files import FolderProblem
+from teachers_teammate.domain.requirements import IssueKind, MemoryShortfall, RequirementIssue
 from teachers_teammate.domain.run_summary import RunSummary
+from teachers_teammate.domain.stages import Stage
 
 
 class _AppServiceStub:
@@ -28,14 +32,11 @@ class _AppServiceStub:
     def describe_data_flow(self, config) -> DataFlow:
         return DataFlow(())
 
-    def ocr_refusal_for_run(self, config) -> str:
-        return ""
+    def check_run_preflight(self, config, **kwargs) -> RunPreflight:
+        return RunPreflight()
 
-    def reader_refusal_for_run(self, config, files) -> str:
+    def env_key(self, provider: str) -> str:
         return ""
-
-    def page_models_skipped(self, config) -> bool:
-        return False
 
     def download_reader(self, on_progress=None, cancel=None) -> None:
         raise AssertionError("nothing may be downloaded")
@@ -43,14 +44,8 @@ class _AppServiceStub:
     def download_page_models(self, on_progress=None, cancel=None) -> None:
         raise AssertionError("nothing may be downloaded")
 
-    def output_refusal_for_run(self, config) -> str:
-        return ""
-
-    def memory_warning_for_run(self, config) -> str:
-        return ""
-
     def collect_input_files(self, config) -> list[Path]:
-        return []
+        return [Path("page.png")]
 
     def run_selected(self, config, files, /, **kwargs) -> RunSummary:
         raise AssertionError("the run must not start")
@@ -740,15 +735,15 @@ def test_run_cli_refuses_online_text_recognition_before_anything_starts(
     tmp_path: Path, capsys
 ) -> None:
     """
-    Given  an application service that refuses the OCR settings of the run
+    Given  a run preflight that refuses the OCR settings of the run
     When   run_cli() is called
     Then   it prints the reason, exits with 1, and neither announces a data flow nor runs
     """
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
 
     class _FakeAppService(_AppServiceStub):
-        def ocr_refusal_for_run(self, config) -> str:
-            return "Text recognition must stay on your computer."
+        def check_run_preflight(self, config, **kwargs) -> RunPreflight:
+            return RunPreflight(ocr_not_allowed="Text recognition must stay on your computer.")
 
         def describe_data_flow(self, config) -> DataFlow:
             raise AssertionError("no data flow may be announced for a refused run")
@@ -766,28 +761,147 @@ def test_run_cli_refuses_online_text_recognition_before_anything_starts(
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
-def test_run_cli_refuses_the_reader_when_it_is_not_downloaded(tmp_path: Path, capsys) -> None:
+def test_run_cli_says_how_to_download_a_missing_reader(tmp_path: Path, capsys) -> None:
     """
-    Given  an application service that says the built-in reader is not downloaded
+    Given  a preflight blocked because the built-in reader is not downloaded
     When   run_cli() is called with --ocr-engine ppocr
-    Then   it prints the sentence, exits with 1 and starts nothing
+    Then   it prints the sentence of the issue and the download command, and starts nothing
     """
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
+    from teachers_teammate.texts.issues import issue_text  # noqa: PLC0415
 
-    class _FakeAppService(_AppServiceStub):
-        def reader_refusal_for_run(self, config, files) -> str:
-            return "The built-in reader is not downloaded yet. Use --download-reader."
-
-        def describe_data_flow(self, config) -> DataFlow:
-            raise AssertionError("no data flow may be announced for a refused run")
+    issue = RequirementIssue(IssueKind.READER_MODEL_MISSING)
+    service = _TextFlagsAppService(preflight=RunPreflight(stage=Stage.OCR, stage_issues=(issue,)))
 
     rc = run_cli(
         argv=["-i", str(tmp_path), "--no-docx", "--ocr-engine", "ppocr"],
-        app_service=services_of(_FakeAppService()),
+        app_service=services_of(service),
     )
 
+    err = capsys.readouterr().err
     assert rc == 1
-    assert "--download-reader" in capsys.readouterr().err
+    assert f"ERROR: {issue_text(issue)}" in err
+    assert cli_issue_hint(issue) in err
+    assert service.configs == []
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_names_the_environment_variable_of_a_missing_key(tmp_path: Path, capsys) -> None:
+    """
+    Given  a preflight blocked by a proofreading provider whose API key is not set
+    When   run_cli() is called
+    Then   it prints the sentence of the issue and names the environment variable to set
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.texts.issues import issue_text  # noqa: PLC0415
+
+    issue = RequirementIssue(IssueKind.KEY_MISSING, provider="openai", name="OpenAI")
+    service = _TextFlagsAppService(
+        preflight=RunPreflight(stage=Stage.CORRECTION, stage_issues=(issue,)),
+        env_key="OPENAI_API_KEY",
+    )
+
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=services_of(service))
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert f"ERROR: {issue_text(issue)}" in err
+    assert "OPENAI_API_KEY" in err
+    assert service.configs == []
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_says_how_to_download_a_missing_ollama_model(tmp_path: Path, capsys) -> None:
+    """
+    Given  a preflight blocked by a model that is not downloaded in Ollama
+    When   run_cli() is called
+    Then   it prints the sentence of the issue and the command that downloads the model
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.texts.issues import issue_text  # noqa: PLC0415
+
+    issue = RequirementIssue(IssueKind.MODEL_MISSING, models=("qwen3-vl:8b",))
+    service = _TextFlagsAppService(preflight=RunPreflight(missing_models=("qwen3-vl:8b",)))
+
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=services_of(service))
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert f"ERROR: {issue_text(issue)}" in err
+    assert "ollama pull qwen3-vl:8b" in err
+    assert service.configs == []
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_stops_when_ollama_is_not_running(tmp_path: Path, capsys) -> None:
+    """
+    Given  a preflight that cannot reach the Ollama server, which is installed but not started
+    When   run_cli() is called
+    Then   it prints the sentence of the issue and says to start Ollama, and starts nothing
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.texts.issues import issue_text  # noqa: PLC0415
+
+    issue = RequirementIssue(IssueKind.OLLAMA_NOT_RUNNING)
+    service = _TextFlagsAppService(
+        preflight=RunPreflight(ollama_unreachable="Connection refused", ollama_issue=issue)
+    )
+
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=services_of(service))
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert f"ERROR: {issue_text(issue)}" in err
+    assert "Start Ollama" in err
+    assert service.configs == []
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_says_when_the_first_file_waits_for_another_model(tmp_path: Path, capsys) -> None:
+    """
+    Given  a preflight that found Ollama busy with another model
+    When   run_cli() is called
+    Then   it prints the note that the first file waits, and the run goes ahead
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.domain.ollama_discovery import WaitDetail, WaitKind  # noqa: PLC0415
+    from teachers_teammate.texts.check import wait_detail_text  # noqa: PLC0415
+
+    wait = WaitDetail(WaitKind.QUEUED, model="qwen3:8b", other="gemma3:4b")
+    service = _TextFlagsAppService(preflight=RunPreflight(ollama_wait=wait))
+
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=services_of(service))
+
+    assert rc == 0
+    assert wait_detail_text(wait) in capsys.readouterr().err
+    assert len(service.configs) == 1
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_stops_when_no_queued_file_can_be_used_without_recognition(
+    tmp_path: Path, capsys
+) -> None:
+    """
+    Given  a preflight that found no file to use with text recognition switched off
+    When   run_cli() is called with --no-recognition
+    Then   it prints the sentence of the issue and starts nothing
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.texts.issues import issue_text  # noqa: PLC0415
+
+    issue = RequirementIssue(IssueKind.NOTHING_TO_READ)
+    service = _TextFlagsAppService(preflight=RunPreflight(nothing_to_read=True))
+
+    rc = run_cli(
+        argv=["-i", str(tmp_path), "--no-docx", "--no-recognition"],
+        app_service=services_of(service),
+    )
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert f"ERROR: {issue_text(issue)}" in err
+    assert service.configs == []
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
@@ -895,8 +1009,8 @@ def test_a_run_with_missing_page_models_prints_one_line_and_still_runs(
     started: list[bool] = []
 
     class _FakeAppService(_AppServiceStub):
-        def page_models_skipped(self, config) -> bool:
-            return True
+        def check_run_preflight(self, config, **kwargs) -> RunPreflight:
+            return RunPreflight(page_models_skipped=True)
 
         def run_selected(self, config, files, /, **kwargs) -> RunSummary:
             started.append(True)
@@ -915,18 +1029,18 @@ def test_a_run_with_missing_page_models_prints_one_line_and_still_runs(
 
 
 class _TextFlagsAppService(_AppServiceStub):
-    """Application service stub for the text-file flags; records configs, refuses on demand."""
+    """Application service stub for the text-file flags; records configs, answers the preflight."""
 
-    def __init__(self, output_refusal: str = "", memory_warning: str = "") -> None:
+    def __init__(self, preflight: RunPreflight | None = None, env_key: str = "") -> None:
         self.configs: list = []
-        self._output_refusal = output_refusal
-        self._memory_warning = memory_warning
+        self._preflight = preflight or RunPreflight()
+        self._env_key = env_key
 
-    def memory_warning_for_run(self, config) -> str:
-        return self._memory_warning
+    def check_run_preflight(self, config, **kwargs) -> RunPreflight:
+        return self._preflight
 
-    def output_refusal_for_run(self, config) -> str:
-        return self._output_refusal
+    def env_key(self, provider: str) -> str:
+        return self._env_key
 
     def run_selected(self, config, files, /, **kwargs) -> RunSummary:
         self.configs.append(config)
@@ -1063,17 +1177,50 @@ def test_run_cli_refuses_an_output_folder_the_service_rejects(tmp_path: Path, ca
     Then   it prints the reason, exits with 1 and does not start the run
     """
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.texts.issues import issue_text  # noqa: PLC0415
 
-    service = _TextFlagsAppService(output_refusal="Text files cannot be saved there.")
+    issue = RequirementIssue(IssueKind.OUTPUT_IN_INPUT_FOLDER)
+    service = _TextFlagsAppService(
+        preflight=RunPreflight(output_problem=FolderProblem.TEXT_IN_INPUT)
+    )
 
     rc = run_cli(
         argv=["-i", str(tmp_path), "-o", str(tmp_path), "--no-docx", "--text"],
         app_service=services_of(service),
     )
 
+    err = capsys.readouterr().err
     assert rc == 1
-    assert "ERROR: Text files cannot be saved there." in capsys.readouterr().err
+    assert f"ERROR: {issue_text(issue)}" in err
+    assert "Choose an output folder with -o/--output" in err
     assert service.configs == []
+
+
+def test_run_cli_over_no_files_does_not_ask_the_preflight(tmp_path: Path) -> None:
+    """
+    Given  an input folder with no supported file and a preflight that would refuse the run
+    When   run_cli() is called
+    Then   the preflight is not asked, so the run itself says there is nothing to do
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    asked: list[bool] = []
+
+    class _FakeAppService(_TextFlagsAppService):
+        def collect_input_files(self, config) -> list[Path]:
+            return []
+
+        def check_run_preflight(self, config, **kwargs) -> RunPreflight:
+            asked.append(True)
+            return RunPreflight(ollama_unreachable="Connection refused")
+
+    service = _FakeAppService()
+
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=services_of(service))
+
+    assert rc == 0
+    assert asked == []
+    assert len(service.configs) == 1
 
 
 def test_run_cli_refuses_a_run_that_would_make_the_computer_swap(tmp_path: Path, capsys) -> None:
@@ -1083,8 +1230,10 @@ def test_run_cli_refuses_a_run_that_would_make_the_computer_swap(tmp_path: Path,
     Then   it prints the reason with the way to override it, exits with 1 and does not run
     """
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.texts.dialogs import memory_shortfall_text  # noqa: PLC0415
 
-    service = _TextFlagsAppService(memory_warning="qwen3.5:9b needs about 7 GB of free memory.")
+    shortfall = MemoryShortfall("qwen3.5:9b", 7.0, 6.0)
+    service = _TextFlagsAppService(preflight=RunPreflight(memory_shortfall=shortfall))
 
     rc = run_cli(
         argv=["-i", str(tmp_path), "-o", str(tmp_path), "--no-docx", "--text"],
@@ -1093,7 +1242,7 @@ def test_run_cli_refuses_a_run_that_would_make_the_computer_swap(tmp_path: Path,
 
     err = capsys.readouterr().err
     assert rc == 1
-    assert "ERROR: qwen3.5:9b needs about 7 GB of free memory." in err
+    assert f"ERROR: {memory_shortfall_text(shortfall)}" in err
     assert "Use --ignore-memory-check to run anyway." in err
     assert service.configs == []
 
@@ -1105,8 +1254,10 @@ def test_run_cli_runs_anyway_when_the_memory_check_is_ignored(tmp_path: Path, ca
     Then   the run starts and the warning is still printed (as a WARNING, not an ERROR)
     """
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.texts.dialogs import memory_shortfall_text  # noqa: PLC0415
 
-    service = _TextFlagsAppService(memory_warning="qwen3.5:9b needs about 7 GB of free memory.")
+    shortfall = MemoryShortfall("qwen3.5:9b", 7.0, 6.0)
+    service = _TextFlagsAppService(preflight=RunPreflight(memory_shortfall=shortfall))
 
     rc = run_cli(
         argv=[
@@ -1123,7 +1274,7 @@ def test_run_cli_runs_anyway_when_the_memory_check_is_ignored(tmp_path: Path, ca
 
     err = capsys.readouterr().err
     assert rc == 0
-    assert "WARNING: qwen3.5:9b needs about 7 GB of free memory." in err
+    assert f"WARNING: {memory_shortfall_text(shortfall)}" in err
     assert "ERROR:" not in err
     assert len(service.configs) == 1
 
@@ -1262,3 +1413,82 @@ def test_parse_args_ocr_timeout_out_of_range_exits(bad: str) -> None:
 
     with pytest.raises(SystemExit):
         _parse_args(argv=["--ocr-timeout", bad])
+
+
+@pytest.mark.unit
+def test_the_hint_names_every_missing_model() -> None:
+    """
+    Given  an issue that names two models that are not downloaded
+    When   the command line asks for its hint
+    Then   the hint pulls both, so one run of it fixes the run
+    """
+    from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
+
+    hint = cli_issue_hint(
+        RequirementIssue(IssueKind.MODEL_MISSING, models=("qwen3-vl:8b", "qwen3.5:9b"))
+    )
+
+    assert "ollama pull qwen3-vl:8b" in hint
+    assert "ollama pull qwen3.5:9b" in hint
+
+
+@pytest.mark.unit
+def test_the_hint_for_no_model_at_all_has_no_placeholder() -> None:
+    """
+    Given  an Ollama without any model and an issue that names none
+    When   the command line asks for its hint
+    Then   the hint says to pull a model, without a placeholder in it
+    """
+    from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
+
+    hint = cli_issue_hint(RequirementIssue(IssueKind.NO_OLLAMA_MODEL))
+
+    assert "ollama pull" in hint
+    assert "<" not in hint
+
+
+@pytest.mark.unit
+def test_a_missing_package_can_be_installed_without_the_app() -> None:
+    """
+    Given  a provider package and spaCy that are not installed
+    When   the command line asks for their hints
+    Then   each names the app and the pip extra that installs it from the wheel
+    """
+    from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
+
+    package = cli_issue_hint(RequirementIssue(IssueKind.PACKAGE_MISSING, provider="openai"))
+    spacy = cli_issue_hint(RequirementIssue(IssueKind.PRIVACY_ADDON_MISSING))
+
+    assert "Add-ons" in package
+    assert "[llm]" in package
+    assert "Add-ons" in spacy
+    assert "[privacy]" in spacy
+
+
+@pytest.mark.unit
+def test_an_add_on_that_waits_for_a_restart_says_to_run_again() -> None:
+    """
+    Given  an add-on that is installed and waits for the next start
+    When   the command line asks for its hint
+    Then   it says to run the command again, and does not send the teacher to the Add-ons page
+    """
+    from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
+
+    hint = cli_issue_hint(RequirementIssue(IssueKind.ADDON_RESTART_NEEDED, name="spaCy"))
+
+    assert "again" in hint
+    assert "Add-ons" not in hint
+
+
+@pytest.mark.unit
+def test_an_ollama_that_does_not_answer_names_the_address_flag() -> None:
+    """
+    Given  an Ollama address that does not answer and nothing to start from here
+    When   the command line asks for its hint
+    Then   the hint names --ollama-url
+    """
+    from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
+
+    hint = cli_issue_hint(RequirementIssue(IssueKind.OLLAMA_UNREACHABLE, reason="timed out"))
+
+    assert "--ollama-url" in hint

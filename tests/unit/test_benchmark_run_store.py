@@ -106,7 +106,7 @@ def test_delete_all_for_clears_document(tmp_path: Path) -> None:
     """
     Given  multiple runs for a document
     When   delete_all_for() is called
-    Then   the document has no runs and is dropped from list_documents()
+    Then   neither run is left for it
     """
     store = BenchmarkRunStore(tmp_path)
     _save(store, text="a")
@@ -114,7 +114,6 @@ def test_delete_all_for_clears_document(tmp_path: Path) -> None:
 
     store.delete_all_for("doc1")
     assert store.list_for("doc1") == []
-    assert store.list_documents() == []
 
 
 @pytest.mark.use_case("OCR_Run_History")
@@ -132,17 +131,6 @@ def test_keep_last_n_evicts_oldest(tmp_path: Path) -> None:
     runs = store.list_for("doc1")
     assert len(runs) == 2
     assert {r.raw_text for r in runs} == {"two", "three"}
-
-
-def test_list_documents_reports_display_name(tmp_path: Path) -> None:
-    """
-    Given  a saved run for a document
-    When   list_documents() is called
-    Then   it returns the document hash and its display name
-    """
-    store = BenchmarkRunStore(tmp_path)
-    _save(store)
-    assert store.list_documents() == [("doc1", "sample.pdf")]
 
 
 @pytest.mark.use_case("OCR_Run_Comparison")

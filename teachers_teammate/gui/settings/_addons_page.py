@@ -21,7 +21,6 @@ from typing import ClassVar
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QPushButton, QTabWidget, QVBoxLayout, QWidget
 
-from ...config import DEFAULTS
 from ...domain.install_item import (
     PAGE_MODELS_ITEM,
     READER_ITEM,
@@ -30,6 +29,7 @@ from ...domain.install_item import (
     InstallKind,
 )
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
+from ...settings_schema import DEFAULTS
 from ...texts import addons as txt
 from ...texts import dialogs as dlg
 from ...texts import settings as st

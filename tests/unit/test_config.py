@@ -10,7 +10,6 @@ from unittest.mock import patch
 import pytest
 
 from teachers_teammate.config import (
-    DEFAULTS,
     Config,
     OcrConfig,
     broken_settings_copy,
@@ -18,6 +17,7 @@ from teachers_teammate.config import (
     load_config_file,
     save_settings_file,
 )
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.settings_notice import SettingNoticeKind
 from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL, HardwareProfileSetting
 from teachers_teammate.exceptions import ConfigFileNotFoundError, ConfigFileParseError

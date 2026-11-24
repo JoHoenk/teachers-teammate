@@ -25,7 +25,8 @@ from teachers_teammate.application.composition import AppServices
 from teachers_teammate.application.context_choice import ContextChoice, context_choice
 from teachers_teammate.application.data_flow import text_goes_online
 from teachers_teammate.application.speed_estimates import SpeedChoices, SpeedSummary
-from teachers_teammate.config import DEFAULTS, Config
+from teachers_teammate.config import Config
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.data_location import (
     STAGE_ANONYMIZATION,
     DataFlow,
@@ -344,7 +345,6 @@ class RecommendationServiceStub(LocalDataFlowStub):
     def __init__(self) -> None:
         self.detect_calls: list[tuple[str, bool]] = []
         self.changed_urls: list[str] = []
-        self.gpu_calls: list[bool] = []  # the ``refresh`` flag of every detect_gpus call
         self.injected_packages_dir = False  # inject_addon_packages_dir was called
         self.outdated_addons = False  # an app update left add-ons that wait for an update
         self.addon_updates = 0  # how often update_addons ran
@@ -400,10 +400,6 @@ class RecommendationServiceStub(LocalDataFlowStub):
     def cached_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection | None:
         """Answer as the real service does once it has probed: this stub never probes."""
         return self.resolve_hardware_profile(setting, ollama_url)
-
-    def detect_gpus(self, *, refresh: bool = False) -> list:
-        self.gpu_calls.append(refresh)
-        return []
 
     def available_memory_gb(self) -> float | None:
         """Answer with the free memory a test set, or ``None``."""

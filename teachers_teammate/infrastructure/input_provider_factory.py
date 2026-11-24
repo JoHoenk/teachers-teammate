@@ -42,7 +42,6 @@ class InputOptions:
 
 
 _ProviderBuilder = Callable[[Path, InputOptions], InputProvider]
-_FingerprintBuilder = Callable[[InputOptions], tuple[str, ...]]
 
 
 def _build_pdf(tmp_dir: Path, options: InputOptions) -> InputProvider:
@@ -65,14 +64,6 @@ def _build_text(_tmp_dir: Path, _options: InputOptions) -> InputProvider:
     return TextInputProvider()
 
 
-def _pdf_fingerprint(options: InputOptions) -> tuple[str, ...]:
-    # The default ("auto") adds nothing, so caches written before the setting existed stay
-    # valid; only an explicit "always"/"never" changes where a PDF's text comes from.
-    if options.pdf_text_layer == "auto":
-        return ()
-    return (f"pdf_text_layer={options.pdf_text_layer}",)
-
-
 _SUFFIX_TO_BUILDER: dict[str, _ProviderBuilder] = {
     ".pdf": _build_pdf,
     ".png": _build_image,
@@ -80,9 +71,6 @@ _SUFFIX_TO_BUILDER: dict[str, _ProviderBuilder] = {
     ".jpeg": _build_image,
     ".txt": _build_text,
 }
-
-# Suffixes whose loaded content depends on an input option beyond the page images' DPI.
-_SUFFIX_TO_FINGERPRINT: dict[str, _FingerprintBuilder] = {".pdf": _pdf_fingerprint}
 
 if frozenset(_SUFFIX_TO_BUILDER.keys()) != SUPPORTED_SUFFIXES:
     raise RuntimeError(
@@ -94,17 +82,6 @@ if frozenset(_SUFFIX_TO_BUILDER.keys()) != SUPPORTED_SUFFIXES:
 def supported_suffixes() -> frozenset[str]:
     """Return all input suffixes handled by registered providers."""
     return SUPPORTED_SUFFIXES
-
-
-def input_settings_fingerprint(suffix: str, options: InputOptions) -> tuple[str, ...]:
-    """Return the *options* that change what is loaded from a file with *suffix*.
-
-    Format-specific settings only appear for the formats they affect, so changing a PDF
-    option does not invalidate cached results of images or text files.  Options at their
-    default contribute nothing, which keeps older cache entries valid.
-    """
-    fingerprint = _SUFFIX_TO_FINGERPRINT.get(suffix.lower())
-    return fingerprint(options) if fingerprint is not None else ()
 
 
 def get_input_provider(

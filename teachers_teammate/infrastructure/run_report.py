@@ -11,15 +11,11 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from ..config import Config
-from ..domain.data_location import (
-    ENGINE_OLLAMA,
-    ENGINE_PPOCR,
-    OCR_ENGINE_NAMES,
-    PROVIDER_OLLAMA,
-)
+from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, OCR_ENGINE_NAMES
 from ..domain.local_models import READER_MODEL_NAME
 from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..interfaces import Reporter
+from ..run_rules import uses_ollama
 from ..texts import report as txt
 
 
@@ -56,11 +52,7 @@ def banner(
             row(txt.OCR_MODEL, cfg.ocr.model)
     row(txt.PREPROCESS, cfg.ocr.preprocess_method)
     row(txt.LANGUAGE, cfg.language)
-    if (
-        (cfg.recognition_enabled and cfg.ocr.engine == ENGINE_OLLAMA)
-        or (cfg.correction_enabled and cfg.correction_provider == PROVIDER_OLLAMA)
-        or (cfg.evaluation_enabled and cfg.evaluate_provider == PROVIDER_OLLAMA)
-    ):
+    if uses_ollama(cfg):
         row(txt.OLLAMA_URL, cfg.ollama_url)
     row(txt.INPUT, cfg.input_dir.resolve())
     row(txt.OUTPUT, cfg.output_dir.resolve())

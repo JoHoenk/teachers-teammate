@@ -10,26 +10,24 @@ spaCy and the model for a language are add-ons: the Add-ons page installs both, 
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Callable, Collection
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import hashlib
 import re
 import threading
-from typing import TYPE_CHECKING
 
-from ..domain.anonymization import AnonymizerConfig, resolve_patterns, restore, surface_pattern
+from ..domain.anonymization import (
+    AnonymizerConfig,
+    resolve_anonymizer_config,
+    restore,
+    surface_pattern,
+)
 from ..domain.formatted_text import INLINE_TAG_ALTERNATION
 from ..domain.name_models import spacy_model_for
 from ..exceptions import AnonymizerError
 from ..interfaces import AnonymizationMap, Anonymizer
-from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
-from ..texts.addons import extra_model_language_unknown, extra_model_missing
 from ..texts.run import personal_info_pattern_invalid
 from . import system_locale
 from .spacy_models import SpacyModels
-
-if TYPE_CHECKING:
-    from ..config import Config
 
 #: Identifies one cached result: language and settings of the anonymizer, then the text hash.
 CacheKey = tuple[object, ...]
@@ -99,69 +97,6 @@ def _split_at_markup(
 # ── Language → spacy model mapping ─────────────────────────────────────────
 
 _NER_PERSON_LABELS = frozenset({"PER", "PERSON"})
-
-
-#: Called with a warning sentence the user should see (e.g. the reporter's ``warn``).
-Warner = Callable[[str], None]
-
-
-def resolve_anonymizer_config(
-    config: AnonymizerConfig,
-    *,
-    document_language: str,
-    system_language: str | None = None,
-    installed_models: Collection[str] | None = None,
-    warn: Warner | None = None,
-) -> AnonymizerConfig:
-    """Return *config* with the models that will actually be loaded.
-
-    ``secondary_model`` of :data:`~teachers_teammate.settings_schema.SECONDARY_MODEL_AUTO` means "the
-    model of the language the operating system is set to".  It is resolved here, once, so a
-    run, a preview and an export all use the same models:
-
-    * no system language could be determined → no extra pass (:data:`SECONDARY_MODEL_NONE`);
-    * the system language has the same model as the primary pass → no extra pass (a second
-      pass with the same model would only repeat the first one);
-    * the model is missing while *installed_models* is known → warning, no extra pass
-      (an automatic default must never make a run fail);
-    * an explicitly chosen model is kept as it is, missing or not: the anonymizer then fails
-      with the same error as before, which is what the user asked for.
-    """
-    secondary = config.secondary_model
-    missing: str | None = None
-    if secondary is None or str(secondary).strip().lower() in ("", SECONDARY_MODEL_NONE):
-        return replace(config, secondary_model=None)
-    if str(secondary) != SECONDARY_MODEL_AUTO:
-        return config
-
-    primary = config.primary_model or spacy_model_for(document_language)
-    if not system_language:
-        if warn is not None:
-            warn(extra_model_language_unknown(document_language))
-        return replace(config, secondary_model=None)
-    system_model = spacy_model_for(system_language)
-    if system_model == primary:
-        return replace(config, secondary_model=None)
-    if installed_models is not None and system_model not in installed_models:
-        missing = system_model
-    if missing is not None:
-        if warn is not None:
-            warn(extra_model_missing(missing, system_language, primary, document_language))
-        return replace(config, secondary_model=None)
-    return replace(config, secondary_model=system_model)
-
-
-def anonymizer_config_from(config: Config) -> AnonymizerConfig:
-    """Return the :class:`AnonymizerConfig` that *config* asks for, models unresolved.
-
-    The single place that maps the stored settings onto the anonymizer, so a run, a
-    preview and the status box all start from the same settings.
-    """
-    return AnonymizerConfig(
-        primary_model=config.anonymizer_primary_model,
-        secondary_model=config.anonymizer_secondary_model,
-        patterns=resolve_patterns(config.anonymizer_patterns),
-    )
 
 
 # ── Result cache ───────────────────────────────────────────────────────────
@@ -434,7 +369,9 @@ class SpacyAnonymizer(Anonymizer):
         *,
         models: SpacyModels | None = None,
     ) -> None:
-        self._config = resolve_anonymizer_config(
+        # Nothing is said about a dropped extra model here: the run that builds this resolved
+        # the same settings and worded the notice itself.
+        self._config, _notice = resolve_anonymizer_config(
             config if config is not None else AnonymizerConfig(),
             document_language=language,
             system_language=system_locale.system_language(),

@@ -56,6 +56,6 @@ Imported, this package installs English for :class:`~teachers_teammate.messages.
 so ``str(message)`` gives the sentence.  A second language would be installed here instead.
 """
 
-from .messages import install as install
+from .messages import install
 
 install()

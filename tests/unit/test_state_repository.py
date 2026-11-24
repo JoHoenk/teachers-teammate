@@ -15,13 +15,14 @@ from teachers_teammate.domain.data_location import SentRecord
 from teachers_teammate.application.document_view import to_view
 from teachers_teammate.domain.freshness import StageHashes, first_stale_stage_for_hashes
 from teachers_teammate.domain.stages import STAGE_ORDER, Stage
+from teachers_teammate.domain.document_state import DocumentState
+from teachers_teammate.domain.freshness import compute_config_hash
 from teachers_teammate.infrastructure.state_repository import (
-    DocumentState,
     OcrResultRecord,
     StateRepository,
-    compute_config_hash,
     compute_file_hash,
 )
+from teachers_teammate.infrastructure import storage_root
 from teachers_teammate.infrastructure.storage_root import document_stem
 
 
@@ -158,6 +159,41 @@ def test_load_or_create_returns_existing_state_after_save(tmp_path: Path) -> Non
     loaded = repo.load_or_create(source, source_hash)
     assert loaded.raw_text == "hello world"
     assert loaded.ocr_done is True
+
+
+def test_a_state_is_found_through_another_spelling_of_the_folder(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a file system that ignores case, so two spellings of a folder hold one document
+    When   the state stored through one spelling is loaded through the other
+    Then   it is the same document's state, with its text
+    """
+    monkeypatch.setattr(storage_root, "_spelled_as_stored", str.lower)
+    (tmp_path / "in").mkdir()
+    first = _source_file(tmp_path / "in", "doc.txt")
+    other = tmp_path / "IN"
+    other.mkdir()
+    (other / "doc.txt").write_bytes(first.read_bytes())
+    repo = _repo(tmp_path)
+    source_hash = compute_file_hash(first)
+    repo.record_ocr_result(
+        first,
+        repo.create(first, source_hash),
+        OcrResultRecord(
+            source_hash=source_hash,
+            raw_text="hello world",
+            preview_img="",
+            source_image="",
+            ocr_config_hash="h1",
+            preview_config_hash="",
+        ),
+    )
+
+    loaded = repo.load_valid(other / "doc.txt")
+
+    assert loaded is not None
+    assert loaded.raw_text == "hello world"
 
 
 # ── record_ocr_result ─────────────────────────────────────────────────────
@@ -935,29 +971,6 @@ def test_state_without_preprocess_info_loads_with_unknown_steps(tmp_path: Path) 
     assert to_view(src, loaded).preprocess_steps is None
 
 
-def test_invalidate_preview_artifact_clears_original_and_steps(tmp_path: Path) -> None:
-    """
-    Given  a state with preview, original image and steps
-    When   invalidate_preview_artifact is called
-    Then   original_img and preprocess_steps are reset together with the preview paths
-    """
-    repo = _repo(tmp_path)
-    src = _source_file(tmp_path)
-    state = dataclasses.replace(
-        repo.create(src, compute_file_hash(src)),
-        page_images=["p.png"],
-        source_image="p.png",
-        original_images=["o.png"],
-        preprocess_steps=["grayscale"],
-    )
-
-    cleared = repo.invalidate_preview_artifact(src, state)
-
-    assert cleared.original_img == ""
-    assert cleared.preprocess_steps is None
-    assert cleared.preview_img == ""
-
-
 def test_invalidate_from_stage_ocr_clears_original_and_steps(tmp_path: Path) -> None:
     """
     Given  a state with OCR text, an original image and steps
@@ -1176,26 +1189,6 @@ def test_a_missing_preview_leaves_no_pages(tmp_path: Path) -> None:
     assert loaded.pages == ()
 
 
-def test_invalidate_preview_artifact_clears_the_pages(tmp_path: Path) -> None:
-    """
-    Given  a state with three pages
-    When   invalidate_preview_artifact is called
-    Then   the pages are cleared with the preview paths
-    """
-    repo = _repo(tmp_path)
-    src = _source_file(tmp_path)
-    pages = _pages(tmp_path)
-    state = dataclasses.replace(
-        repo.create(src, compute_file_hash(src)),
-        source_image=str(pages[0]),
-        page_images=[str(page) for page in pages],
-    )
-
-    cleared = repo.invalidate_preview_artifact(src, state)
-
-    assert cleared.page_images == []
-
-
 def test_resetting_from_ocr_clears_the_pages(tmp_path: Path) -> None:
     """
     Given  a state with OCR text and three pages
@@ -1370,28 +1363,6 @@ def test_a_missing_first_original_leaves_no_originals(tmp_path: Path) -> None:
 
     assert loaded is not None
     assert loaded.originals == ()
-
-
-def test_invalidate_preview_artifact_clears_the_originals(tmp_path: Path) -> None:
-    """
-    Given  a state with three originals
-    When   invalidate_preview_artifact is called
-    Then   the originals are cleared with the preview paths
-    """
-    repo = _repo(tmp_path)
-    src = _source_file(tmp_path)
-    pages = _pages(tmp_path)
-    originals = _originals(tmp_path)
-    state = dataclasses.replace(
-        repo.create(src, compute_file_hash(src)),
-        source_image=str(pages[0]),
-        page_images=[str(page) for page in pages],
-        original_images=[str(page) for page in originals],
-    )
-
-    cleared = repo.invalidate_preview_artifact(src, state)
-
-    assert cleared.original_images == []
 
 
 def test_resetting_from_ocr_clears_the_originals(tmp_path: Path) -> None:

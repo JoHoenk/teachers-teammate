@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.composition import AppServices
-from ..config import DEFAULTS, OcrConfig
+from ..config import OcrConfig
 from ..domain.data_location import (
     ENGINE_OLLAMA,
     ENGINE_PPOCR,
@@ -54,6 +54,7 @@ from ..domain.pdf_text_layer import (
 )
 from ..domain.setting_values import PreprocessMethod
 from ..settings_schema import (
+    DEFAULTS,
     PDF_RENDER_DPI_RANGE,
     PREPROCESS_METHODS,
     normalize_preprocess_method,

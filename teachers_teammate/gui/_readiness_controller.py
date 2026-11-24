@@ -17,7 +17,6 @@ from PySide6.QtWidgets import QWidget
 
 from ..application.composition import AppServices
 from ..application.run import RunPreflight
-from ..config import DEFAULTS
 from ..domain.ollama_discovery import (
     OLLAMA_DOWNLOAD_URL,
     DiscoveredServer,
@@ -26,6 +25,7 @@ from ..domain.ollama_discovery import (
 )
 from ..domain.requirements import IssueKind, RequirementIssue
 from ..domain.stages import Stage
+from ..settings_schema import DEFAULTS
 from ..texts import dialogs as dlg
 from ..texts import main_window as txt
 from . import _dialogs
@@ -164,7 +164,7 @@ class ReadinessController(QObject):
         self._readiness_task.submit(
             lambda: service.run.check_run_preflight(
                 config,
-                memory=False,
+                for_run=False,
                 recognition=recognition,
                 fresh=fresh,
                 files=files,
@@ -308,7 +308,7 @@ class ReadinessController(QObject):
         panel = self._panel
         if panel.results_problem():
             return results_fix(RESULTS_NO_FOLDER)
-        if panel.get_input_dir() and self._services.run.output_refusal_for_run(
+        if panel.get_input_dir() and self._services.run.output_problem_for_run(
             panel.lookup_config()
         ):
             return results_fix(RESULTS_TEXT_IN_INPUT)

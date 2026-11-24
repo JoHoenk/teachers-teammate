@@ -12,6 +12,7 @@ from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import OCR_ENGINE_NAMES, RETIRED_ENGINE_NAMES
 from ..domain.local_models import READER_SIZE_LABEL
 from ..domain.output_files import FolderProblem
+from ..domain.requirements import MemoryShortfall
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ._types import (
     Choice,
@@ -38,6 +39,12 @@ UNKNOWN_ERROR = "unknown error"
 
 #: The label above the message of a step that failed, inside a dialog.
 ERROR_HEAD = "Error:"
+
+#: Why a run may not save text files where it looks for its inputs.
+TEXT_IN_INPUT_FOLDER = (
+    "Text files cannot be saved in the input folder: the next run would read them as new "
+    "documents. Choose a different output folder."
+)
 
 #: Why a window stays open while a package is being installed.
 INSTALLATION_RUNNING = (
@@ -100,6 +107,8 @@ def folder_problem_text(problem: FolderProblem, *, input_text: str = "") -> str:
         return "Input folder is required."
     if problem is FolderProblem.NO_OUTPUT:
         return "Output folder is required."
+    if problem is FolderProblem.TEXT_IN_INPUT:
+        return TEXT_IN_INPUT_FOLDER
     return f"Input folder does not exist: {input_text}"
 
 
@@ -168,11 +177,11 @@ def configuration_error(reason: str) -> Notice:
     return Notice("Configuration error", reason, NoticeKind.WARNING)
 
 
-def output_folder_refused(refusal: str) -> Notice:
+def output_folder_refused(problem: FolderProblem) -> Notice:
     """Tell the teacher why the output folder cannot be used, and where to change it."""
     return Notice(
         "Choose another output folder",
-        f"{refusal}\n\nChange it under {WHERE_RESULTS}.",
+        f"{folder_problem_text(problem)}\n\nChange it under {WHERE_RESULTS}.",
         NoticeKind.WARNING,
     )
 
@@ -396,11 +405,21 @@ def save_into_input_folder() -> Question:
     )
 
 
-def not_enough_memory(warning: str) -> Question:
+def memory_shortfall_text(shortfall: MemoryShortfall) -> str:
+    """Return why a model does not fit the memory that is free now, and what helps."""
+    return (
+        f"{shortfall.model} needs about {shortfall.needed_gb:.0f} GB of free memory, but only "
+        f"{shortfall.free_gb:.0f} GB are free on this computer right now. Close other programs "
+        "or choose a smaller model; otherwise the computer would have to use its disk as "
+        "memory and become extremely slow."
+    )
+
+
+def not_enough_memory(shortfall: MemoryShortfall) -> Question:
     """Ask before a run whose models do not fit the memory that is free now."""
     return Question(
         "Not enough free memory",
-        warning,
+        memory_shortfall_text(shortfall),
         (Choice("Run anyway"), cancel()),
         kind=QuestionKind.WARNING,
     )

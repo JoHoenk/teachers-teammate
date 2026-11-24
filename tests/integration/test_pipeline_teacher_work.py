@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 from docx import Document
 import pytest
 
+from teachers_teammate.domain.document_state import DocumentState, machine_texts
 from teachers_teammate.domain.evaluation import EvaluationOutcome
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.teacher_work import (
@@ -33,10 +34,8 @@ from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.infrastructure.pipeline import OCRPipeline
 from teachers_teammate.infrastructure.stage_builder import StageBuilder
 from teachers_teammate.infrastructure.state_repository import (
-    DocumentState,
     StateRepository,
     compute_file_hash,
-    machine_texts,
 )
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore

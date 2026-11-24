@@ -30,7 +30,8 @@ from pathlib import Path
 import shutil
 import uuid
 
-from ...config import DEFAULTS, OcrConfig
+from ...config import OcrConfig
+from ...settings_schema import DEFAULTS
 from ..storage_root import resolve_data_folder
 
 BENCHMARK_KEEP_LAST_N = 20
@@ -251,26 +252,6 @@ class BenchmarkRunStore:
                 runs.append(run)
         runs.sort(key=lambda r: r.timestamp, reverse=True)
         return runs
-
-    def list_documents(self) -> list[tuple[str, str]]:
-        """Return ``(document_hash, display_name)`` for every document with runs."""
-        if not self._root.is_dir():
-            return []
-        result: list[tuple[str, str]] = []
-        for doc_dir in sorted(self._root.iterdir()):
-            if not doc_dir.is_dir():
-                continue
-            meta = doc_dir / _DOCUMENT_META
-            display = doc_dir.name
-            if meta.is_file():
-                try:
-                    display = json.loads(meta.read_text(encoding="utf-8")).get(
-                        "display_name", doc_dir.name
-                    )
-                except (OSError, json.JSONDecodeError) as exc:
-                    _logger.debug("Cannot read %s, showing the folder name: %s", meta, exc)
-            result.append((doc_dir.name, display))
-        return result
 
     def delete(self, document_hash: str, run_id: str) -> None:
         """Remove a single run's JSON and its preview image."""

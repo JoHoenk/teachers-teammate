@@ -156,6 +156,9 @@ def _general_fix(issue: RequirementIssue) -> Fix | None:
                 ),
             ),
         )
+    if kind is IssueKind.OUTPUT_IN_INPUT_FOLDER:
+        # The same fix the Results step offers by itself: choose another output folder.
+        return results_fix(RESULTS_TEXT_IN_INPUT)
     if kind is IssueKind.OCR_NOT_ALLOWED:
         return Fix(
             fixes.OCR_NOT_ALLOWED,

@@ -710,24 +710,25 @@ def test_privacy_level_severity_orders_the_levels() -> None:
 
 
 @pytest.mark.parametrize(
-    ("level", "leaves", "names"),
+    ("level", "leaves"),
     [
-        (PrivacyLevel.LOCAL, False, False),
-        (PrivacyLevel.OWN_SERVER, True, False),
-        (PrivacyLevel.ANON_EU, True, False),
-        (PrivacyLevel.ANON_NON_EU, True, False),
-        (PrivacyLevel.NAMES_EU, True, True),
-        (PrivacyLevel.NAMES_NON_EU, True, True),
+        (PrivacyLevel.LOCAL, False),
+        (PrivacyLevel.OWN_SERVER, True),
+        (PrivacyLevel.ANON_EU, True),
+        (PrivacyLevel.ANON_NON_EU, True),
+        (PrivacyLevel.NAMES_EU, True),
+        (PrivacyLevel.NAMES_NON_EU, True),
     ],
 )
-def test_privacy_level_helpers(level: PrivacyLevel, leaves: bool, names: bool) -> None:
+def test_a_privacy_level_says_whether_data_leaves_this_computer(
+    level: PrivacyLevel, leaves: bool
+) -> None:
     """
     Given  a privacy level
-    When   its helpers are read
-    Then   only LOCAL stays on this computer and only the NAMES levels send names
+    When   it is asked whether data leaves this computer
+    Then   only LOCAL stays here
     """
     assert level.leaves_computer is leaves
-    assert level.sends_names is names
 
 
 def test_data_flow_level_is_the_worst_step() -> None:

@@ -20,6 +20,11 @@ from typing import Any
 
 from ._model_defaults import default_model_for_task
 from .atomic_file import write_text_atomic
+from .domain.anonymization import (
+    SECONDARY_MODEL_AUTO,
+    AnonymizerConfig,
+    resolve_patterns,
+)
 from .domain.correction_policy import CorrectionOutput
 from .domain.model_catalog import (
     OCR_TEMPERATURE,
@@ -33,15 +38,8 @@ from .domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
 from .domain.setting_values import ContextSetting, PreprocessMethod
 from .domain.stages import Stage
 from .exceptions import ConfigFileParseError
-from .interfaces import SUPPORTED_SUFFIXES as SUPPORTED_SUFFIXES  # noqa: PLC0414
-
-# ``DEFAULTS`` is read from here by most of the app; every other name of the schema is imported
-# from ``settings_schema`` itself.
 from .settings_schema import (
-    DEFAULTS as DEFAULTS,  # noqa: PLC0414
-)
-from .settings_schema import (
-    SECONDARY_MODEL_AUTO,
+    DEFAULTS,
     LoadedSettings,
     normalize_ocr_engine,
     normalize_ocr_model,
@@ -296,6 +294,19 @@ class Config:
     def evaluate_temperature(self) -> float:
         """Return the temperature the content review is sent at."""
         return review_temperature(self.effective_evaluate_model, self.evaluate_provider)
+
+    @property
+    def anonymizer_config(self) -> AnonymizerConfig:
+        """Return the anonymizer settings this config asks for, models unresolved.
+
+        The one place the stored settings become an :class:`AnonymizerConfig`, so a run, a
+        preview and the status box all start from the same settings.
+        """
+        return AnonymizerConfig(
+            primary_model=self.anonymizer_primary_model,
+            secondary_model=self.anonymizer_secondary_model,
+            patterns=resolve_patterns(self.anonymizer_patterns),
+        )
 
 
 def override_root() -> Path | None:

@@ -88,15 +88,6 @@ class OcrOutputPostprocessor:
         self._renderer = renderer or MarkdownRenderer()
         self._fallback = PlainTextParser()
 
-    def parse_page(self, text: str) -> tuple[FormattedDocument, str]:
-        """Return ``(document, parser_name)`` using the first parser that accepts *text*.
-
-        A code fence around the whole answer (chat models wrap Markdown/HTML in one) is
-        looked through.
-        """
-        _text, doc, name = self._detect(text)
-        return doc, name
-
     def _detect(self, text: str) -> tuple[str, FormattedDocument, str]:
         """Return ``(page_text, document, parser_name)``; *page_text* has no wrapping fence.
 

@@ -12,10 +12,18 @@ from collections.abc import Iterable, Sequence
 
 from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import DataFlow
-from ..domain.local_models import HUGGING_FACE_HOST, PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
+from ..domain.local_models import (
+    HUGGING_FACE_HOST,
+    PAGE_MODELS_SIZE_LABEL,
+    READER_DOWNLOAD_COMMAND,
+    READER_SIZE_LABEL,
+)
+from ..domain.ollama_discovery import OLLAMA_DOWNLOAD_URL
+from ..domain.requirements import IssueKind, RequirementIssue
 from . import app, privacy
 from .app import NAME
 from .privacy import level_text
+from .settings import WHERE_ADDONS, WHERE_ONLINE_SERVICES
 
 DESCRIPTION = (
     f"{NAME} — batch OCR pipeline that extracts text from PDFs/images "
@@ -213,3 +221,51 @@ def dpi_out_of_range(dpi: int, low: int, high: int) -> str:
 def timeout_out_of_range(seconds: int, low: int, high: int) -> str:
     """Return what ``--ocr-timeout`` says about *seconds* outside *low*..*high*."""
     return f"the timeout must be between {low} and {high} seconds, got {seconds}"
+
+
+_INSTALL_IN_APP = f"Install it in the app: {WHERE_ADDONS}"
+
+
+def _install_with_extra(extra: str) -> str:
+    """Return the hint to install it in the app, or from the wheel with its pip *extra*."""
+    return f'{_INSTALL_IN_APP}, or run: pip install "<wheel>[{extra}]"'
+
+
+#: What the command line says for an issue whose hint does not depend on its data.
+_FIXED_HINTS: dict[IssueKind, str] = {
+    IssueKind.READER_MODEL_MISSING: f"Download it with: {READER_DOWNLOAD_COMMAND}",
+    IssueKind.NOTHING_TO_READ: "Run again with --recognition, or queue files that have text.",
+    IssueKind.OLLAMA_NOT_RUNNING: "Start Ollama, then run again.",
+    IssueKind.OLLAMA_NOT_FOUND: f"Install Ollama from {OLLAMA_DOWNLOAD_URL}, then run again.",
+    IssueKind.OLLAMA_UNREACHABLE: (
+        "Check that the server answers at the address of --ollama-url, then run again."
+    ),
+    IssueKind.ADDON_RESTART_NEEDED: "Run the command again: the installation finishes at the start.",
+    IssueKind.OUTPUT_IN_INPUT_FOLDER: (
+        "Choose an output folder with -o/--output that is not the input folder."
+    ),
+    IssueKind.PACKAGE_MISSING: _install_with_extra("llm"),
+    IssueKind.NAME_DETECTION_MISSING: _INSTALL_IN_APP,
+    IssueKind.PRIVACY_ADDON_MISSING: _install_with_extra("privacy"),
+    IssueKind.ADDONS_OUTDATED: _INSTALL_IN_APP,
+}
+
+
+def cli_issue_hint(issue: RequirementIssue, *, env_key: str = "") -> str:
+    """Return what the command line suggests for *issue*, or ``""`` when nothing helps.
+
+    *env_key* is the environment variable the key of ``issue.provider`` is read from.
+    """
+    kind = issue.kind
+    if kind in (IssueKind.MODEL_MISSING, IssueKind.NO_OLLAMA_MODEL):
+        if not issue.models:
+            return "Download a model in Ollama with ollama pull, then run again."
+        pulls = "; ".join(f"ollama pull {model}" for model in issue.models)
+        return f"Download in Ollama: {pulls}"
+    if kind is IssueKind.KEY_MISSING:
+        if env_key:
+            return (
+                f"Set {env_key} in the environment, or save the key under {WHERE_ONLINE_SERVICES}."
+            )
+        return f"Save the key under {WHERE_ONLINE_SERVICES}."
+    return _FIXED_HINTS.get(kind, "")

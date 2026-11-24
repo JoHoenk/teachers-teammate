@@ -22,6 +22,7 @@ from ..infrastructure import logging_setup, power
 from ..infrastructure.addon_manager import AddonPackages
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.gpu_detector import SystemHardwareProbe
+from ..infrastructure.key_facts import MachineKeyFacts
 from ..infrastructure.ollama_utils import OllamaClient
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline
@@ -48,6 +49,7 @@ from .speed_estimates import SpeedEstimateService
 from .stored_results import StoredResults
 
 if TYPE_CHECKING:
+    from ..domain.key_facts import KeyFacts
     from ..infrastructure.diagnostics import Diagnostics
 
 
@@ -93,6 +95,8 @@ class AppServices:
     work_store: TeacherWorkStore
     model_store: ModelStore
     sleep_blocker: SleepBlocker
+    key_facts: KeyFacts
+    """What this computer adds to a cache key: its page models, its language, the exchange."""
 
 
 @dataclass(frozen=True)
@@ -143,8 +147,11 @@ def build_app_services(
     data_flow = _data_flow(providers, anonymization)
     recommendations = _recommendations(parts, providers, speeds)
     setup = _setup(parts, providers, reader, recommendations, anonymization, addons)
-    documents, commands = _documents(parts, recommendations, data_flow, anonymization)
-    run = _run(parts, providers, reader, recommendations, anonymization, addons, documents)
+    key_facts = MachineKeyFacts(parts.model_store)
+    documents, commands = _documents(parts, recommendations, data_flow, anonymization, key_facts)
+    run = _run(
+        parts, providers, reader, recommendations, anonymization, addons, documents, key_facts
+    )
     return AppServices(
         run=run,
         ollama=parts.ollama,
@@ -164,6 +171,7 @@ def build_app_services(
         work_store=parts.work_store,
         model_store=parts.model_store,
         sleep_blocker=parts.sleep_blocker,
+        key_facts=key_facts,
     )
 
 
@@ -286,6 +294,7 @@ def _documents(
     recommendations: ModelRecommendationService,
     data_flow: DataFlowService,
     anonymization: AnonymizationService,
+    facts: KeyFacts,
 ) -> tuple[DocumentQueries, DocumentCommands]:
     """Return what reads a document and what writes it, on the factories the run uses too."""
     # One store per output folder, and the context windows a run uses: the queue, the Check tab
@@ -295,7 +304,7 @@ def _documents(
     documents = DocumentQueries(
         state_store_factory=state_store,
         work_store=parts.work_store,
-        model_store=parts.model_store,
+        facts=facts,
         windows_for=windows,
         data_flow=data_flow,
         anonymization=anonymization,
@@ -303,7 +312,7 @@ def _documents(
     commands = DocumentCommands(
         state_store_factory=state_store,
         windows_for=windows,
-        model_store=parts.model_store,
+        facts=facts,
         work_store=parts.work_store,
     )
     return documents, commands
@@ -317,6 +326,7 @@ def _run(
     anonymization: AnonymizationService,
     addons: AddonService,
     documents: DocumentQueries,
+    key_facts: KeyFacts,
 ) -> RunService:
     """Return the run itself: the service the adapters start a batch on."""
     return RunService(
@@ -326,6 +336,7 @@ def _run(
             component_factory=parts.component_factory,
             sleep_blocker=parts.sleep_blocker,
             model_store=parts.model_store,
+            key_facts=key_facts,
             work_store=parts.work_store,
             samples=parts.samples,
         ),

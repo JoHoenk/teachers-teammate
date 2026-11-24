@@ -1,10 +1,9 @@
 """Everything the Check tab shows about one document, in one query.
 
-The tab used to be fed from the queue row: eight fields pushed by hand after every edit, and a
-panel that reloaded itself from them.  This module is the one place that reads a stored document
-and says what the tab shows — the texts, the review aligned with them, the items the list numbers,
-the pages of the scan, how the results were sent.  The window asks for it once per document and
-once per stored edit; nothing else assembles that state.
+This module is the one place that reads a stored document and says what the tab shows — the
+texts, the review aligned with them, the items the list numbers, the pages of the scan, how the
+results were sent.  The window asks for it once per document and once per stored edit; nothing
+else assembles that state.
 
 Pure apart from the state it is built from: no Qt, no I/O of its own.
 """

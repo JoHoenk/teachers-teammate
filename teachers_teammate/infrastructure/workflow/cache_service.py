@@ -94,8 +94,8 @@ def compute_ocr_config_hash(
     return compute_config_hash(
         Stage.OCR,
         ocr.engine,
-        # The engine is hashed twice on purpose: a "provider" slot used to sit here, and
-        # keeping the shape keeps every existing cached OCR result valid.
+        # Two slots for one value: the second is the provider slot the key has room for, and
+        # dropping it would change every OCR cache key.
         ocr.engine,
         ocr.model,
         *_preprocess_fingerprint(ocr, source, store),

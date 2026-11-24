@@ -38,7 +38,17 @@ from .domain.run_summary import FileOutcome, KeepAwakeState
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-SUPPORTED_SUFFIXES: frozenset[str] = frozenset({".pdf", ".png", ".jpg", ".jpeg", ".txt"})
+#: What reads each input suffix: ``"pdf"``, ``"image"`` or ``"text"``.
+INPUT_KINDS: dict[str, str] = {
+    ".pdf": "pdf",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".txt": "text",
+}
+
+#: Every input suffix the app accepts, and so every one a provider is built for.
+SUPPORTED_SUFFIXES: frozenset[str] = frozenset(INPUT_KINDS)
 
 
 @runtime_checkable
@@ -283,11 +293,9 @@ class Corrector(ABC):
 class Evaluator(ABC):
     """Assesses the quality of corrected OCR text.
 
-    Implementations: :class:`~infrastructure.evaluation.LangChainEvaluator`
-    (provider-agnostic) and :class:`~infrastructure.evaluation.NativeOllamaEvaluator`.
-    To add a non-LangChain evaluator, implement this ABC, add a constructor field
-    to :class:`~infrastructure.stage_builder.PipelineComponentFactory`, and select it
-    in :meth:`~infrastructure.stage_builder.StageBuilder.build_evaluation`.
+    Implementation: :class:`~infrastructure.evaluation.PortEvaluator`, which asks over the
+    run's connection to a model.  To review in another way, implement this ABC and swap the
+    :attr:`~infrastructure.stage_builder.PipelineComponentFactory.build_evaluator` field.
     """
 
     @abstractmethod

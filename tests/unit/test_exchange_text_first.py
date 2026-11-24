@@ -152,6 +152,33 @@ def test_a_cut_off_correction_fails_the_file() -> None:
     assert result.review is None
 
 
+def test_an_online_answer_cut_off_at_its_limit_fails_the_file() -> None:
+    """
+    Given  an online provider whose text-mode answer the output limit cut off
+    When   the exchange proofreads the text
+    Then   no half answer is stored: the file fails and keeps the source text
+    """
+    from langchain_core.language_models.fake_chat_models import (  # noqa: PLC0415
+        FakeMessagesListChatModel,
+    )
+    from langchain_core.messages import AIMessage  # noqa: PLC0415
+
+    from teachers_teammate.exceptions import TRUNCATED_MESSAGE  # noqa: PLC0415
+    from teachers_teammate.infrastructure.proofreading.port import LangChainPort  # noqa: PLC0415
+
+    cut_off_answer = AIMessage(
+        content=CORRECTED[:10], response_metadata={"finish_reason": "length"}
+    )
+    port = LangChainPort(FakeMessagesListChatModel(responses=[cut_off_answer]))
+
+    result = TextFirstExchange(port).proofread(SOURCE, _ctx())
+
+    assert result.failed is True
+    assert result.text == SOURCE
+    assert result.review is None
+    assert result.warnings == (TRUNCATED_MESSAGE,)
+
+
 def test_an_unreachable_server_fails_the_file() -> None:
     """
     Given  a server that cannot be reached

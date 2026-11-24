@@ -116,17 +116,16 @@ def test_effective_correction_model_honours_explicit_model() -> None:
     assert cfg.effective_correction_model == "gpt-3.5-turbo"
 
 
-def test_effective_correction_model_unknown_provider_falls_back() -> None:
+def test_effective_correction_model_unknown_provider_raises() -> None:
     """
     Given  a Config with an unrecognised correction_provider and no correction_model
     When   effective_correction_model is read
-    Then   a non-empty fallback string is returned without raising
+    Then   ValueError is raised: another provider's model would answer for a typo
     """
     cfg = _cfg(correction_provider="unknown_provider", correction_model="")
-    # Should not raise; returns a fallback string
-    result = cfg.effective_correction_model
-    assert isinstance(result, str)
-    assert len(result) > 0
+
+    with pytest.raises(ValueError, match="unknown_provider"):
+        _ = cfg.effective_correction_model
 
 
 # ── effective_evaluate_model ───────────────────────────────────────────────
@@ -409,16 +408,21 @@ def test_ocr_config_from_settings_replaces_online_engine() -> None:
     assert ocr.model == DEFAULTS["ocr_model"]
 
 
-def test_load_config_file_passes_through_unknown_provider(tmp_path: Path) -> None:
+def test_load_config_file_ignores_an_unknown_provider(tmp_path: Path) -> None:
     """
     Given  a TOML file with correction_provider = 'nonexistent_xyz'
     When   load_config_file() is called
-    Then   the value is returned as-is (provider validation happens at the CLI layer)
+    Then   the value is left out, so the default provider applies, and a notice names the key
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text('correction_provider = "nonexistent_xyz"\n')
-    result = _load(cfg_file)
-    assert result.get("correction_provider") == "nonexistent_xyz"
+
+    loaded = load_config_file(cfg_file)
+
+    assert "correction_provider" not in loaded.values
+    assert [(notice.key, notice.detail) for notice in loaded.notices] == [
+        ("correction_provider", "nonexistent_xyz")
+    ]
 
 
 def test_load_config_file_raises_on_invalid_toml(tmp_path: Path) -> None:

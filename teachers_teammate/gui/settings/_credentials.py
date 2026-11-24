@@ -1,10 +1,10 @@
 """API keys for the online AI services: one draft per key, shown in two places.
 
-Keys are not part of the pipeline settings.  :class:`~.._credential_store.CredentialStore`
-keeps them in the system's secret store (Keychain, Credential Manager, Secret Service) when
-there is one, otherwise in the app's settings file in plain text, and the note on the group
-says which.  Saved keys are handed to the app at start-up, where a key set before the app
-started takes priority (see ``MainWindow._load_credentials_from_settings``).
+Keys are not part of the pipeline settings.  The app's key store keeps them in the system's
+secret store (Keychain, Credential Manager, Secret Service) when there is one, otherwise in the
+app's settings file in plain text, and the note on the group says which.  Saved keys are handed
+to the app at start-up, where a key set before the app started takes priority (see
+``MainWindow._load_credentials_from_settings``).
 
 While the Settings window is open, a key is edited as an :class:`ApiKeyDrafts` entry that every
 page shares.  A key takes effect as soon as it is committed -- the providers ask the app for it
@@ -32,10 +32,10 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.composition import AppServices
+from ...domain.credentials import KeyLocation
 from ...texts import credentials as keys_text
 from ...texts import dialogs as dlg
 from .. import _dialogs, _html
-from .._credential_store import CredentialStore, KeyLocation
 
 #: How long after the last keystroke a typed key counts as entered.
 COMMIT_DELAY_MS = 800
@@ -53,16 +53,9 @@ class ApiKeyDrafts(QObject):
     #: The key of this environment variable changed (only on a real change).
     changed = Signal(str)
 
-    def __init__(
-        self,
-        app_service: AppServices,
-        *,
-        store: CredentialStore | None = None,
-        parent: QObject | None = None,
-    ) -> None:
+    def __init__(self, app_service: AppServices, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._app_service = app_service
-        self._store = store or CredentialStore()
         #: What the key was when the window first touched it, and what the app held for it then
         #: (``None`` = nothing, so the environment's counts again), which :meth:`discard` puts back.
         self._initial: dict[str, str] = {}
@@ -116,7 +109,7 @@ class ApiKeyDrafts(QObject):
     def location(self) -> KeyLocation:
         """Return where a saved key would be kept (asked once per window)."""
         if self._location is None:
-            self._location = self._store.location()
+            self._location = self._app_service.keys.location()
         return self._location
 
     def set(self, env_key: str, value: str) -> None:
@@ -160,14 +153,14 @@ class ApiKeyDrafts(QObject):
             if final == initial:
                 continue
             if final:
-                location = self._store.set(env_key, final)
+                location = self._app_service.keys.save(env_key, final)
                 if (
                     location is KeyLocation.SETTINGS_FILE
                     and self.location() is KeyLocation.KEYCHAIN
                 ):
                     in_file.append(env_key)
             else:
-                self._store.remove(env_key)
+                self._app_service.keys.forget(env_key)
         self._initial.clear()
         self._held_before.clear()
         return in_file
@@ -367,11 +360,10 @@ class CredentialsGroup(QGroupBox):
         parent: QWidget | None = None,
         *,
         drafts: ApiKeyDrafts | None = None,
-        store: CredentialStore | None = None,
     ) -> None:
         super().__init__(keys_text.GROUP_TITLE, parent)
         self._app_service = app_service
-        self.drafts = drafts or ApiKeyDrafts(app_service, store=store, parent=self)
+        self.drafts = drafts or ApiKeyDrafts(app_service, parent=self)
         layout = QVBoxLayout(self)
 
         in_keychain = self.drafts.location() is KeyLocation.KEYCHAIN

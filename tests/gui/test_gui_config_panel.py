@@ -8,10 +8,9 @@ from pathlib import Path
 import pytest
 from teachers_teammate.domain.install_item import InstallItem, InstallKind
 from teachers_teammate.domain.stages import Stage
-from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui.settings import SettingsPage
 
-from ._service_stubs import LocalDataFlowStub, services_of
+from ._service_stubs import LocalDataFlowStub, make_config_panel
 
 
 @pytest.mark.gui
@@ -26,7 +25,7 @@ def test_config_panel_to_config_maps_values(qtbot, tmp_path: Path) -> None:
     input_dir.mkdir()
     output_dir.mkdir()
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.set_input_dir(str(input_dir))
@@ -51,7 +50,7 @@ def test_config_panel_to_config_rejects_missing_input(qtbot, tmp_path: Path) -> 
     output_dir = tmp_path / "output"
     output_dir.mkdir()
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel._settings_dict["output"] = str(output_dir)
 
@@ -71,7 +70,7 @@ def test_config_panel_to_config_allows_missing_output_when_docx_disabled(
     input_dir = tmp_path / "input"
     input_dir.mkdir()
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.set_input_dir(str(input_dir))
@@ -91,7 +90,7 @@ def test_config_panel_configure_prompt_buttons_always_enabled(qtbot) -> None:
     When   the enable checkboxes are toggled on and off
     Then   the Configure Prompt buttons remain enabled throughout
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     assert panel._correction_prompt_btn.isEnabled() is True
@@ -116,7 +115,7 @@ def test_content_review_is_disabled_while_proofreading_is_off(qtbot) -> None:
     Then   the review box is disabled with a tooltip and keeps its tick, and the settings
            still say it is ticked (so it is saved)
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel._evaluation_enabled.setChecked(True)
 
@@ -140,12 +139,11 @@ def test_a_review_without_proofreading_counts_as_off_in_every_config(qtbot, tmp_
     """
     input_dir = tmp_path / "in"
     input_dir.mkdir()
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.set_input_dir(str(input_dir))
     panel._evaluation_enabled.setChecked(True)
     panel._correction_enabled.setChecked(True)
-    panel.set_service(services_of(_GuardService()))
     assert panel.to_config().evaluation_enabled is True
     assert panel.lookup_config().evaluation_enabled is True
 
@@ -166,11 +164,10 @@ def test_the_guard_unticking_proofreading_disables_the_review(qtbot, monkeypatch
     from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
 
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: 0)
-    panel = ConfigPanel()
+    panel = make_config_panel(_GuardService())
     qtbot.addWidget(panel)
     panel._evaluation_enabled.setChecked(True)
     panel._correction_enabled.setChecked(False)
-    panel.set_service(services_of(_GuardService()))
 
     panel._correction_enabled.setChecked(True)
     qtbot.waitUntil(lambda: not panel._correction_enabled.isChecked(), timeout=3000)
@@ -192,9 +189,8 @@ def test_ticking_proofreading_again_guards_the_ticked_review_too(qtbot, monkeypa
             checked.append(stage)
             return []
 
-    panel = ConfigPanel()
+    panel = make_config_panel(_Service())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_Service()))
     panel._evaluation_enabled.setChecked(True)
     qtbot.waitUntil(lambda: checked == ["evaluation"], timeout=3000)  # ticking the review
     panel._correction_enabled.setChecked(False)
@@ -215,11 +211,11 @@ def test_a_problem_shared_by_proofreading_and_review_is_explained_once(qtbot, mo
 
     dialogs: list[object] = []
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
-    panel = ConfigPanel()
+    panel = make_config_panel(_GuardService())
     qtbot.addWidget(panel)
-    panel._evaluation_enabled.setChecked(True)  # before the service: nothing is checked yet
+    # Restored as ticked, not ticked now: its own check would report the same missing model.
+    panel.load_from_dict({"evaluation_enabled": True})
     panel._correction_enabled.setChecked(False)
-    panel.set_service(services_of(_GuardService()))
 
     panel._correction_enabled.setChecked(True)
     qtbot.waitUntil(lambda: not panel._correction_enabled.isChecked(), timeout=3000)
@@ -250,10 +246,9 @@ def test_a_late_review_answer_is_ignored_once_proofreading_is_off(qtbot, monkeyp
             return super().check_stage_requirements(config, stage)
 
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
-    panel = ConfigPanel()
+    panel = make_config_panel(_SlowService())
     qtbot.addWidget(panel)
     panel._correction_enabled.setChecked(False)
-    panel.set_service(services_of(_SlowService()))
     panel._evaluation_enabled.setChecked(True)  # starts the review's check, which waits
 
     release.set()
@@ -272,7 +267,7 @@ def test_the_level_sits_in_step_two_and_reaches_the_config(qtbot, tmp_path) -> N
     """
     input_dir = tmp_path / "in"
     input_dir.mkdir()
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.set_input_dir(str(input_dir))
 
@@ -292,10 +287,9 @@ def test_the_lookup_config_is_recursive_like_the_run_config(qtbot, tmp_path) -> 
     """
     input_dir = tmp_path / "in"
     input_dir.mkdir()
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.set_input_dir(str(input_dir))
-    panel.set_service(services_of(_GuardService()))
 
     assert panel.lookup_config().recursive is True
     assert panel.to_config().recursive is True
@@ -312,7 +306,7 @@ def test_the_lookup_config_is_the_run_config(qtbot, tmp_path) -> None:
     output_dir = tmp_path / "out"
     input_dir.mkdir()
     output_dir.mkdir()
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.set_input_dir(str(input_dir))
     panel._settings_dict["output"] = str(output_dir)
@@ -330,7 +324,7 @@ def test_without_a_results_folder_both_configs_name_the_same_state_folder(qtbot,
     """
     input_dir = tmp_path / "in"
     input_dir.mkdir()
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.set_input_dir(str(input_dir))
 
@@ -345,9 +339,8 @@ def test_the_lookup_config_carries_the_results_step(qtbot) -> None:
     When   the lookup config for the requirement checks is built
     Then   it carries those, so the preflight checks name detection for that file alone
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_GuardService()))
     panel.update_settings({"hardware_profile": "16gb", "proofreading_context": "16384"})
     panel._results._docx_enabled.setChecked(False)
     panel._results._text_enabled.setChecked(True)
@@ -369,7 +362,7 @@ def test_the_results_problem_is_a_file_output_without_a_folder(qtbot) -> None:
     When   a file output is ticked without a folder, and then a folder is chosen
     Then   results_problem() is true only in between
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel._results._docx_enabled.setChecked(False)
     assert panel.results_problem() is False
@@ -444,7 +437,7 @@ def test_the_options_buttons_open_dialogs_with_the_new_titles(qtbot, monkeypatch
 
     monkeypatch.setattr(_ProofreadingDialog, "exec", reject)
     monkeypatch.setattr(_PromptDialog, "exec", reject)
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel._correction_prompt_btn.click()
@@ -462,7 +455,7 @@ def test_config_panel_enabling_evaluation_sets_flag(qtbot) -> None:
     When   the evaluation checkbox is enabled
     Then   evaluation_enabled is recorded in the settings dict
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel._evaluation_enabled.setChecked(True)
@@ -484,7 +477,7 @@ def test_config_panel_set_selected_files_overrides_folder(qtbot, tmp_path: Path)
     f1.touch()
     f2.touch()
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.set_input_dir(str(folder))
@@ -524,9 +517,8 @@ def test_guard_dialog_opens_addons_on_local_models_with_missing_model_ticked(
     monkeypatch.setattr(
         DependencyGuardDialog, "exec", lambda self: self.action_chosen.emit(self.fix_actions[0])
     )
-    panel = ConfigPanel()
+    panel = make_config_panel(_GuardService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_GuardService()))
     panel.update_settings({"correction_provider": "ollama", "correction_model": "qwen3.5:9b"})
     requests: list[tuple[object, str, list[InstallItem]]] = []
     panel.open_settings_requested.connect(
@@ -565,9 +557,8 @@ def test_loading_saved_settings_does_not_run_the_requirement_guard(qtbot, monkey
             return super().check_stage_requirements(config, stage)
 
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
-    panel = ConfigPanel()
+    panel = make_config_panel(_Service())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_Service()))
 
     panel.load_from_dict({"correction_enabled": True, "evaluation_enabled": True})
     qtbot.wait(100)  # a (wrongly) scheduled background check would have finished by now
@@ -599,9 +590,8 @@ def test_ticking_a_stage_checks_requirements_off_the_gui_thread(qtbot, monkeypat
             return super().check_stage_requirements(config, stage)
 
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
-    panel = ConfigPanel()
+    panel = make_config_panel(_SlowService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_SlowService()))
     panel._correction_enabled.setChecked(False)
 
     panel._correction_enabled.setChecked(True)
@@ -635,9 +625,8 @@ def test_outdated_guard_result_for_a_replaced_model_is_ignored(qtbot, monkeypatc
             return super().check_stage_requirements(config, stage)
 
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
-    panel = ConfigPanel()
+    panel = make_config_panel(_SlowService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_SlowService()))
     panel.update_settings({"correction_provider": "ollama", "correction_model": "model-x"})
     panel._correction_enabled.setChecked(False)
     panel._correction_enabled.setChecked(True)
@@ -681,9 +670,8 @@ def test_only_the_latest_guard_check_of_a_stage_counts(qtbot, monkeypatch) -> No
             return answers[index]
 
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
-    panel = ConfigPanel()
+    panel = make_config_panel(_Service())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_Service()))
     panel._correction_enabled.setChecked(False)
     panel._correction_enabled.setChecked(True)
     qtbot.waitUntil(lambda: calls["n"] == 1, timeout=3000)
@@ -710,7 +698,7 @@ def test_config_panel_to_config_applies_preprocess_and_pdf_settings(qtbot, tmp_p
     """
     input_dir = tmp_path / "input"
     input_dir.mkdir()
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.set_input_dir(str(input_dir))
     panel.update_settings(
@@ -737,7 +725,7 @@ def test_a_method_of_the_old_preparation_in_the_settings_reads_as_automatic(
     When   load_from_dict() and then to_config() are called
     Then   the method is "auto", and the switch keys neither appear in to_dict() nor fail
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.set_input_dir(str(tmp_path))
 
@@ -761,7 +749,7 @@ def test_load_from_dict_restores_advanced_ocr_settings(qtbot, tmp_path: Path) ->
     """
     input_dir = tmp_path / "input"
     input_dir.mkdir()
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.set_input_dir(str(input_dir))
 
@@ -815,10 +803,9 @@ def test_summary_follows_the_step_3_checkbox(qtbot) -> None:
     When   "Remove personal info" is ticked
     Then   the summary no longer advises hiding names and says only anonymized text leaves
     """
-    panel = ConfigPanel()
+    panel = make_config_panel(_FlowService())
     qtbot.addWidget(panel)
-    panel._correction_enabled.setChecked(True)  # before the service: nothing is checked yet
-    panel.set_service(services_of(_FlowService()))
+    panel._correction_enabled.setChecked(True)
     assert "Remove personal info" in panel._data_flow_summary._body.text()
 
     panel._anonymization_enabled.setChecked(True)
@@ -896,9 +883,8 @@ def test_every_step_shows_what_it_uses(qtbot) -> None:
     When   the panel shows its data flow
     Then   each step has a line with its model and place, and name removal says what it does
     """
-    panel = ConfigPanel()
+    panel = make_config_panel(_StepsService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_StepsService()))
 
     panel.update_settings(_MISTRAL)
     panel._anonymization_enabled.setChecked(True)
@@ -917,9 +903,8 @@ def test_the_name_removal_line_is_hidden_while_it_is_off(qtbot) -> None:
     When   the data flow is shown
     Then   the line under the step is hidden instead of repeating "Off"
     """
-    panel = ConfigPanel()
+    panel = make_config_panel(_StepsService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_StepsService()))
 
     panel.update_settings(_MISTRAL)
 
@@ -934,9 +919,8 @@ def test_the_name_removal_line_names_the_languages(qtbot) -> None:
     When   the data flow is shown
     Then   the line names both languages and says neither "spaCy" nor "On"
     """
-    panel = ConfigPanel()
+    panel = make_config_panel(_TwoLanguageStepsService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_TwoLanguageStepsService()))
 
     panel.update_settings(_MISTRAL)
     panel._anonymization_enabled.setChecked(True)
@@ -954,9 +938,8 @@ def test_a_program_engine_is_named_by_the_engine_not_by_the_ollama_model(qtbot) 
     When   the panel shows what text recognition uses
     Then   the line does not name the Ollama model, which is not what is used
     """
-    panel = ConfigPanel()
+    panel = make_config_panel(_StepsService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_StepsService()))
 
     panel.update_settings({**_MISTRAL, "ocr_engine": "ppocr"})
 
@@ -978,9 +961,8 @@ def test_a_replaced_engine_in_a_settings_dict_is_taken_over_quietly(
     Then   it holds the local engine that replaces it and says nothing: the loader reports the
            replacement, so the window shows it once (see test_config.py)
     """
-    panel = ConfigPanel()
+    panel = make_config_panel(_StepsService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_StepsService()))
 
     panel.load_from_dict({**_MISTRAL, "ocr_engine": engine})
 
@@ -994,9 +976,8 @@ def test_the_review_line_names_its_own_model_when_it_differs(qtbot) -> None:
     When   the panel shows its data flow
     Then   the review line names its model instead of "Same model as proofreading"
     """
-    panel = ConfigPanel()
+    panel = make_config_panel(_StepsService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_StepsService()))
 
     panel.update_settings({**_MISTRAL, "evaluate_model": "mistral-large-latest"})
 
@@ -1011,9 +992,8 @@ def test_an_unticked_step_keeps_its_line_in_grey(qtbot) -> None:
     When   "Proofread" is unticked
     Then   the line still names the model, now in grey, and the review line follows
     """
-    panel = ConfigPanel()
+    panel = make_config_panel(_StepsService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_StepsService()))
     panel.update_settings(_MISTRAL)
     panel._evaluation_enabled.setChecked(True)
     assert "#888" not in panel._correction_uses.text()
@@ -1036,7 +1016,7 @@ def test_change_opens_ai_models_on_that_step(qtbot, line, focus) -> None:
     When   "change…" is clicked on one of them
     Then   the panel asks for the AI models page, focused on that step
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     requests: list[tuple[object, str, list[InstallItem]]] = []
     panel.open_settings_requested.connect(lambda *args: requests.append(args))
@@ -1053,7 +1033,7 @@ def test_name_removal_has_no_change_link(qtbot) -> None:
     When   the panel is built
     Then   it has no "change…" link: that step has its "Rules…" button instead
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     assert panel._anonymization_uses.change_link.isHidden()
@@ -1066,9 +1046,8 @@ def test_the_model_name_is_not_part_of_what_the_teacher_confirmed(qtbot) -> None
     When   another model of the same service is chosen
     Then   the data flow keeps the same fingerprint, so the answer stays valid
     """
-    panel = ConfigPanel()
+    panel = make_config_panel(_StepsService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_StepsService()))
     panel.update_settings(_MISTRAL)
     before = panel.data_flow().fingerprint
 
@@ -1086,7 +1065,9 @@ class _FlowServiceMissingPrivacy(_FlowService):
             RequirementIssue,
         )
 
-        _ = config, stage
+        _ = config
+        if stage != "anonymizer":
+            return []  # only hiding names needs the missing add-on
         return [
             RequirementIssue(
                 IssueKind.NAME_DETECTION_MISSING,
@@ -1105,10 +1086,9 @@ def test_summary_follows_a_stage_the_guard_unticked(qtbot, monkeypatch) -> None:
     from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
 
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: 0)
-    panel = ConfigPanel()
+    panel = make_config_panel(_FlowServiceMissingPrivacy())
     qtbot.addWidget(panel)
-    panel._correction_enabled.setChecked(True)  # before the service: nothing is checked yet
-    panel.set_service(services_of(_FlowServiceMissingPrivacy()))
+    panel._correction_enabled.setChecked(True)
 
     panel._anonymization_enabled.setChecked(True)
     qtbot.waitUntil(lambda: not panel._anonymization_enabled.isChecked(), timeout=3000)
@@ -1123,17 +1103,18 @@ def test_summary_refreshes_after_settings_dialog_changes(qtbot) -> None:
     When   the settings dialog hands back new values
     Then   the summary is rendered again from the live settings
     """
-    panel = ConfigPanel()
-    qtbot.addWidget(panel)
     calls: list[int] = []
 
     class _CountingService(_FlowService):
+        """Counts how often the panel renders the data flow."""
+
         def describe_steps(self, config):
             calls.append(1)
             return super().describe_steps(config)
 
-    panel.set_service(services_of(_CountingService()))
-    calls.clear()
+    panel = make_config_panel(_CountingService())
+    qtbot.addWidget(panel)
+    calls.clear()  # building the panel renders it once
 
     panel.update_settings({"correction_provider": "openai"})
 
@@ -1147,17 +1128,18 @@ def test_loading_settings_renders_the_summary_once(qtbot) -> None:
     When   saved settings that flip several checkboxes are loaded
     Then   the summary is rendered once, from the final settings, not once per checkbox
     """
-    panel = ConfigPanel()
-    qtbot.addWidget(panel)
     calls: list[int] = []
 
     class _CountingService(_FlowService):
+        """Counts how often the panel renders the data flow."""
+
         def describe_steps(self, config):
             calls.append(1)
             return super().describe_steps(config)
 
-    panel.set_service(services_of(_CountingService()))
-    calls.clear()
+    panel = make_config_panel(_CountingService())
+    qtbot.addWidget(panel)
+    calls.clear()  # building the panel renders it once
 
     panel.load_from_dict(
         {
@@ -1177,7 +1159,7 @@ def test_saved_online_ocr_engine_falls_back_to_the_local_default(qtbot) -> None:
     When   they are loaded into the panel
     Then   the engine is the local default
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.load_from_dict({"ocr_engine": "langchain", "ocr_provider": "openai"})
@@ -1193,7 +1175,7 @@ def test_config_panel_language_change_keeps_the_notes(qtbot) -> None:
     When   the document language is changed
     Then   the notes stay — they are the teacher's own words, not a language preset
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.set_correction_notes("Year 9, second foreign language.")
@@ -1209,12 +1191,12 @@ def test_config_panel_round_trips_the_notes(qtbot) -> None:
     When   they are saved with to_dict() and loaded into a new panel
     Then   the notes reach the Config the pipeline uses
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.set_correction_notes("Ignore missing capital letters in headings.")
 
     saved = panel.to_dict()
-    other = ConfigPanel()
+    other = make_config_panel()
     qtbot.addWidget(other)
     other.load_from_dict(saved)
 
@@ -1230,7 +1212,7 @@ def test_config_panel_cuts_notes_longer_than_the_limit(qtbot) -> None:
     """
     from teachers_teammate.domain.correction_prompts import NOTES_LIMIT  # noqa: PLC0415
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.set_correction_notes("x" * (NOTES_LIMIT + 40))
@@ -1245,7 +1227,7 @@ def test_config_panel_ignores_the_removed_proofreading_keys(qtbot) -> None:
     When   load_from_dict() applies them
     Then   the notes stay empty and the removed keys are not written again
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.load_from_dict(
@@ -1271,9 +1253,8 @@ def test_lookup_config_carries_the_anonymizer_rules_and_instructions(qtbot) -> N
     When   lookup_config() is read (the "What is sent" dialog and the status box use it)
     Then   the config holds those settings instead of the defaults
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_GuardService()))
     panel.update_settings(
         {
             "anonymizer_primary_model": "de_core_news_sm",
@@ -1296,13 +1277,12 @@ def test_lookup_config_carries_the_anonymizer_rules_and_instructions(qtbot) -> N
 @pytest.mark.gui
 def test_changing_the_document_language_refreshes_the_data_flow(qtbot) -> None:
     """
-    Given  a panel with a service
+    Given  the panel
     When   the document language changes
     Then   the data flow is described again and announced (models and availability depend on it)
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_GuardService()))
     announced: list[object] = []
     panel.data_flow_changed.connect(announced.append)
 
@@ -1322,7 +1302,7 @@ def test_results_step_shows_and_saves_the_output_choices(qtbot, tmp_path: Path) 
     Then   the Results step shows them, and to_dict() / load_from_dict() round-trip the change
            with the same keys as the old Output Settings dialog
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.load_from_dict(
         {
@@ -1350,7 +1330,7 @@ def test_results_step_shows_and_saves_the_output_choices(qtbot, tmp_path: Path) 
     assert saved["text_enabled"] is True
     assert saved["text_anonymized_enabled"] is True
 
-    reloaded = ConfigPanel()
+    reloaded = make_config_panel()
     qtbot.addWidget(reloaded)
     reloaded.load_from_dict(saved)
     assert not reloaded._results._docx_enabled.isChecked()
@@ -1376,7 +1356,7 @@ def test_the_text_file_row_round_trips_all_four_key_combinations(
     When   they are loaded into the panel and read back
     Then   the checkbox and the choice show them, and to_dict() writes the same two keys
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.load_from_dict({"text_enabled": as_written, "text_anonymized_enabled": anonymized})
 
@@ -1395,7 +1375,7 @@ def test_unticking_the_text_file_keeps_the_choice_for_next_time(qtbot) -> None:
     When   the checkbox is unticked
     Then   both keys are off, the choice stays "both" and the choice is disabled
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel._results._text_enabled.setChecked(True)
     panel._results._text_mode.setCurrentText("both")
@@ -1415,7 +1395,7 @@ def test_word_layout_is_only_enabled_while_word_is_ticked(qtbot) -> None:
     When   Word is unticked and ticked again
     Then   the layout choice is disabled while Word is off and enabled again with it
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel._results._docx_enabled.setChecked(True)
     assert panel._results._docx_format.isEnabled()
@@ -1439,7 +1419,7 @@ def test_changing_the_results_step_tells_the_main_window(
     """
     from teachers_teammate.gui import _dialogs  # noqa: PLC0415
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     changes: list[bool] = []
     panel.results_changed.connect(lambda: changes.append(True))
@@ -1467,7 +1447,7 @@ def test_text_files_without_a_folder_turn_the_hint_orange(qtbot) -> None:
     When   text files are ticked
     Then   the hint that text files need a folder is shown as a warning
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.update_settings({"output": ""})
     assert "#888" in panel._results._text_hint.styleSheet()
@@ -1484,7 +1464,7 @@ def test_settings_from_the_settings_window_reach_the_results_step(qtbot, tmp_pat
     When   update_settings() brings another output folder and Word layout (e.g. Restore defaults)
     Then   the Results step shows them without reporting a user change
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     changes: list[bool] = []
     panel.results_changed.connect(lambda: changes.append(True))
@@ -1563,7 +1543,7 @@ def test_confirming_an_instructions_dialog_tells_the_main_window(
     answers = [QDialog.DialogCode.Rejected, QDialog.DialogCode.Accepted]
     monkeypatch.setattr(_ProofreadingDialog, "exec", lambda self: answers.pop(0))
     monkeypatch.setattr(_PromptDialog, "exec", lambda self: answers.pop(0))
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     emitted: list[bool] = []
     panel.instructions_changed.connect(lambda: emitted.append(True))
@@ -1594,7 +1574,7 @@ def test_accepting_the_proofreading_options_saves_the_notes_and_explanations(
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(_ProofreadingDialog, "exec", accept_with_notes)
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.update_settings({"explanation_language": "French", "correction_output": "review"})
 
@@ -1615,7 +1595,7 @@ def test_both_path_rows_are_read_only(qtbot) -> None:
     """
     from teachers_teammate.gui._path_row import PathRow  # noqa: PLC0415
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     assert isinstance(panel._selection.row, PathRow)
@@ -1651,7 +1631,7 @@ def test_the_pickers_pass_the_panel_and_the_results_start_next_to_the_documents(
     monkeypatch.setattr(_dialogs, "pick_folder", pick_folder)
     monkeypatch.setattr(_dialogs, "pick_files", pick_files)
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel._selection.folder_button.click()
@@ -1676,7 +1656,7 @@ def test_a_file_selection_shows_how_many_files_were_picked(qtbot, tmp_path: Path
     for path in files:
         path.touch()
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.set_selected_files(files)
 
@@ -1697,7 +1677,7 @@ def test_a_long_file_selection_lists_twenty_names_and_counts_the_rest(
     for path in files:
         path.touch()
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.set_selected_files(files)
 
@@ -1713,7 +1693,7 @@ def test_the_output_folder_field_does_not_promise_a_blank_folder_works(qtbot) ->
     When   its folder field is empty
     Then   the placeholder asks for a folder instead of promising "save next to your documents"
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     assert panel._results._output_dir.placeholderText() == "Choose a folder for the results"
@@ -1735,10 +1715,9 @@ def test_recognize_text_is_a_ticked_checkbox_that_every_config_reports(qtbot, tm
 
     input_dir = tmp_path / "in"
     input_dir.mkdir()
-    panel = ConfigPanel()
+    panel = make_config_panel(_GuardService())
     qtbot.addWidget(panel)
     panel.set_input_dir(str(input_dir))
-    panel.set_service(services_of(_GuardService()))
     assert isinstance(panel._recognition_enabled, QCheckBox)
     assert panel._recognition_enabled.isChecked() is True
     assert panel.to_config().recognition_enabled is True
@@ -1758,7 +1737,7 @@ def test_recognize_text_is_restored_from_saved_settings_and_reset_by_defaults(qt
     When   they are loaded, and later the defaults are restored
     Then   the box is unticked after loading and ticked again after the reset
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.load_from_dict({"recognition_enabled": False})
@@ -1776,9 +1755,8 @@ def test_switching_recognition_off_takes_it_out_of_the_data_flow_box(qtbot) -> N
     Then   the box no longer lists text recognition (no page is read), while the line under
            the step keeps naming what ticking it would use
     """
-    panel = ConfigPanel()
+    panel = make_config_panel(_GuardService())
     qtbot.addWidget(panel)
-    panel.set_service(services_of(_GuardService()))
     assert panel.data_flow() is not None
     assert panel.data_flow().stage(Stage.OCR) is not None
 
@@ -1811,10 +1789,9 @@ def test_ticking_recognition_checks_the_engine_and_unticks_when_it_is_missing(
             assert stage == "ocr"
             return [RequirementIssue(IssueKind.READER_MODEL_MISSING)]
 
-    panel = ConfigPanel()
+    panel = make_config_panel(_Service())
     qtbot.addWidget(panel)
     panel._recognition_enabled.setChecked(False)
-    panel.set_service(services_of(_Service()))
 
     panel._recognition_enabled.setChecked(True)
     qtbot.waitUntil(lambda: not panel._recognition_enabled.isChecked(), timeout=3000)
@@ -1831,7 +1808,7 @@ def test_the_recognition_note_counts_skipped_scans_or_says_nothing_is_needed(qtb
            while it is on, then neither
     Then   the note says "3 scans will be skipped", then "Not needed", then it is hidden
     """
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.show()
 

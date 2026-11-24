@@ -277,17 +277,39 @@ def make_config(tmp_path: Path, **overrides: object):
     return Config(**defaults)
 
 
-def pipeline_dependencies(tmp_path: Path, **fields: object):
-    """Return what a run is given from outside; its samples go into *tmp_path*.
+def make_key_facts():
+    """Return this computer's key facts with an empty model folder, as a test finds it.
 
-    A test never lets a run write its speed samples into the folder of the teacher who runs the
-    suite, and every pipeline test passes this so the one store of the process is the test's.
+    The cache keys a document gets are worked out from these; a test never reads the models of
+    the machine it runs on.
     """
+    from teachers_teammate.infrastructure.key_facts import MachineKeyFacts  # noqa: PLC0415
+    from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
+
+    return MachineKeyFacts(ModelStore())
+
+
+def pipeline_dependencies(tmp_path: Path, **fields: object):
+    """Return what a run is given from outside; its speed samples go into *tmp_path*.
+
+    The teacher's work and the model folder are the app's own stores, which the autouse fixtures
+    point at empty temporary folders: a run and the test that set the work up see one folder.
+    """
+    from teachers_teammate.infrastructure.key_facts import MachineKeyFacts  # noqa: PLC0415
+    from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
     from teachers_teammate.infrastructure.pipeline import PipelineDependencies  # noqa: PLC0415
     from teachers_teammate.infrastructure.speed_store import SampleStore  # noqa: PLC0415
+    from teachers_teammate.infrastructure.teacher_work_store import (  # noqa: PLC0415
+        TeacherWorkStore,
+    )
 
-    values: dict[str, object] = {"samples": SampleStore(tmp_path / "samples.json")}
+    values: dict[str, object] = {
+        "samples": SampleStore(tmp_path / "samples.json"),
+        "work_store": TeacherWorkStore(),
+        "model_store": ModelStore(),
+    }
     values.update(fields)
+    values.setdefault("key_facts", MachineKeyFacts(values["model_store"]))
     return PipelineDependencies(**values)  # ty: ignore[invalid-argument-type]
 
 
@@ -377,7 +399,7 @@ def credential_file(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """
     stored: dict[str, object] = {}
     try:
-        from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+        from teachers_teammate.infrastructure import credential_store  # noqa: PLC0415
     except ImportError:  # pure-unit targets without PySide6
         return stored
 
@@ -394,8 +416,8 @@ def credential_file(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         def remove(self, key: str) -> None:
             stored.pop(key, None)
 
-    monkeypatch.setattr(_credential_store, "app_settings", lambda: MemorySettings())
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: None)
+    monkeypatch.setattr(credential_store, "app_settings", lambda: MemorySettings())
+    monkeypatch.setattr(credential_store, "_keyring", lambda: None)
     return stored
 
 

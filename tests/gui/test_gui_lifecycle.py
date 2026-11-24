@@ -20,7 +20,6 @@ from teachers_teammate.gui._addon_installer_dialog import AddonInstallerDialog, 
 from teachers_teammate.gui._anonymizer_config_widget import AnonymizerConfigWidget
 from teachers_teammate.gui._chart_widget import ChartWidget
 from teachers_teammate.gui._collapsible_section import CollapsibleSection
-from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog
 from teachers_teammate.gui._help_dialog import AboutDialog, HelpDialog, LicensesDialog
 from teachers_teammate.gui._log_widget import LogWidget
@@ -36,7 +35,7 @@ from teachers_teammate.gui.benchmark.composition import build_benchmark_window
 from teachers_teammate.gui.composition import build_main_window
 from teachers_teammate.gui.settings import SettingsPage, SettingsWindow
 
-from ._service_stubs import services_of
+from ._service_stubs import make_config_panel, services_of
 from ._gui_harness import (
     FakeGuiService,
     exercise_lifecycle,
@@ -68,7 +67,7 @@ WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
     ("help", lambda: HelpDialog()),
     ("licenses", lambda: LicensesDialog()),
     ("dependency_guard", lambda: DependencyGuardDialog("correction", [])),
-    ("config_panel", lambda: ConfigPanel()),
+    ("config_panel", lambda: make_config_panel()),
     ("results_table", lambda: ResultsTable()),
     ("zoomable_image", lambda: ZoomableImageView()),
     ("diff_widget", lambda: DiffWidget()),

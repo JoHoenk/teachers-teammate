@@ -367,7 +367,7 @@ class SpacyAnonymizer(Anonymizer):
         language: str = "English",
         config: AnonymizerConfig | None = None,
         *,
-        models: SpacyModels | None = None,
+        models: SpacyModels,
     ) -> None:
         # Nothing is said about a dropped extra model here: the run that builds this resolved
         # the same settings and worded the notice itself.
@@ -377,9 +377,7 @@ class SpacyAnonymizer(Anonymizer):
             system_language=system_locale.system_language(),
         )
         primary_model = self._config.primary_model or spacy_model_for(language)
-        self._nlp, self._nlp_secondary = (models or SpacyModels()).load(
-            primary_model, self._config.secondary_model
-        )
+        self._nlp, self._nlp_secondary = models.load(primary_model, self._config.secondary_model)
 
     def anonymize(self, text: str) -> tuple[str, AnonymizationMap]:
         """Replace PII in *text* with stable placeholders.

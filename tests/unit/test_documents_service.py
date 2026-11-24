@@ -23,11 +23,10 @@ from teachers_teammate.domain.teacher_work import (
 from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.cache_keys import correction_key, sent_record
-from teachers_teammate.infrastructure.key_facts import MachineKeyFacts
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheReconciliationService,
 )
-from tests.conftest import make_config
+from tests.conftest import make_config, make_key_facts
 from ._service_helpers import (
     _change_work,
     _machine_of,
@@ -61,7 +60,9 @@ def test_a_privacy_setting_change_keeps_the_proofreading_and_says_so(tmp_path: P
 
     repo = StateRepository(tmp_path / "state")
     artifacts = PreviewImageStore(tmp_path / "art")
-    recon = CacheReconciliationService(state_repo=repo, artifact_store=artifacts, config=off)
+    recon = CacheReconciliationService(
+        facts=make_key_facts(), state_repo=repo, artifact_store=artifacts, config=off
+    )
     ctx = recon.prepare(source)
     ctx = recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
     recon.record_correction(source, ctx, correction_text="hello corrected", source_text="hello")
@@ -71,21 +72,21 @@ def test_a_privacy_setting_change_keeps_the_proofreading_and_says_so(tmp_path: P
 
     assert row.correction is StageState.DONE
     assert row.sent[Stage.CORRECTION].record == sent_record(
-        off, Stage.CORRECTION, facts=MachineKeyFacts()
+        off, Stage.CORRECTION, facts=make_key_facts()
     )
     assert row.sent[Stage.CORRECTION].other_privacy_settings is True
 
     # The next run with the new settings: nothing is invalidated, so the corrector is skipped
     # and the anonymizer is never asked for a text that is not sent again.
     after = CacheReconciliationService(
-        state_repo=repo, artifact_store=artifacts, config=on
+        facts=make_key_facts(), state_repo=repo, artifact_store=artifacts, config=on
     ).prepare(source)
 
     assert after.state.correction_done is True
     assert after.state.correction_text == "hello corrected"
     assert (
         after.state.correction_sent
-        == sent_record(off, Stage.CORRECTION, facts=MachineKeyFacts()).to_dict()
+        == sent_record(off, Stage.CORRECTION, facts=make_key_facts()).to_dict()
     )
 
 
@@ -104,7 +105,10 @@ def test_a_stale_stage_shows_no_line_about_how_it_was_sent(tmp_path: Path) -> No
     now = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
     repo = StateRepository(tmp_path / "state")
     recon = CacheReconciliationService(
-        state_repo=repo, artifact_store=PreviewImageStore(tmp_path / "art"), config=made
+        facts=make_key_facts(),
+        state_repo=repo,
+        artifact_store=PreviewImageStore(tmp_path / "art"),
+        config=made,
     )
     ctx = recon.prepare(source)
     ctx = recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
@@ -132,7 +136,9 @@ def test_a_switched_off_proofreading_stays_done_and_is_kept(tmp_path: Path) -> N
     off = make_config(tmp_path, correction_enabled=False)
     repo = StateRepository(tmp_path / "state")
     artifacts = PreviewImageStore(tmp_path / "art")
-    recon = CacheReconciliationService(state_repo=repo, artifact_store=artifacts, config=on)
+    recon = CacheReconciliationService(
+        facts=make_key_facts(), state_repo=repo, artifact_store=artifacts, config=on
+    )
     ctx = recon.prepare(source)
     ctx = recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
     recon.record_correction(source, ctx, correction_text="hello corrected", source_text="hello")
@@ -143,7 +149,7 @@ def test_a_switched_off_proofreading_stays_done_and_is_kept(tmp_path: Path) -> N
     assert row.correction is StageState.DONE
 
     after = CacheReconciliationService(
-        state_repo=repo, artifact_store=artifacts, config=off
+        facts=make_key_facts(), state_repo=repo, artifact_store=artifacts, config=off
     ).prepare(source)
 
     assert after.state.correction_done is True
@@ -165,13 +171,15 @@ def test_the_queue_and_the_check_view_agree_after_reconciliation(tmp_path: Path)
     now = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
     repo = StateRepository(tmp_path / "state")
     artifacts = PreviewImageStore(tmp_path / "art")
-    recon = CacheReconciliationService(state_repo=repo, artifact_store=artifacts, config=made)
+    recon = CacheReconciliationService(
+        facts=make_key_facts(), state_repo=repo, artifact_store=artifacts, config=made
+    )
     ctx = recon.prepare(source)
     ctx = recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
     recon.record_correction(source, ctx, correction_text="hello corrected", source_text="hello")
-    CacheReconciliationService(state_repo=repo, artifact_store=artifacts, config=now).prepare(
-        source
-    )
+    CacheReconciliationService(
+        facts=make_key_facts(), state_repo=repo, artifact_store=artifacts, config=now
+    ).prepare(source)
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
     row = svc.documents.queue_rows(now, [source])[0]
@@ -222,7 +230,10 @@ def test_views_without_a_stored_result_cost_no_privacy_fingerprint(tmp_path: Pat
     cfg = make_config(tmp_path)
     repo = StateRepository(tmp_path / "state")
     recon = CacheReconciliationService(
-        state_repo=repo, artifact_store=PreviewImageStore(tmp_path / "art"), config=cfg
+        facts=make_key_facts(),
+        state_repo=repo,
+        artifact_store=PreviewImageStore(tmp_path / "art"),
+        config=cfg,
     )
     ctx = recon.prepare(source)
     recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
@@ -248,7 +259,10 @@ def test_check_document_answers_for_a_stored_document_and_none_without_one(
     cfg = make_config(tmp_path)
     repo = StateRepository(tmp_path / "state")
     recon = CacheReconciliationService(
-        state_repo=repo, artifact_store=PreviewImageStore(tmp_path / "art"), config=cfg
+        facts=make_key_facts(),
+        state_repo=repo,
+        artifact_store=PreviewImageStore(tmp_path / "art"),
+        config=cfg,
     )
     ctx = recon.prepare(source)
     recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
@@ -471,7 +485,7 @@ def test_worked_on_documents_does_not_ask_again_after_keep_my_changes(tmp_path: 
     other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
     expected = correction_key(
-        other, windows_for(other, recommendations=svc.recommendations), MachineKeyFacts()
+        other, windows_for(other, recommendations=svc.recommendations), make_key_facts()
     )
 
     _change_work(
@@ -566,7 +580,10 @@ def test_a_reading_made_with_other_settings_is_not_a_recognised_file(tmp_path: P
 
     repo = StateRepository(tmp_path / "state")
     recon = CacheReconciliationService(
-        state_repo=repo, artifact_store=PreviewImageStore(tmp_path / "art"), config=made
+        facts=make_key_facts(),
+        state_repo=repo,
+        artifact_store=PreviewImageStore(tmp_path / "art"),
+        config=made,
     )
     ctx = recon.prepare(source)
     recon.record_ocr(source, ctx, raw_text="page text", preview_img="", source_image="")

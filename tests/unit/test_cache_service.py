@@ -34,12 +34,11 @@ from teachers_teammate.domain.teacher_work import (
     text_identity,
 )
 from teachers_teammate.cache_keys import correction_key, review_key, sent_record
-from teachers_teammate.infrastructure.key_facts import MachineKeyFacts
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheContext,
     CacheReconciliationService,
 )
-from tests.conftest import make_config
+from tests.conftest import make_config, make_key_facts
 
 _PDF = Path("worksheet.pdf")
 
@@ -65,7 +64,7 @@ def _make_ctx(state: DocumentState | None = None) -> CacheContext:
 
 def _correction_key(config: Config, windows: RunWindows | None = None) -> str:
     """The proofreading key of *config*, made with the facts of this computer."""
-    return correction_key(config, windows, MachineKeyFacts())
+    return correction_key(config, windows, make_key_facts())
 
 
 def _make_svc(
@@ -74,7 +73,9 @@ def _make_svc(
     repo = MagicMock()
     artifacts = MagicMock()
     cfg = make_config(tmp_path, **config_overrides)
-    svc = CacheReconciliationService(state_repo=repo, artifact_store=artifacts, config=cfg)
+    svc = CacheReconciliationService(
+        facts=make_key_facts(), state_repo=repo, artifact_store=artifacts, config=cfg
+    )
     return svc, repo, artifacts
 
 
@@ -170,6 +171,7 @@ def test_prepare_writes_the_state_file_once(tmp_path: Path, monkeypatch) -> None
         ),
     )
     svc = CacheReconciliationService(
+        facts=make_key_facts(),
         state_repo=repo,
         artifact_store=PreviewImageStore(tmp_path / "art"),
         config=make_config(tmp_path),
@@ -618,7 +620,7 @@ def test_record_correction_delegates_to_repo(tmp_path: Path) -> None:
         correction_warning="",
         sent_text="",
         sent_map=None,
-        sent=sent_record(svc._config, Stage.CORRECTION, facts=MachineKeyFacts()),
+        sent=sent_record(svc._config, Stage.CORRECTION, facts=make_key_facts()),
         source_hash=text_identity(""),
     )
     assert result.state is new_state
@@ -671,7 +673,7 @@ def test_record_evaluation_delegates_to_repo(tmp_path: Path) -> None:
         evaluation_text="quality: good",
         eval_config_hash=ctx.eval_config_hash,
         evaluation_warning="",
-        sent=sent_record(svc._config, Stage.EVALUATION, facts=MachineKeyFacts()),
+        sent=sent_record(svc._config, Stage.EVALUATION, facts=make_key_facts()),
     )
     assert result.state is new_state
 
@@ -1232,12 +1234,14 @@ def test_the_cache_service_keys_the_window_it_was_given(tmp_path: Path) -> None:
     """
     cfg = make_config(tmp_path, correction_enabled=True, correction_provider="ollama")
     base = CacheReconciliationService(
+        facts=make_key_facts(),
         state_repo=MagicMock(),
         artifact_store=MagicMock(),
         config=cfg,
         windows=RunWindows(proofreading=8192, evaluation=8192),
     )
     larger = CacheReconciliationService(
+        facts=make_key_facts(),
         state_repo=MagicMock(),
         artifact_store=MagicMock(),
         config=cfg,
@@ -1490,6 +1494,7 @@ def test_prepare_loads_the_work_of_the_documents_content(tmp_path: Path) -> None
     repo.load_or_create.return_value = _make_state()
     repo.reconcile.return_value = _make_state()
     svc = CacheReconciliationService(
+        facts=make_key_facts(),
         state_repo=repo,
         artifact_store=MagicMock(),
         config=make_config(tmp_path),
@@ -1549,6 +1554,7 @@ def test_prepare_freezes_the_reading_of_a_document_the_teacher_fixed(tmp_path: P
     repo.load_or_create.return_value = state
     repo.reconcile.return_value = state
     svc = CacheReconciliationService(
+        facts=make_key_facts(),
         state_repo=repo,
         artifact_store=MagicMock(),
         config=make_config(tmp_path),

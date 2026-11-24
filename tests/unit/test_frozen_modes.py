@@ -11,10 +11,10 @@ from types import SimpleNamespace
 import pytest
 
 from teachers_teammate import frozen_modes
-from teachers_teammate.gui import _credential_store
-from teachers_teammate.gui._credential_store import KEYRING_SERVICE
+from teachers_teammate.infrastructure import credential_store
+from teachers_teammate.infrastructure.credential_store import KEYRING_SERVICE
 
-from ..gui._settings_stubs import FakeKeyring
+from ..fakes.fake_keyring import FakeKeyring
 
 #: The build spec, as Bazel's runfiles see it or in the source tree when the test runs directly.
 _SPEC = (
@@ -28,7 +28,7 @@ _SPEC = (
 def _keychain(monkeypatch) -> FakeKeyring:
     """A working system keychain (the settings-file fixture runs first and turns it off)."""
     fake = FakeKeyring()
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: fake)
+    monkeypatch.setattr(credential_store, "_keyring", lambda: fake)
     return fake
 
 

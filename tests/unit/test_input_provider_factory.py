@@ -60,6 +60,16 @@ def test_get_input_provider_dispatches_by_suffix(
     assert isinstance(provider, expected_type)
 
 
+@pytest.mark.parametrize("suffix", sorted(SUPPORTED_SUFFIXES))
+def test_every_offered_suffix_has_a_provider(suffix: str, tmp_path: Path) -> None:
+    """
+    Given  every input suffix the app offers a teacher
+    When   get_input_provider is called for it
+    Then   a provider is built, so the offered list and the builders cannot drift apart
+    """
+    assert get_input_provider(suffix, tmp_dir=tmp_path) is not None
+
+
 def test_get_input_provider_threads_pdf_dpi_to_pdf_provider(tmp_path: Path) -> None:
     """
     Given  a .pdf suffix and an explicit pdf_dpi

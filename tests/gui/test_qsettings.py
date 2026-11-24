@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QSettings
 
+from teachers_teammate import config
 from teachers_teammate.gui import _qsettings
 
 
@@ -25,7 +26,7 @@ def test_the_override_folder_keeps_the_settings_as_an_ini_file(
     store.setValue("gui/geometry", "saved")
     store.sync()
 
-    path = tmp_path / _qsettings.FILE_NAME
+    path = tmp_path / config.GUI_STORE_FILE_NAME
     assert store.format() == QSettings.Format.IniFormat
     assert Path(store.fileName()) == path
     assert "saved" in path.read_text(encoding="utf-8")
@@ -46,5 +47,5 @@ def test_without_the_override_folder_the_native_store_is_used(
     store = _qsettings.app_settings()
 
     assert store.format() == QSettings.Format.NativeFormat
-    assert store.organizationName() == _qsettings.ORGANIZATION
-    assert store.applicationName() == _qsettings.APPLICATION
+    assert store.organizationName() == config.GUI_STORE_ORGANIZATION
+    assert store.applicationName() == config.GUI_STORE_APPLICATION

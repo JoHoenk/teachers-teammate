@@ -455,7 +455,7 @@ app_test(
 
 app_test(
     "unit/test_exchange_text_first.py",
-    deps = _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
+    deps = _FORMAT_DEPS + _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 app_test(
@@ -722,6 +722,19 @@ app_test(
 app_test(
     "unit/test_class_size.py",
     data = ["//teachers_teammate:all_sources"],
+)
+
+# No default stands in for a forgotten argument.
+app_test(
+    "unit/test_no_hidden_defaults.py",
+    data = ["//teachers_teammate:all_sources"],
+)
+
+# A start-up failure is worded for a teacher: each entry point installs the wording first.
+app_test(
+    "unit/test_wording_is_installed.py",
+    data = ["//teachers_teammate:all_sources"],
+    deps = _PIPELINE_DEPS + _CLI_LIB,
 )
 
 app_test(
@@ -1673,10 +1686,11 @@ app_test(
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
+# Where the API keys are kept: the system keychain, else the app's settings file.  No window:
+# the store reads QSettings without one.
 app_test(
-    "gui/test_credential_store.py",
-    extra_srcs = ["gui/_settings_stubs.py"],
-    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+    "unit/test_credential_store.py",
+    deps = _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 app_test(

@@ -33,13 +33,13 @@ class AddonService:
     def __init__(
         self,
         *,
-        model_store: ModelStore | None = None,
+        model_store: ModelStore,
         providers: ProviderService,
         reader: ReaderService,
         anonymization: AnonymizationService,
         state: AddonState,
     ) -> None:
-        self._model_store = model_store or ModelStore()
+        self._model_store = model_store
         # What the packages folder holds: the installs below are this service's own, the
         # questions about them come from there.
         self._state = state

@@ -235,7 +235,7 @@ def build_llm(
     model: str,
     *,
     base_url: str,
-    temperature: float = 0.7,
+    temperature: float,
     api_key: str | None = None,
 ) -> BaseChatModel:
     """Instantiate and return a LangChain chat model via the named provider module.

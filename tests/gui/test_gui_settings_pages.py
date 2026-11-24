@@ -22,7 +22,6 @@ from teachers_teammate.domain.model_catalog import (
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.gui import _anonymizer_config_widget, _dialogs
-from teachers_teammate.gui._credential_store import CredentialStore
 from teachers_teammate.gui._background import wait_for_background_tasks
 from teachers_teammate.texts import review as txt
 from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
@@ -58,13 +57,13 @@ from teachers_teammate.gui.settings._scan_quality_page import ScanQualityPage
 from teachers_teammate.gui.settings._ai_setup_page import AiSetupPage
 from teachers_teammate.gui.settings._online_services_page import OnlineServicesPage
 
+from ..fakes.fake_keyring import FakeKeyring
 from ._gui_harness import settings_context
 from ._service_stubs import services_of
 from ._settings_stubs import (
     CachingDummyAppService,
     CatalogAppService,
     DummyAppService,
-    FakeKeyring,
     InertLatestTask,
     MeasuredCatalogAppService,
     NonListableService,
@@ -1406,7 +1405,7 @@ def test_applying_keeps_a_stored_key_that_was_not_edited(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     credential_file["credentials/OPENAI_API_KEY"] = "sk-stored"
     services = services_of(DummyAppService())
-    CredentialStore().load(services.keys, ["OPENAI_API_KEY"])
+    services.keys.load_stored(["OPENAI_API_KEY"])
     group = CredentialsGroup(services)
     qtbot.addWidget(group)
     assert group.field("OPENAI_API_KEY").text() == "sk-stored"
@@ -1443,14 +1442,14 @@ def test_the_note_says_where_the_keys_are_kept(qtbot, monkeypatch) -> None:
     Then   the note admits the plain-text settings file in the first case, and names the
            keychain in the second
     """
-    from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+    from teachers_teammate.infrastructure import credential_store  # noqa: PLC0415
 
     plain = CredentialsGroup(services_of(DummyAppService()))
     qtbot.addWidget(plain)
     plain_text = " ".join(label.text() for label in plain.findChildren(QLabel))
     assert "not encrypted" in plain_text
 
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring())
+    monkeypatch.setattr(credential_store, "_keyring", lambda: FakeKeyring())
     safe = CredentialsGroup(services_of(DummyAppService()))
     qtbot.addWidget(safe)
     safe_text = " ".join(label.text() for label in safe.findChildren(QLabel))
@@ -2569,9 +2568,9 @@ def test_keys_the_keychain_refused_are_reported_by_apply(qtbot, monkeypatch) -> 
     When   the credentials group is committed and its drafts applied
     Then   it reports that key as kept in the settings file (the note promised the keychain)
     """
-    from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+    from teachers_teammate.infrastructure import credential_store  # noqa: PLC0415
 
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring(refuses_writes=True))
+    monkeypatch.setattr(credential_store, "_keyring", lambda: FakeKeyring(refuses_writes=True))
     group = _credentials(qtbot, monkeypatch)
     group._add_combo.setCurrentIndex(group._add_combo.findData("OPENAI_API_KEY"))
     group._add_btn.click()
@@ -2590,16 +2589,16 @@ def test_keys_in_a_working_keychain_and_plain_file_setups_are_not_reported(
     When   a key is typed and the group applied
     Then   nothing is reported in either case (the note already told the truth)
     """
-    from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+    from teachers_teammate.infrastructure import credential_store  # noqa: PLC0415
 
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring())
+    monkeypatch.setattr(credential_store, "_keyring", lambda: FakeKeyring())
     safe = _credentials(qtbot, monkeypatch)
     safe._add_combo.setCurrentIndex(safe._add_combo.findData("OPENAI_API_KEY"))
     safe._add_btn.click()
     safe.field("OPENAI_API_KEY").setText("sk-1")
     assert _apply(safe) == []
 
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: None)
+    monkeypatch.setattr(credential_store, "_keyring", lambda: None)
     plain = _credentials(qtbot, monkeypatch)
     plain._add_combo.setCurrentIndex(plain._add_combo.findData("OPENAI_API_KEY"))
     plain._add_btn.click()
@@ -2692,7 +2691,7 @@ def test_committing_a_loaded_key_stores_nothing_again(drafts, credential_file) -
     """
     credential_file["credentials/OPENAI_API_KEY"] = "sk-stored"
     services = services_of(ProviderAppService())
-    CredentialStore().load(services.keys, ["OPENAI_API_KEY"])
+    services.keys.load_stored(["OPENAI_API_KEY"])
     drafts = ApiKeyDrafts(services)
     seen: list[str] = []
     drafts.changed.connect(seen.append)
@@ -2756,7 +2755,7 @@ def test_removing_a_stored_key_forgets_it(drafts, credential_file) -> None:
     Then   the store forgets it
     """
     credential_file["credentials/OPENAI_API_KEY"] = "sk-stored"
-    CredentialStore().load(drafts._app_service.keys, ["OPENAI_API_KEY"])
+    drafts._app_service.keys.load_stored(["OPENAI_API_KEY"])
     assert drafts.value("OPENAI_API_KEY") == "sk-stored"
 
     drafts.remove("OPENAI_API_KEY")
@@ -2774,9 +2773,9 @@ def test_a_key_the_keychain_refuses_is_reported_as_kept_in_the_file(
     When   a typed key is applied
     Then   it lands in the settings file and apply() names it
     """
-    from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+    from teachers_teammate.infrastructure import credential_store  # noqa: PLC0415
 
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring(refuses_writes=True))
+    monkeypatch.setattr(credential_store, "_keyring", lambda: FakeKeyring(refuses_writes=True))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     drafts = ApiKeyDrafts(services_of(ProviderAppService()))
 
@@ -3024,7 +3023,7 @@ def test_the_key_row_says_where_the_key_is_kept(qtbot, monkeypatch, no_keys) -> 
     Then   the grey line names the settings file, the keychain or the environment, and links
            the vendor's page only when the provider declares one
     """
-    from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+    from teachers_teammate.infrastructure import credential_store  # noqa: PLC0415
 
     plain = _proofreading(qtbot, _KeyUrlService(), {"correction_provider": "mistral_eu"})
     text = plain.key_row().line.text()
@@ -3038,7 +3037,7 @@ def test_the_key_row_says_where_the_key_is_kept(qtbot, monkeypatch, no_keys) -> 
     no_url = _proofreading(qtbot, ProviderAppService(), {"correction_provider": "mistral_eu"})
     assert "Get a key at" not in no_url.key_row().line.text()
 
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring())
+    monkeypatch.setattr(credential_store, "_keyring", lambda: FakeKeyring())
     safe = _proofreading(qtbot, ProviderAppService(), {"correction_provider": "mistral_eu"})
     assert "keychain" in safe.key_row().line.text()
 

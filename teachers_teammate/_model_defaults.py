@@ -40,7 +40,16 @@ _DEFAULT_MODELS: dict[Stage, dict[str, str]] = {
 
 
 def default_model_for_task(provider: str, task: Stage | str) -> str:
-    """Return the default model name for *provider* and pipeline *task*."""
+    """Return the default model name for *provider* and pipeline *task*.
+
+    Raises:
+        ValueError: For a task no provider serves (text recognition) or a name no provider
+            declares.  A fallback here would answer for a typo with another service's model.
+    """
     stage = Stage._value2member_map_.get(task)
-    task_defaults = _DEFAULT_MODELS.get(stage, _DEFAULT_MODELS[Stage.CORRECTION])
-    return task_defaults.get(provider, "gpt-4o-mini")
+    defaults = _DEFAULT_MODELS.get(stage) if stage is not None else None
+    if defaults is None:
+        raise ValueError(f"no default model for task {task!r}")
+    if provider not in defaults:
+        raise ValueError(f"no default model for provider {provider!r} at {stage}")
+    return defaults[provider]

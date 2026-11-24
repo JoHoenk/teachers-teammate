@@ -13,7 +13,6 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from ..domain.data_location import LOCAL_OCR_ENGINES
 from ..domain.ocr_prompt import get_ocr_prompt
 from ..interfaces import OCRProcessor
 from .ollama_utils import OllamaClient
@@ -21,9 +20,6 @@ from .ollama_utils import OllamaClient
 OCR_ANSWER_TOKENS = 2048
 """Tokens a page's answer may take.  A page of handwriting needs more than a short answer, and a
 page that runs into the limit keeps the text read so far."""
-
-# Every engine reads pages on a computer the user controls (see domain/data_location.py).
-SUPPORTED_OCR_ENGINES: list[str] = list(LOCAL_OCR_ENGINES)
 
 
 class OllamaOCRProcessor(OCRProcessor):

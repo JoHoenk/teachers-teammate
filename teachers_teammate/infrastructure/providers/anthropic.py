@@ -41,17 +41,23 @@ def list_models(**_kwargs: object) -> list[str]:
 def create(
     model: str,
     *,
-    temperature: float = 0.7,
+    temperature: float,
     api_key: str | None = None,
     **_kwargs: object,
 ) -> BaseChatModel:
     """Return a ``ChatAnthropic`` instance for *model*.
 
     The key comes in as *api_key*; with none, LangChain reads ``$ANTHROPIC_API_KEY`` itself.
+
+    No ``max_tokens`` is passed: ``ChatAnthropic`` takes each model's own output limit.
     """
     with import_guard("langchain-anthropic"):
         from langchain_anthropic import ChatAnthropic  # noqa: PLC0415
-    return ChatAnthropic(model=model, temperature=temperature, api_key=api_key)
+    return ChatAnthropic(
+        model=model,
+        temperature=temperature,
+        api_key=api_key,
+    )
 
 
 check_connection = api_key_check(PROVIDER.env_key)

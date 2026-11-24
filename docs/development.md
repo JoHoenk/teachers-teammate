@@ -2168,7 +2168,17 @@ keychain refused); every other way out of `done()` (Cancel, Esc, close, Restore 
 calls `discard()`, which puts back what the app held, after the pages' `shutdown()` stopped any
 commit timer.  `ApiKeys` (`application/api_keys.py`) is the only place a key is kept: the
 environment is only read, so a key the teacher exported before the app started counts and the app
-writes none (`_credential_store.load`).
+writes none.
+
+**Where a key lives, and who reads it.**  `infrastructure/credential_store.py` is the store: the
+system's secret store (Keychain, Credential Manager, Secret Service) when there is one, else the
+plain-text `credentials/` group of the app's settings file.  Both it and `gui/_qsettings.py` take
+the file's location from `config.gui_store_location()`, so the two cannot drift apart.  The store
+is built once, in `application/composition.py`, and handed to `ApiKeys` there; a key is asked for
+on first use and the answer is remembered, so the window loads every key at start
+(`ApiKeys.load_stored`, migration included) and a run that asks nothing online never touches the
+keychain.  A key found in the settings file moves into the secret store at the next start
+(`CredentialStore.migrate`), and the uninstaller deletes them all (`ApiKeys.forget_all`).
 
 **One model, an override, and the privacy line.**  The AI models page has one proofreading/review
 block.  There is no setting for "different review model": the box starts ticked when the
@@ -3143,6 +3153,14 @@ one of them is visible afterwards:
   sending (`ensure_prompt_fits()`) and raises the same error. It applies only to requests that
   set `num_ctx` and carry no image; the estimate errs towards refusing.
 
+An online provider says the same thing in the response metadata, under one of three names
+(`finish_reason == "length"` at OpenAI and Mistral, `stop_reason == "max_tokens"` at Anthropic,
+`finish_reason == "MAX_TOKENS"` at Gemini).  `answer_was_cut_off()` in `_llm_invoke.py` is the one
+place that reads it, and it counts metadata that says nothing as a whole answer, so a provider the
+app cannot read is never reported as cut off.  `LangChainPort.ask_text()` maps it to the same
+`"truncated"` failure as the server does, so a cut-off online answer is reported on both paths and
+never stored as complete.
+
 `_llm_invoke.py` turns the error into the failure kind `"truncated"`, with the warning
 `TRUNCATED_MESSAGE` (*"The text was too long for the model's working memory."*). What it costs
 depends on the step: a cut-off ① fails the file and the source is kept (a half-corrected text is
@@ -3315,7 +3333,7 @@ that both reads scans and proofreads is reloaded on each switch between the two 
 when a prefix is cached; read it as a lower bound.
 
 The evaluation tools (`tools/verify_model_catalog.py`, `tools/evaluate.py`) pin
-`PROOFREADING_NUM_CTX` (8192) on purpose: their verdicts are compared across models and across
+`BASE_NUM_CTX` (8192) on purpose: their verdicts are compared across models and across
 months, and a window that followed the card of the machine would make two runs incomparable.
 
 ### Logging

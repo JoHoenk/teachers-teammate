@@ -56,7 +56,7 @@ from ..texts.addons import anonymizer_notice
 from ..texts.dialogs import cli_warning
 from ..texts.run import personal_info_not_removed
 from .docx_builder import DocxDocumentCreator
-from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
+from .evaluation import PortEvaluator
 from .llm_factory import build_llm, get_provider_info
 from .ocr_processor import OllamaOCRProcessor
 from .ollama_utils import OllamaClient, ollama_server
@@ -76,16 +76,13 @@ from .workflow.preprocess_service import PreprocessService
 
 
 def default_build_preprocessor(
-    *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore | None = None
+    *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore
 ) -> ImagePreprocessor:
     """Build the preprocessor for *ocr*'s settings; shared by real runs and the GUI preview.
 
-    *store* is where the page models of the automatic preparation are (``None`` = the default
-    folder).
+    *store* is where the page models of the automatic preparation are.
     """
-    return StepPipeline(
-        steps_for(ocr, store or ModelStore()), tmp_dir=tmp_dir, save_steps=save_steps
-    )
+    return StepPipeline(steps_for(ocr, store), tmp_dir=tmp_dir, save_steps=save_steps)
 
 
 def _default_build_ppocr_ocr(
@@ -143,29 +140,10 @@ def _default_build_corrector(
     )
 
 
-def _default_build_evaluator(*, llm: BaseChatModel, prompt: str) -> Evaluator:
-    return LangChainEvaluator(llm, prompt)
-
-
-def _default_build_native_ollama_evaluator(
-    *,
-    model: str,
-    client: OllamaClient,
-    prompt: str,
-    timeout: float,
-    temperature: float,
-    num_ctx: int,
-    think: bool | str = False,
+def _default_build_evaluator(
+    *, port: ModelPort, prompt: str, temperature: float, think: bool | str = False
 ) -> Evaluator:
-    return NativeOllamaEvaluator(
-        model=model,
-        client=client,
-        prompt=prompt,
-        timeout=timeout,
-        temperature=temperature,
-        num_ctx=num_ctx,
-        think=think,
-    )
+    return PortEvaluator(port, prompt, temperature=temperature, think=think)
 
 
 def _default_build_doc_creator(*, fmt: str, labels_language: str = "") -> DocumentCreator:
@@ -173,9 +151,9 @@ def _default_build_doc_creator(*, fmt: str, labels_language: str = "") -> Docume
 
 
 def _default_build_anonymizer(*, language: str, config: AnonymizerConfig) -> Anonymizer:
-    from .anonymizer import SpacyAnonymizer  # noqa: PLC0415
-
-    return SpacyAnonymizer(language, config)
+    """Fail: the application layer gives a run the builder that owns the spaCy models."""
+    del language, config
+    raise NotImplementedError
 
 
 def _default_check_ocr_model(*, url: str, model: str, reporter: Reporter) -> None:
@@ -220,7 +198,7 @@ class PreprocessorBuilder(Protocol):
     """Builds the image preprocessor of a run."""
 
     def __call__(
-        self, *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore | None
+        self, *, tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore
     ) -> ImagePreprocessor:
         """Return the preprocessor for *ocr*'s settings."""
         ...
@@ -270,28 +248,17 @@ class CorrectorBuilder(Protocol):
 
 
 class EvaluatorBuilder(Protocol):
-    """Builds the content review over a chat model."""
-
-    def __call__(self, *, llm: BaseChatModel, prompt: str) -> Evaluator:
-        """Return the evaluator that asks *llm* with *prompt*."""
-        ...
-
-
-class NativeOllamaEvaluatorBuilder(Protocol):
-    """Builds the content review that asks an Ollama server directly."""
+    """Builds the content review over a connection to a model."""
 
     def __call__(
         self,
         *,
-        model: str,
-        client: OllamaClient,
+        port: ModelPort,
         prompt: str,
-        timeout: float,
         temperature: float,
-        num_ctx: int,
         think: bool | str = False,
     ) -> Evaluator:
-        """Return the evaluator for *model* on *client*."""
+        """Return the evaluator that asks *port* with *prompt*."""
         ...
 
 
@@ -342,9 +309,6 @@ class PipelineComponentFactory:
     build_llm: LlmBuilder = _default_build_llm
     build_corrector: CorrectorBuilder = _default_build_corrector
     build_evaluator: EvaluatorBuilder = _default_build_evaluator
-    build_native_ollama_evaluator: NativeOllamaEvaluatorBuilder = (
-        _default_build_native_ollama_evaluator
-    )
     build_doc_creator: DocCreatorBuilder = _default_build_doc_creator
     build_anonymizer: AnonymizerBuilder = _default_build_anonymizer
     build_ocr_postprocessor: OcrPostprocessorBuilder = _default_build_ocr_postprocessor
@@ -366,19 +330,56 @@ class StageBuilder:
 
     config: Config
     factory: PipelineComponentFactory
+    #: Where the built-in reader's model files are looked for.  The application layer passes
+    #: the store its readiness check uses, so a run reads the folder that was checked.
+    model_store: ModelStore
     reporter: Reporter = field(default_factory=StdoutReporter)
     #: The hardware of the computer that runs Ollama, resolved by the application layer.  Only
     #: needed to size the context window of the local models; ``None`` means "not known" and
     #: keeps the base window.
     hardware: HardwareDetection | None = None
-    #: Where the built-in reader's model files are looked for.  The application layer passes
-    #: the store its readiness check uses, so a run reads the folder that was checked;
-    #: ``None`` means the default folder.
-    model_store: ModelStore | None = None
 
     def _build_ollama_client(self) -> OllamaClient:
         """Create the shared OllamaClient for all Ollama-backed stages."""
         return OllamaClient(self.config.ollama_url)
+
+    def _model_port(
+        self,
+        provider: str,
+        model: str,
+        *,
+        num_ctx: int,
+        temperature: float,
+        ollama_client: OllamaClient | None = None,
+    ) -> ModelPort:
+        """Return the connection to *model* on *provider*: the server's own API, or LangChain.
+
+        One place builds it, so a proofreading request and a content review are sent the same way
+        on the same provider.  Building contacts no server: the Ollama client is a thin wrapper
+        and the LangChain model is built from the settings.
+
+        Args:
+            num_ctx: The window a local model is asked for; a LangChain provider brings its own.
+            temperature: The temperature of the requests *this* stage sends; a provider builds
+                its model with it, so a stage with its own temperature needs its own port.
+        """
+        if provider == PROVIDER_OLLAMA:
+            client = ollama_client or self._build_ollama_client()
+            return OllamaPort(
+                client,
+                model,
+                timeout=float(self.config.ocr_timeout),
+                num_ctx=num_ctx,
+            )
+        return LangChainPort(
+            self.factory.build_llm(
+                provider=provider,
+                model=model,
+                base_url=self.config.ollama_url,
+                temperature=temperature,
+            ),
+            strict=_strict_json_schema(provider),
+        )
 
     def resolved_windows(self) -> RunWindows:
         """Return the context windows of this run (see :func:`~teachers_teammate.run_rules.resolve_run_windows`)."""
@@ -431,9 +432,7 @@ class StageBuilder:
         if reason and cfg.recognition_enabled:
             raise OnlineOcrNotAllowedError(reason)
         if ocr.engine == ENGINE_PPOCR:
-            return factory.build_ppocr_ocr(
-                store=self.model_store or ModelStore(), stop_event=stop_event
-            )
+            return factory.build_ppocr_ocr(store=self.model_store, stop_event=stop_event)
         client = ollama_client or self._build_ollama_client()
         return factory.build_ollama_ocr(
             model=ocr.model, client=client, timeout=cfg.ocr_timeout, temperature=ocr.temperature
@@ -462,24 +461,13 @@ class StageBuilder:
         tries = correction_policy.cut_off_tries(
             online=self._correction_is_online(), temperature=profile.temperature
         )
-        if cfg.correction_provider == PROVIDER_OLLAMA:
-            client = ollama_client or self._build_ollama_client()
-            port: ModelPort = OllamaPort(
-                client,
-                cfg.effective_correction_model,
-                timeout=float(cfg.ocr_timeout),
-                num_ctx=self.resolved_windows().proofreading,
-            )
-        else:
-            port = LangChainPort(
-                factory.build_llm(
-                    provider=cfg.correction_provider,
-                    model=cfg.effective_correction_model,
-                    base_url=cfg.ollama_url,
-                    temperature=cfg.correction_temperature,
-                ),
-                strict=_strict_json_schema(cfg.correction_provider),
-            )
+        port = self._model_port(
+            cfg.correction_provider,
+            cfg.effective_correction_model,
+            num_ctx=self.resolved_windows().proofreading,
+            temperature=cfg.correction_temperature,
+            ollama_client=ollama_client,
+        )
         return _chunked(
             factory.build_corrector(
                 port=port, settings=settings, profile=profile, cut_off_tries=tries
@@ -569,30 +557,23 @@ class StageBuilder:
         ollama_client: OllamaClient | None = None,
     ) -> Evaluator | None:
         cfg = self.config
-        factory = self.factory
         if not cfg.evaluation_enabled:
             return None
         if correction is None:
             self.reporter.warn(report_text.EVALUATION_NEEDS_CORRECTION)
             return None
-        if cfg.evaluate_provider == PROVIDER_OLLAMA:
-            client = ollama_client or self._build_ollama_client()
-            return factory.build_native_ollama_evaluator(
-                model=cfg.effective_evaluate_model,
-                client=client,
-                prompt=cfg.evaluate_prompt,
-                timeout=float(cfg.ocr_timeout),
-                temperature=cfg.evaluate_temperature,
+        return self.factory.build_evaluator(
+            port=self._model_port(
+                cfg.evaluate_provider,
+                cfg.effective_evaluate_model,
                 num_ctx=self.resolved_windows().evaluation,
-                think=cfg.evaluate_think,
-            )
-        llm = factory.build_llm(
-            provider=cfg.evaluate_provider,
-            model=cfg.effective_evaluate_model,
-            base_url=cfg.ollama_url,
+                temperature=cfg.evaluate_temperature,
+                ollama_client=ollama_client,
+            ),
+            prompt=cfg.evaluate_prompt,
             temperature=cfg.evaluate_temperature,
+            think=cfg.evaluate_think,
         )
-        return factory.build_evaluator(llm=llm, prompt=cfg.evaluate_prompt)
 
     def build_ocr_postprocessor(self) -> OcrOutputPostprocessor:
         """Build the notation detector/parser applied to every page of OCR output."""

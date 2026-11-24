@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from ..domain.pdf_text_layer import PdfTextLayerMode
 from ..exceptions import PipelineInputError
-from ..interfaces import SUPPORTED_SUFFIXES, InputProvider
+from ..interfaces import INPUT_KINDS, SUPPORTED_SUFFIXES, InputProvider
 from ..messages import unsupported_input_suffix
 
 if TYPE_CHECKING:
@@ -64,19 +64,15 @@ def _build_text(_tmp_dir: Path, _options: InputOptions) -> InputProvider:
     return TextInputProvider()
 
 
-_SUFFIX_TO_BUILDER: dict[str, _ProviderBuilder] = {
-    ".pdf": _build_pdf,
-    ".png": _build_image,
-    ".jpg": _build_image,
-    ".jpeg": _build_image,
-    ".txt": _build_text,
+_BUILDERS: dict[str, _ProviderBuilder] = {
+    "pdf": _build_pdf,
+    "image": _build_image,
+    "text": _build_text,
 }
 
-if frozenset(_SUFFIX_TO_BUILDER.keys()) != SUPPORTED_SUFFIXES:
-    raise RuntimeError(
-        f"_SUFFIX_TO_BUILDER keys {set(_SUFFIX_TO_BUILDER)} do not match "
-        f"SUPPORTED_SUFFIXES {SUPPORTED_SUFFIXES} — update both together"
-    )
+_SUFFIX_TO_BUILDER: dict[str, _ProviderBuilder] = {
+    suffix: _BUILDERS[kind] for suffix, kind in INPUT_KINDS.items()
+}
 
 
 def supported_suffixes() -> frozenset[str]:

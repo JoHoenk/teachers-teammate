@@ -70,7 +70,7 @@ class DocumentCommands:
         state_store_factory: Callable[[Config], StateRepository],
         windows_for: Callable[[Config], RunWindows] | None = None,
         facts: KeyFacts,
-        work_store: TeacherWorkStore | None = None,
+        work_store: TeacherWorkStore,
     ) -> None:
         self._state_store_factory = state_store_factory
         #: The context windows a run with a config uses on this computer, so a hash written
@@ -79,7 +79,7 @@ class DocumentCommands:
         #: What this computer adds to the cache keys it writes.
         self._facts = facts
         #: The teacher's work: the same store the runs read, so both see one folder.
-        self._work_store = work_store or TeacherWorkStore()
+        self._work_store = work_store
 
     # ── The teacher's texts and decisions ─────────────────────────────────
 

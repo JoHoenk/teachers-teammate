@@ -617,7 +617,7 @@ def test_anonymizer_raises_import_error_when_spacy_missing() -> None:
     """
     with patch.dict("sys.modules", {"spacy": None}):
         with pytest.raises(ImportError):
-            SpacyAnonymizer("English")
+            SpacyAnonymizer("English", models=SpacyModels())
 
 
 def test_anonymizer_names_the_cause_when_installed_spacy_cannot_load(monkeypatch) -> None:
@@ -631,7 +631,7 @@ def test_anonymizer_names_the_cause_when_installed_spacy_cannot_load(monkeypatch
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
     with patch.dict("sys.modules", {"spacy": None}):
         with pytest.raises(ImportError) as raised:
-            SpacyAnonymizer("English")
+            SpacyAnonymizer("English", models=SpacyModels())
 
     message = raised.value.args[0]
     assert message.key is MessageKey.SPACY_NOT_LOADABLE
@@ -649,7 +649,7 @@ def test_anonymizer_raises_os_error_when_model_missing() -> None:
 
     with patch.dict(sys.modules, {"spacy": mock_spacy}):
         with pytest.raises(OSError, match="model not found"):
-            SpacyAnonymizer("English")
+            SpacyAnonymizer("English", models=SpacyModels())
 
 
 def test_anonymizer_raises_os_error_when_secondary_model_missing() -> None:
@@ -669,7 +669,9 @@ def test_anonymizer_raises_os_error_when_secondary_model_missing() -> None:
 
     with patch.dict(sys.modules, {"spacy": mock_spacy}):
         with pytest.raises(OSError, match="secondary model not found"):
-            SpacyAnonymizer("English", AnonymizerConfig(secondary_model="xx_ent_wiki_sm"))
+            SpacyAnonymizer(
+                "English", AnonymizerConfig(secondary_model="xx_ent_wiki_sm"), models=SpacyModels()
+            )
 
 
 def test_anonymizer_uses_configured_primary_model() -> None:
@@ -681,7 +683,9 @@ def test_anonymizer_uses_configured_primary_model() -> None:
     mock_spacy = MagicMock()
 
     with patch.dict(sys.modules, {"spacy": mock_spacy}):
-        SpacyAnonymizer("English", AnonymizerConfig(primary_model="xx_ent_wiki_sm"))
+        SpacyAnonymizer(
+            "English", AnonymizerConfig(primary_model="xx_ent_wiki_sm"), models=SpacyModels()
+        )
 
     mock_spacy.load.assert_called_once_with("xx_ent_wiki_sm")
 
@@ -695,7 +699,7 @@ def test_anonymizer_falls_back_to_language_model_when_primary_none() -> None:
     mock_spacy = MagicMock()
 
     with patch.dict(sys.modules, {"spacy": mock_spacy}):
-        SpacyAnonymizer("English", AnonymizerConfig(primary_model=None))
+        SpacyAnonymizer("English", AnonymizerConfig(primary_model=None), models=SpacyModels())
 
     mock_spacy.load.assert_called_once_with("en_core_web_sm")
 
@@ -711,7 +715,9 @@ def test_anonymizer_raises_oserror_when_configured_primary_model_missing() -> No
 
     with patch.dict(sys.modules, {"spacy": mock_spacy}):
         with pytest.raises(OSError, match="configured model not found"):
-            SpacyAnonymizer("English", AnonymizerConfig(primary_model="custom_model_sm"))
+            SpacyAnonymizer(
+                "English", AnonymizerConfig(primary_model="custom_model_sm"), models=SpacyModels()
+            )
 
 
 # ── Loading the models ────────────────────────────────────────────────────
@@ -738,7 +744,9 @@ def test_the_anonymizer_loads_its_pipelines_through_the_models() -> None:
         "teachers_teammate.infrastructure.spacy_models.load_pipelines",
         return_value=("primary", "secondary"),
     ) as load:
-        anon = SpacyAnonymizer("English", AnonymizerConfig(secondary_model="xx_ent_wiki_sm"))
+        anon = SpacyAnonymizer(
+            "English", AnonymizerConfig(secondary_model="xx_ent_wiki_sm"), models=SpacyModels()
+        )
 
     load.assert_called_once_with("en_core_web_sm", "xx_ent_wiki_sm")
     assert (anon._nlp, anon._nlp_secondary) == ("primary", "secondary")

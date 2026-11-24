@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from teachers_teammate.application import setup_plan
 from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.application.ollama_server import OllamaStatus
 from teachers_teammate.application.setup_plan import (
@@ -138,8 +139,8 @@ def test_the_setup_plan_comes_from_the_facts_and_the_ratings() -> None:
         patch.object(setup._reader, "page_models_installed", return_value=False),
         patch.object(setup._recommendations, "rate_ollama_models", side_effect=rate),
         patch.object(
-            setup._recommendations,
-            "best_ollama_model",
+            setup_plan,
+            "best_model",
             side_effect=lambda task, profile, **kwargs: recommended[task],
         ),
         patch(f"{_INSTALL}.free_disk_gb", return_value=100.0),
@@ -208,7 +209,7 @@ def test_the_plan_and_the_model_choices_are_made_from_one_set_of_facts() -> None
         patch.object(setup._providers, "missing_provider_package", return_value=None),
         patch.object(setup._reader, "page_models_installed", return_value=False),
         patch.object(setup._recommendations, "rate_ollama_models", side_effect=rate),
-        patch.object(setup._recommendations, "best_ollama_model", return_value="gemma4:e4b"),
+        patch.object(setup_plan, "best_model", return_value="gemma4:e4b"),
         patch(f"{_INSTALL}.free_disk_gb", return_value=100.0),
     ):
         plan, choices = setup.plan_with_model_choices(answers, dict(DEFAULTS))

@@ -29,8 +29,10 @@ if TYPE_CHECKING:
 #: arbitrary size, so only a model or a settings change can make Ollama reload the model.
 CONTEXT_STEPS: tuple[int, ...] = (8192, 16384, 32768)
 
-#: The smallest step: what every computer gets, and what a model with unmeasured context
-#: growth keeps.
+#: The smallest step: what every computer gets, what proofreading and a content review ask
+#: for, and what a model with unmeasured context growth keeps.  Ollama itself would apply 4k on
+#: a graphics card under 24 GiB, which one error-dense page overruns.  One window for every text
+#: on purpose: a changed ``num_ctx`` makes Ollama reload the model.
 BASE_NUM_CTX = CONTEXT_STEPS[0]
 
 #: Largest window used for proofreading.  A review answer repeats the text it was given, and

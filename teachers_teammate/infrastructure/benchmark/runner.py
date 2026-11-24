@@ -46,7 +46,7 @@ def run_ocr(
     *,
     component_factory: PipelineComponentFactory | None = None,
     stop_event: threading.Event | None = None,
-    model_store: ModelStore | None = None,
+    model_store: ModelStore,
 ) -> OcrRunResult:
     """Run OCR for *source* using *config* and return an :class:`OcrRunResult`.
 
@@ -56,7 +56,7 @@ def run_ocr(
         source: The document to OCR (PDF, image, or TXT).
         component_factory: Optional stage-constructor overrides (test injection).
         stop_event: Optional cooperative cancellation signal.
-        model_store: Where the built-in reader's model files are; ``None`` = the default folder.
+        model_store: Where the built-in reader's model files are.
     """
     factory = component_factory or PipelineComponentFactory()
     tmp_dir = resolve_artifact_dir(config.output_dir)

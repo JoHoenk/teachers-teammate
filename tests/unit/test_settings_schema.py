@@ -18,9 +18,16 @@ from teachers_teammate.domain.data_location import DataFlow
 from teachers_teammate.domain.run_summary import RunSummary
 from teachers_teammate.domain.settings_notice import SettingNoticeKind
 from teachers_teammate.gui._types import SettingsDict
-from teachers_teammate.settings_schema import DEFAULTS, SETTINGS, SettingScope, normalize_settings
+from teachers_teammate.domain.ollama_discovery import DEFAULT_SERVER_URL
+from teachers_teammate.settings_schema import (
+    DEFAULTS,
+    SETTINGS,
+    SettingScope,
+    normalize_saved_ollama_url,
+    normalize_settings,
+)
 
-from ..gui._service_stubs import services_of
+from ..gui._service_stubs import make_config_panel, services_of
 
 _SCHEMA_KEYS = frozenset(setting.key for setting in SETTINGS)
 _FILE_KEYS = frozenset(setting.key for setting in SETTINGS if setting.scope is SettingScope.FILE)
@@ -177,6 +184,17 @@ def test_every_default_is_taken_as_it_is() -> None:
     }
 
 
+def test_a_saved_ollama_address_of_blanks_is_the_default_server() -> None:
+    """
+    Given  a saved Ollama address of nothing but spaces
+    When   the settings are normalised
+    Then   the address is the one the app looks at first, not an empty server address
+    """
+    loaded = normalize_settings({"ollama_url": "  "})
+
+    assert loaded.values["ollama_url"] == DEFAULTS["ollama_url"]
+
+
 def test_the_defaults_cannot_be_changed_by_a_caller() -> None:
     """
     Given  the defaults of the schema
@@ -277,8 +295,6 @@ def test_the_window_and_the_command_line_read_one_file_the_same(
     When   the command line (through run_cli) and the window each build their Config from it
     Then   the two are equal field by field, so a run does not depend on who started it
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
-
     input_dir = tmp_path / "in"
     output_dir = tmp_path / "out"
     input_dir.mkdir()
@@ -299,7 +315,7 @@ def test_the_window_and_the_command_line_read_one_file_the_same(
     )
     values = load_config_file(path).values
 
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.load_from_dict(values)
 
@@ -318,9 +334,7 @@ def test_the_panel_writes_no_key_outside_the_schema(qtbot) -> None:
     When   it hands its settings to the file
     Then   every key it writes is a settings key
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
-
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     assert frozenset(panel.to_dict()) <= _SCHEMA_KEYS
@@ -333,9 +347,7 @@ def test_restoring_the_defaults_resets_the_anonymizer_patterns(qtbot) -> None:
     When   the defaults are restored
     Then   the list is the anonymizer's own again, not the teacher's earlier choice
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
-
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
     panel.load_from_dict({"anonymizer_patterns": []})
     assert panel.to_dict().get("anonymizer_patterns") == []
@@ -352,9 +364,7 @@ def test_a_loaded_recursive_is_not_kept_by_the_panel(qtbot) -> None:
     When   the panel loads it and hands its settings back
     Then   it writes no ``recursive``: the window always searches subfolders and has no toggle
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
-
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.load_from_dict({"recursive": True, "debug": True})
@@ -370,12 +380,48 @@ def test_a_language_typed_by_hand_survives_a_reload(qtbot) -> None:
     When   the panel loads it
     Then   the language box shows it and the Config carries it
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
-
-    panel = ConfigPanel()
+    panel = make_config_panel()
     qtbot.addWidget(panel)
 
     panel.load_from_dict({"language": "Swahili"})
 
     assert panel.lookup_language() == "Swahili"
     assert panel.lookup_config().language == "Swahili"
+
+
+@pytest.mark.parametrize("saved", [None, "", "   "])
+def test_a_blank_saved_ollama_address_is_the_default_server(saved: object) -> None:
+    """
+    Given  a saved address that is missing (None), empty or blank
+    When   normalize_saved_ollama_url() reads it
+    Then   it is the default server, never the host called "None"
+    """
+    assert normalize_saved_ollama_url(saved) == DEFAULT_SERVER_URL
+
+
+@pytest.mark.parametrize("key", ["correction_provider", "evaluate_provider"])
+def test_a_saved_provider_the_app_does_not_know_is_ignored_with_a_notice(key: str) -> None:
+    """
+    Given  a settings file that names a provider the app has no default model for
+    When   the settings are normalised
+    Then   the value is left out, so the default applies, and a notice names the key
+    """
+    loaded = normalize_settings({key: "groq", "correction_level": "B1"})
+
+    assert key not in loaded.values
+    assert loaded.values["correction_level"] == "B1"
+    assert [(n.kind, n.key, n.detail) for n in loaded.notices] == [
+        (SettingNoticeKind.VALUE_IGNORED, key, "groq")
+    ]
+
+
+def test_a_known_provider_is_taken_as_saved() -> None:
+    """
+    Given  a settings file that names providers with a default model
+    When   the settings are normalised
+    Then   both are kept and nothing is reported
+    """
+    loaded = normalize_settings({"correction_provider": "openai", "evaluate_provider": "ollama"})
+
+    assert loaded.values == {"correction_provider": "openai", "evaluate_provider": "ollama"}
+    assert loaded.notices == ()

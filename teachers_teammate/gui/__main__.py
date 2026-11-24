@@ -1,6 +1,11 @@
 """Entry point: ``python -m teachers_teammate.gui``."""
 
-from ..application.composition import inject_addon_packages_dir
+from ..texts.messages import install
+
+# First: a start-up that fails below is read by a teacher, as a sentence.
+install()
+
+from ..application.composition import inject_addon_packages_dir  # noqa: E402
 
 # Prepend the addon packages dir to sys.path before any optional imports.
 # Routed through the application service (the GUI's gateway) rather than

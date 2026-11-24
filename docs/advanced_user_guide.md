@@ -294,6 +294,11 @@ teachers-teammate --help
 under, and needs no folders. It works where the command line is installed (with pip); in a
 download, the same text is in **Help → About** and **Help → Licenses**.
 
+An access key works the same in both: save it under **Settings → Online services** and the
+command line uses it too. A key in the environment wins over the saved one. The keychain is
+asked only when a run needs an online service, so a batch without one starts without a prompt;
+when the key is only in the keychain, macOS may ask once for permission the first time.
+
 A typical run:
 
 ```bash

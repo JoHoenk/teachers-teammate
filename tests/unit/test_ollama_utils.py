@@ -18,6 +18,7 @@ from teachers_teammate.exceptions import (
     ResponseTruncatedError,
     RunStoppedError,
 )
+from teachers_teammate.domain.context_budget import BASE_NUM_CTX
 from teachers_teammate.domain.ollama_address import ollama_host
 from teachers_teammate.infrastructure import ollama_utils
 from teachers_teammate.infrastructure.ollama_utils import (
@@ -1439,8 +1440,8 @@ def test_proofreading_options_hold_one_fixed_context_size() -> None:
     """
     options = ollama_utils.proofreading_options(0.7)
 
-    assert options == {"temperature": 0.7, "num_ctx": ollama_utils.PROOFREADING_NUM_CTX}
-    assert ollama_utils.PROOFREADING_NUM_CTX == 8192
+    assert options == {"temperature": 0.7, "num_ctx": BASE_NUM_CTX}
+    assert BASE_NUM_CTX == 8192
 
 
 def test_chat_can_return_a_cut_off_answer_when_the_caller_allows_it(monkeypatch) -> None:
@@ -1702,16 +1703,14 @@ def test_cut_connection_falls_back_to_the_http_client_of_an_older_client() -> No
     http.close.assert_called_once_with()
 
 
-def test_the_ollama_wrappers_let_a_stop_through_instead_of_degrading_to_a_warning() -> None:
+def test_the_structured_ollama_wrapper_lets_a_stop_through() -> None:
     """
     Given  an Ollama client whose request is cut off by "Stop now"
-    When   invoke_ollama_chat or invoke_ollama_structured runs
-    Then   RunStoppedError propagates (any other error still becomes a warning)
+    When   invoke_ollama_structured runs
+    Then   RunStoppedError propagates (any other error becomes a transport failure)
     """
     from teachers_teammate.infrastructure._llm_invoke import (  # noqa: PLC0415
         ChatRequest,
-        InvokeAnswer,
-        invoke_ollama_chat,
         invoke_ollama_structured,
     )
 
@@ -1719,21 +1718,14 @@ def test_the_ollama_wrappers_let_a_stop_through_instead_of_degrading_to_a_warnin
     client.chat.side_effect = RunStoppedError
     request = ChatRequest(model="m", prompt="p", temperature=0.2, timeout=1.0)
 
-    def chat() -> InvokeAnswer:
-        return invoke_ollama_chat(
-            client, request, fallback="raw", failure=lambda exc: f"failed ({exc})"
-        )
-
-    def structured():
-        return invoke_ollama_structured(client, request, parse=lambda text: (text, ""))
-
     with pytest.raises(RunStoppedError):
-        chat()
-    with pytest.raises(RunStoppedError):
-        structured()
+        invoke_ollama_structured(client, request, parse=lambda text: (text, ""))
 
     client.chat.side_effect = RuntimeError("boom")
-    assert chat() == InvokeAnswer("raw", "failed (boom)")
+    result = invoke_ollama_structured(client, request, parse=lambda text: (text, ""))
+
+    assert result.failure == "transport"
+    assert result.error.startswith("Correction failed (")
 
 
 def test_stop_requested_reads_an_optional_event() -> None:

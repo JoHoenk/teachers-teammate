@@ -47,6 +47,7 @@ from ..domain.data_location import (
 )
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import OCR_TEMPERATURE, HardwareProfileSetting
+from ..domain.ollama_address import normalize_ollama_url
 from ..domain.pdf_text_layer import (
     PDF_TEXT_LAYER_MODES,
     PdfTextLayerMode,
@@ -232,7 +233,7 @@ class OcrModelPicker(QWidget):
 
     def set_ollama_url(self, url: str) -> None:
         """Update the Ollama base URL used when fetching models (and ask the new server)."""
-        new_url = url or DEFAULTS["ollama_url"]
+        new_url = normalize_ollama_url(url)
         changed = new_url != self._ollama_url
         self._ollama_url = new_url
         if self._shared_selector is None:

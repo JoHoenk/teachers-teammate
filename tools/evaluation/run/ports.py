@@ -56,13 +56,11 @@ class OllamaChatPort:
     """
 
     def __init__(self, url: str, *, num_ctx: int | None = None) -> None:
-        from teachers_teammate.infrastructure.ollama_utils import (  # noqa: PLC0415
-            PROOFREADING_NUM_CTX,
-            OllamaClient,
-        )
+        from teachers_teammate.domain.context_budget import BASE_NUM_CTX  # noqa: PLC0415
+        from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
         self._client = OllamaClient(url)
-        self._num_ctx = PROOFREADING_NUM_CTX if num_ctx is None else num_ctx
+        self._num_ctx = BASE_NUM_CTX if num_ctx is None else num_ctx
 
     @property
     def num_ctx(self) -> int:

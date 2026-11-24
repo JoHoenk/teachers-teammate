@@ -35,14 +35,17 @@ if TYPE_CHECKING:
 
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 
-from teachers_teammate.domain.context_budget import REVIEW_ANSWER_FACTOR, ContextBudget
+from teachers_teammate.domain.context_budget import (
+    BASE_NUM_CTX,
+    REVIEW_ANSWER_FACTOR,
+    ContextBudget,
+)
 from teachers_teammate.domain.correction_policy import CUT_OFF_TRIES, normalize_output_mode
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
 from teachers_teammate.domain.notation import with_notation_hint
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.stages import Stage
-from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX
 from teachers_teammate.infrastructure.proofreading.port import (
     REVIEW_TIMEOUT_CAP,  # noqa: F401  # re-exported for the tests that pin the timeout
     LangChainPort,
@@ -129,7 +132,7 @@ class CorrectionSettings:
     """The teacher's own answer format for corrections only ("" = built-in)."""
     strict_schema: bool = False
     """OpenAI's strict JSON-schema mode; the other providers pick their own mechanism."""
-    num_ctx: int = PROOFREADING_NUM_CTX
+    num_ctx: int = BASE_NUM_CTX
     """Context window this corrector asks Ollama for, resolved once per run from the hardware."""
     cut_off_tries: int = CUT_OFF_TRIES
     """How often a review request is sent when its answer is cut off (see

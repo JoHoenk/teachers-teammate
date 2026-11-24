@@ -320,6 +320,42 @@ def override_root() -> Path | None:
     return Path(override) if override else None
 
 
+#: The organisation and application the GUI's settings are filed under in the native store.
+GUI_STORE_ORGANIZATION = "TeachersTeammate"
+GUI_STORE_APPLICATION = "TeachersTeammate"
+
+#: The file name the GUI's settings take under the override folder.
+GUI_STORE_FILE_NAME = "gui-settings.ini"
+
+
+@dataclass(frozen=True)
+class StoreLocation:
+    """Where the GUI's settings store lives: the native store, or an INI file.
+
+    The location as data, so the windows and the credential store (which keeps its plain-text
+    fallback there) cannot drift apart.
+    """
+
+    organization: str
+    application: str
+    ini_file: Path | None = None
+    """The INI file to use instead of the native store; ``None`` names the native store."""
+
+
+def gui_store_location() -> StoreLocation:
+    """Return where the GUI keeps its settings: an INI file in the override folder, else native.
+
+    An INI file there, because the native store writes where the platform says (the registry on
+    Windows), which no folder of a walkthrough could hold.
+    """
+    root = override_root()
+    return StoreLocation(
+        organization=GUI_STORE_ORGANIZATION,
+        application=GUI_STORE_APPLICATION,
+        ini_file=None if root is None else root / GUI_STORE_FILE_NAME,
+    )
+
+
 def _read_toml(path: Path) -> dict[str, Any]:
     """Return the parsed TOML of *path*, raising :exc:`ConfigFileParseError` on failure."""
     try:

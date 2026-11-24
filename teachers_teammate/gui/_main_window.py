@@ -46,7 +46,7 @@ from ..config import Config
 from ..domain.data_location import DataFlow
 from ..domain.install_item import InstallItem
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
-from ..settings_schema import DEFAULTS
+from ..settings_schema import DEFAULTS, normalize_saved_ollama_url
 from ..texts import app as app_text
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
@@ -58,7 +58,6 @@ from ._background import LatestTask, wait_for_background_tasks
 from ._chart_widget import ChartWidget
 from ._check_controller import CheckController, CheckHooks
 from ._config_panel import ConfigPanel
-from ._credential_store import CredentialStore
 from ._export_controller import ExportController
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
@@ -226,7 +225,7 @@ class MainWindow(QMainWindow):
             self._app_service.providers.env_key(provider)
             for provider in self._app_service.providers.list_providers()
         }
-        CredentialStore().load(self._app_service.keys, sorted(key for key in env_keys if key))
+        self._app_service.keys.load_stored(sorted(key for key in env_keys if key))
 
     def _build_ui(self) -> None:
         """Build the widgets, hand them to the controllers, then lay them out."""
@@ -270,8 +269,7 @@ class MainWindow(QMainWindow):
 
     def _build_widgets(self) -> None:
         """Build what the window shows and the controllers work on."""
-        self._config_panel = ConfigPanel()
-        self._config_panel.set_service(self._app_service)
+        self._config_panel = ConfigPanel(self._app_service)
         self._results_table = ResultsTable()
         self._results_table.setObjectName(_handles.RESULTS_TABLE)
         self._log = LogWidget()
@@ -830,7 +828,7 @@ class MainWindow(QMainWindow):
         show_update(self._update_banner, version, url)
 
     def _current_ollama_url(self) -> str:
-        return str(self._config_panel.get_settings_dict().get("ollama_url", DEFAULTS["ollama_url"]))
+        return normalize_saved_ollama_url(self._config_panel.get_settings_dict().get("ollama_url"))
 
     # ── Settings window ───────────────────────────────────────────────────
 

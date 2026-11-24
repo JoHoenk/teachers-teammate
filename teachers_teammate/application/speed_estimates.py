@@ -30,6 +30,7 @@ from statistics import median
 import threading
 
 from ..config import Config, OcrConfig
+from ..domain.context_budget import BASE_NUM_CTX
 from ..domain.correction_policy import CorrectionOutput, normalize_output_mode
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import (
@@ -65,7 +66,6 @@ from ..domain.performance_estimate import (
 )
 from ..domain.proofreading.result import StepName
 from ..domain.stages import Stage
-from ..infrastructure.ollama_utils import PROOFREADING_NUM_CTX
 from ..infrastructure.performance_probe import (
     PerformanceProbe,
     ProbeResult,
@@ -84,7 +84,7 @@ from ..infrastructure.speed_store import (
     StoredSpeed,
     now_stamp,
 )
-from ..settings_schema import DEFAULTS
+from ..settings_schema import DEFAULTS, normalize_saved_ollama_url
 from .ports import OllamaClientFactory, OllamaServer
 
 _logger = logging.getLogger(__name__)
@@ -121,7 +121,7 @@ class SpeedChoices:
     """``"review"`` or ``"text"``: how the answer of the proofreading is written, which decides
     how long it is."""
     language: str = "English"
-    num_ctx: int = PROOFREADING_NUM_CTX
+    num_ctx: int = BASE_NUM_CTX
     ocr: OcrConfig = field(default_factory=OcrConfig)
 
     @classmethod
@@ -145,7 +145,7 @@ class SpeedChoices:
         """
         ocr = OcrConfig.from_settings(settings)
         return cls._of(
-            ollama_url=str(settings.get("ollama_url") or DEFAULTS["ollama_url"]),
+            ollama_url=normalize_saved_ollama_url(settings.get("ollama_url")),
             ocr=ocr,
             reading=True,
             correction=(
@@ -174,7 +174,7 @@ class SpeedChoices:
         those steps alone, so the time left must not count the others.
         """
         return cls._of(
-            ollama_url=config.ollama_url or DEFAULTS["ollama_url"],
+            ollama_url=config.ollama_url,
             ocr=config.ocr,
             reading=config.recognition_enabled,
             correction=(
@@ -219,7 +219,7 @@ class SpeedChoices:
             review_model=ollama_model(evaluation, Stage.EVALUATION),
             correction_output=normalize_output_mode(correction_output),
             language=language,
-            num_ctx=PROOFREADING_NUM_CTX,
+            num_ctx=BASE_NUM_CTX,
             ocr=ocr,
         )
 
@@ -415,7 +415,7 @@ class SpeedEstimateService:
         client_factory: OllamaClientFactory,
         store: SpeedStore | None = None,
         samples: SampleStore,
-        probe_factory: Callable[..., PerformanceProbe] | None = None,
+        probe_factory: Callable[..., PerformanceProbe],
     ) -> None:
         """Create the service.
 
@@ -430,14 +430,15 @@ class SpeedEstimateService:
             store: Where measurements live; the default store under the storage root.
             samples: Where the samples of real runs live: the one store of the process, so the
                 estimates read what a run wrote.
-            probe_factory: Builds the probe; a test replaces it.
+            probe_factory: Builds the probe, given the page models it prepares a page with; a
+                test replaces it.
         """
         self._effective_model = effective_model
         self._ollama = ollama
         self._client_factory = client_factory
         self._store = store or SpeedStore()
         self._samples = samples
-        self._probe_factory: Callable[..., PerformanceProbe] = probe_factory or PerformanceProbe
+        self._probe_factory = probe_factory
         self._lock = threading.RLock()
         self._facts: dict[str, ServerFacts] = {}
 

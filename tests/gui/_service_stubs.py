@@ -11,16 +11,19 @@ methods the app calls on a thread it has started.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 import dataclasses
 from pathlib import Path
 from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.stages import Stage
 import tempfile
 import threading
+from typing import TYPE_CHECKING
 
 from teachers_teammate._model_defaults import default_model_for_task
 from teachers_teammate.application.api_keys import ApiKeys
+from teachers_teammate.domain.credentials import KeyLocation
+from teachers_teammate.infrastructure.credential_store import CredentialStore
 from teachers_teammate.application.composition import AppServices
 from teachers_teammate.application.context_choice import ContextChoice, context_choice
 from teachers_teammate.application.data_flow import text_goes_online
@@ -51,6 +54,10 @@ from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.performance_estimate import ProbeResult, TimeRange
 from teachers_teammate.domain.providers import ProviderInfo, display_name_of
 
+if TYPE_CHECKING:
+    # The panel pulls Qt in, which the domain- and CLI-level tests' deps do not carry.
+    from teachers_teammate.gui._config_panel import ConfigPanel
+
 
 def services_of(stub: object) -> AppServices:
     """Hand one flat stub to a widget as the grouped services it asks for.
@@ -61,6 +68,17 @@ def services_of(stub: object) -> AppServices:
     return AppServices(
         **{field.name: stub for field in dataclasses.fields(AppServices)}  # ty: ignore[invalid-argument-type]
     )
+
+
+def make_config_panel(service: object | None = None) -> ConfigPanel:
+    """Return a config panel whose data flow and requirement checks ask *service*.
+
+    Without one the panel asks :class:`LocalDataFlowStub`: every step runs on this computer and
+    every requirement is met, so a test that cares about neither names neither.
+    """
+    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
+
+    return ConfigPanel(services_of(service if service is not None else LocalDataFlowStub()))
 
 
 def context_choice_from(settings: Mapping[str, object], card_gb: float | None) -> ContextChoice:
@@ -161,6 +179,11 @@ class LocalDataFlowStub:
                 DataFlowStage(Stage.EVALUATION, here, "text"),
             )
         )
+
+    def check_stage_requirements(self, config, stage: str) -> list:
+        """Every requirement of *stage* is met in a test unless a stub says otherwise."""
+        _ = config, stage
+        return []
 
     def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation:
         _ = model, ollama_url
@@ -265,9 +288,25 @@ class LocalDataFlowStub:
         """Mirror the app: whether the key was exported before the app started."""
         return self._api_keys().set_outside_app(env_key)
 
+    def save(self, env_key: str, value: str) -> KeyLocation:
+        """Mirror the app: keep *value* for *env_key* in the store, wherever that puts it."""
+        return self._api_keys().save(env_key, value)
+
+    def forget(self, env_key: str) -> None:
+        """Mirror the app: forget the key for *env_key* wherever it is kept."""
+        self._api_keys().forget(env_key)
+
+    def location(self) -> KeyLocation:
+        """Mirror the app: where a key saved now would be kept."""
+        return self._api_keys().location()
+
+    def load_stored(self, env_keys: Iterable[str]) -> None:
+        """Mirror the app: hand the stored keys to what the app holds."""
+        self._api_keys().load_stored(env_keys)
+
     def _api_keys(self) -> ApiKeys:
         if self.api_keys is None:
-            self.api_keys = ApiKeys()
+            self.api_keys = ApiKeys(CredentialStore())
         return self.api_keys
 
     # ── speed test and time estimates (the panel on the AI models page) ───────

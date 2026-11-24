@@ -18,6 +18,7 @@ from teachers_teammate.application.speed_estimates import (
     SpeedSource,
 )
 from teachers_teammate.application.ports import OllamaServer
+from teachers_teammate.domain.context_budget import BASE_NUM_CTX
 from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     DetectionReason,
@@ -39,7 +40,6 @@ from teachers_teammate.domain.performance_estimate import (
 )
 from teachers_teammate.domain.proofreading.result import StepName
 from teachers_teammate.infrastructure.proofreading.corrector import exchange_cost
-from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX
 from teachers_teammate.infrastructure.performance_probe import PerformanceProbe
 from teachers_teammate.infrastructure.speed_store import (
     RunSample,
@@ -87,7 +87,7 @@ def _choices(
     writing_model: str = "gemma4:e4b",
     review_model: str = "",
     language: str = "English",
-    num_ctx: int = PROOFREADING_NUM_CTX,
+    num_ctx: int = BASE_NUM_CTX,
 ) -> SpeedChoices:
     """Return the choices of a page that reads and proofreads on Ollama."""
     return SpeedChoices(
@@ -215,6 +215,11 @@ def _client_factory(_url: str, _cancel: threading.Event | None) -> object:
     return _FakeClient()
 
 
+def _no_probe_built(*_args: object, **_kwargs: object) -> PerformanceProbe:
+    """Fail a test that measures the machine without a probe of its own."""
+    raise AssertionError("this test uses no probe")
+
+
 class _FakeProbe:
     """A stand-in for :class:`PerformanceProbe` that returns a scripted result."""
 
@@ -249,7 +254,9 @@ def _service(
         store=store,
         samples=samples if samples is not None else SampleStore(tmp_path / "samples.json"),
         probe_factory=(
-            (lambda *_a, **_k: cast(PerformanceProbe, probe)) if probe is not None else None
+            (lambda *_a, **_k: cast(PerformanceProbe, probe))
+            if probe is not None
+            else _no_probe_built
         ),
     )
     return service, store, server

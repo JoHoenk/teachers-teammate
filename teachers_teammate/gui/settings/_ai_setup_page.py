@@ -27,7 +27,8 @@ from PySide6.QtWidgets import (
 
 from ...domain.install_item import InstallItem
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
-from ...settings_schema import DEFAULTS
+from ...domain.ollama_address import normalize_ollama_url
+from ...settings_schema import DEFAULTS, normalize_saved_ollama_url
 from ...texts import models as mdl
 from ...texts import review as txt
 from ...texts import servers as srv
@@ -68,7 +69,7 @@ class AiSetupPage(SettingsPageBase):
         settings = context.settings
         # Known before any widget is built: "My computer" must detect for the
         # configured server, not for the default one.
-        self._url = str(settings.get("ollama_url") or DEFAULTS["ollama_url"])
+        self._url = normalize_saved_ollama_url(settings.get("ollama_url"))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -194,7 +195,7 @@ class AiSetupPage(SettingsPageBase):
 
     def load(self, values: Mapping[str, Any]) -> None:
         if "ollama_url" in values:
-            self._url = str(values["ollama_url"] or DEFAULTS["ollama_url"])
+            self._url = normalize_saved_ollama_url(values["ollama_url"])
             self._ollama_url.setText(self._url)
             self._status_line.set_url(self._url)
             self._hardware_selector.set_ollama_url(self._url)
@@ -204,7 +205,7 @@ class AiSetupPage(SettingsPageBase):
 
     def values(self) -> dict[str, Any]:
         return {
-            "ollama_url": self._ollama_url.text().strip() or DEFAULTS["ollama_url"],
+            "ollama_url": normalize_ollama_url(self._ollama_url.text()),
             "hardware_profile": self._hardware_selector.setting(),
         }
 
@@ -229,7 +230,7 @@ class AiSetupPage(SettingsPageBase):
     # ── server ────────────────────────────────────────────────────────────────
 
     def _on_url_edited(self) -> None:
-        url = self._ollama_url.text().strip() or DEFAULTS["ollama_url"]
+        url = normalize_ollama_url(self._ollama_url.text())
         if url == self._url:
             return
         self._url = url

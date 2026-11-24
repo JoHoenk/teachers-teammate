@@ -567,15 +567,10 @@ def forget_keys() -> int:
     Windows Credential Manager, which no uninstaller can enumerate.  No Qt application is
     needed — ``QSettings`` works without one.
     """
-    from teachers_teammate.gui._credential_store import CredentialStore  # noqa: PLC0415
-    from teachers_teammate.infrastructure import llm_factory  # noqa: PLC0415
+    from teachers_teammate.application.api_keys import ApiKeys  # noqa: PLC0415
+    from teachers_teammate.infrastructure.credential_store import CredentialStore  # noqa: PLC0415
 
-    store = CredentialStore()
-    for provider in llm_factory.list_providers():
-        info = llm_factory.get_provider_info(provider)
-        env_key = info.env_key if info is not None else ""
-        if env_key:
-            store.remove(env_key)
+    ApiKeys(CredentialStore()).forget_all()
     return 0
 
 
@@ -673,9 +668,10 @@ def _check_addon_imports() -> list[str]:
 
 def _check_name_detection() -> str | None:
     """Hide a name with spaCy the way a run does."""
-    from teachers_teammate.infrastructure.anonymizer import SpacyAnonymizer  # noqa: PLC0415
+    from teachers_teammate.infrastructure.spacy_models import SpacyModels  # noqa: PLC0415
 
-    anonymized, _mapping = SpacyAnonymizer(_ADDON_CHECK_LANGUAGE).anonymize(_ADDON_CHECK_TEXT)
+    anonymizer = SpacyModels().anonymizer(_ADDON_CHECK_LANGUAGE)
+    anonymized, _mapping = anonymizer.anonymize(_ADDON_CHECK_TEXT)
     if _ADDON_CHECK_NAME in anonymized:
         return f"the name was not hidden: {anonymized!r}"
     return None

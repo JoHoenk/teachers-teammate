@@ -27,6 +27,7 @@ from ..domain.model_catalog import (
     HardwareProfileSetting,
     profile_setting,
 )
+from ..domain.ollama_address import normalize_ollama_url
 from ..settings_schema import DEFAULTS
 from ..texts.models import (
     CHECK_COMPUTER_FAILED,
@@ -155,7 +156,7 @@ class HardwareProfileSelector(QWidget):
 
     def set_ollama_url(self, url: str) -> None:
         """Update the Ollama server URL and re-resolve the profile for it."""
-        new_url = url or DEFAULTS["ollama_url"]
+        new_url = normalize_ollama_url(url)
         if new_url == self._ollama_url:
             return
         self._ollama_url = new_url

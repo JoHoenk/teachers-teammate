@@ -6,6 +6,10 @@ answer, and how the request ended when it did not come back whole — the caller
 that is a failure of its stage.  These two helpers capture that shared shape so the
 ``Corrector`` / ``Evaluator`` implementations do not repeat the prompt-build and error-handling
 boilerplate.
+
+A cut-off answer is read in one place for every provider (:func:`answer_was_cut_off`): the fact
+is reported in the response metadata, under one of three names, and an answer whose metadata
+says nothing counts as whole.
 """
 
 from __future__ import annotations
@@ -14,9 +18,9 @@ from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from ..domain.context_budget import BASE_NUM_CTX
 from ..exceptions import TRUNCATED_MESSAGE, RunStoppedError
 from ..texts.review import ANSWER_NOT_STRUCTURED, correction_failed
-from .ollama_utils import PROOFREADING_NUM_CTX
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,6 +37,9 @@ class InvokeAnswer:
     text: str = ""
     warning: str | None = None
     """Why the request did not answer as asked; ``None`` when it did."""
+    truncated: bool = False
+    """Whether the output limit cut the answer off: its end is missing, so it must not replace
+    the text it was asked about."""
 
 
 @dataclass(frozen=True)
@@ -46,7 +53,7 @@ class ChatRequest:
     #: Sent as a system message; empty sends none.
     system: str = ""
     #: The context window this request asks Ollama for (resolved once per run).
-    num_ctx: int = PROOFREADING_NUM_CTX
+    num_ctx: int = BASE_NUM_CTX
     #: Reasoning on, off, or at the level the server names.
     think: bool | str = False
     #: A JSON schema the answer is constrained to; ``None`` leaves it free.
@@ -54,6 +61,26 @@ class ChatRequest:
     #: How many tokens the answer may take; ``None`` — as many as the request, which is the
     #: proofreading shape.  A content review passes a short fixed allowance.
     answer_tokens: int | None = None
+
+
+#: The finish reasons that say the provider stopped at its output limit rather than because it
+#: was done.
+_CUT_OFF_REASONS = frozenset({"length", "max_tokens", "MAX_TOKENS"})
+
+
+def answer_was_cut_off(message: object) -> bool:
+    """Return whether the output limit cut *message* off.
+
+    Each provider names the same fact in its own field and its own word: OpenAI and Mistral
+    ``finish_reason == "length"``, Anthropic ``stop_reason == "max_tokens"``, Gemini
+    ``finish_reason == "MAX_TOKENS"``.  Metadata that says nothing counts as a whole answer, so
+    a provider the app cannot read is never reported as cut off.
+    """
+    metadata = getattr(message, "response_metadata", None) or {}
+    if not isinstance(metadata, dict):
+        return False
+    reasons = (metadata.get("finish_reason"), metadata.get("stop_reason"))
+    return any(str(reason) in _CUT_OFF_REASONS for reason in reasons if reason)
 
 
 def invoke_langchain_chain(
@@ -67,67 +94,18 @@ def invoke_langchain_chain(
 ) -> InvokeAnswer:
     """Build a ``(system, human)`` chain and invoke it.
 
-    On any provider error, returns *fallback* with the warning *failure* words for it.
+    The message the provider returned is kept instead of being parsed to its text: the finish
+    reason lives in the message, and a parser drops it.  On any provider error, returns
+    *fallback* with the warning *failure* words for it.
     """
-    from langchain_core.output_parsers import StrOutputParser  # noqa: PLC0415
     from langchain_core.prompts import ChatPromptTemplate  # noqa: PLC0415
 
     template = ChatPromptTemplate.from_messages([("system", system), ("human", human)])
-    chain = template | llm | StrOutputParser()
     try:
-        return InvokeAnswer(chain.invoke(variables))
+        message = (template | llm).invoke(variables)
     except Exception as exc:  # noqa: BLE001  # LangChain raises provider-specific errors; degrade with a warning
         return InvokeAnswer(fallback, failure(exc))
-
-
-def invoke_ollama_chat(
-    client: OllamaClient,
-    request: ChatRequest,
-    *,
-    fallback: str,
-    failure: Callable[[Exception], str],
-    truncated_warning: str = TRUNCATED_MESSAGE,
-) -> InvokeAnswer:
-    """Invoke a native Ollama chat completion.
-
-    On any transport error, returns *fallback* with the warning *failure* words for the
-    exception.  A request's ``format`` passes a JSON schema to Ollama, which then constrains the
-    answer to it.  An answer the context window cut off returns *fallback* with
-    *truncated_warning*: its end is missing, so it must not replace the text it was asked about.
-    *truncated_warning* words a request or answer that did not fit the window.
-    """
-    from ..exceptions import ResponseTruncatedError  # noqa: PLC0415
-    from .ollama_utils import proofreading_options  # noqa: PLC0415
-
-    try:
-        return InvokeAnswer(
-            client.chat(
-                request.model,
-                request.prompt,
-                options=proofreading_options(request.temperature, request.num_ctx),
-                think=request.think,
-                timeout=request.timeout,
-                format=request.format,
-                system=request.system,
-                answer_tokens=request.answer_tokens,
-            )
-        )
-    except ResponseTruncatedError:
-        return InvokeAnswer(fallback, truncated_warning)
-    except RunStoppedError:
-        raise  # a stop is not a failed request: the caller leaves the stage
-    except Exception as exc:  # noqa: BLE001  # client may raise any transport error; degrade with a warning
-        return InvokeAnswer(fallback, failure(exc))
-
-
-def tidy_answer(answer: InvokeAnswer, postprocess: Callable[[str], str]) -> InvokeAnswer:
-    """Apply *postprocess* to the text of an answer that came back whole.
-
-    An answer with a warning is the caller's own fallback text and stays exactly as it was.
-    """
-    if answer.warning is not None:
-        return answer
-    return InvokeAnswer(postprocess(answer.text))
+    return InvokeAnswer(_message_text(message), truncated=answer_was_cut_off(message))
 
 
 FailureKind = Literal["", "transport", "unsupported", "invalid", "truncated"]
@@ -224,6 +202,8 @@ def invoke_langchain_structured[T](
             return StructuredResult(error=str(exc), failure="unsupported")
         return StructuredResult(error=correction_failed(exc), failure="transport")
     raw = answer.get("raw") if isinstance(answer, dict) else answer
+    if answer_was_cut_off(raw):
+        return StructuredResult(error=TRUNCATED_MESSAGE, failure="truncated")
     parsed = answer.get("parsed") if isinstance(answer, dict) else answer
     if parsed is None:
         error = answer.get("parsing_error") if isinstance(answer, dict) else None

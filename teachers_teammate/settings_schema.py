@@ -17,6 +17,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
+from ._model_defaults import default_model_for_task
 from .domain.anonymization import (
     SECONDARY_MODEL_AUTO,
     SECONDARY_MODEL_NONE,
@@ -42,12 +43,14 @@ from .domain.model_catalog import (
     HardwareProfileSetting,
     parse_profile_setting,
 )
+from .domain.ollama_address import normalize_ollama_url
 from .domain.ollama_discovery import DEFAULT_SERVER_URL
 from .domain.output_files import DocxFormat
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES, parse_pdf_text_layer
 from .domain.prompt_text import migrate_saved_default
 from .domain.setting_values import ContextSetting, PreprocessMethod
 from .domain.settings_notice import SettingNotice, SettingNoticeKind
+from .domain.stages import Stage
 
 #: Values accepted for ``proofreading_context``: ``"auto"`` or a window from this ladder.
 CONTEXT_SETTINGS: tuple[ContextSetting, ...] = tuple(ContextSetting)
@@ -175,6 +178,24 @@ def _member_of[E: StrEnum](kind: type[E]) -> Callable[[object], E]:
     return normalize
 
 
+def _provider_of(task: Stage) -> Callable[[object], str]:
+    """Return a normaliser that accepts only a provider that has a default model for *task*.
+
+    A saved provider the app no longer knows (a removed one, a hand edit) is ignored with a
+    notice, so the default applies instead of every later model lookup failing.
+    """
+
+    def normalize(value: object) -> str:
+        name = str(value).strip()
+        try:
+            default_model_for_task(name, task)
+        except ValueError:
+            raise ValueError(f"'{value}' is not a provider") from None
+        return name
+
+    return normalize
+
+
 def _pdf_text_layer(value: object) -> str:
     """Return *value* as a PDF text-layer mode, raising :exc:`ValueError` for anything else."""
     mode = parse_pdf_text_layer(value)
@@ -216,6 +237,16 @@ def _evaluate_prompt(value: object) -> str:
     of the review's fingerprint.
     """
     return migrate_saved_default(str(value).rstrip(), _DEFAULT_EVALUATE_PROMPT)
+
+
+def normalize_saved_ollama_url(value: object) -> str:
+    """Return *value* as the address the app uses: the default server when it is blank.
+
+    A saved setup can hold an empty address (a cleared field, an older file).  The one meaning
+    of that is :data:`~teachers_teammate.domain.ollama_discovery.DEFAULT_SERVER_URL`, decided
+    here so no reader of ``Config.ollama_url`` has to decide it again.
+    """
+    return normalize_ollama_url("" if value is None else str(value))
 
 
 def normalize_ocr_engine(value: object) -> str:
@@ -291,7 +322,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         "preprocess_method", PreprocessMethod.AUTO, SettingScope.RUN, normalize_preprocess_method
     ),
-    Setting("ollama_url", DEFAULT_SERVER_URL, SettingScope.RUN),
+    Setting("ollama_url", DEFAULT_SERVER_URL, SettingScope.RUN, normalize_saved_ollama_url),
     Setting("ocr_timeout", 180, SettingScope.RUN, _count_between(*OCR_TIMEOUT_RANGE)),
     # Whether scans (images, PDFs without a text layer) are read.  Off = only text that already
     # exists is used (text files, PDFs with a text layer) and scans are skipped.
@@ -313,7 +344,9 @@ SETTINGS: tuple[Setting, ...] = (
     # ── Correction ────────────────────────────────────────────────────────────
     Setting("correction_enabled", True, SettingScope.RUN, _flag),
     Setting("anonymization_enabled", False, SettingScope.RUN, _flag),
-    Setting("correction_provider", PROVIDER_OLLAMA, SettingScope.RUN),
+    Setting(
+        "correction_provider", PROVIDER_OLLAMA, SettingScope.RUN, _provider_of(Stage.CORRECTION)
+    ),
     Setting("correction_model", DEFAULT_WRITING_MODEL, SettingScope.RUN),
     # What the teacher wants the model to know about this class or this text.  The instructions
     # themselves are fixed by the app; the notes are the one place a teacher adds context.
@@ -330,7 +363,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     # ── Evaluation ────────────────────────────────────────────────────────────
     Setting("evaluation_enabled", False, SettingScope.RUN, _flag),
-    Setting("evaluate_provider", PROVIDER_OLLAMA, SettingScope.RUN),
+    Setting("evaluate_provider", PROVIDER_OLLAMA, SettingScope.RUN, _provider_of(Stage.EVALUATION)),
     Setting("evaluate_model", DEFAULT_WRITING_MODEL, SettingScope.RUN),
     Setting("evaluate_prompt", _DEFAULT_EVALUATE_PROMPT, SettingScope.RUN, _evaluate_prompt),
     # ── Output ────────────────────────────────────────────────────────────────

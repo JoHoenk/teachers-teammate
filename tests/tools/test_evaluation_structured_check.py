@@ -357,9 +357,10 @@ class _RecordingClient:
         timeout: float = 120.0,
         format: dict | str | None = None,
         system: str = "",
+        answer_tokens: int | None = None,
     ) -> str:
         """Record the request and return the scripted answer."""
-        del think
+        del think, answer_tokens
         self.requests.append(
             {"model": model, "prompt": prompt, "system": system, "options": options}
         )

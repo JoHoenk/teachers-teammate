@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QWidget
 from ..application.composition import AppServices
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import HardwareDetection
-from ..settings_schema import DEFAULTS
+from ..settings_schema import DEFAULTS, normalize_saved_ollama_url
 from ..texts.models import first_start_log
 from ._background import LatestTask
 from ._config_panel import ConfigPanel
@@ -155,7 +155,7 @@ class SetupLauncher(QObject):
     def _apply_first_start_model_settings(self) -> None:
         """Start first-start hardware detection in the background."""
         service = self._services
-        ollama_url = str(self._panel.get_settings_dict().get("ollama_url", DEFAULTS["ollama_url"]))
+        ollama_url = normalize_saved_ollama_url(self._panel.get_settings_dict().get("ollama_url"))
         # Detection must never get in the way of starting the app: any failure
         # simply leaves the static defaults in place.
         self._first_run_task.submit(

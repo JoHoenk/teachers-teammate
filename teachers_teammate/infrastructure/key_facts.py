@@ -19,11 +19,11 @@ from .system_locale import system_language
 class MachineKeyFacts:
     """This computer: its model folder and its system language."""
 
-    model_store: ModelStore | None = None
-    """Where the page models are; ``None`` is the default folder."""
+    model_store: ModelStore
+    """Where the page models are."""
 
     def page_steps(self) -> tuple[str, ...]:
-        return available_page_steps(self.model_store or ModelStore())
+        return available_page_steps(self.model_store)
 
     def system_language(self) -> str:
         # An unsupported locale is as good as unknown: the automatic extra model is then left

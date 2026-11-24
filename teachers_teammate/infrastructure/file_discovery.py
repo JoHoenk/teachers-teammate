@@ -18,6 +18,10 @@ class FileDiscovery:
         """Return sorted source files matching supported suffixes."""
         return self.collect_input_files_from_dir(config.input_dir, config.recursive)
 
+    def supported_suffixes(self) -> frozenset[str]:
+        """Return the input suffixes this discovery collects."""
+        return supported_suffixes()
+
     def collect_input_files_from_dir(self, input_dir: Path, recursive: bool) -> list[Path]:
         """Return sorted source files in *input_dir* without requiring a full Config."""
         glob_fn = input_dir.rglob if recursive else input_dir.glob

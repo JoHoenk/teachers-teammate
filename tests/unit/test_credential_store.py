@@ -9,15 +9,15 @@ from types import SimpleNamespace
 import pytest
 
 from teachers_teammate.application.api_keys import ApiKeys
-from teachers_teammate.gui import _credential_store
-from teachers_teammate.gui._credential_store import (
+from teachers_teammate.domain.credentials import KeyLocation
+from teachers_teammate.infrastructure import credential_store
+from teachers_teammate.infrastructure.credential_store import (
     KEYRING_SERVICE,
     CredentialStore,
-    KeyLocation,
 )
-from teachers_teammate.gui._credential_store import _keyring as real_keyring
+from teachers_teammate.infrastructure.credential_store import _keyring as real_keyring
 
-from ._settings_stubs import FakeKeyring
+from ..fakes.fake_keyring import FakeKeyring
 
 _FILE_KEY = "credentials/OPENAI_API_KEY"
 
@@ -26,11 +26,10 @@ _FILE_KEY = "credentials/OPENAI_API_KEY"
 def _keychain(monkeypatch) -> FakeKeyring:
     """A working system keychain."""
     fake = FakeKeyring()
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: fake)
+    monkeypatch.setattr(credential_store, "_keyring", lambda: fake)
     return fake
 
 
-@pytest.mark.gui
 def test_without_a_keychain_keys_live_in_the_settings_file(credential_file) -> None:
     """
     Given  a computer without a system keychain
@@ -49,7 +48,6 @@ def test_without_a_keychain_keys_live_in_the_settings_file(credential_file) -> N
     assert store.get("OPENAI_API_KEY") == ""
 
 
-@pytest.mark.gui
 def test_with_a_keychain_keys_go_there_and_not_into_the_file(keychain, credential_file) -> None:
     """
     Given  a working system keychain, and an old plain-text copy of the key
@@ -67,7 +65,6 @@ def test_with_a_keychain_keys_go_there_and_not_into_the_file(keychain, credentia
     assert store.get("OPENAI_API_KEY") == "sk-new"
 
 
-@pytest.mark.gui
 def test_a_keychain_that_refuses_the_write_does_not_lose_the_key(
     monkeypatch, credential_file
 ) -> None:
@@ -77,7 +74,7 @@ def test_a_keychain_that_refuses_the_write_does_not_lose_the_key(
     Then   it is kept in the settings file instead, and the caller is told so
     """
     locked = FakeKeyring(refuses_writes=True)
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: locked)
+    monkeypatch.setattr(credential_store, "_keyring", lambda: locked)
 
     assert CredentialStore().set("OPENAI_API_KEY", "sk-1") is KeyLocation.SETTINGS_FILE
 
@@ -85,7 +82,6 @@ def test_a_keychain_that_refuses_the_write_does_not_lose_the_key(
     assert CredentialStore().get("OPENAI_API_KEY") == "sk-1"
 
 
-@pytest.mark.gui
 def test_removing_forgets_the_key_in_both_places(keychain, credential_file) -> None:
     """
     Given  a key in the keychain and a leftover plain copy
@@ -102,7 +98,6 @@ def test_removing_forgets_the_key_in_both_places(keychain, credential_file) -> N
     assert credential_file == {}
 
 
-@pytest.mark.gui
 def test_start_up_moves_plain_keys_into_the_keychain(
     keychain, credential_file, monkeypatch
 ) -> None:
@@ -115,9 +110,9 @@ def test_start_up_moves_plain_keys_into_the_keychain(
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     credential_file[_FILE_KEY] = "sk-old"
-    keys = ApiKeys()
+    keys = ApiKeys(CredentialStore())
 
-    CredentialStore().load(keys, ["OPENAI_API_KEY", "MISTRAL_API_KEY"])
+    keys.load_stored(["OPENAI_API_KEY", "MISTRAL_API_KEY"])
 
     assert keys.key("OPENAI_API_KEY") == "sk-old"
     assert keychain.passwords == {(KEYRING_SERVICE, "OPENAI_API_KEY"): "sk-old"}
@@ -126,7 +121,35 @@ def test_start_up_moves_plain_keys_into_the_keychain(
     assert "MISTRAL_API_KEY" not in os.environ
 
 
-@pytest.mark.gui
+def test_a_provider_without_a_stored_key_is_not_asked_again(monkeypatch) -> None:
+    """
+    Given  a store with no key for a provider, read once at start-up
+    When   the key is asked for later
+    Then   the answer is "no key" and the store is not read a second time
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    class CountingStore:
+        reads = 0
+
+        def migrate(self, env_key: str) -> None:
+            """Nothing to move."""
+
+        def get(self, env_key: str) -> str:
+            """Count the read; the store holds nothing."""
+            self.reads += 1
+            return ""
+
+    store = CountingStore()
+    keys = ApiKeys(store)  # ty: ignore[invalid-argument-type]
+
+    keys.load_stored(["OPENAI_API_KEY"])
+    assert keys.key("OPENAI_API_KEY") == ""
+    assert keys.key("OPENAI_API_KEY") == ""
+
+    assert store.reads == 1
+
+
 def test_a_key_in_the_environment_wins_over_the_stored_one(keychain, monkeypatch) -> None:
     """
     Given  a key in the keychain and another one set in the environment before the app started
@@ -136,16 +159,15 @@ def test_a_key_in_the_environment_wins_over_the_stored_one(keychain, monkeypatch
     """
     keychain.passwords[(KEYRING_SERVICE, "OPENAI_API_KEY")] = "sk-stored"
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
-    keys = ApiKeys()
+    keys = ApiKeys(CredentialStore())
 
-    CredentialStore().load(keys, ["OPENAI_API_KEY"])
+    keys.load_stored(["OPENAI_API_KEY"])
 
     assert keys.key("OPENAI_API_KEY") == "sk-env"
     assert keys.held("OPENAI_API_KEY") is None
     assert os.environ["OPENAI_API_KEY"] == "sk-env"
 
 
-@pytest.mark.gui
 def test_a_failed_move_leaves_the_plain_copy_for_the_next_start(
     monkeypatch, credential_file
 ) -> None:
@@ -155,18 +177,17 @@ def test_a_failed_move_leaves_the_plain_copy_for_the_next_start(
     Then   the key is still usable and still in the file (nothing was lost)
     """
     locked = FakeKeyring(refuses_writes=True)
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: locked)
+    monkeypatch.setattr(credential_store, "_keyring", lambda: locked)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     credential_file[_FILE_KEY] = "sk-old"
-    keys = ApiKeys()
+    keys = ApiKeys(CredentialStore())
 
-    CredentialStore().load(keys, ["OPENAI_API_KEY"])
+    keys.load_stored(["OPENAI_API_KEY"])
 
     assert keys.key("OPENAI_API_KEY") == "sk-old"
     assert credential_file == {_FILE_KEY: "sk-old"}
 
 
-@pytest.mark.gui
 @pytest.mark.parametrize(
     ("module", "usable"),
     [
@@ -191,7 +212,6 @@ def test_the_keychain_counts_only_when_keyring_has_a_working_backend(
     assert (real_keyring() is not None) is usable
 
 
-@pytest.mark.gui
 def test_under_an_override_folder_the_keychain_is_never_used(monkeypatch, tmp_path) -> None:
     """
     Given  a run under ``TEACHERS_TEAMMATE_TMPDIR`` on a machine with a working keychain
@@ -213,7 +233,6 @@ def test_under_an_override_folder_the_keychain_is_never_used(monkeypatch, tmp_pa
     assert asked == []
 
 
-@pytest.mark.gui
 def test_a_keychain_that_raises_while_loading_counts_as_missing(monkeypatch) -> None:
     """
     Given  keyring whose backend cannot be loaded (broken D-Bus, for example)
@@ -230,7 +249,6 @@ def test_a_keychain_that_raises_while_loading_counts_as_missing(monkeypatch) -> 
     assert real_keyring() is None
 
 
-@pytest.mark.gui
 def test_a_refused_replacement_is_not_shadowed_by_the_old_keychain_key(
     monkeypatch, credential_file
 ) -> None:
@@ -242,19 +260,18 @@ def test_a_refused_replacement_is_not_shadowed_by_the_old_keychain_key(
     """
     locked = FakeKeyring(refuses_writes=True)
     locked.passwords[(KEYRING_SERVICE, "OPENAI_API_KEY")] = "sk-old"
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: locked)
+    monkeypatch.setattr(credential_store, "_keyring", lambda: locked)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     assert CredentialStore().set("OPENAI_API_KEY", "sk-new") is KeyLocation.SETTINGS_FILE
 
     assert locked.passwords == {}
     assert CredentialStore().get("OPENAI_API_KEY") == "sk-new"
-    keys = ApiKeys()
-    CredentialStore().load(keys, ["OPENAI_API_KEY"])
+    keys = ApiKeys(CredentialStore())
+    keys.load_stored(["OPENAI_API_KEY"])
     assert keys.key("OPENAI_API_KEY") == "sk-new"
 
 
-@pytest.mark.gui
 def test_the_newer_plain_key_replaces_a_stale_keychain_key_when_it_is_moved(
     keychain, credential_file, monkeypatch
 ) -> None:
@@ -268,16 +285,15 @@ def test_the_newer_plain_key_replaces_a_stale_keychain_key_when_it_is_moved(
     keychain.passwords[(KEYRING_SERVICE, "OPENAI_API_KEY")] = "sk-old"
     credential_file[_FILE_KEY] = "sk-new"
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    keys = ApiKeys()
+    keys = ApiKeys(CredentialStore())
 
-    CredentialStore().load(keys, ["OPENAI_API_KEY"])
+    keys.load_stored(["OPENAI_API_KEY"])
 
     assert keys.key("OPENAI_API_KEY") == "sk-new"
     assert keychain.passwords == {(KEYRING_SERVICE, "OPENAI_API_KEY"): "sk-new"}
     assert credential_file == {}
 
 
-@pytest.mark.gui
 def test_a_key_set_outside_the_app_is_known_as_such(monkeypatch, credential_file) -> None:
     """
     Given  one key exported before start-up and one only stored
@@ -288,11 +304,10 @@ def test_a_key_set_outside_the_app_is_known_as_such(monkeypatch, credential_file
     monkeypatch.setenv("OPENAI_API_KEY", "sk-outside")
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     credential_file["credentials/MISTRAL_API_KEY"] = "m-stored"
-    store = CredentialStore()
-    keys = ApiKeys()
+    keys = ApiKeys(CredentialStore())
 
-    store.load(keys, ["OPENAI_API_KEY", "MISTRAL_API_KEY"])
-    store.load(keys, ["OPENAI_API_KEY", "MISTRAL_API_KEY"])
+    keys.load_stored(["OPENAI_API_KEY", "MISTRAL_API_KEY"])
+    keys.load_stored(["OPENAI_API_KEY", "MISTRAL_API_KEY"])
 
     assert keys.set_outside_app("OPENAI_API_KEY")
     assert not keys.set_outside_app("MISTRAL_API_KEY")

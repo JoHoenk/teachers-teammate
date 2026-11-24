@@ -17,6 +17,7 @@ from teachers_teammate.application.commands import DocumentCommands
 from teachers_teammate.domain.document_state import machine_texts
 from teachers_teammate.domain.teacher_work import text_identity
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
+from teachers_teammate.infrastructure.input_provider_factory import supported_suffixes
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
 from teachers_teammate.infrastructure.state_repository import (
@@ -24,15 +25,17 @@ from teachers_teammate.infrastructure.state_repository import (
     StateRepository,
     compute_file_hash,
 )
-from teachers_teammate.infrastructure.key_facts import MachineKeyFacts
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore
 from teachers_teammate.infrastructure.workflow.cache_service import CacheReconciliationService
-from tests.conftest import fake_reader_store, make_config
+from tests.conftest import fake_reader_store, make_config, make_key_facts
 
 
 def _discovery_of(*names: str) -> MagicMock:
     """File discovery that finds the files called *names* (none by default)."""
-    return MagicMock(collect_input_files=MagicMock(return_value=[Path(n) for n in names]))
+    return MagicMock(
+        collect_input_files=MagicMock(return_value=[Path(n) for n in names]),
+        supported_suffixes=MagicMock(return_value=supported_suffixes()),
+    )
 
 
 #: The module the Ollama program lookup lives in, as the tests patch it.
@@ -57,7 +60,7 @@ def _make_svc(
     mock_state_factory = state_repository_factory or MagicMock(
         return_value=MagicMock(load_valid=MagicMock(return_value=None))
     )
-    mock_discovery = discovery or MagicMock()
+    mock_discovery = discovery or _discovery_of()
     return _build_services(
         discovery=mock_discovery,
         pipeline_factory=mock_pipeline_factory,
@@ -140,9 +143,10 @@ def _repo_with_document(
 
 def _commands_for(repo: StateRepository, **kwargs) -> DocumentCommands:
     """The window's write commands over *repo*, with the teacher's work in a temporary folder."""
+    kwargs.setdefault("work_store", TeacherWorkStore())
     return DocumentCommands(
         state_store_factory=lambda _config: repo,
-        facts=MachineKeyFacts(),
+        facts=make_key_facts(),
         **kwargs,
     )
 
@@ -214,7 +218,10 @@ def _proofread(
     cfg = make_config(tmp_path, correction_enabled=True, correction_model=model)
     repo = StateRepository(tmp_path / "state")
     recon = CacheReconciliationService(
-        state_repo=repo, artifact_store=PreviewImageStore(tmp_path / "art"), config=cfg
+        facts=make_key_facts(),
+        state_repo=repo,
+        artifact_store=PreviewImageStore(tmp_path / "art"),
+        config=cfg,
     )
     sources: list[Path] = []
     for name in names:

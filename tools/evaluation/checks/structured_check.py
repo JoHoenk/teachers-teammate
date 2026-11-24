@@ -732,9 +732,9 @@ class StructuredOutputCheck:
 
 def window_of(chat: ChatPort) -> int:
     """Return the context window *chat* sends at (the app's default when it does not say)."""
-    from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX  # noqa: PLC0415
+    from teachers_teammate.domain.context_budget import BASE_NUM_CTX  # noqa: PLC0415
 
-    return int(getattr(chat, "num_ctx", PROOFREADING_NUM_CTX))
+    return int(getattr(chat, "num_ctx", BASE_NUM_CTX))
 
 
 def report_lines(runs: Iterator[CheckRun] | list[CheckRun], rule: CheckRule) -> list[str]:

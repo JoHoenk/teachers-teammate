@@ -41,8 +41,8 @@ from ....domain.model_catalog import (
     ModelUses,
     OllamaModelSpec,
     Suitability,
+    active_profile,
     best_model,
-    concrete_profile,
     find_spec,
     normalize_tag,
     suitability_rank,
@@ -410,11 +410,8 @@ class OllamaModelsTab(QWidget):
     # ── the computer the rows are rated for ──────────────────────────────────────
 
     def _active_profile(self) -> HardwareProfile:
-        """Return the currently active hardware profile (8 GB until detection lands)."""
-        detection = self._hardware_selector.resolved()
-        if detection is not None:
-            return detection.profile
-        return concrete_profile(self._hardware_selector.setting()) or HardwareProfile.CARD_8GB
+        """Return the profile the rows are rated for (a hand-picked one at once)."""
+        return active_profile(self._hardware_selector.resolved(), self._hardware_selector.setting())
 
     def _best_model(self, category: ModelCategory, profile: HardwareProfile) -> str:
         """Return the BEST model of *category* on the active computer."""

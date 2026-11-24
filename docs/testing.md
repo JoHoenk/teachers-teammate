@@ -40,10 +40,11 @@ The built-in reader's model tests (`//tests:test_ppocr_models`, the multi-page P
 
 You can also invoke pytest directly (without Bazel) for quick ad-hoc runs, but Bazel is preferred in CI and for coverage because it applies the correct sandbox and dependency isolation.
 
-The suites take their tests from a tag rather than a list: every `py_test` of `tests/BUILD`
-carries the tag of the folder its file lives in (`unit`, `gui`, `integration`, `tools`), and
-`unit_tests`/`gui_tests`/`integration_tests`/`tools_tests` are one `test_suite` per tag.
-`tests/unit/test_test_targets.py` holds the tags to the folders.
+The suites take their tests from a tag rather than a list: `unit_tests`/`gui_tests`/
+`integration_tests`/`tools_tests` are one `test_suite` per tag, and `app_test()` (`tests/defs.bzl`)
+gives every test the tag of the folder its file lives in. A target is one call that names the test
+file; the macro derives the rest (name, tag, entry point). `tests/unit/test_test_targets.py` holds
+the targets to the test files.
 
 `platform_tests.yml` runs the unit and GUI tests in a plain venv on Windows and macOS: the build
 venv's own recipe with the `[test]` extra, so the versions are the ones the bundle ships there.

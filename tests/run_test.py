@@ -1,6 +1,6 @@
-"""Bazel py_test entry point: runs pytest on a single test file.
+"""Bazel test entry point: runs pytest on a single test file.
 
-Usage (set via the ``args`` attribute in each ``py_test`` BUILD target):
+Usage (set for every target by ``app_test()`` in ``defs.bzl``):
 
     python run_test.py unit/test_foo.py [extra pytest args …]
 

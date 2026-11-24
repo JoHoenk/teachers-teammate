@@ -7,8 +7,9 @@ lint run without a word, so the lint job runs this after the linters:
 
     python3 tools/ci/check_lint_coverage.py
 
-A file of ``//teachers_teammate``, ``//tools`` or ``//tests`` that no target of the set holds turns
-the job red, and so does a label the set names that holds nothing.
+A Python file of ``teachers_teammate/``, ``tools/`` or ``tests/`` that no target of the set holds
+turns the job red, whether another rule holds it or none does, and so does a label the set names
+that holds nothing.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ EXPRESSION = 'kind("py_.*", ' + " + ".join(f"{tree}/..." for tree in TREES) + ")
 
 Rule = dict[str, object]
 Query = Callable[[str], list[Rule]]
+Tracked = Callable[[], list[str]]
 
 
 def linted_labels(build: Path) -> list[str]:
@@ -48,17 +50,24 @@ def sources(rules: Iterable[Rule]) -> dict[str, set[str]]:
         attributes = {one["name"]: one for one in rule["attribute"]}  # ty: ignore[not-iterable]
         held = attributes.get("srcs", {}).get("stringListValue", [])
         found[str(rule["name"])] = {
-            one for one in held if one.startswith("//") and one.endswith(".py")
+            one.replace(":", "/", 1) for one in held if one.startswith("//") and one.endswith(".py")
         }
     return found
 
 
-def gaps(held: dict[str, set[str]], linted: list[str]) -> tuple[list[str], list[str]]:
-    """Return the files no lint target holds, and the lint targets that hold nothing."""
+def gaps(
+    held: dict[str, set[str]], linted: list[str], tracked: Iterable[str]
+) -> tuple[list[str], list[str]]:
+    """Return the files no lint target holds, and the lint targets that hold nothing.
+
+    *tracked* are the repository's Python files as ``//path/file.py``: a file that is in no rule
+    at all is among them, not among *held*.
+    """
     covered: set[str] = set()
     for label in linted:
         covered |= held.get(label, set())
-    lost = sorted({one for files in held.values() for one in files} - covered)
+    everything = {one for files in held.values() for one in files} | set(tracked)
+    lost = sorted(everything - covered)
     empty = sorted(label for label in linted if not held.get(label))
     return lost, empty
 
@@ -72,14 +81,27 @@ def bazel_rules(expression: str) -> list[Rule]:
     return [json.loads(line)["rule"] for line in done.stdout.splitlines() if line.strip()]
 
 
-def main(argv: list[str] | None = None, *, query: Query | None = None) -> int:
+def tracked_files() -> list[str]:
+    """Return the Python files git tracks in the three trees, as ``//path/file.py``."""
+    paths = [f"{tree.removeprefix('//')}/*.py" for tree in TREES]
+    done = subprocess.run(
+        ["git", "ls-files", "--", *paths], capture_output=True, text=True, check=False
+    )
+    if done.returncode != 0:
+        raise SystemExit(f"git ls-files failed ({done.returncode}):\n{done.stderr}")
+    return [f"//{line}" for line in done.stdout.splitlines() if line.strip()]
+
+
+def main(
+    argv: list[str] | None = None, *, query: Query | None = None, tracked: Tracked | None = None
+) -> int:
     """Fail when a Python file of the three trees is in no target of the lint set."""
     parser = argparse.ArgumentParser(description="Check that every Python file is linted.")
     parser.add_argument("--build", type=Path, default=Path("BUILD"), help="the root BUILD file")
     options = parser.parse_args(argv)
     ask = query or bazel_rules
     held = sources(ask(EXPRESSION))
-    lost, empty = gaps(held, linted_labels(options.build))
+    lost, empty = gaps(held, linted_labels(options.build), (tracked or tracked_files)())
     for label in empty:
         print(f"the lint set names {label}, which holds no Python file", file=sys.stderr)
     for one in lost:

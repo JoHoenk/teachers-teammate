@@ -1,6 +1,8 @@
 # Quality gate for pull requests. Runs format-lint, the test suite, the docs build and CodeQL on
-# every PR, on pushes to main, and when GitHub's merge queue requests checks. Mark the
-# `check` job as required in branch protection to block merges until it passes.
+# every PR and on pushes to main.
+#
+# `main` requires the `check` job below (`PR merge gate`) with up-to-date branches, so a PR's run
+# tested what lands.
 #
 # Not on tags: release.yml runs lint and tests itself, and a second run per tag only repeats it.
 #
@@ -16,10 +18,8 @@ on:
   pull_request:
     branches: ["main"]
     types: [opened, reopened, synchronize]
-  merge_group:
-    types: [checks_requested]
 
-# Cancel superseded runs for the same PR; never cancel push/merge_group runs.
+# Cancel superseded runs for the same PR; never cancel push runs.
 concurrency:
   group: pull_request_checks-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

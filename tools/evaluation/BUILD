@@ -21,9 +21,10 @@ load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 # formatting.  `application_lib` brings the layers below it; the GUI and the command line stay out.
 _APP = ["//teachers_teammate:application_lib"]
 
+# The package's own __init__.py is here, in the layer every other one imports.
 py_library(
     name = "core",
-    srcs = glob(["core/*.py"]),
+    srcs = ["__init__.py"] + glob(["core/*.py"]),
     data = ["core/protocol.json"],
     visibility = ["//visibility:public"],
     deps = _APP,

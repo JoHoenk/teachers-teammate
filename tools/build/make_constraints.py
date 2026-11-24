@@ -6,9 +6,14 @@ install from, resolved with the Python of `.python-version` — plus
 ``tools/build/requirements_platform.txt`` for the packages that lock cannot hold (Windows-only
 ones) and the build tools themselves.
 
+With ``--dev`` the pins of ``requirements_dev_lock.txt`` and ``requirements_addons_lock.txt`` (and
+``tools/build/requirements_addons_platform.txt``) are added, for the developer venv that installs
+the dev and llm extras. Where the locks differ on a package, the add-on lock wins (see ``ALLOWED``
+in ``tests/unit/test_lock_agreement.py``).
+
 Usage (from the repo root):
 
-    python tools/build/make_constraints.py
+    python tools/build/make_constraints.py [--dev]
 
 Output: ``pyinstaller-work/constraints.txt``, which the build then passes to pip:
 
@@ -20,6 +25,7 @@ not pinned here, so a build never silently picks up a newer version.
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import re
 import sys
@@ -27,6 +33,9 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent.parent
 LOCK = ROOT / "requirements_lock.txt"
 PLATFORM = Path(__file__).resolve().parent / "requirements_platform.txt"
+DEV_LOCK = ROOT / "requirements_dev_lock.txt"
+ADDONS_LOCK = ROOT / "requirements_addons_lock.txt"
+ADDONS_PLATFORM = Path(__file__).resolve().parent / "requirements_addons_platform.txt"
 OUTPUT = ROOT / "pyinstaller-work" / "constraints.txt"
 
 
@@ -64,12 +73,19 @@ def merge(*pin_lists: list[str]) -> dict[str, str]:
     return merged
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Write the constraints file and say how many pins it holds."""
-    pins = merge(
-        parse_pins(LOCK.read_text(encoding="utf-8")),
-        parse_pins(PLATFORM.read_text(encoding="utf-8")),
+    parser = argparse.ArgumentParser(description="Write the pip constraints file of the build.")
+    parser.add_argument(
+        "--dev", action="store_true", help="also pin the dev and add-on locks (developer venv)"
     )
+    options = parser.parse_args(argv)
+    # Later files win; the platform file comes last: it holds the build tools.
+    files = [LOCK]
+    if options.dev:
+        files += [DEV_LOCK, ADDONS_LOCK, ADDONS_PLATFORM]
+    files.append(PLATFORM)
+    pins = merge(*(parse_pins(path.read_text(encoding="utf-8")) for path in files))
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(
         "".join(f"{name}=={version}\n" for name, version in sorted(pins.items())),

@@ -42,8 +42,19 @@ bazel_dep(
     dev_dependency = True,
 )
 
-bazel_dep(name = "rules_jvm_external", version = "7.2")
-bazel_dep(name = "rules_java", version = "9.9.0")
+# Java for the documentation build alone: //tools/sphinx:plantuml runs the PlantUML jar. Both are
+# dev dependencies, so the evaluation repository, which depends on this module, carries neither
+# the rules nor a JDK.
+bazel_dep(
+    name = "rules_jvm_external",
+    version = "7.2",
+    dev_dependency = True,
+)
+bazel_dep(
+    name = "rules_java",
+    version = "9.9.0",
+    dev_dependency = True,
+)
 
 # One Python version for the whole repository: `.python-version` holds the full patch, and
 # rules_python reads it here.  CI's setup-python reads the same file, so the Bazel tests and the
@@ -88,12 +99,17 @@ pip_test.parse(
 )
 use_repo(pip_test, "ocr_test_dependencies")
 
-maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven = use_extension(
+    "@rules_jvm_external//:extensions.bzl",
+    "maven",
+    dev_dependency = True,
+)
 maven.install(
     name = "blueprint_maven_dependencies",
     artifacts = [
         "net.sourceforge.plantuml:plantuml:1.2025.9",
     ],
+    lock_file = "//:maven_install.json",
     repositories = ["https://repo1.maven.org/maven2"],
 )
 use_repo(maven, "blueprint_maven_dependencies")

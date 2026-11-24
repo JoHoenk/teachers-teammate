@@ -16,8 +16,17 @@ def _rule(label: str, *srcs: str) -> dict[str, object]:
 
 #: What the query answers for two packages, one of them in the lint set.
 RECORDED = [
-    _rule("//tools/ci:lint_lib", "//tools/ci/__init__.py", "//tools/ci/new_tool.py"),
-    _rule("//tools/new:new_lib", "//tools/new/__init__.py", "//tools/new/new_tool.py"),
+    _rule("//tools/ci:lint_lib", "//tools/ci:__init__.py", "//tools/ci:new_tool.py"),
+    _rule("//tools/new:new_lib", "//tools/new:__init__.py", "//tools/new:new_tool.py"),
+]
+
+
+#: The files git tracks in those two packages, as the guard lists them.
+TRACKED = [
+    "//tools/ci/__init__.py",
+    "//tools/ci/new_tool.py",
+    "//tools/new/__init__.py",
+    "//tools/new/new_tool.py",
 ]
 
 
@@ -38,7 +47,9 @@ def test_a_file_of_no_lint_target_is_reported(
     """
     build = _build(tmp_path, ["//tools/ci:lint_lib"])
 
-    code = check_lint_coverage.main(["--build", str(build)], query=lambda _expression: RECORDED)
+    code = check_lint_coverage.main(
+        ["--build", str(build)], query=lambda _expression: RECORDED, tracked=lambda: TRACKED
+    )
 
     assert code == 1
     assert "in no lint target: //tools/new/new_tool.py" in capsys.readouterr().err
@@ -54,10 +65,32 @@ def test_a_file_of_a_lint_target_is_not_reported(
     """
     build = _build(tmp_path, ["//tools/ci:lint_lib", "//tools/new:new_lib"])
 
-    code = check_lint_coverage.main(["--build", str(build)], query=lambda _expression: RECORDED)
+    code = check_lint_coverage.main(
+        ["--build", str(build)], query=lambda _expression: RECORDED, tracked=lambda: TRACKED
+    )
 
     assert code == 0
     assert capsys.readouterr().err == ""
+
+
+def test_a_file_of_no_rule_at_all_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    Given  a tracked Python file that no py_* rule holds, so the query never mentions it
+    When   the guard runs
+    Then   it names that file and fails, because nothing would lint it
+    """
+    build = _build(tmp_path, ["//tools/ci:lint_lib", "//tools/new:new_lib"])
+
+    code = check_lint_coverage.main(
+        ["--build", str(build)],
+        query=lambda _expression: RECORDED,
+        tracked=lambda: [*TRACKED, "//tools/orphan/stray.py"],
+    )
+
+    assert code == 1
+    assert "in no lint target: //tools/orphan/stray.py" in capsys.readouterr().err
 
 
 def test_a_lint_target_that_holds_nothing_is_reported(
@@ -70,7 +103,9 @@ def test_a_lint_target_that_holds_nothing_is_reported(
     """
     build = _build(tmp_path, ["//tools/ci:lint_lib", "//tools/ci:gone"])
 
-    code = check_lint_coverage.main(["--build", str(build)], query=lambda _expression: RECORDED)
+    code = check_lint_coverage.main(
+        ["--build", str(build)], query=lambda _expression: RECORDED, tracked=lambda: TRACKED
+    )
 
     assert code == 1
     assert "the lint set names //tools/ci:gone" in capsys.readouterr().err

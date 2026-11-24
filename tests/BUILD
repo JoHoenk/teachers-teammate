@@ -886,6 +886,8 @@ app_test(
 app_test(
     "unit/test_wheel.py",
     data = [
+        "//:LICENSE",
+        "//:NOTICE",
         "//:pyproject.toml",
         "//docs:advanced_user_guide.md",
         "//docs:index.md",
@@ -1491,14 +1493,20 @@ app_test(
 # explains a rule is not a second copy of it.
 app_test(
     "tools/test_evaluation_shared_names.py",
-    data = ["//tools:all_sources"],
+    data = [
+        "//tools:all_sources",
+        "//tools/dev:all_sources",
+    ],
 )
 
 # The layers of the evaluation tooling: an import that reaches above its own layer fails here, with
 # the file and the line, instead of failing the build with the name of a target.
 app_test(
     "tools/test_evaluation_layers.py",
-    data = ["//tools:all_sources"],
+    data = [
+        "//tools:all_sources",
+        "//tools/dev:all_sources",
+    ],
 )
 
 # Every tool binary starts: `--help` exits 0, and so does each subcommand's `--help`.  The binaries
@@ -1536,6 +1544,7 @@ app_test(
         "//evaluations:records",
         "//teachers_teammate:all_sources",
         "//tools:all_sources",
+        "//tools/dev:all_sources",
     ],
 )
 
@@ -1550,6 +1559,7 @@ app_test(
         "//evaluations:records",
         "//teachers_teammate:all_sources",
         "//tools:all_sources",
+        "//tools/dev:all_sources",
     ],
     deps = _PKG_LIB,
 )

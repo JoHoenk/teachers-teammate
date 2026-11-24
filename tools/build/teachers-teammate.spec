@@ -19,11 +19,10 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 ROOT = Path(SPECPATH).resolve().parent.parent
 ASSETS = ROOT / "teachers_teammate" / "assets"
 
-# Qt modules the app does not use: Qt offers them only under the GPL-3.0 or a commercial license,
-# and one in the bundle would be size for nothing, so a future import must never drag one in. The
-# smoke test (teachers_teammate/frozen_modes.py) checks the finished bundle, and a unit test keeps
-# this list equal to its GPL_ONLY_QT_MODULES.
-GPL_ONLY_QT_MODULES = (
+# Qt modules the app does not use: one in the bundle would be size for nothing, so a future import
+# must never drag one in. The smoke test (teachers_teammate/frozen_modes.py) checks the finished
+# bundle, and a unit test keeps this list equal to its UNUSED_QT_MODULES.
+UNUSED_QT_MODULES = (
     "Charts",
     "DataVisualization",
     "Graphs",
@@ -43,9 +42,9 @@ _DROPPED = (
     "platformthemes/libqgtk3",
     "WebEngine",
     "Qt6Multimedia",
-    # The GPL-only modules: the library "Qt6<name>" and the Python module "Qt<name>" of each.
-    *(f"Qt6{module}" for module in GPL_ONLY_QT_MODULES),
-    *(f"Qt{module}" for module in GPL_ONLY_QT_MODULES),
+    # The unused modules: the library "Qt6<name>" and the Python module "Qt<name>" of each.
+    *(f"Qt6{module}" for module in UNUSED_QT_MODULES),
+    *(f"Qt{module}" for module in UNUSED_QT_MODULES),
     # Platform plugins for devices without a desktop (framebuffer, KMS, VNC, test stubs): the
     # app runs under X11 (xcb) or Wayland, and the smoke test under offscreen.
     "platforms/libqeglfs",

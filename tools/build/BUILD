@@ -12,7 +12,7 @@ load("@rules_shell//shell:sh_library.bzl", "sh_library")
 
 # The platform pins: the packages the Linux lock cannot hold, or that only the build needs.
 # Read by the license inventory (a row per pin) and by the store test.  The spec is read by the
-# smoke test's unit test, which keeps its GPL-only Qt list equal to the one in frozen_modes.py.
+# smoke test's unit test, which keeps its unused-Qt list equal to the one in frozen_modes.py.
 exports_files(
     [
         "requirements_addons_platform.txt",

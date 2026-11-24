@@ -66,7 +66,7 @@ def test_main_writes_sorted_pins(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(make_constraints, "PLATFORM", platform)
     monkeypatch.setattr(make_constraints, "OUTPUT", output)
 
-    assert make_constraints.main() == 0
+    assert make_constraints.main([]) == 0
 
     assert output.read_text(encoding="utf-8").splitlines() == [
         "annotated-types==0.8.0",
@@ -75,6 +75,45 @@ def test_main_writes_sorted_pins(tmp_path: Path, monkeypatch) -> None:
         "setuptools==84.2.1",
         "smart-open==9.0.2",
     ]
+
+
+def test_dev_adds_the_dev_and_addon_locks_and_the_addon_lock_wins(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a lock, a dev lock and an add-on lock that pins a package lower, and the platform file
+    When   the constraints are written with --dev
+    Then   the dev and add-on packages are pinned, the add-on version wins, and without --dev
+           none of them is
+    """
+    files = {
+        "LOCK": "tenacity==9.2.1\nrequests==2.0\n",
+        "DEV_LOCK": "sphinx==8.0\n",
+        "ADDONS_LOCK": "tenacity==9.1.4\ngoogle-genai==1.0\n",
+        "ADDONS_PLATFORM": "colorama==0.4.6\n",
+        "PLATFORM": "pyinstaller==6.22.3\n",
+    }
+    for name, text in files.items():
+        path = tmp_path / f"{name}.txt"
+        path.write_text(text, encoding="utf-8")
+        monkeypatch.setattr(make_constraints, name, path)
+    output = tmp_path / "constraints.txt"
+    monkeypatch.setattr(make_constraints, "OUTPUT", output)
+
+    assert make_constraints.main(["--dev"]) == 0
+    dev = output.read_text(encoding="utf-8").splitlines()
+    assert make_constraints.main([]) == 0
+    base = output.read_text(encoding="utf-8").splitlines()
+
+    assert dev == [
+        "colorama==0.4.6",
+        "google-genai==1.0",
+        "pyinstaller==6.22.3",
+        "requests==2.0",
+        "sphinx==8.0",
+        "tenacity==9.1.4",
+    ]
+    assert base == ["pyinstaller==6.22.3", "requests==2.0", "tenacity==9.2.1"]
 
 
 def test_the_committed_platform_file_pins_the_build_tools() -> None:

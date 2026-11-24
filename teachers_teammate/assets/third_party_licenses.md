@@ -20,20 +20,17 @@ the "Third-Party Licenses" tab of Help > Licenses and in third_party_license.txt
 are separate files in the application folder (the PySide6 folder inside _internal,
 or inside the macOS app bundle), not compiled into the program, and the
 application loads them at runtime, so they can be replaced with a compatible build
-of the same Qt version. Nothing in the license of Teacher's Teammate restricts
-changing the application for your own use or reverse engineering it to debug such
-changes. The complete source code of Teacher's Teammate is publicly available at
-https://github.com/JoHoenk/teachers-teammate.
+of the same Qt version. The complete source code of Teacher's Teammate is publicly
+available at https://github.com/JoHoenk/teachers-teammate.
 
-The build carries only the Qt modules the app uses. Qt Charts and the other modules that Qt offers
-only under the GPL-3.0 or a commercial license stay out because nothing uses them, and the smoke
-test fails if one is still in the finished bundle.
+The build carries only the Qt modules the app uses. The others (Qt Charts, Qt Quick 3D, ...) stay
+out to keep the download small, and the smoke test fails if one is in the finished bundle.
 
 FFmpeg inside OpenCV (LGPL-2.1)
 -------------------------------
 The OpenCV package (opencv-python-headless) carries FFmpeg. It is used under the GNU Lesser
 General Public License, version 2.1, whose text is in the OpenCV entry of the third-party
-license list. The application never reads video. FFmpeg ships in the Linux and macOS bundles
+license list. FFmpeg ships in the Linux and macOS bundles
 only: the Windows bundle leaves out the separate DLL that OpenCV's Windows build carries.
 
 Source code
@@ -68,13 +65,9 @@ update check does not see it.
 Written offer
 -------------
 The sources release named above is the offer of corresponding source from the same place as the
-download (GPL-3.0 section 6(d), as used through LGPL-3.0). Teacher's Teammate itself is offered the
+download (GPL-3.0 section 6(d), as used through LGPL-3.0; LGPL-2.1 section 6(d) for FFmpeg). Teacher's Teammate itself is offered the
 same way: the "Source code" archive on the page of each release is its Corresponding Source
-(GPL-3.0 section 6(d)). In addition, for three years after we last distributed a version, we send
-the corresponding source of this program and of every LGPL component in it on request, on a
-medium customary for software interchange, for no more than our cost of physically performing the
-source distribution (LGPL-2.1 section 6(c), GPL-3.0 section 6(b)). Ask at
-https://github.com/JoHoenk/teachers-teammate/issues.
+(GPL-3.0 section 6(d)).
 
 The macOS OpenCV libraries and the Linux host libraries are covered by this offer. The Linux
 download's third_party_host_libraries.txt names the Ubuntu source package and version of every

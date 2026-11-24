@@ -1,6 +1,6 @@
 name: codeql
 
-# Called from pull_request_checks.yml (PRs, pushes to main, merge queue) so the
+# Called from pull_request_checks.yml (PRs, pushes to main) so the
 # `PR merge gate` covers it; the weekly schedule re-scans main for newly added queries.
 
 on:

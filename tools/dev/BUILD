@@ -2,8 +2,8 @@
 
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 
-# What both probes reach at start-up: the app's proofreading infrastructure pulls in pydantic and
-# the ocr_formats parsers, and the client needs ollama.
+# What the type checker needs to resolve the app's proofreading imports (pydantic, the ocr_formats
+# parsers, the ollama client). Only `lint_lib` takes it: neither probe imports those at start-up.
 _APP_RUNTIME = [
     "@ocr_test_dependencies//lxml:pkg",
     "@ocr_test_dependencies//markdown_it_py:pkg",
@@ -47,6 +47,14 @@ py_binary(
         "@ocr_test_dependencies//pillow:pkg",
         "@ocr_test_dependencies//platformdirs:pkg",
     ],
+)
+
+# Every probe's source, for the tests that scan the tools' sources (//tools:all_sources does not
+# reach into this package). Not added to any wheel.
+filegroup(
+    name = "all_sources",
+    srcs = glob(["*.py"]),
+    visibility = ["//visibility:public"],
 )
 
 # Every probe of this package as one library, for //:py_ruff and //:py_ty. The binaries above each

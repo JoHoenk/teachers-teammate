@@ -7,7 +7,7 @@ before the splash screen and before any heavy import.
 ``run_smoke_test`` is what proves a build is complete: the modules the app loads lazily,
 Qt's image plugins, the reader's OpenCV runtime, PDF and DOCX writing, the provider list,
 the Setup Assistant building a plan, the bundled assets, the model files the app carries
-itself, the absence of GPL-only Qt modules, the pip dispatch and the add-on constraints and
+itself, the absence of unused Qt modules, the pip dispatch and the add-on constraints and
 lock. CI runs it on every build
 (see ``.github/workflows/build_artifacts.yml``) and the Windows installer test runs it again
 on the installed copy.
@@ -105,11 +105,10 @@ SETUP_PLAN_TIMEOUT_MS = 30_000
 # The pages the check clicks through: Welcome, Classes, Local AI, Proofreading, Privacy → Summary.
 SETUP_PAGES = 5
 
-# Qt modules the app does not use: Qt offers them only under the GPL-3.0 or a commercial license,
-# and one in the bundle would be size for nothing. ``tools/build/teachers-teammate.spec`` drops
+# Qt modules the app does not use: one in the bundle would be size for nothing. ``tools/build/teachers-teammate.spec`` drops
 # the same names (a unit test keeps the two lists equal); the smoke test is the check on the
 # finished bundle.
-GPL_ONLY_QT_MODULES: tuple[str, ...] = (
+UNUSED_QT_MODULES: tuple[str, ...] = (
     "Charts",
     "DataVisualization",
     "Graphs",
@@ -380,29 +379,29 @@ def _check_assets() -> str | None:
     return None
 
 
-def gpl_only_qt_files(names: Iterable[str]) -> list[str]:
-    """Return the file or folder names (without their folder) that belong to a GPL-only Qt module.
+def unused_qt_files(names: Iterable[str]) -> list[str]:
+    """Return the file or folder names (without their folder) that belong to an unused Qt module.
 
     Matches the library (``libQt6Charts.so.6``, ``Qt6Charts.dll``) and the Python module
-    (``QtCharts.abi3.so``, ``QtCharts.pyd``) of each module in :data:`GPL_ONLY_QT_MODULES`.
+    (``QtCharts.abi3.so``, ``QtCharts.pyd``) of each module in :data:`UNUSED_QT_MODULES`.
     """
     prefixes = tuple(
         f"{lib}{qt}{module}"
-        for module in GPL_ONLY_QT_MODULES
+        for module in UNUSED_QT_MODULES
         for qt in ("Qt6", "Qt")
         for lib in ("lib", "")
     )
     return sorted(name for name in names if name.startswith(prefixes))
 
 
-def _check_qt_licenses() -> str | None:
-    """Check that no GPL-only Qt module is in the bundle (frozen builds only)."""
+def _check_qt_modules() -> str | None:
+    """Check that no unused Qt module is in the bundle (frozen builds only)."""
     found: list[str] = []
     for folder, folders, files in os.walk(_root()):
         names = [*folders, *files]
-        found += [str(Path(folder, name)) for name in gpl_only_qt_files(names)]
+        found += [str(Path(folder, name)) for name in unused_qt_files(names)]
     if found:
-        return "GPL-only Qt modules in the bundle: " + ", ".join(sorted(found))
+        return "Unused Qt modules in the bundle: " + ", ".join(sorted(found))
     return None
 
 
@@ -518,7 +517,7 @@ def _checks() -> list[tuple[str, Check]]:
         checks += [
             ("assets", _check_assets),
             ("models", _check_bundled_models),
-            ("qt licenses", _check_qt_licenses),
+            ("qt modules", _check_qt_modules),
             ("pip", _check_pip),
             ("addon constraints", _check_addon_constraints),
             ("addon lock", _check_addon_lock),

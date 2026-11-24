@@ -253,6 +253,22 @@ def test_a_development_build_is_not_offered_a_release() -> None:
         assert fetch_newer_release() is None
 
 
+def test_a_released_dev_version_is_offered_a_newer_release() -> None:
+    """
+    Given  a stamped release whose version carries a .dev suffix (0.6.0.dev1) and a newer v0.7.0
+    When   the release is fetched
+    Then   it is offered: only the unstamped placeholder is a development build
+    """
+    with (
+        patch("teachers_teammate.__version__", "0.6.0.dev1"),
+        patch("urllib.request.urlopen", return_value=_fake_response("v0.7.0")),
+    ):
+        offered = fetch_newer_release()
+
+    assert offered is not None
+    assert offered[0] == "0.7.0"
+
+
 def test_a_development_build_asks_no_network() -> None:
     """
     Given  a development build

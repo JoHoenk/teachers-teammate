@@ -7,10 +7,11 @@ binary, and the license inventory covers only the base runtime. A fresh venv als
 runner's own tools (pipx and its dependencies on Windows), which check_pins.py rightly reports.
 
 Every version comes from ``requirements_lock.txt`` plus ``tools/build/requirements_platform.txt``
-(through ``pyinstaller-work/constraints.txt``), so two builds of one commit give the same bundle
-and the same license list.
+(through ``pyinstaller-work/constraints.txt``; the ``dev`` venv adds the dev and add-on locks), so
+two builds of one commit give the same bundle and the same license list.
 
-An existing venv at the given folder is deleted and made again.
+An existing venv at the given folder is deleted and made again, unless it is the one running the
+script: deactivate it first.
 
 Usage (from the repo root):
 
@@ -76,15 +77,19 @@ def create(venv: Path, purpose: str) -> None:
     """Delete and recreate *venv*, then install *purpose* into it from the pins.
 
     Only a venv is deleted: a folder without ``pyvenv.cfg`` is somebody's files, and the script
-    stops instead of removing them.
+    stops instead of removing them. The venv that runs the script is not deleted either: its
+    interpreter would be gone before the new one is made.
     """
+    if venv.resolve() == Path(sys.prefix).resolve():
+        msg = f"{venv} is the venv running this script; run `deactivate` and start it again"
+        raise SystemExit(msg)
     if venv.exists():
         if not (venv / "pyvenv.cfg").is_file():
             msg = f"{venv} exists and is not a venv; remove it or choose another folder"
             raise SystemExit(msg)
         shutil.rmtree(venv)
     run([sys.executable, "-m", "venv", str(venv)])
-    run([sys.executable, str(MAKE_CONSTRAINTS)])
+    run([sys.executable, str(MAKE_CONSTRAINTS), *(["--dev"] if purpose == "dev" else [])])
     run(
         [
             str(venv_python(venv)),

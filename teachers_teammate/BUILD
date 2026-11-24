@@ -2,7 +2,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 load("@rules_python//python:packaging.bzl", "py_package")
 load(":wheel.bzl", "app_wheel")
 
-# Exposed so //:requirements_{dev,test} can stage it next to pyproject.toml when
+# Exposed so the //:requirements* targets can stage it next to pyproject.toml when
 # pip-compile expands the dynamic version (attr = teachers_teammate.__version__).
 exports_files(["__init__.py"])
 

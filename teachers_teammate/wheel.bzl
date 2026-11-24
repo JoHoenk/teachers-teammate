@@ -32,6 +32,10 @@ def app_wheel(name, version, tags = []):
                 "teachers-teammate-benchmark = teachers_teammate.gui.benchmark:main_benchmark",
             ],
         },
+        extra_distinfo_files = {
+            "//:LICENSE": "LICENSE",
+            "//:NOTICE": "NOTICE",
+        },
         extra_requires_files = {
             "wheel_requires_llm.txt": "llm",
             "wheel_requires_privacy.txt": "privacy",

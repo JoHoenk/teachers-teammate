@@ -207,6 +207,24 @@ def test_the_wheel_states_the_license_pyproject_declares(metadata, pyproject: di
     assert metadata["License"] == pyproject["project"]["license"]
 
 
+def test_the_wheel_carries_license_and_notice_in_dist_info(
+    wheel: zipfile.ZipFile, metadata
+) -> None:
+    """
+    Given  the LICENSE and NOTICE of the repository
+    When   the wheel's dist-info folder is listed
+    Then   both are in it, equal to the originals — py_wheel writes no License-File field, so the
+           folder is where an installer or a scanner looks for the texts
+    """
+    folder = next(n for n in wheel.namelist() if n.endswith(".dist-info/METADATA")).rsplit("/", 1)[
+        0
+    ]
+    root = _runfile("PYPROJECT").parent
+
+    for name in ("LICENSE", "NOTICE"):
+        assert wheel.read(f"{folder}/{name}") == (root / name).read_bytes()
+
+
 def test_the_wheel_version_is_the_package_version(metadata, package_dir: Path) -> None:
     """
     Given  `__version__` in teachers_teammate/__init__.py

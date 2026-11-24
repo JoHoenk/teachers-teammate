@@ -91,6 +91,41 @@ def test_a_folder_that_is_not_a_venv_is_never_deleted(tmp_path: Path) -> None:
     assert (folder / "notes.txt").read_text(encoding="utf-8") == "keep"
 
 
+def test_the_venv_running_the_script_is_never_deleted(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a venv that is the one running the script
+    When   a venv is created there
+    Then   the script stops before deleting anything, because its own interpreter would go
+    """
+    venv = tmp_path / "venv"
+    venv.mkdir()
+    (venv / "pyvenv.cfg").write_text("", encoding="utf-8")
+    monkeypatch.setattr(make_venv.sys, "prefix", str(venv))
+
+    with patch.object(make_venv.subprocess, "run") as run, pytest.raises(SystemExit):
+        make_venv.create(venv, "dev")
+
+    run.assert_not_called()
+    assert (venv / "pyvenv.cfg").is_file()
+
+
+@pytest.mark.parametrize(("purpose", "flags"), [("dev", ["--dev"]), ("build", []), ("test", [])])
+def test_only_the_dev_venv_pins_the_dev_and_addon_locks(
+    tmp_path: Path, purpose: str, flags: list[str]
+) -> None:
+    """
+    Given  a purpose
+    When   the venv is created
+    Then   the constraints are written with --dev for the dev purpose only
+    """
+    with patch.object(make_venv.subprocess, "run") as run:
+        make_venv.create(tmp_path / "venv", purpose)
+
+    commands = [call.args[0] for call in run.call_args_list]
+    written = next(command for command in commands if str(make_venv.MAKE_CONSTRAINTS) in command)
+    assert written[2:] == flags
+
+
 def test_a_test_venv_checks_no_pins(tmp_path: Path) -> None:
     """
     Given  the test purpose

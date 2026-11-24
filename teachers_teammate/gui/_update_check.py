@@ -11,6 +11,8 @@ import teachers_teammate as _pkg
 
 from ._background import run_in_background
 
+#: The version of a build nobody stamped, which sorts below every release.
+_DEVELOPMENT_VERSION = "0.0.0.dev0"
 _RELEASES_API = "https://api.github.com/repos/JoHoenk/teachers-teammate/releases/latest"
 #: Every release page of this project is under this prefix.  The banner is a link, and the
 # answer comes from the network: what points elsewhere is not opened.
@@ -48,7 +50,7 @@ def _version_tuple(tag: str) -> tuple[int, ...]:
 
 def _is_development_build(version: str) -> bool:
     """Whether *version* is a development build, which names no release to compare with."""
-    return ".dev" in version
+    return version == _DEVELOPMENT_VERSION
 
 
 def _is_release_url(url: str) -> bool:

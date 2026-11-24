@@ -84,7 +84,7 @@ pip_test = use_extension(
 pip_test.parse(
     hub_name = "ocr_test_dependencies",
     python_version = "3.14",
-    requirements_lock = "//:requirements_test_lock.txt",
+    requirements_lock = "//:requirements_lock.txt",
 )
 use_repo(pip_test, "ocr_test_dependencies")
 

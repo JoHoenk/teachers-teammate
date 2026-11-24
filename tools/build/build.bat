@@ -11,7 +11,7 @@
 ::   features are installed by users at runtime via the in-app addon installer.
 ::
 :: Why the constraints file?
-::   Every version comes from requirements_test_lock.txt plus
+::   Every version comes from requirements_lock.txt plus
 ::   tools\build\requirements_platform.txt, so two builds of the same commit produce
 ::   the same bundle and the same license list. check_pins.py proves pip followed it.
 ::

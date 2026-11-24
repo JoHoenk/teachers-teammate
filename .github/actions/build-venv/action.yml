@@ -41,7 +41,7 @@ runs:
         # are downloaded at runtime by the in-app addon manager, so they are
         # intentionally not bundled into the standalone binary.
         #
-        # Every version comes from requirements_test_lock.txt (plus the
+        # Every version comes from requirements_lock.txt (plus the
         # platform-only pins in tools/build/requirements_platform.txt), and
         # check_pins.py fails the build if pip installed anything else.
         python tools/build/make_constraints.py

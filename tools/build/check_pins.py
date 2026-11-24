@@ -210,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {problem}")
         print(
             "\nAdd the pin to tools/build/requirements_platform.txt (a build tool or a "
-            "platform-only package) or regenerate requirements_test_lock.txt."
+            "platform-only package) or regenerate requirements_lock.txt."
         )
         return 1
     print("Every installed distribution is pinned.")

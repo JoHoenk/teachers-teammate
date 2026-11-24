@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Write the pip constraints file the standalone build installs against.
 
-The versions come from ``requirements_test_lock.txt`` — the lock the tests run against,
-resolved with the Python of `.python-version` — plus ``tools/build/requirements_platform.txt`` for the packages
-that lock cannot hold (Windows-only ones) and the build tools themselves.
+The versions come from ``requirements_lock.txt`` — the lock the bundle's runtime and the tests
+install from, resolved with the Python of `.python-version` — plus
+``tools/build/requirements_platform.txt`` for the packages that lock cannot hold (Windows-only
+ones) and the build tools themselves.
 
 Usage (from the repo root):
 
@@ -24,7 +25,7 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-LOCK = ROOT / "requirements_test_lock.txt"
+LOCK = ROOT / "requirements_lock.txt"
 PLATFORM = Path(__file__).resolve().parent / "requirements_platform.txt"
 OUTPUT = ROOT / "pyinstaller-work" / "constraints.txt"
 

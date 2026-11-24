@@ -14,7 +14,7 @@ exports_files(
         "README.md",
         "requirements_addons_lock.txt",
         "requirements_dev_lock.txt",
-        "requirements_test_lock.txt",
+        "requirements_lock.txt",
     ],
     visibility = ["//visibility:public"],
 )
@@ -177,18 +177,21 @@ compile_pip_requirements(
     requirements_txt = "requirements_dev_lock.txt",
 )
 
-# Run: bazel run //:requirements_test.update
+# The lock the bundle's runtime and the tests install from: a bump here changes what teachers
+# receive, not only what CI runs.
+#
+# Run: bazel run //:requirements.update
 # --extra=privacy pulls spaCy so the ty/pylint typecheck targets can resolve the
 # anonymizer's NER imports (see //teachers_teammate:gui_lib_typed / ocr_lib_typed).
 compile_pip_requirements(
-    name = "requirements_test",
+    name = "requirements",
     src = "pyproject.toml",
     data = ["//teachers_teammate:__init__.py"],
     extra_args = [
         "--extra=test",
         "--extra=privacy",
     ],
-    requirements_txt = "requirements_test_lock.txt",
+    requirements_txt = "requirements_lock.txt",
 )
 
 # Run: bazel run //:requirements_addons.update
@@ -214,7 +217,7 @@ test_suite(
     tests = [
         ":requirements_addons.test",
         ":requirements_dev.test",
-        ":requirements_test.test",
+        ":requirements.test",
         "//tests:test_lock_agreement",
     ],
 )

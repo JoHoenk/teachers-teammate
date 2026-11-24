@@ -1,6 +1,6 @@
 """The three lock files agree on the version of every package they share.
 
-``requirements_test_lock.txt`` is what the tests and the bundle run, ``requirements_addons_lock.txt``
+``requirements_lock.txt`` is what the tests and the bundle run, ``requirements_addons_lock.txt``
 is what an add-on install brings, and ``requirements_dev_lock.txt`` is the tooling. Three separate
 resolutions of one ``pyproject.toml``, so a package that appears in two of them at two versions is a
 conflict pip-compile could not see across the files — and one that only shows when a teacher
@@ -15,7 +15,7 @@ import re
 
 #: The locks, in the order a mismatch is reported.
 LOCKS = (
-    "requirements_test_lock.txt",
+    "requirements_lock.txt",
     "requirements_addons_lock.txt",
     "requirements_dev_lock.txt",
 )

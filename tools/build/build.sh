@@ -13,7 +13,7 @@
 #   (which is why pip is bundled with --collect-all).
 #
 # Why the constraints file?
-#   Every version comes from requirements_test_lock.txt plus
+#   Every version comes from requirements_lock.txt plus
 #   tools/build/requirements_platform.txt, so two builds of the same commit produce
 #   the same bundle and the same license list. check_pins.py proves pip followed it.
 #

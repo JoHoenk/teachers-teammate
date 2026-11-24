@@ -127,7 +127,7 @@ bash tools/build/build.sh
 ```
 
 The output is a folder (`dist/teachers-teammate/`) or, on macOS, `dist/teachers-teammate.app/`.
-Every version comes from `requirements_test_lock.txt` plus `tools/build/requirements_platform.txt`,
+Every version comes from `requirements_lock.txt` plus `tools/build/requirements_platform.txt`,
 so two builds of one commit give the same bundle. Check that it starts:
 
 ```bash
@@ -172,7 +172,7 @@ pwsh -File tools/packaging/test_windows_installer.ps1 -Setup dist\teachers-teamm
 (`python.toolchain`). Change both together, then relock:
 
 ```bash
-bazel run //:requirements_test.update
+bazel run //:requirements.update
 ```
 
 ```bash

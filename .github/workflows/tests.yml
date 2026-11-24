@@ -52,7 +52,7 @@ jobs:
 
       - name: Run the tests of this group
         # LangChain is an optional runtime dependency (pip install "teachers-teammate[llm]").
-        # The test lock file (requirements_test_lock.txt) includes langchain-core so that
+        # The lock (requirements_lock.txt) includes langchain-core so that
         # correction, evaluation, and LLM OCR tests are exercised in CI.
         run: |
           python3 tools/ci/target_groups.py "${GROUP}" --config=ci > "${RUNNER_TEMP}/targets.txt"

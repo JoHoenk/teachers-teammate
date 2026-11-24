@@ -100,7 +100,7 @@ Run these after adding, removing, or upgrading a dependency in `pyproject.toml` 
 
 ```bash
 bazel run //:requirements_dev.update
-bazel run //:requirements_test.update
+bazel run //:requirements.update
 ```
 
 

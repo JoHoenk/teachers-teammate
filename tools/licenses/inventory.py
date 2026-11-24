@@ -60,7 +60,7 @@ ASSET_MD = ROOT / "teachers_teammate" / "assets" / "third_party_licenses.md"
 ASSET_CSV = ROOT / "teachers_teammate" / "assets" / "third_party_inventory.csv"
 ASSET_LICENSE = ROOT / "teachers_teammate" / "assets" / "LICENSE.txt"
 POLICY = Path(__file__).resolve().parent / "policy.toml"
-TEST_LOCK = ROOT / "requirements_test_lock.txt"
+TEST_LOCK = ROOT / "requirements_lock.txt"
 ADDON_LOCK = ROOT / "requirements_addons_lock.txt"
 PLATFORM_PINS = ROOT / "tools" / "build" / "requirements_platform.txt"
 PYPROJECT = ROOT / "pyproject.toml"
@@ -332,7 +332,7 @@ def bundle_roots(root: Path = ROOT) -> list[str]:
 def bundle_rows(root: Path = ROOT) -> list[Row]:
     """Return the bundle's package rows: the closure of the app's own dependencies."""
     locked = closure(
-        (root / "requirements_test_lock.txt").read_text(encoding="utf-8"), bundle_roots(root)
+        (root / "requirements_lock.txt").read_text(encoding="utf-8"), bundle_roots(root)
     )
     return [Row(name, version, "", "bundle") for name, version in locked]
 
@@ -377,7 +377,7 @@ def platform_rows(policy: Policy, root: Path = ROOT) -> list[Row]:
         Row(name, version, "", "build" if name in policy.build_only else "bundle")
         for name, version in pins.items()
     ]
-    versions, _parents = _graph((root / "requirements_test_lock.txt").read_text(encoding="utf-8"))
+    versions, _parents = _graph((root / "requirements_lock.txt").read_text(encoding="utf-8"))
     rows += [
         Row(name, versions[name], "", "build")
         for name in policy.build_only

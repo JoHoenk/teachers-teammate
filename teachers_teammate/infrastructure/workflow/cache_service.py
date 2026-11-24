@@ -19,14 +19,14 @@ from ...domain.freshness import (
     first_stale_stage_for_hashes,
     stage_hashes,
 )
-from ...domain.local_models import reader_fingerprint
+from ...domain.local_models import auto_identity, reader_fingerprint
+from ...domain.ocr_prompt import get_ocr_prompt
 from ...domain.ollama_address import ollama_host
+from ...domain.pdf_text_layer import input_fingerprint
 from ...domain.stages import Stage
 from ...domain.teacher_work import TeacherWork, text_identity
-from ..input_provider_factory import InputOptions, input_settings_fingerprint
-from ..ocr_processor import get_ocr_prompt
 from ..onnx.store import ModelStore
-from ..preprocessing.identity import auto_identity
+from ..preprocessing.identity import available_page_steps
 from ..preview_image_store import PreviewImageStore
 from ..proofreading.corrector import exchange_identity
 from ..state_repository import OcrResultRecord, StateRepository, compute_file_hash
@@ -55,9 +55,11 @@ def _preprocess_fingerprint(
     mode) are only included for the formats they affect, so changing one does not invalidate
     results of other files.
     """
-    text_layer = input_settings_fingerprint(source.suffix, InputOptions.from_ocr(ocr))
+    text_layer = input_fingerprint(source.suffix, ocr.pdf_text_layer)
     identity = (
-        auto_identity(ocr.engine, store or ModelStore()) if ocr.preprocess_method == "auto" else ()
+        auto_identity(ocr.engine, available_page_steps(store or ModelStore()))
+        if ocr.preprocess_method == "auto"
+        else ()
     )
     return (ocr.preprocess_method, *identity, str(ocr.pdf_render_dpi), *text_layer)
 

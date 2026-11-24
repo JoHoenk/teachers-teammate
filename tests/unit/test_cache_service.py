@@ -13,12 +13,8 @@ import pytest
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.settings_schema import DEFAULTS
-from teachers_teammate.infrastructure.input_provider_factory import (
-    InputOptions,
-    input_settings_fingerprint,
-)
 from teachers_teammate.infrastructure.onnx.store import ModelStore
-from teachers_teammate.infrastructure.preprocessing.identity import AUTO_VERSION
+from teachers_teammate.domain.local_models import AUTO_VERSION
 from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
 from teachers_teammate.domain.document_state import DocumentState
 from teachers_teammate.infrastructure.state_repository import (
@@ -27,6 +23,7 @@ from teachers_teammate.infrastructure.state_repository import (
     compute_file_hash,
 )
 from teachers_teammate.infrastructure.storage_root import document_stem
+from teachers_teammate.domain.pdf_text_layer import input_fingerprint
 from teachers_teammate.domain.freshness import (
     ExpectedHashes,
     first_stale_stage_for_hashes,
@@ -515,7 +512,7 @@ def test_the_automatic_fingerprint_names_version_output_and_available_model_step
         f"v{AUTO_VERSION}",
         "colour",
         "600",
-        *input_settings_fingerprint(".pdf", InputOptions.from_ocr(ocr)),
+        *input_fingerprint(".pdf", ocr.pdf_text_layer),
     )
     assert _preprocess_fingerprint(ocr, _PDF, full)[1:5] == (
         f"v{AUTO_VERSION}",

@@ -31,8 +31,9 @@ import tempfile
 
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.model_catalog import OLLAMA_CATALOG
+from teachers_teammate.domain.ocr_prompt import get_ocr_prompt
 from teachers_teammate.exceptions import OCRError
-from teachers_teammate.infrastructure.ocr_processor import OCR_ANSWER_TOKENS, get_ocr_prompt
+from teachers_teammate.infrastructure.ocr_processor import OCR_ANSWER_TOKENS
 from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClient
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.performance_probe import (

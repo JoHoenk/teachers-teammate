@@ -8,11 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.exceptions import OCRError
-from teachers_teammate.infrastructure.ocr_processor import (
-    OllamaOCRProcessor,
-    _encode_image,
-    get_ocr_prompt,
-)
+from teachers_teammate.domain.ocr_prompt import get_ocr_prompt
+from teachers_teammate.infrastructure.ocr_processor import OllamaOCRProcessor, _encode_image
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 
 

@@ -26,7 +26,7 @@ import pytest
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.infrastructure.onnx.store import ModelStore
-from teachers_teammate.infrastructure.preprocessing.identity import AUTO_VERSION
+from teachers_teammate.domain.local_models import AUTO_VERSION
 from teachers_teammate.infrastructure.preprocessing.recipes import steps_for
 from teachers_teammate.infrastructure.preprocessing.steps import StepPipeline
 from teachers_teammate.interfaces import ImageUnit

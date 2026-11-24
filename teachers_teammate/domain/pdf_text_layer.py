@@ -122,3 +122,15 @@ def use_text_layer(mode: PdfTextLayerMode, pages: Iterable[PageTextStats]) -> bo
         if not usable:
             return False
     return any_page
+
+
+def input_fingerprint(suffix: str, pdf_text_layer: PdfTextLayerMode) -> tuple[str, ...]:
+    """Return the *pdf_text_layer* setting where it changes what is loaded from *suffix*.
+
+    Format-specific settings only appear for the formats they affect, so changing a PDF option
+    does not invalidate cached results of images or text files.  A setting at its default
+    contributes nothing, which keeps older cache entries valid.
+    """
+    if suffix.lower() != ".pdf" or pdf_text_layer == "auto":
+        return ()
+    return (f"pdf_text_layer={pdf_text_layer}",)

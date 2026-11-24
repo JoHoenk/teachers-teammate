@@ -1691,9 +1691,9 @@ and **Original page** (`"none"`).  `infrastructure/preprocessing/` holds all of 
   returns `acted=False`, reason "page models not downloaded", and `PageModels.note_missing()`
   logs that once per run (info), not per page.  A model that fails at run time never fails the
   page: the step declines and the failure is logged.
-- `identity.py` — `AUTO_VERSION`, `auto_output(engine)`, `available_page_steps(store)` and
-  `auto_identity(engine, store)`, without importing OpenCV (the cache key needs them for every
-  page).
+- `identity.py` — `available_page_steps(store)`: which page models a store can run, without
+  importing OpenCV (the cache key needs it for every page).  The identity itself is
+  `domain/local_models.py` (`AUTO_VERSION`, `auto_output`, `auto_identity`).
 - `recipes.py` — `steps_for(ocr, store)`: `none` → `[]`, anything else → `auto_steps(ocr.engine,
   store)`.  `stage_builder.default_build_preprocessor(tmp_dir, save_steps, ocr, store)` is
   `StepPipeline(steps_for(ocr, store or ModelStore()), …)`; the factory, `preprocess_preview`, the
@@ -1714,11 +1714,13 @@ them; the CLI prints one notice line (`texts/addons.py:PAGE_MODELS_SKIPPED_NOTIC
 answers an image at
 the size it was given, so the page goes to it scaled to at most `FLATTEN_MAX_SIDE` (2048).
 
-**Identity.**  `cache_service._preprocess_fingerprint(ocr, source, store)` is the method; for
-`auto` also `v<AUTO_VERSION>`, `colour` / `gray`, and `+turn` / `+flatten` for the page models
-that are downloaded; then the PDF DPI and text-layer entries.  Downloading the page models, a
+**Identity.**  `domain/local_models.auto_identity(engine, page_steps)` is the identity; for
+`auto` it adds `v<AUTO_VERSION>`, `colour` / `gray`, and `+turn` / `+flatten` for the page models
+that are downloaded, and `cache_service._preprocess_fingerprint(ocr, source, store)` puts the
+method in front of it, then the PDF DPI and text-layer entries.  Downloading the page models, a
 new `AUTO_VERSION` or another engine's output re-reads pages **once**, and that is intended.
-Bump `AUTO_VERSION` whenever a step, a threshold or a page model revision changes.  The model
+Bump `AUTO_VERSION` (`domain/local_models.py`) whenever a step, a threshold or a page model
+revision changes.  The model
 store reaches the key through `CacheReconciliationService(model_store=…)`,
 `DocumentCommands(model_store=…)` and `compute_ocr_config_hash(…, store)`; with `None` it is
 the default folder (the tests point that at an empty temporary one).
@@ -1794,7 +1796,7 @@ SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
   models** of the automatic image preparation (`PAGE_MODELS`) are pinned the
   same way; their four `http_file`s are `doc_ori_*` and `uvdoc_*`, their test helpers
   `conftest.page_models_store()` and `fake_page_models_store()`, and a new revision means a
-  bump of `AUTO_VERSION` (`preprocessing/identity.py`) and a look at `test_page_models.py`.
+  bump of `AUTO_VERSION` (`domain/local_models.py`) and a look at `test_page_models.py`.
 
 ## Storage, hashing & caching
 
@@ -2727,8 +2729,8 @@ and only up to the first one that rules the text layer out.
 Where the setting applies:
 
 - Input options travel as one `InputOptions` object (`infrastructure/input_provider_factory.py`);
-  builders pick what they need.  The factory also answers which options affect a suffix
-  (`input_settings_fingerprint`), so the OCR config hash only contains the mode for PDF
+  builders pick what they need.  `domain/pdf_text_layer.input_fingerprint(suffix, mode)` answers
+  which of them affects a suffix, so the OCR config hash only contains the mode for PDF
   sources and only when it is not `auto` — caches from before the setting existed, and every
   image/TXT result, stay valid.
 - `InputPayload.text_origin` says whether text came from a TXT file or a PDF text layer; the

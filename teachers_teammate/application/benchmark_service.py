@@ -20,9 +20,9 @@ from ..config import Config, OcrConfig, load_config_file
 from ..domain.benchmark import PairComparison, compare_pair
 from ..domain.data_location import ENGINE_OLLAMA
 from ..domain.model_catalog import normalize_tag
+from ..domain.ocr_prompt import get_ocr_prompt
 from ..infrastructure.benchmark.run_store import BenchmarkRunStore, NewRunRequest, StoredRun
 from ..infrastructure.benchmark.runner import OcrRunResult, run_ocr
-from ..infrastructure.ocr_processor import get_ocr_prompt
 from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.state_repository import compute_file_hash
 from ..infrastructure.workflow.cache_service import compute_ocr_config_hash

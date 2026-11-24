@@ -102,7 +102,7 @@ as Bazel `http_file`s (`MODULE.bazel`). See {doc}`development` → "Local model 
 ## New image preparation step
 
 Add a `Step` (`name`, `apply(image, ctx) -> StepResult`) to `auto_steps` in
-`infrastructure/preprocessing/auto.py` (bump `AUTO_VERSION` in `preprocessing/identity.py`). The
+`infrastructure/preprocessing/auto.py` (bump `AUTO_VERSION` in `domain/local_models.py`). The
 settings get **no switch of its own** (teachers see "Automatic" or "Original page"). Thresholds
 are named constants in `auto.py`. Regenerate the digests of
 `tests/unit/test_preprocessing_auto_golden.py` only when the pixel change is on purpose. See

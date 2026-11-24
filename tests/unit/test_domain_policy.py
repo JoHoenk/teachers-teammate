@@ -17,6 +17,7 @@ from teachers_teammate.domain.pdf_text_layer import (
     MAX_IMAGE_COVERAGE,
     MIN_FREEHAND_PATHS,
     PageTextStats,
+    input_fingerprint,
     normalize_pdf_text_layer,
     parse_pdf_text_layer,
     page_has_usable_text,
@@ -462,3 +463,24 @@ def test_a_cut_off_review_is_sent_again_only_where_it_is_free_and_can_differ(
     from teachers_teammate.domain.correction_policy import cut_off_tries  # noqa: PLC0415
 
     assert cut_off_tries(online=online, temperature=temperature) == tries
+
+
+@pytest.mark.parametrize(
+    ("suffix", "mode", "expected"),
+    [
+        (".pdf", "auto", ()),
+        (".PDF", "never", ("pdf_text_layer=never",)),
+        (".pdf", "always", ("pdf_text_layer=always",)),
+        (".png", "never", ()),
+        (".txt", "always", ()),
+    ],
+)
+def test_input_fingerprint_only_covers_affected_formats(
+    suffix: str, mode: str, expected: tuple[str, ...]
+) -> None:
+    """
+    Given  an input suffix and a PDF text-layer mode
+    When   input_fingerprint is called
+    Then   only a non-default mode on a PDF contributes, other formats and "auto" give ()
+    """
+    assert input_fingerprint(suffix, mode) == expected  # ty: ignore[invalid-argument-type]

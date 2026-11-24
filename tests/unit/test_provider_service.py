@@ -15,6 +15,8 @@ from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.providers import ProviderInfo
 
+from ..fakes.fake_secret_store import FakeSecretStore
+
 
 def _as_listing(fake):
     """Wrap a fake that returns model names as the checked listing the service asks for."""
@@ -31,7 +33,9 @@ class _NoServer:
 
 def _service(**kwargs) -> ProviderService:
     """Return the service over a server that is never asked."""
-    return ProviderService(ollama=cast(OllamaServer, _NoServer()), credentials=ApiKeys(), **kwargs)
+    return ProviderService(
+        ollama=cast(OllamaServer, _NoServer()), credentials=ApiKeys(FakeSecretStore()), **kwargs
+    )
 
 
 # ── the model lists ───────────────────────────────────────────────────────
@@ -228,8 +232,8 @@ def test_provider_key_missing_follows_the_provider_and_environment(
     Then   it is missing only for a provider that needs a key while the app holds none
     """
     monkeypatch.setattr(providers_module, "get_provider_info", lambda _provider: info)
-    monkeypatch.setattr(api_keys_module, "get_provider_info", lambda _provider: info)
-    keys = ApiKeys()
+    monkeypatch.setattr(api_keys_module.llm_factory, "get_provider_info", lambda _provider: info)
+    keys = ApiKeys(FakeSecretStore())
     if key_set:
         keys.remember("TT_TEST_KEY", "k")
 

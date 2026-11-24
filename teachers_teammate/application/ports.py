@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ..domain.anonymization import AnonymizerConfig
+    from ..domain.credentials import KeyLocation
     from ..domain.model_catalog import GpuInfo, GpuUsage, ServerFacts
     from ..domain.ollama_discovery import WaitDetail
     from ..infrastructure.ollama_utils import ServerActivity
@@ -101,6 +102,30 @@ class Credentials(Protocol):
 
     def key_for(self, provider: str) -> str | None:
         """Return the key *provider* sends to its service, or ``None`` when there is none."""
+        ...
+
+
+class SecretStore(Protocol):
+    """Where the API keys are kept: the system's secret store, else the app's settings file."""
+
+    def location(self) -> KeyLocation:
+        """Return where a key saved now would be kept."""
+        ...
+
+    def get(self, env_key: str) -> str:
+        """Return the stored key for *env_key* (``""`` when there is none)."""
+        ...
+
+    def set(self, env_key: str, value: str) -> KeyLocation:
+        """Store *value* for *env_key* and return where it ended up."""
+        ...
+
+    def remove(self, env_key: str) -> None:
+        """Forget the key for *env_key* wherever it is kept."""
+        ...
+
+    def migrate(self, env_key: str) -> None:
+        """Move a key still kept in the settings file into the secret store, when there is one."""
         ...
 
 

@@ -58,7 +58,6 @@ from ._background import LatestTask, wait_for_background_tasks
 from ._chart_widget import ChartWidget
 from ._check_controller import CheckController, CheckHooks
 from ._config_panel import ConfigPanel
-from ._credential_store import CredentialStore
 from ._export_controller import ExportController
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
@@ -226,7 +225,7 @@ class MainWindow(QMainWindow):
             self._app_service.providers.env_key(provider)
             for provider in self._app_service.providers.list_providers()
         }
-        CredentialStore().load(self._app_service.keys, sorted(key for key in env_keys if key))
+        self._app_service.keys.load_stored(sorted(key for key in env_keys if key))
 
     def _build_ui(self) -> None:
         """Build the widgets, hand them to the controllers, then lay them out."""

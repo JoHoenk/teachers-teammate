@@ -37,10 +37,10 @@ from teachers_teammate.gui.settings._page import (
 )
 from teachers_teammate.texts._types import Answer, Choice, Notice, Question
 
+from ..fakes.fake_keyring import FakeKeyring
 from ._gui_harness import settings_context
 from ._settings_stubs import (
     AddonsCapableService,
-    FakeKeyring,
     InertLatestTask,
     ProviderAddonsService,
 )
@@ -487,9 +487,9 @@ def test_ok_stores_a_key_and_warns_when_the_keychain_refused_it(
     When   OK is pressed
     Then   the key is kept in the settings file and a warning names the service
     """
-    from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+    from teachers_teammate.infrastructure import credential_store  # noqa: PLC0415
 
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring(refuses_writes=True))
+    monkeypatch.setattr(credential_store, "_keyring", lambda: FakeKeyring(refuses_writes=True))
     warned: list[Notice] = []
     monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: warned.append(notice))
     window = _window(qtbot, SettingsPage.ONLINE_SERVICES)

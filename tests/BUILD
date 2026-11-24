@@ -1673,10 +1673,11 @@ app_test(
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
+# Where the API keys are kept: the system keychain, else the app's settings file.  No window:
+# the store reads QSettings without one.
 app_test(
-    "gui/test_credential_store.py",
-    extra_srcs = ["gui/_settings_stubs.py"],
-    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+    "unit/test_credential_store.py",
+    deps = _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 app_test(

@@ -377,7 +377,7 @@ def credential_file(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """
     stored: dict[str, object] = {}
     try:
-        from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+        from teachers_teammate.infrastructure import credential_store  # noqa: PLC0415
     except ImportError:  # pure-unit targets without PySide6
         return stored
 
@@ -394,8 +394,8 @@ def credential_file(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         def remove(self, key: str) -> None:
             stored.pop(key, None)
 
-    monkeypatch.setattr(_credential_store, "app_settings", lambda: MemorySettings())
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: None)
+    monkeypatch.setattr(credential_store, "app_settings", lambda: MemorySettings())
+    monkeypatch.setattr(credential_store, "_keyring", lambda: None)
     return stored
 
 

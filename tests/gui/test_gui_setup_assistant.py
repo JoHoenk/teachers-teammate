@@ -24,16 +24,17 @@ from teachers_teammate.texts import setup as words
 from teachers_teammate.texts._types import Notice
 
 from ._service_stubs import services_of
-from ._settings_stubs import FakeKeyring, SetupAppService
+from ..fakes.fake_keyring import FakeKeyring
+from ._settings_stubs import SetupAppService
 
 
 @pytest.fixture(name="keyring")
 def _keyring(monkeypatch) -> FakeKeyring:
     """Give the app a working in-memory keychain, so no test touches the real one."""
-    from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+    from teachers_teammate.infrastructure import credential_store  # noqa: PLC0415
 
     store = FakeKeyring()
-    monkeypatch.setattr(_credential_store, "_keyring", lambda: store)
+    monkeypatch.setattr(credential_store, "_keyring", lambda: store)
     return store
 
 

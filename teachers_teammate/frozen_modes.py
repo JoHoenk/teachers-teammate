@@ -567,15 +567,10 @@ def forget_keys() -> int:
     Windows Credential Manager, which no uninstaller can enumerate.  No Qt application is
     needed — ``QSettings`` works without one.
     """
-    from teachers_teammate.gui._credential_store import CredentialStore  # noqa: PLC0415
-    from teachers_teammate.infrastructure import llm_factory  # noqa: PLC0415
+    from teachers_teammate.application.api_keys import ApiKeys  # noqa: PLC0415
+    from teachers_teammate.infrastructure.credential_store import CredentialStore  # noqa: PLC0415
 
-    store = CredentialStore()
-    for provider in llm_factory.list_providers():
-        info = llm_factory.get_provider_info(provider)
-        env_key = info.env_key if info is not None else ""
-        if env_key:
-            store.remove(env_key)
+    ApiKeys(CredentialStore()).forget_all()
     return 0
 
 

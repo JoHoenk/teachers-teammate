@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from ..fakes.fake_secret_store import FakeSecretStore
 from ..gui._service_stubs import services_of
 from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.application.run import RunPreflight
@@ -1492,3 +1493,35 @@ def test_an_ollama_that_does_not_answer_names_the_address_flag() -> None:
     hint = cli_issue_hint(RequirementIssue(IssueKind.OLLAMA_UNREACHABLE, reason="timed out"))
 
     assert "--ollama-url" in hint
+
+
+@pytest.mark.unit
+def test_the_command_line_uses_the_key_saved_in_settings(monkeypatch) -> None:
+    """
+    Given  the key saved in Settings, which the store keeps, and none in the environment
+    When   the command line builds its services and asks whether proofreading can start
+    Then   no key is missing, and the model of the run is built with the stored key
+    """
+    from teachers_teammate.application import composition  # noqa: PLC0415
+    from teachers_teammate.infrastructure import stage_builder  # noqa: PLC0415
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = FakeSecretStore()
+    store.keys["OPENAI_API_KEY"] = "sk-stored"
+    monkeypatch.setattr(composition, "CredentialStore", lambda: store)
+    built: dict[str, str] = {}
+
+    def fake_build_llm(provider: str, model: str, *, api_key: str, **kwargs: object) -> object:
+        built["provider"] = provider
+        built["key"] = api_key
+        return object()
+
+    monkeypatch.setattr(stage_builder, "build_llm", fake_build_llm)
+
+    services = build_app_services()
+
+    assert services.providers.provider_key_missing("openai") is False
+    stage_builder.LlmBuilderWithKeys(key_for=services.keys.key_for)(
+        provider="openai", model="gpt-5", base_url="", temperature=0.0
+    )
+    assert built == {"provider": "openai", "key": "sk-stored"}

@@ -23,7 +23,9 @@ COMMON_SRCS = [
     "gui/_service_stubs.py",
     "tools/__init__.py",
     "fakes/__init__.py",
+    "fakes/fake_keyring.py",
     "fakes/fake_port.py",
+    "fakes/fake_secret_store.py",
 ]
 
 #: What every test needs: the proofreading steps' schemas are pydantic models, and the app reads

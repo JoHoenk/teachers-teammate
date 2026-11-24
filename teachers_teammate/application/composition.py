@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from ..infrastructure import logging_setup, power
 from ..infrastructure.addon_manager import AddonPackages
+from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.gpu_detector import SystemHardwareProbe
 from ..infrastructure.key_facts import MachineKeyFacts
@@ -129,7 +130,7 @@ def build_app_services(
     work_store: TeacherWorkStore | None = None,
 ) -> AppServices:
     """Build the application's services, sharing the parts that must exist once."""
-    keys = ApiKeys()
+    keys = ApiKeys(CredentialStore())
     parts = _parts(
         keys=keys,
         discovery=discovery,

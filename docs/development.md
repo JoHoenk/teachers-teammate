@@ -2168,7 +2168,17 @@ keychain refused); every other way out of `done()` (Cancel, Esc, close, Restore 
 calls `discard()`, which puts back what the app held, after the pages' `shutdown()` stopped any
 commit timer.  `ApiKeys` (`application/api_keys.py`) is the only place a key is kept: the
 environment is only read, so a key the teacher exported before the app started counts and the app
-writes none (`_credential_store.load`).
+writes none.
+
+**Where a key lives, and who reads it.**  `infrastructure/credential_store.py` is the store: the
+system's secret store (Keychain, Credential Manager, Secret Service) when there is one, else the
+plain-text `credentials/` group of the app's settings file.  Both it and `gui/_qsettings.py` take
+the file's location from `config.gui_store_location()`, so the two cannot drift apart.  The store
+is built once, in `application/composition.py`, and handed to `ApiKeys` there; a key is asked for
+on first use and the answer is remembered, so the window loads every key at start
+(`ApiKeys.load_stored`, migration included) and a run that asks nothing online never touches the
+keychain.  A key found in the settings file moves into the secret store at the next start
+(`CredentialStore.migrate`), and the uninstaller deletes them all (`ApiKeys.forget_all`).
 
 **One model, an override, and the privacy line.**  The AI models page has one proofreading/review
 block.  There is no setting for "different review model": the box starts ticked when the

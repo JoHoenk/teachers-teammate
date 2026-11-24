@@ -5,12 +5,14 @@ Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWall
 KeePassXC) -- through the ``keyring`` package.  Where there is none (a Linux session without
 a desktop keyring, a minimal install, ``keyring`` missing), the key stays in the app's
 settings file (``QSettings``, plain text) as before; :meth:`CredentialStore.location` says
-which of the two is in use, so the Settings window never claims more than is true.
+which of the two is in use, so the Settings window never claims more than is true.  That file is
+the one the GUI itself keeps its state in: both read the location from
+:func:`~..config.gui_store_location`.
 
 A key found in the settings file is moved into the secret store the first time the store is
-available (:meth:`CredentialStore.load`), and the plain copy is deleted.  The keys are loaded
-into :class:`~..application.api_keys.ApiKeys`, never into the environment: a key set in the
-environment before the app started always wins, and the app writes none.
+available (:meth:`CredentialStore.migrate`), and the plain copy is deleted.  The keys reach
+:class:`~..application.api_keys.ApiKeys`, never the environment: a key set in the environment
+before the app started always wins, and the app writes none.
 
 Under ``TEACHERS_TEAMMATE_TMPDIR`` (a test, the smoke test, the app walkthrough) there is no
 secret store: the folder holds everything of the run, and the teacher's own keys stay out of it.
@@ -18,14 +20,15 @@ secret store: the folder holds everything of the run, and the teacher's own keys
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from enum import StrEnum
 import logging
 from types import ModuleType
+from typing import TYPE_CHECKING
 
-from ..application.api_keys import ApiKeys
-from ..config import override_root
-from ._qsettings import app_settings
+from ..config import gui_store_location, override_root
+from ..domain.credentials import KeyLocation
+
+if TYPE_CHECKING:
+    from PySide6.QtCore import QSettings
 
 LOG = logging.getLogger(__name__)
 
@@ -35,11 +38,18 @@ KEYRING_SERVICE = "TeachersTeammate"
 _FILE_GROUP = "credentials"
 
 
-class KeyLocation(StrEnum):
-    """Where new keys are kept."""
+def app_settings() -> QSettings:
+    """Return the app's settings file, where a key without a keychain is kept in plain text.
 
-    KEYCHAIN = "keychain"
-    SETTINGS_FILE = "settings_file"
+    ``PySide6.QtCore`` is imported on first use only: this module is reachable from the command
+    line, which asks the store for a key without ever building a window.
+    """
+    from PySide6.QtCore import QSettings  # noqa: PLC0415
+
+    location = gui_store_location()
+    if location.ini_file is not None:
+        return QSettings(str(location.ini_file), QSettings.Format.IniFormat)
+    return QSettings(location.organization, location.application)
 
 
 def _keyring() -> ModuleType | None:
@@ -108,7 +118,7 @@ class CredentialStore:
             except Exception:  # noqa: BLE001
                 LOG.warning("keyring write failed for %s; keeping it in the settings file", env_key)
                 # An older key still in the keychain would otherwise be read first and
-                # shadow the new one.  If that delete fails too, ``get`` and ``_migrate``
+                # shadow the new one.  If that delete fails too, ``get`` and :meth:`migrate`
                 # still prefer the file copy (see :meth:`get`).
                 self._delete_keyring_value(keyring, env_key)
             else:
@@ -131,31 +141,21 @@ class CredentialStore:
         except Exception:  # nothing stored (PasswordDeleteError) or locked
             LOG.debug("keyring delete failed for %s", env_key, exc_info=True)
 
-    # ── all keys ──────────────────────────────────────────────────────────────
+    # ── an old plain-text key ─────────────────────────────────────────────────
 
-    def load(self, keys: ApiKeys, env_keys: Iterable[str]) -> None:
-        """Hand the stored keys to *keys*, where the app reads them (a key in the environment wins).
+    def migrate(self, env_key: str) -> None:
+        """Move a key still kept in the settings file into the secret store, when there is one.
 
-        Moves keys still kept in the settings file into the secret store when there is one.
-        *env_keys* are the names the providers use; a secret store cannot be listed.
+        Overwrites: the plain copy is the newer key (see :meth:`get`).  A move that fails leaves
+        the plain copy where it is, and it is tried again at the next start.
         """
-        for env_key in env_keys:
-            self._migrate(env_key)
-            if keys.set_outside_app(env_key):
-                continue
-            value = self.get(env_key)
-            if value:
-                keys.remember(env_key, value)
-
-    def _migrate(self, env_key: str) -> None:
         keyring = _keyring()
         plain = self._file_value(env_key)
         if keyring is None or not plain:
             return
         try:
-            # Overwrites: the plain copy is the newer key (see ``get``).
             keyring.set_password(KEYRING_SERVICE, env_key, plain)
-        except Exception:  # leave the plain copy; it is tried again next start
+        except Exception:  # keep the plain copy; the next start tries again
             LOG.debug("moving %s into the keyring failed", env_key, exc_info=True)
             return
         self._remove_file_value(env_key)

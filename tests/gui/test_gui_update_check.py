@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -17,6 +18,7 @@ from teachers_teammate.gui._update_check import (
 from teachers_teammate.texts.app import update_available
 
 _RELEASE_PAGE = "https://github.com/JoHoenk/teachers-teammate/releases/tag/v1.0.0"
+_RELEASES_API = "https://api.github.com/repos/JoHoenk/teachers-teammate/releases/latest"
 
 
 # ── _version_tuple ────────────────────────────────────────────────────────────
@@ -323,10 +325,82 @@ def test_a_network_failure_is_silent() -> None:
     """
     Given  urllib raises an OSError when contacting the GitHub API
     When   the release is fetched
+    Then   nothing is offered, no exception escapes, and GitHub was asked
+    """
+    with (
+        patch("teachers_teammate.__version__", "0.9.0"),
+        patch("urllib.request.urlopen", side_effect=OSError("connection refused")) as urlopen,
+    ):
+        assert fetch_newer_release() is None
+
+    urlopen.assert_called_once()
+
+
+def _http_error(status: int) -> HTTPError:
+    """Return the error ``urlopen`` raises for *status*, with the headers GitHub sends."""
+    return HTTPError(_RELEASES_API, status, "denied", {"x-ratelimit-remaining": "0"}, None)
+
+
+@pytest.mark.parametrize(
+    ("name", "failure"),
+    [
+        ("a rate limit", _http_error(403)),
+        ("a missing release", _http_error(404)),
+        ("a timeout", TimeoutError("timed out")),
+        ("an unreachable host", URLError("no route to host")),
+    ],
+    ids=lambda value: value if isinstance(value, str) else "",
+)
+def test_every_failure_offers_nothing(name: str, failure: Exception) -> None:
+    """
+    Given  a run of the check whose answer fails: a rate limit, a missing release, a timeout,
+           an unreachable host
+    When   the release is fetched
     Then   nothing is offered and no exception escapes
     """
-    with patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
+    with (
+        patch("teachers_teammate.__version__", "0.9.0"),
+        patch("urllib.request.urlopen", side_effect=failure),
+    ):
         assert fetch_newer_release() is None
+
+
+def test_a_list_answer_is_silent() -> None:
+    """
+    Given  the GitHub API answers a JSON list where an object is expected
+    When   the release is fetched
+    Then   nothing is offered
+    """
+    resp = MagicMock()
+    resp.read.return_value = json.dumps([{"tag_name": "v1.0.0"}]).encode()
+    resp.__enter__ = lambda s: s
+    resp.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("teachers_teammate.__version__", "0.9.0"),
+        patch("urllib.request.urlopen", return_value=resp),
+    ):
+        assert fetch_newer_release() is None
+
+
+def test_a_failed_check_writes_one_log_line_with_its_status(caplog) -> None:
+    """
+    Given  the API refuses the request with a rate limit (403)
+    When   the release is fetched
+    Then   one info line names the failure and its status, and holds no URL and no answer
+    """
+    with (
+        caplog.at_level("INFO", logger="teachers_teammate.gui._update_check"),
+        patch("teachers_teammate.__version__", "0.9.0"),
+        patch("urllib.request.urlopen", side_effect=_http_error(403)),
+    ):
+        assert fetch_newer_release() is None
+
+    assert len(caplog.records) == 1
+    line = caplog.records[0].getMessage()
+    assert "403" in line
+    assert "HTTPError" in line
+    assert _RELEASES_API not in line
 
 
 def test_a_malformed_answer_is_silent() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 import re
 
 from PySide6.QtCore import QObject
@@ -10,6 +11,8 @@ from PySide6.QtCore import QObject
 import teachers_teammate as _pkg
 
 from ._background import run_in_background
+
+_logger = logging.getLogger(__name__)
 
 #: The version of a build nobody stamped, which sorts below every release.
 _DEVELOPMENT_VERSION = "0.0.0.dev0"
@@ -85,8 +88,12 @@ def fetch_newer_release() -> tuple[str, str] | None:
         installed = _version_tuple(_pkg.__version__)
         if tag and _is_release_url(url) and latest and installed and latest > installed:
             return tag.lstrip("v"), url
-    except Exception:  # noqa: BLE001  # update check is best-effort; network/parse errors are silently ignored
-        pass
+    except Exception as exc:  # noqa: BLE001  # update check is best-effort; network/parse errors are silently ignored
+        # Info, not warning: no network at a start is normal.  The status tells a rate limit
+        # (403, 429) from a real failure; what the answer held is never logged.
+        status = getattr(exc, "code", "")
+        kind = f"{type(exc).__name__} {status}" if status else type(exc).__name__
+        _logger.info("The update check failed: %s", kind)
     return None
 
 

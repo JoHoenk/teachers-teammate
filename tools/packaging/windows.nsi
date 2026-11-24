@@ -752,9 +752,11 @@ Function ScopePageLeave
         StrCpy $R1 "/SCOPE=all /ELEVATED /NODESKTOP"
       ${EndIf}
       ; The elevated copy may run as another account (an administrator's password typed for the
-      ; teacher), whose profile is not the teacher's: it is told where the settings belong.
+      ; teacher), whose profile is not the teacher's: it is told where the settings belong,
+      ; whatever the box says.  The box decides only whether the check is written off.
+      StrCpy $R1 '$R1 /SETTINGSDIR="$LOCALAPPDATA\teachers_teammate"'
       ${If} $CheckUpdates == "0"
-        StrCpy $R1 '$R1 /NOUPDATECHECK /SETTINGSDIR="$LOCALAPPDATA\teachers_teammate"'
+        StrCpy $R1 "$R1 /NOUPDATECHECK"
       ${EndIf}
       ; /D= must be the last argument, and it is not quoted.
       ${If} $DirGiven == "1"

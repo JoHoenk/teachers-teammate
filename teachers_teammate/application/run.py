@@ -344,14 +344,16 @@ class RunService:
         """Collect supported input files without a full Config (for partial GUI state)."""
         return self._discovery.collect_input_files_from_dir(input_dir, recursive)
 
-    def _page_models_skipped(self, config: Config) -> bool:
+    def _page_models_skipped(self, config: Config, *, recognition: bool) -> bool:
         """Return whether a run skips turning and flattening the pages.
 
-        That is a run that reads pages with the automatic preparation while the page models
-        are not downloaded.  It is a notice, never a refusal: the run does not wait for them.
+        That is a run that reads pages (*recognition*) with the automatic preparation while the
+        page models are not downloaded.  It is a notice, never a refusal: the run does not wait
+        for them.
         """
         return (
-            config.recognition_enabled
+            recognition
+            and config.recognition_enabled
             and config.ocr.preprocess_method == "auto"
             and not self._reader.page_models_installed()
         )
@@ -455,7 +457,7 @@ class RunService:
         files: Collection[Path] | None = None,
         recognised: Collection[Path] = (),
         recognition: bool | None = None,
-        memory: bool = True,
+        for_run: bool = True,
         fresh: bool = False,
         ask_about_work: bool = False,
     ) -> RunPreflight:
@@ -470,14 +472,21 @@ class RunService:
 
         *recognition* says whether the run reads pages at all; without it, *files* and
         *recognised* answer that (:meth:`needs_text_recognition`), so a caller need not ask.
+        Documents whose recognised text an earlier run stored count as *recognised* too.
+
+        *for_run* ``False`` is the bare question whether a run could start, as the readiness line
+        asks it: free memory, the wait for Ollama and the output folder belong to Run, and the
+        line shows the output folder on its own, so a folder not chosen yet must not stop it.
 
         *ask_about_work* adds ``worked_on``: the documents whose corrections or transcription the
         teacher worked on, for the question before a run.  It reads every file that was not
         read since it last changed, so only the check that starts a run asks for it.
         """
-        problem = self.output_problem_for_run(config)
+        problem = self.output_problem_for_run(config) if for_run else None
         if problem is not None:
             return RunPreflight(output_problem=problem)
+        if files and (recognition is None or not config.recognition_enabled):
+            recognised = {*recognised, *self._documents.recognised_files(config, files)}
         if recognition is None:
             recognition = (
                 self.needs_text_recognition(files, recognised=recognised)
@@ -495,7 +504,7 @@ class RunService:
                 return RunPreflight(nothing_to_read=True, skipped=plan.skipped)
             skipped = plan.skipped
         result = self._check_requirements(
-            config, memory=memory, recognition=recognition, fresh=fresh
+            config, memory=for_run, recognition=recognition, fresh=fresh
         )
         if skipped:
             result = dataclasses.replace(result, skipped=skipped)
@@ -577,7 +586,7 @@ class RunService:
                 return RunPreflight(stage=stage, stage_issues=tuple(issues))
         return RunPreflight(
             memory_shortfall=self._memory_shortfall(config) if memory else None,
-            page_models_skipped=self._page_models_skipped(config),
+            page_models_skipped=self._page_models_skipped(config, recognition=recognition),
             ollama_wait=self._ollama_wait(config) if memory else WaitDetail(),
         )
 

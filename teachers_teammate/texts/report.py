@@ -6,9 +6,7 @@ table of ``label : value`` rows; a progress line under a file starts with an arr
 
 from __future__ import annotations
 
-from ..domain.output_files import FolderProblem
 from .app import NAME
-from .dialogs import folder_problem_text
 
 LINE = "=" * 64
 TITLE = NAME
@@ -48,11 +46,6 @@ AWAKE_REFUSED = "no (the system did not allow it)"
 def row(label: str, value: object) -> str:
     """Return one ``label : value`` row of the banner."""
     return f"  {label:<14}: {value}"
-
-
-def folder_problem(problem: FolderProblem) -> str:
-    """Return the line for a run that may not write its files where it was told."""
-    return folder_problem_text(problem)
 
 
 def reader_engine(engine: str, model: str) -> str:

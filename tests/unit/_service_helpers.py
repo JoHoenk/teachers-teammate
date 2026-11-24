@@ -53,7 +53,9 @@ def _make_svc(
     model_store=None,
 ) -> AppServices:
     mock_pipeline_factory = pipeline_factory or MagicMock(return_value=MagicMock(run=lambda: 0))
-    mock_state_factory = state_repository_factory or MagicMock(return_value=MagicMock())
+    mock_state_factory = state_repository_factory or MagicMock(
+        return_value=MagicMock(load_valid=MagicMock(return_value=None))
+    )
     mock_discovery = discovery or MagicMock()
     return _build_services(
         discovery=mock_discovery,

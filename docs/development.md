@@ -1649,8 +1649,9 @@ Off, the layers behave like this:
   no error dialog for it and `ResultsTable.add_result` shows "skipped" in grey.
 - The refusal of settings that would read pages online, `_ollama_needed` and
   `_configured_ollama_models` ignore the OCR model, the pipeline does not check it, and
-  `describe_data_flow` leaves the recognition stage out (no page leaves anywhere).  `describe_steps` forces it back on so the line under the step can still say
-  what ticking it would use.
+  `describe_data_flow` leaves the recognition stage out (no page leaves anywhere).
+  `describe_steps` forces it back on so the line under the step can still say what ticking it
+  would use.
 - `check_run_preflight(config, files=..., recognised=...)` asks `_plan_recognition()` (images are
   scans; PDFs are opened with `pdf_has_text_layer()`, cached by path/size/mtime/mode, so call it from
   a background thread) and returns `RunPreflight.skipped`; when no file is readable it is blocked by
@@ -2208,11 +2209,16 @@ pipeline would drop (`StageBuilder.build_evaluation`).  The tick itself is kept 
 
 **Requirements and their fixes.**  `check_stage_requirements(config, stage)` (stages `ocr`,
 `anonymizer`, `correction`, `evaluation`) returns `RequirementIssue`s that carry an `IssueKind`,
-never only a sentence; `check_run_preflight(config, memory=..., recognition=..., fresh=...)` runs
+never only a sentence; `check_run_preflight(config, for_run=..., recognition=..., fresh=...)` runs
 `ocr` first and exposes the first blocker as `RunPreflight.blocker -> (stage, issue)`.
 `recognition=False` leaves the engine check out for a run that reads no page
 (`needs_text_recognition(files, recognised=...)`: only text files, or text already stored; a PDF
-counts as reading, because its text layer is only known by opening it); `fresh=True` asks Ollama
+counts as reading, because its text layer is only known by opening it).  Given `files`, the
+preflight adds the documents whose recognised text an earlier run stored to `recognised`, so the
+command line, which passes none, answers like the window.  `for_run=False` is the bare
+readiness question: it leaves out the memory, the wait for Ollama and the output folder (the
+line shows that problem on its own, and with no input folder chosen yet both folders are the
+current one).  `fresh=True` asks Ollama
 for its models again instead of using the cached list ("Check again", a returning window).
 The engine probes (`AddonService.is_module_importable`, `ReaderService.reader_installed`) are
 shared with the connection check, so a package or the reader's models installed from Add-ons are

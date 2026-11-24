@@ -305,7 +305,10 @@ def test_page_models_are_reported_skipped_only_for_an_automatic_run_that_reads_p
         recognition_enabled=False,
     )
 
+    text = tmp_path / "essay.txt"
+
     assert svc.run.check_run_preflight(auto).page_models_skipped is True
+    assert svc.run.check_run_preflight(auto, files=[text]).page_models_skipped is False
     assert svc.run.check_run_preflight(original).page_models_skipped is False
     assert svc.run.check_run_preflight(off).page_models_skipped is False
 
@@ -333,6 +336,70 @@ def test_preflight_reports_a_reader_that_is_not_downloaded(tmp_path: Path) -> No
 
 
 @pytest.mark.unit
+def test_a_missing_reader_does_not_stop_other_engines_or_a_run_without_recognition(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  no reader model files, a run with Ollama as the reading engine and one with
+           recognition switched off, each over a scan
+    When   the run preflight is computed
+    Then   neither is blocked because the reader is not downloaded
+    """
+    svc = _reader_service(tmp_path)
+    ollama = _ollama_config(tmp_path / "o", correction_enabled=False)
+    off = make_config(
+        tmp_path / "s", ocr_engine="ppocr", recognition_enabled=False, correction_enabled=False
+    )
+    (ollama.input_dir / "scan.png").write_bytes(b"x")
+    (off.input_dir / "scan.png").write_bytes(b"x")
+
+    with _server_answers(["qwen3-vl:8b"]):
+        with_ollama = svc.run.check_run_preflight(ollama, files=[ollama.input_dir / "scan.png"])
+    without_recognition = svc.run.check_run_preflight(off, files=[off.input_dir / "scan.png"])
+
+    assert with_ollama.blocked is False
+    kinds = [blocker[1].kind for blocker in (without_recognition.blocker,) if blocker]
+    assert IssueKind.READER_MODEL_MISSING not in kinds
+
+
+@pytest.mark.unit
+def test_a_run_over_files_that_were_read_before_needs_no_reader(tmp_path: Path) -> None:
+    """
+    Given  no reader model files and a scan whose recognised text an earlier run stored
+    When   the run preflight is computed over that scan
+    Then   nothing blocks it: no page is read again
+    """
+    svc = _reader_service(tmp_path)
+    config = make_config(tmp_path / "r", ocr_engine="ppocr")
+    scan = config.input_dir / "scan.png"
+    scan.write_bytes(b"x")
+
+    with patch.object(svc.documents, "recognised_files", return_value={scan}):
+        result = svc.run.check_run_preflight(config, files=[scan])
+
+    assert result.blocked is False
+
+
+@pytest.mark.unit
+def test_a_scan_read_before_is_usable_with_recognition_off(tmp_path: Path) -> None:
+    """
+    Given  recognition switched off and a scan whose recognised text an earlier run stored
+    When   the run preflight is computed over that scan
+    Then   the run is not "nothing to read", and the scan is not left out
+    """
+    svc = _make_svc()
+    config = make_config(tmp_path, ocr_engine="ppocr", recognition_enabled=False)
+    scan = config.input_dir / "scan.png"
+    scan.write_bytes(b"x")
+
+    with patch.object(svc.documents, "recognised_files", return_value={scan}):
+        result = svc.run.check_run_preflight(config, files=[scan])
+
+    assert result.nothing_to_read is False
+    assert result.skipped == ()
+
+
+@pytest.mark.unit
 def test_a_run_over_text_files_needs_no_reader(tmp_path: Path) -> None:
     """
     Given  the built-in reader without model files and an input folder with only a text file
@@ -348,6 +415,15 @@ def test_a_run_over_text_files_needs_no_reader(tmp_path: Path) -> None:
 
     assert svc.run.check_run_preflight(config, files=[text]).blocked is False
     assert svc.run.check_run_preflight(config, files=[text, scan]).blocker is not None
+
+
+_ALL_MODELS = ["qwen3-vl:8b", "qwen3.5:9b", "gemma4:12b", "my-own:latest"]
+
+
+def _memory_shortfall_of(svc, config):
+    """Return the memory shortfall the run preflight reports, with every model downloaded."""
+    with _server_answers(_ALL_MODELS):
+        return svc.run.check_run_preflight(config).memory_shortfall
 
 
 @pytest.fixture(autouse=True)
@@ -386,7 +462,7 @@ def test_a_run_is_refused_when_the_model_would_have_to_swap(tmp_path: Path, monk
     cfg = _ollama_config(tmp_path, ocr_engine="ppocr")
     _computer(svc, monkeypatch, profile="cpu", free_gb=6.0)
 
-    shortfall = svc.run._memory_shortfall(cfg)
+    shortfall = _memory_shortfall_of(svc, cfg)
 
     assert shortfall is not None
     assert shortfall.model == "qwen3.5:9b"
@@ -404,7 +480,7 @@ def test_a_run_is_allowed_when_enough_memory_is_free(tmp_path: Path, monkeypatch
     cfg = _ollama_config(tmp_path, ocr_engine="ppocr")
     _computer(svc, monkeypatch, profile="cpu", free_gb=12.0)
 
-    assert svc.run._memory_shortfall(cfg) is None
+    assert _memory_shortfall_of(svc, cfg) is None
 
 
 @pytest.mark.unit
@@ -420,10 +496,10 @@ def test_only_what_does_not_fit_the_card_has_to_fit_the_free_memory(
     cfg = _ollama_config(tmp_path, ocr_engine="ppocr", correction_model="gemma4:12b")
 
     _computer(svc, monkeypatch, profile="8gb", free_gb=4.0, card_gb=8.0 * 0.85)
-    shortfall = svc.run._memory_shortfall(cfg)
+    shortfall = _memory_shortfall_of(svc, cfg)
     assert shortfall is not None and shortfall.model == "gemma4:12b"
     _computer(svc, monkeypatch, profile="8gb", free_gb=6.0, card_gb=8.0 * 0.85)
-    assert svc.run._memory_shortfall(cfg) is None
+    assert _memory_shortfall_of(svc, cfg) is None
 
 
 @pytest.mark.unit
@@ -448,7 +524,7 @@ def test_apple_silicon_needs_the_whole_model_from_the_shared_memory(
         reason=DetectionReason.APPLE_UNIFIED_MEMORY,
     )
 
-    shortfall = svc.run._memory_shortfall(cfg)
+    shortfall = _memory_shortfall_of(svc, cfg)
     assert shortfall is not None and shortfall.model == "qwen3.5:9b"
 
 
@@ -468,9 +544,9 @@ def test_the_memory_check_leaves_other_cases_alone(tmp_path: Path, monkeypatch) 
     remote = _ollama_config(tmp_path, ocr_engine="ppocr", ollama_url="http://gpu-box.lan:11434")
     no_ollama = _ollama_config(tmp_path, ocr_engine="ppocr", correction_enabled=False)
 
-    assert svc.run._memory_shortfall(unknown) is None
-    assert svc.run._memory_shortfall(remote) is None
-    assert svc.run._memory_shortfall(no_ollama) is None
+    assert _memory_shortfall_of(svc, unknown) is None
+    assert _memory_shortfall_of(svc, remote) is None
+    assert _memory_shortfall_of(svc, no_ollama) is None
 
 
 @pytest.mark.unit
@@ -862,6 +938,21 @@ def test_output_problem_for_text_files_in_input_folder(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_the_bare_readiness_question_leaves_the_output_folder_out(tmp_path: Path) -> None:
+    """
+    Given  text output into the input folder, as a window with no folder chosen yet has it
+    When   the run preflight is computed with for_run=False
+    Then   the output folder is not reported, so the other blockers still are
+    """
+    cfg = make_config(tmp_path, text_enabled=True, output_dir=tmp_path, input_dir=tmp_path)
+    svc = _make_svc()
+
+    result = svc.run.check_run_preflight(cfg, for_run=False)
+
+    assert result.output_problem is None
+
+
+@pytest.mark.unit
 def test_the_output_folder_blocks_before_a_missing_model(tmp_path: Path) -> None:
     """
     Given  text output into the input folder and a model that is not downloaded
@@ -1156,14 +1247,16 @@ def test_a_fresh_preflight_sees_a_model_pulled_since_the_list_was_cached(tmp_pat
 def test_preflight_without_memory_never_asks_the_memory_question(tmp_path: Path) -> None:
     """
     Given  a config the readiness line checks
-    When   the preflight runs with memory=False
+    When   the preflight runs with for_run=False
     Then   the memory is never looked at, so a bare readiness question stays cheap
     """
     svc = _make_svc()
     cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False)
 
-    with patch.object(svc.run, "_memory_shortfall", side_effect=AssertionError("asked")):
-        result = svc.run.check_run_preflight(cfg, memory=False)
+    with patch.object(
+        svc.recommendations, "available_memory_gb", side_effect=AssertionError("asked")
+    ):
+        result = svc.run.check_run_preflight(cfg, for_run=False)
 
     assert result.blocked is False
     assert result.memory_shortfall is None
@@ -1525,4 +1618,4 @@ def test_the_memory_check_does_not_probe_the_graphics_cards(tmp_path: Path, monk
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
     monkeypatch.setattr(gpu_detector, "detect_gpus", _no_probe)
 
-    assert svc.run._memory_shortfall(cfg) is not None
+    assert _memory_shortfall_of(svc, cfg) is not None

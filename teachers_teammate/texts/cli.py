@@ -223,39 +223,39 @@ def timeout_out_of_range(seconds: int, low: int, high: int) -> str:
     return f"the timeout must be between {low} and {high} seconds, got {seconds}"
 
 
+_INSTALL_IN_APP = f"Install it in the app: {WHERE_ADDONS}"
+
+#: What the command line says for an issue whose hint does not depend on its data.
+_FIXED_HINTS: dict[IssueKind, str] = {
+    IssueKind.READER_MODEL_MISSING: f"Download it with: {READER_DOWNLOAD_COMMAND}",
+    IssueKind.NOTHING_TO_READ: "Run again with --recognition, or queue files that have text.",
+    IssueKind.OLLAMA_NOT_RUNNING: "Start Ollama, then run again.",
+    IssueKind.OLLAMA_NOT_FOUND: f"Install Ollama from {OLLAMA_DOWNLOAD_URL}, then run again.",
+    IssueKind.OUTPUT_IN_INPUT_FOLDER: (
+        "Choose an output folder with -o/--output that is not the input folder."
+    ),
+    IssueKind.PACKAGE_MISSING: _INSTALL_IN_APP,
+    IssueKind.NAME_DETECTION_MISSING: _INSTALL_IN_APP,
+    IssueKind.PRIVACY_ADDON_MISSING: _INSTALL_IN_APP,
+    IssueKind.ADDONS_OUTDATED: _INSTALL_IN_APP,
+}
+
+
 def cli_issue_hint(issue: RequirementIssue, *, env_key: str = "") -> str:
     """Return what the command line suggests for *issue*, or ``""`` when nothing helps.
 
     *env_key* is the environment variable the key of ``issue.provider`` is read from.
     """
     kind = issue.kind
-    if kind is IssueKind.READER_MODEL_MISSING:
-        return f"Download it with: {READER_DOWNLOAD_COMMAND}"
     if kind in (IssueKind.MODEL_MISSING, IssueKind.NO_OLLAMA_MODEL):
-        model = issue.models[0] if issue.models else "<model>"
-        return f"Download it in Ollama: ollama pull {model}"
+        if not issue.models:
+            return "Download a model in Ollama with ollama pull, then run again."
+        pulls = "; ".join(f"ollama pull {model}" for model in issue.models)
+        return f"Download in Ollama: {pulls}"
     if kind is IssueKind.KEY_MISSING:
-        where = WHERE_ONLINE_SERVICES
         if env_key:
-            return f"Set {env_key} in the environment, or save the key under {where}."
-        return f"Save the key under {where}."
-    if kind in (
-        IssueKind.PACKAGE_MISSING,
-        IssueKind.NAME_DETECTION_MISSING,
-        IssueKind.PRIVACY_ADDON_MISSING,
-        IssueKind.ADDONS_OUTDATED,
-        IssueKind.ADDON_RESTART_NEEDED,
-    ):
-        return f"Install it in the app: {WHERE_ADDONS}"
-    if kind is IssueKind.NOTHING_TO_READ:
-        return "Run again with --recognition, or queue files that have text."
-    if kind in (IssueKind.OLLAMA_NOT_RUNNING, IssueKind.OLLAMA_NOT_FOUND):
-        fix = (
-            "Start Ollama"
-            if kind is IssueKind.OLLAMA_NOT_RUNNING
-            else f"Install Ollama from {OLLAMA_DOWNLOAD_URL}"
-        )
-        return f"{fix}, then run again."
-    if kind is IssueKind.OUTPUT_IN_INPUT_FOLDER:
-        return "Choose an output folder with -o/--output that is not the input folder."
-    return ""
+            return (
+                f"Set {env_key} in the environment, or save the key under {WHERE_ONLINE_SERVICES}."
+            )
+        return f"Save the key under {WHERE_ONLINE_SERVICES}."
+    return _FIXED_HINTS.get(kind, "")

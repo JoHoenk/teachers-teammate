@@ -52,6 +52,7 @@ from ..exceptions import OllamaUnreachableError, ProviderNotAvailableError
 from ..interfaces import ImageUnit, PreparedPreview, ProgressCallbacks, Reporter
 from ..messages import preview_needs_images
 from ..texts import report as report_text
+from ..texts.dialogs import folder_problem_text
 from . import run_report
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
 from .ollama_utils import OllamaClient
@@ -276,7 +277,7 @@ class OCRPipeline:
             input_dir=cfg.input_dir.resolve(),
             recursive=cfg.recursive,
         )
-        return report_text.folder_problem(problem) if problem is not None else ""
+        return folder_problem_text(problem) if problem is not None else ""
 
     def _prepare_run(self) -> _RunStart:
         """Create the run's folders and stores, and say where the teacher's work is kept."""

@@ -1365,3 +1365,47 @@ def test_parse_args_ocr_timeout_out_of_range_exits(bad: str) -> None:
 
     with pytest.raises(SystemExit):
         _parse_args(argv=["--ocr-timeout", bad])
+
+
+@pytest.mark.unit
+def test_the_hint_names_every_missing_model() -> None:
+    """
+    Given  an issue that names two models that are not downloaded
+    When   the command line asks for its hint
+    Then   the hint pulls both, so one run of it fixes the run
+    """
+    from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
+
+    hint = cli_issue_hint(
+        RequirementIssue(IssueKind.MODEL_MISSING, models=("qwen3-vl:8b", "qwen3.5:9b"))
+    )
+
+    assert "ollama pull qwen3-vl:8b" in hint
+    assert "ollama pull qwen3.5:9b" in hint
+
+
+@pytest.mark.unit
+def test_the_hint_for_no_model_at_all_has_no_placeholder() -> None:
+    """
+    Given  an Ollama without any model and an issue that names none
+    When   the command line asks for its hint
+    Then   the hint says to pull a model, without a placeholder in it
+    """
+    from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
+
+    hint = cli_issue_hint(RequirementIssue(IssueKind.NO_OLLAMA_MODEL))
+
+    assert "ollama pull" in hint
+    assert "<" not in hint
+
+
+@pytest.mark.unit
+def test_an_add_on_that_waits_for_a_restart_gets_no_install_hint() -> None:
+    """
+    Given  an add-on that is installed and waits for the next start
+    When   the command line asks for its hint
+    Then   there is none: the sentence already says to restart
+    """
+    from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
+
+    assert cli_issue_hint(RequirementIssue(IssueKind.ADDON_RESTART_NEEDED, name="spaCy")) == ""

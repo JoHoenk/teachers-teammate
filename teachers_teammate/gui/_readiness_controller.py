@@ -164,7 +164,7 @@ class ReadinessController(QObject):
         self._readiness_task.submit(
             lambda: service.run.check_run_preflight(
                 config,
-                memory=False,
+                for_run=False,
                 recognition=recognition,
                 fresh=fresh,
                 files=files,

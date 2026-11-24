@@ -86,6 +86,7 @@ def test_the_window_states_the_blocker_in_the_words_of_texts(
     assert main_window._run_controller._worker is None
 
 
+@pytest.mark.unit
 def test_the_command_line_states_the_blocker_in_the_words_of_texts(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

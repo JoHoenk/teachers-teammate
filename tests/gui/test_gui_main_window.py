@@ -4227,7 +4227,7 @@ def test_the_line_names_a_missing_key_and_its_button_opens_the_key_row(
 
     assert _buttons(ready_window) == ["Enter key…"]
     assert calls[-1] == {
-        "memory": False,
+        "for_run": False,
         "recognition": True,
         "fresh": False,
         "files": [],

@@ -2226,6 +2226,15 @@ py_test(
 )
 
 py_test(
+    name = "test_cache_keys_golden",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_cache_keys_golden.py"],
+    args = ["unit/test_cache_keys_golden.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+py_test(
     name = "test_file_processor",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_file_processor.py"],
@@ -3108,6 +3117,7 @@ test_suite(
         ":test_benchmark_run_store",
         ":test_benchmark_runner",
         ":test_benchmark_service",
+        ":test_cache_keys_golden",
         ":test_cache_service",
         ":test_check_desktop_entry",
         ":test_check_document",

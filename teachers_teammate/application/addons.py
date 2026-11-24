@@ -130,14 +130,6 @@ class AddonService:
 
         return addon_license(package)
 
-    def addons_restart_needed(self) -> bool:
-        """Return whether an install waits for the next start (``packages.pending/``).
-
-        Windows locks a file the running app has loaded, so a package that could not replace
-        its old copy waits there; :func:`prepare_packages_dir` applies it at the next start.
-        """
-        return self._state.restart_needed()
-
     def pending_addon_packages(self) -> list[str]:
         """Return the normalised names of the packages that wait for the next start."""
         return self._state.pending()

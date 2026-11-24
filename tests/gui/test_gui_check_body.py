@@ -45,6 +45,7 @@ def _document(
     review: CorrectionReview | None = None,
     warning: str = "",
     content_review: str = "",
+    machine: str = "",
 ) -> CheckDocument:
     """Return the Check tab's data for a stored document."""
     return check_document_of(
@@ -62,11 +63,27 @@ def _document(
             preprocess_steps=(),
             raw_text_format="plain",
             correction_review=review,
+            machine_correction_text=machine,
             correction_warning=warning,
             sent={},
             page_images=(),
             original_images=(),
         )
+    )
+
+
+def _retyped(
+    doc: CheckDocument, *, raw: str | None = None, corrected: str | None = None
+) -> CheckDocument:
+    """Return *doc* as the store hands it back after the teacher typed in one of its texts."""
+    return _document(
+        source_id=doc.source_id,
+        raw=doc.raw_text if raw is None else raw,
+        corrected=doc.corrected_text if corrected is None else corrected,
+        review=doc.review,
+        warning=doc.warning,
+        content_review=doc.content_review,
+        machine=doc.machine_corrected_text,
     )
 
 
@@ -87,7 +104,7 @@ def _body(qtbot, doc: CheckDocument, masking: Masking | None = None) -> CheckBod
     body.show()
     qtbot.wait(20)
     body.corrected_text_edited.connect(
-        lambda text: body.update_document(doc.realigned(doc.raw_text, text))
+        lambda text: body.update_document(_retyped(doc, corrected=text))
     )
     body.show_document(doc, masking or Masking())
     return body
@@ -225,7 +242,7 @@ def test_a_stored_edit_of_the_transcription_keeps_the_text_and_the_scan(qtbot, t
     page.body.read_view.setPlainText("Getippt.")
     cursor_text = page.body.read_view.toPlainText()
 
-    page.show_document(doc.realigned("Getippt.", ""), 1, 1, typed=True)
+    page.show_document(_retyped(doc, raw="Getippt.", corrected=""), 1, 1, typed=True)
 
     assert bar.value() == scrolled
     assert page.body.read_view.toPlainText() == cursor_text
@@ -749,7 +766,9 @@ def test_a_reading_fix_removes_the_proofreading_and_offers_proofread_this_docume
     doc = _document(review=_review(RAW, CORRECTED))
     page.show_document(doc, 1, 1)
     page.body.banner.action_clicked.emit()
-    page.raw_text_edited.connect(lambda text: page.update_document(doc.realigned(text, "")))
+    page.raw_text_edited.connect(
+        lambda text: page.update_document(_retyped(doc, raw=text, corrected=""))
+    )
 
     page.body.read_view.setPlainText("Der bunte Hund bellt laut.")
     page.body.read_view.flush()

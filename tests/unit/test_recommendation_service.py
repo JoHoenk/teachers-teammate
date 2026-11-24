@@ -275,10 +275,10 @@ def test_hardware_detection_is_logged(monkeypatch, caplog) -> None:
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_detect_gpus_is_served_from_the_shared_probe(monkeypatch) -> None:
+def test_the_local_hardware_is_served_from_the_shared_probe(monkeypatch) -> None:
     """
     Given  hardware detection that already probed this computer
-    When   detected_gpus() is called afterwards (the "Detect GPU" button)
+    When   the local hardware is asked for afterwards
     Then   the machine is not probed a second time
     """
     from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
@@ -293,8 +293,8 @@ def test_detect_gpus_is_served_from_the_shared_probe(monkeypatch) -> None:
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
     service = _service()
     service.detect_hardware(_URL)
-    gpus = service.detected_gpus()
-    assert [g.name for g in gpus] == ["RTX 4060"]
+    hardware = service.local_hardware()
+    assert [name for name, _gb in hardware.gpus] == ["RTX 4060"]
     assert calls == ["gpu"]
 
 

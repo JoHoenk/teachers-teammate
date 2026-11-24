@@ -128,10 +128,6 @@ class FakeGuiService(LocalDataFlowStub):
     def list_supported_suffixes(self) -> frozenset[str]:
         return frozenset({".pdf", ".png", ".jpg", ".jpeg", ".txt"})
 
-    def detect_gpus(self, *, refresh: bool = False) -> list:
-        _ = refresh
-        return []
-
     def available_memory_gb(self) -> float | None:
         """Answer with no free figure: the line then names the total memory only."""
         return None

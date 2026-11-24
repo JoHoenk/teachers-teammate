@@ -179,14 +179,15 @@ def test_evaluator_strips_reasoning_and_a_code_fence_from_the_review(mocker) -> 
     assert evaluator.evaluate("text", "English") == EvaluationOutcome(text="**Good** work")
 
 
-# ── fits(): the same limit evaluate() enforces ─────────────────────────────
+# ── the limit evaluate() enforces ───────────────────────────────────────────
 
 
-def test_fits_agrees_with_the_too_long_warning_of_evaluate(mocker) -> None:
+def test_a_text_beyond_the_window_is_not_reviewed(mocker) -> None:
     """
-    Given  a NativeOllamaEvaluator with a small window and the longest text that still fits
-    When   fits() and evaluate() are asked about that text and one character more
-    Then   fits() is False exactly when evaluate() reports the text as too long
+    Given  a NativeOllamaEvaluator with a small window
+    When   a text far longer than that window is reviewed
+    Then   the answer carries the too-long warning, because a content review cannot be split
+           into pieces the way proofreading can
     """
     from teachers_teammate.infrastructure.evaluation import (  # noqa: PLC0415
         NativeOllamaEvaluator,
@@ -205,16 +206,6 @@ def test_fits_agrees_with_the_too_long_warning_of_evaluate(mocker) -> None:
         num_ctx=8192,
     )
 
-    low, high = 0, 100_000
-    while low < high:
-        middle = (low + high + 1) // 2
-        if evaluator.fits("a" * middle, "English"):
-            low = middle
-        else:
-            high = middle - 1
-    inside, outside = "a" * low, "a" * (low + 1)
+    outcome = evaluator.evaluate("a" * 100_000, "English")
 
-    assert evaluator.fits(inside, "English")
-    assert not evaluator.fits(outside, "English")
-    assert evaluator.evaluate(inside, "English").warning is None
-    assert evaluator.evaluate(outside, "English").warning == TOO_LONG_FOR_REVIEW_WARNING
+    assert outcome.warning == TOO_LONG_FOR_REVIEW_WARNING

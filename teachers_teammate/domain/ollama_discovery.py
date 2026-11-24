@@ -130,11 +130,6 @@ class DiscoveredServer:
         """The host name or address part of :attr:`url`."""
         return urlparse(self.url).hostname or self.url
 
-    @property
-    def on_this_computer(self) -> bool:
-        """Whether the server runs on the computer the teacher sits at."""
-        return self.kind is not ServerKind.NETWORK
-
 
 def server_url(host: str, port: int = OLLAMA_PORT, scheme: str = "http") -> str:
     """Return ``scheme://host:port`` (an IPv6 address gets its brackets)."""

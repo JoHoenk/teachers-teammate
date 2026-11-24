@@ -719,6 +719,6 @@ def test_a_stretch_left_out_is_counted_apart_from_the_unclear_expressions() -> N
     left_out = UnclearNote(4, 9, "defgh", "Left out.", "", left_out=True)
     review = CorrectionReview(unclear=(unclear, left_out))
 
-    assert (review.unclear_count, review.left_out_count) == (1, 1)
+    assert (review.unclear_count, len(review.unclear)) == (1, 2)
     assert review.unclear_notes == (unclear,)
     assert align("abc defgh", "abc defgh", review).unclear_count == 1

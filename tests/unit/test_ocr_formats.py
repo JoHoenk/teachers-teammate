@@ -836,20 +836,17 @@ def test_postprocessor_looks_through_a_fence_around_layout_html() -> None:
     assert (result.text, result.text_format) == ("Hallo **Welt**", "markdown")
 
 
-def test_postprocessor_does_not_unwrap_a_fence_in_another_language() -> None:
+def test_a_fenced_block_in_another_language_stays_one_paragraph() -> None:
     """
     Given  a page that is one fenced block in another language, with a "# comment" line
-    When   the page is parsed
-    Then   the fence is not looked through: the code stays one literal paragraph, and its
-           comment does not become a heading
+    When   the page is processed
+    Then   the code stays one literal paragraph and its comment does not become a heading
     """
     page = "```python\n# Kommentar\nx = 1\n```"
 
-    doc, _name = OcrOutputPostprocessor().parse_page(page)
+    result = OcrOutputPostprocessor().process_pages([page])
 
-    assert [(block.kind, block.text) for block in doc.blocks] == [
-        ("paragraph", "# Kommentar\nx = 1")
-    ]
+    assert (result.text, result.text_format) == ("\\# Kommentar\nx = 1", "markdown")
 
 
 @pytest.mark.parametrize("info", ["", "markdown", "html"])

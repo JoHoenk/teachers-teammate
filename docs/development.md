@@ -2279,10 +2279,10 @@ result (`ResultsTable.checkable_source_ids()`), and the tab labels carry the sta
 texts and their plain forms, the review aligned with them, the items the list numbers, the pages
 of the scan, how the results were sent.  The window asks for it once per document
 (`_load_check`) and once per stored edit (`_store_edit`), and never assembles that state itself.
-`CheckDocument.realigned(raw_text, corrected_text)` re-aligns after a typing pause without
-touching the disk, memoised on the two plain texts and the review.  The document also carries
-`sent` and `preprocess`, so the queue row's *sent* cells come from the same read; the queue
-keeps no preprocessing info of its own.
+A typed text is stored and read back through the same query; the alignment is memoised on the
+two plain texts and the review (`_align_cached`).  The document also carries `sent` and
+`preprocess`, so the queue row's *sent* cells come from the same read; the queue keeps no
+preprocessing info of its own.
 
 **Showing a document again.**  `CheckBody.show_document` fills the scan and both texts from the
 `CheckDocument`, also for the document that is already open: a run may have read it again.  Only

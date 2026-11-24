@@ -157,10 +157,6 @@ class DocumentQueries:
             rows.append(queue_row(view, stored))
         return rows
 
-    def queue_row(self, config: Config, source: Path) -> QueueRow:
-        """Return what the queue shows for one file, read from the store."""
-        return self.queue_rows(config, [source])[0]
-
     def load_view(self, config: Config, source: Path) -> DocumentStateView | None:
         """Return the view of *source*, with the texts the document has now."""
         for _file, _state, view in self._documents(config, [source], reconciled=False):

@@ -170,7 +170,7 @@ def test_the_queue_and_the_check_view_agree_after_reconciliation(tmp_path: Path)
     )
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    row = svc.documents.queue_row(now, source)
+    row = svc.documents.queue_rows(now, [source])[0]
     view = svc.documents.load_view(now, source)
 
     assert view is not None
@@ -196,7 +196,7 @@ def test_the_queue_and_the_check_view_agree_about_a_file_without_a_result(tmp_pa
     repo = StateRepository(tmp_path / "state")
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    row = svc.documents.queue_row(cfg, source)
+    row = svc.documents.queue_rows(cfg, [source])[0]
 
     assert svc.documents.load_view(cfg, source) is None
     assert row.has_text is False

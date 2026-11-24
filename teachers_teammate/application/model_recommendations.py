@@ -146,10 +146,6 @@ class ModelRecommendationService:
         """Return the raw hardware of this computer (probed once per process)."""
         return self._ensure_probe(refresh=refresh).as_local_hardware()
 
-    def detected_gpus(self, *, refresh: bool = False) -> list[GpuInfo]:
-        """Return the GPUs of this computer (probed once per process)."""
-        return list(self._ensure_probe(refresh=refresh).gpus)
-
     def available_memory_gb(self) -> float | None:
         """Return the main memory free right now in GB, or ``None`` when it cannot be read.
 

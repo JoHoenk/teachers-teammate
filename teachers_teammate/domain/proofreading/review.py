@@ -111,11 +111,6 @@ class CorrectionReview:
     unclear: tuple[UnclearNote, ...] = ()
 
     @property
-    def edit_count(self) -> int:
-        """Number of edits the review carries."""
-        return len(self.edits)
-
-    @property
     def unclear_notes(self) -> tuple[UnclearNote, ...]:
         """The unclear or ambiguous expressions: the notes that are not a stretch left out."""
         return tuple(note for note in self.unclear if not note.left_out)
@@ -124,11 +119,6 @@ class CorrectionReview:
     def unclear_count(self) -> int:
         """Number of unclear or ambiguous expressions (a stretch left out is none)."""
         return len(self.unclear_notes)
-
-    @property
-    def left_out_count(self) -> int:
-        """Number of stretches the model left out of its answer and the app put back."""
-        return len(self.unclear) - self.unclear_count
 
     def note(self, edit_id: int) -> EditNote | None:
         """Return the note of edit *edit_id*, or ``None``."""
@@ -510,11 +500,6 @@ class AlignedReview:
     unclear: tuple[AlignedUnclear, ...] = ()
     orphan_notes: tuple[EditNote, ...] = ()
     """Notes whose edit is not in the text any more (the teacher undid it)."""
-
-    @property
-    def change_count(self) -> int:
-        """Number of diff hunks, minor ones included."""
-        return len(self.changes)
 
     @property
     def listed_changes(self) -> tuple[AlignedChange, ...]:

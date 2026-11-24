@@ -101,11 +101,6 @@ class PrivacyLevel(StrEnum):
         """Whether data leaves this computer at this level."""
         return self is not PrivacyLevel.LOCAL
 
-    @property
-    def sends_names(self) -> bool:
-        """Whether names are sent as written at this level."""
-        return self in (PrivacyLevel.NAMES_EU, PrivacyLevel.NAMES_NON_EU)
-
 
 _PRIVACY_ORDER: tuple[PrivacyLevel, ...] = (
     PrivacyLevel.LOCAL,

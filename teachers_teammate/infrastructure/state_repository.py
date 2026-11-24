@@ -592,12 +592,6 @@ class StateRepository:
         self.save(input_file, new_state)
         return new_state
 
-    def invalidate_preview_artifact(self, input_file: Path, state: DocumentState) -> DocumentState:
-        """Clear preview artifact paths while keeping textual stage data intact."""
-        new_state = dataclasses.replace(state, **_cleared_preview())
-        self.save(input_file, new_state)
-        return new_state
-
     def reset_from_stage(
         self,
         input_file: Path,

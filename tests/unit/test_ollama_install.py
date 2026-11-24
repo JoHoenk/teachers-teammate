@@ -145,13 +145,14 @@ def test_starting_on_macos_runs_a_homebrew_command_with_serve() -> None:
     When   it is started
     Then   it runs ``ollama serve``; ``open -a`` would fail on a command
     """
+    command = Path("/opt/homebrew/bin/ollama")
     with (
         patch.object(sys, "platform", "darwin"),
         patch.object(ollama_install.subprocess, "Popen") as popen,
     ):
-        ollama_install.start_ollama(Path("/opt/homebrew/bin/ollama"))
+        ollama_install.start_ollama(command)
 
-    assert popen.call_args.args[0] == ["/opt/homebrew/bin/ollama", "serve"]
+    assert popen.call_args.args[0] == [str(command), "serve"]
 
 
 @pytest.mark.unit
@@ -180,13 +181,14 @@ def test_starting_on_macos_opens_the_app_bundle() -> None:
     When   it is started
     Then   ``open -a`` is used, so the app starts the server itself
     """
+    bundle = Path("/Applications/Ollama.app")
     with (
         patch.object(sys, "platform", "darwin"),
         patch.object(ollama_install.subprocess, "Popen") as popen,
     ):
-        ollama_install.start_ollama(Path("/Applications/Ollama.app"))
+        ollama_install.start_ollama(bundle)
 
-    assert popen.call_args.args[0] == ["open", "-a", "/Applications/Ollama.app"]
+    assert popen.call_args.args[0] == ["open", "-a", str(bundle)]
 
 
 @pytest.mark.unit

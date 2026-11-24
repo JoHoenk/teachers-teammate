@@ -302,7 +302,7 @@ def test_system_memory_is_none_when_nothing_can_be_read(monkeypatch) -> None:
         raise ValueError("not supported")
 
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(gpu_detector.os, "sysconf", refuse)
+    monkeypatch.setattr(gpu_detector.os, "sysconf", refuse, raising=False)
     with patch.dict(sys.modules, {"psutil": None}):
         assert gpu_detector.detect_system_memory_gb() is None
 

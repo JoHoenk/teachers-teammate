@@ -277,23 +277,15 @@ def test_install_addon_subprocess_raises_on_nonzero_exit(tmp_path: Path) -> None
 
 def test_install_addon_subprocess_raises_oserror_on_bad_target(tmp_path: Path) -> None:
     """
-    Given  the target packages directory cannot be created (read-only parent)
+    Given  the target packages directory cannot be created (its parent is a file)
     When   install_addon_subprocess() is called
     Then   OSError or PermissionError propagates
     """
-    read_only = tmp_path / "ro"
-    read_only.mkdir()
-    read_only.chmod(0o444)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("")
 
-    try:
-        with pytest.raises((OSError, PermissionError)):
-            install_addon_subprocess(
-                PRIVACY_ADDON_ID,
-                read_only / "sub" / "pkg",
-                lambda _: None,
-            )
-    finally:
-        read_only.chmod(0o755)
+    with pytest.raises((OSError, PermissionError)):
+        install_addon_subprocess(PRIVACY_ADDON_ID, blocker / "sub" / "pkg", lambda _: None)
 
 
 def test_install_addon_subprocess_unknown_addon_raises_key_error(tmp_path: Path) -> None:
@@ -389,21 +381,15 @@ def test_download_spacy_model_raises_on_nonzero_exit(tmp_path: Path) -> None:
 
 def test_download_spacy_model_raises_oserror_on_bad_target(tmp_path: Path) -> None:
     """
-    Given  the target packages directory cannot be created (read-only parent)
+    Given  the target packages directory cannot be created (its parent is a file)
     When   download_spacy_model_subprocess() is called
     Then   OSError or PermissionError propagates
     """
-    read_only = tmp_path / "ro"
-    read_only.mkdir()
-    read_only.chmod(0o444)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("")
 
-    try:
-        with pytest.raises((OSError, PermissionError)):
-            download_spacy_model_subprocess(
-                "en_core_web_sm", read_only / "sub" / "pkg", lambda _: None
-            )
-    finally:
-        read_only.chmod(0o755)
+    with pytest.raises((OSError, PermissionError)):
+        download_spacy_model_subprocess("en_core_web_sm", blocker / "sub" / "pkg", lambda _: None)
 
 
 # ── _packages_dir_readable ────────────────────────────────────────────────────

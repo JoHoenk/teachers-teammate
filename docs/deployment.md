@@ -52,7 +52,7 @@ Only the maintainer may create or delete `v*` tags (tag ruleset); a tag cannot b
 | `release.yml` | a `v*` tag | the release above |
 | `release_dry_run.yml` | manual, with a version | the whole release build without touching a release |
 | `build_bundles.yml` | manual; PRs touching the app (`teachers_teammate/`), `tests/e2e/`, `tools/packaging/`, `tools/build/`, the requirement, `pyproject.toml` and Bazel module files, the build-venv action or `build_*.yml` | the three bundles as workflow artifacts (2 days) |
-| `platform_tests.yml` | pull requests | the unit and GUI tests in a plain venv on Windows and macOS, without Bazel; a trial, not part of the merge gate |
+| `platform_tests.yml` | pull requests | the tests marked `platform` in a plain venv on Windows and macOS, without Bazel; a trial, not part of the merge gate |
 | `addon_resolution.yml` | weekly | resolves every add-on's requirement against the bundle's versions, so a new `langchain-*` or spaCy release that breaks an add-on shows up before release day |
 | `dependabot.yml` | weekly | dependency bumps, each held back 7 days after its release (security updates are not) |
 

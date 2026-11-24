@@ -46,10 +46,11 @@ gives every test the tag of the folder its file lives in. A target is one call t
 file; the macro derives the rest (name, tag, entry point). `tests/unit/test_test_targets.py` holds
 the targets to the test files.
 
-`platform_tests.yml` runs the unit and GUI tests in a plain venv on Windows and macOS: the build
-venv's own recipe with the `[test]` extra, so the versions are the ones the bundle ships there.
-It blocks no merge; `-m "not needs_reader_models and not needs_ollama
-and not needs_bazel"` leaves out what needs Bazel's runfiles or an Ollama server.
+`platform_tests.yml` runs the tests marked `platform` in a plain venv on Windows and macOS: the
+build venv's own recipe with the `[test]` extra, so the versions are the ones the bundle ships
+there. They cover the code that differs per system (paths, processes, Ollama, locale); the list
+is `PLATFORM_TEST_FILES` in `tests/conftest.py`. A test in it uses `Path`, `tmp_path` and
+`os.sep`, never a literal POSIX path or a POSIX-only call. It blocks no merge.
 
 Bazel gives every test file its own process, which hides a test that changes global state (`sys.modules`, `sys.path`, environment) and leaves it changed. A single `pytest tests` run puts all files in one process and is how such a leak between files shows up. A test that evicts or replaces modules must restore them (`with patch.dict(sys.modules):`).
 
@@ -142,6 +143,7 @@ than a second library for the modules infrastructure imports.
 | `needs_page_models` | Runs the page models' real model files (Bazel fetches them; skipped without) |
 | `needs_ollama` | Requires a running Ollama instance |
 | `gui` | Exercises PySide6 widgets and the event loop |
+| `platform` | Covers code that differs per operating system; runs on Linux, Windows and macOS |
 | `needs_bazel` | Reads Bazel's runfiles (the built wheel, the model files); skipped unless `TEST_SRCDIR` is set |
 | `use_case` | Links the test to a use case in `use_cases.trlc` (see below) |
 

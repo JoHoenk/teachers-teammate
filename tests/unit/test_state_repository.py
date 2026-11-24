@@ -173,7 +173,7 @@ def test_a_state_is_found_through_another_spelling_of_the_folder(
     (tmp_path / "in").mkdir()
     first = _source_file(tmp_path / "in", "doc.txt")
     other = tmp_path / "IN"
-    other.mkdir()
+    other.mkdir(exist_ok=True)
     (other / "doc.txt").write_bytes(first.read_bytes())
     repo = _repo(tmp_path)
     source_hash = compute_file_hash(first)

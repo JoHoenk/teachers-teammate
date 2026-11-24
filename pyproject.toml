@@ -237,5 +237,6 @@ markers = [
     "needs_ollama: requires a running Ollama instance",
     "needs_bazel: reads the Bazel runfiles, so it runs under `bazel test` and is skipped elsewhere",
     "gui: exercises PySide6 widgets/event loop",
+    "platform: covers code that differs per operating system; runs on all three",
     "use_case: links test to a named use case from use_cases.trlc",
 ]

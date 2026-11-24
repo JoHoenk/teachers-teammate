@@ -320,6 +320,7 @@ Remove-Item -LiteralPath $AllUsersDesktopLink -Force -ErrorAction SilentlyContin
 Write-Step 'Fresh per-user install'
 Assert-Equal 0 (Invoke-Setup @('/SCOPE=user')) 'the installer exits 0'
 Assert-Present (Join-Path $UserDir 'teachers-teammate.exe') 'the exe is under %LOCALAPPDATA%\Programs'
+Assert-Present (Join-Path $UserDir 'LICENSE.txt') 'our license is installed next to the exe'
 Assert-Present (Join-Path $UserDir 'NOTICE.txt') 'the notice is installed next to the exe (LGPL)'
 Assert-Present (Join-Path $UserDir 'third_party_license.txt') 'the license list is installed next to the exe'
 Assert-Present (Join-Path $UserDir 'Uninstall.exe') 'the uninstaller is installed as its own file'

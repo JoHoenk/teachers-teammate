@@ -9,13 +9,13 @@ This product includes software developed by third parties. The full license
 and notice texts for all bundled third-party components are reproduced in:
 
   - third_party_licenses/third_party_license.txt   (repository)
-  - the "Third-Party Licenses" dialog inside the application
+  - the "Third-Party Licenses" tab of Help > Licenses inside the application
 
 Qt / PySide6 (LGPL-3.0)
 -----------------------
 The bundled GUI toolkit (Qt, via PySide6) is used under the terms of the
 GNU Lesser General Public License, version 3 (LGPL-3.0); the license texts are in
-the "Third-Party Licenses" dialog and in third_party_license.txt. The Qt libraries
+the "Third-Party Licenses" tab of Help > Licenses and in third_party_license.txt. The Qt libraries
 are separate files in the application folder (the PySide6 folder inside _internal,
 or inside the macOS app bundle), not compiled into the program, and the
 application loads them at runtime, so they can be replaced with a compatible build

@@ -178,6 +178,48 @@ def test_parse_args_extra_defaults_override_builtin() -> None:
     assert args.language == "German"
 
 
+# ── --version ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_version_prints_the_notice_and_needs_no_folder(capsys, monkeypatch) -> None:
+    """
+    Given  --version, no input or output folder, and a config file that cannot be read
+    When   main() is called
+    Then   it exits 0 after printing the version, the copyright line and the license, before
+           the log, the services or the config file are touched
+    """
+    from teachers_teammate import __version__  # noqa: PLC0415
+    from teachers_teammate import cli  # noqa: PLC0415
+    from teachers_teammate.texts import app as app_text  # noqa: PLC0415
+
+    class _UntouchedAppService(_AppServiceStub):
+        """Every answer --version could ask for fails loudly."""
+
+        def list_providers(self) -> list[str]:
+            raise AssertionError("--version must not reach the services")
+
+        def resolve_config_path(self, explicit: str | None) -> Path | None:
+            raise AssertionError("--version must not read the config file")
+
+    def _no_log() -> None:
+        raise AssertionError("--version must not start the log")
+
+    monkeypatch.setattr(cli, "start_logging", _no_log)
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(
+            services_of(_UntouchedAppService()),
+            argv=["--config", "/nonexistent/ocr.toml", "--version"],
+        )
+
+    assert exit_info.value.code == 0
+    printed = capsys.readouterr().out
+    assert __version__ in printed
+    assert app_text.COPYRIGHT in printed
+    assert app_text.LICENSE_TITLE in printed
+
+
 # ── main() error paths ─────────────────────────────────────────────────────
 
 

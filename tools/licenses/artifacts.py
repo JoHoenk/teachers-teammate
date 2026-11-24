@@ -20,10 +20,11 @@ INVENTORY = "third_party_licenses/inventory.csv"
 """The one list of third-party parts, written by ``tools/licenses/inventory.py``."""
 
 PACKAGE_FILES = (
+    "teachers_teammate/assets/LICENSE.txt",
     "teachers_teammate/assets/third_party_licenses.md",
     "teachers_teammate/assets/third_party_inventory.csv",
 )
-"""What the installed package carries, for **Help → Third-Party Licenses**, by repository path."""
+"""What the installed package carries, for **Help → Licenses**, by repository path."""
 
 SMOKE_REPORTED = {"PySide6": "pyside6-essentials", "cv2": "opencv-python-headless"}
 """What a bundle's smoke result reports as a module, and the inventory row it must match."""

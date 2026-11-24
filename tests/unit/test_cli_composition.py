@@ -31,3 +31,27 @@ def test_run_cli_entrypoint_uses_composed_app_service(monkeypatch) -> None:
     assert captured["app_service"] is fake_service
     assert captured["argv"] == ["--help"]
     assert captured["exit_fn"] is exit_fn
+
+
+def test_run_cli_entrypoint_prints_the_version_before_building_services(
+    monkeypatch, capsys
+) -> None:
+    """
+    Given  run_cli_entrypoint whose service builder fails
+    When   it is called with --version
+    Then   it exits 0 with the version printed and never builds a service
+    """
+    import pytest  # noqa: PLC0415
+
+    import teachers_teammate.cli_composition as mod  # noqa: PLC0415
+
+    def _no_services():
+        raise AssertionError("--version must not build the services")
+
+    monkeypatch.setattr(mod, "build_cli_app_service", _no_services)
+
+    with pytest.raises(SystemExit) as exit_info:
+        mod.run_cli_entrypoint(argv=["--version"])
+
+    assert exit_info.value.code == 0
+    assert "Copyright" in capsys.readouterr().out

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 import re
 import sys
@@ -33,6 +34,8 @@ _DOCS = next(
     _ROOT / "docs",
 )
 _IMG_PATH = _ROOT / "teachers_teammate" / "assets" / "teachers_teammate.png"
+#: Our own license, written by ``tools/licenses/inventory.py`` from the repository's ``LICENSE``.
+_LICENSE_PATH = _ROOT / "teachers_teammate" / "assets" / "LICENSE.txt"
 _LICENSES_PATH = _ROOT / "teachers_teammate" / "assets" / "third_party_licenses.md"
 #: The Linux build's host libraries, written into ``_internal/`` by the build.  No other platform
 #: has one: Windows and macOS take every library from a wheel.
@@ -86,12 +89,12 @@ class HelpDialog(QDialog):
 
 
 class AboutDialog(QDialog):
-    """About dialog showing the app image, version, and credits."""
+    """About dialog showing the app image, version, license, and credits."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(app_text.ABOUT_TITLE)
-        self.setFixedSize(440, 480)
+        self.setFixedSize(460, 620)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 16)
@@ -118,6 +121,12 @@ class AboutDialog(QDialog):
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
+        license_lbl = QLabel(app_text.ABOUT_LICENSE)
+        license_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        license_lbl.setOpenExternalLinks(True)
+        license_lbl.setWordWrap(True)
+        layout.addWidget(license_lbl)
+
         credits_lbl = QLabel(app_text.ABOUT_CREDITS)
         credits_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         credits_lbl.setOpenExternalLinks(True)
@@ -131,8 +140,8 @@ class AboutDialog(QDialog):
         layout.addWidget(buttons)
 
 
-class ThirdPartyLicensesDialog(QDialog):
-    """Dialog showing the bundled third-party license and notice texts."""
+class LicensesDialog(QDialog):
+    """Dialog showing our own license and the bundled third-party license and notice texts."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -142,17 +151,51 @@ class ThirdPartyLicensesDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        browser = QTextBrowser()
-        browser.setOpenExternalLinks(True)
-        if _LICENSES_PATH.exists():
-            text = _LICENSES_PATH.read_text(encoding="utf-8")
-            if _HOST_LIBRARIES_PATH.exists():
-                text += "\n" + _HOST_LIBRARIES_PATH.read_text(encoding="utf-8")
-            browser.setMarkdown(text)
-        else:
-            browser.setPlainText(app_text.LICENSES_MISSING)
-        layout.addWidget(browser)
+        tabs = QTabWidget()
+        tabs.addTab(
+            self._tab(self._own_license_text, app_text.LICENSE_MISSING, markdown=False),
+            app_text.LICENSE_TAB,
+        )
+        tabs.addTab(
+            self._tab(self._third_party_text, app_text.THIRD_PARTY_MISSING, markdown=True),
+            app_text.THIRD_PARTY_TAB,
+        )
+        layout.addWidget(tabs)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _tab(self, read: Callable[[], str | None], missing: str, *, markdown: bool) -> QWidget:
+        """Return one tab: the text *read* returns, or *missing* when it did not ship."""
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 4, 0, 0)
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(True)
+        text = read()
+        if text is None:
+            browser.setPlainText(missing)
+        elif markdown:
+            browser.setMarkdown(text)
+        else:
+            browser.setPlainText(text)
+        page_layout.addWidget(browser)
+        return page
+
+    @staticmethod
+    def _own_license_text() -> str | None:
+        """Return our own license, or ``None`` when it did not ship."""
+        if not _LICENSE_PATH.exists():
+            return None
+        return _LICENSE_PATH.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _third_party_text() -> str | None:
+        """Return the third-party page, with the host libraries, or ``None`` when it did not ship."""
+        if not _LICENSES_PATH.exists():
+            return None
+        text = _LICENSES_PATH.read_text(encoding="utf-8")
+        if _HOST_LIBRARIES_PATH.exists():
+            text += "\n" + _HOST_LIBRARIES_PATH.read_text(encoding="utf-8")
+        return text

@@ -22,7 +22,7 @@ from teachers_teammate.gui._chart_widget import ChartWidget
 from teachers_teammate.gui._collapsible_section import CollapsibleSection
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog
-from teachers_teammate.gui._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
+from teachers_teammate.gui._help_dialog import AboutDialog, HelpDialog, LicensesDialog
 from teachers_teammate.gui._log_widget import LogWidget
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 from teachers_teammate.gui._diff_widget import DiffWidget
@@ -66,7 +66,7 @@ WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
     ("reader_download", lambda: ReaderDownloadDialog(services_of(_FAKE))),
     ("about", lambda: AboutDialog()),
     ("help", lambda: HelpDialog()),
-    ("licenses", lambda: ThirdPartyLicensesDialog()),
+    ("licenses", lambda: LicensesDialog()),
     ("dependency_guard", lambda: DependencyGuardDialog("correction", [])),
     ("config_panel", lambda: ConfigPanel()),
     ("results_table", lambda: ResultsTable()),

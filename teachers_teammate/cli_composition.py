@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 import sys
 
 from .application.composition import AppServices, build_app_services
-from .cli import main
+from .cli import exit_on_version, main
 
 
 def build_cli_app_service() -> AppServices:
@@ -20,4 +20,5 @@ def run_cli_entrypoint(
     exit_fn: Callable[[int], None] = sys.exit,
 ) -> None:
     """Run CLI entrypoint with composed dependencies."""
+    exit_on_version(argv)
     main(app_service=build_cli_app_service(), argv=argv, exit_fn=exit_fn)

@@ -34,6 +34,7 @@ docker run --rm \
     -v "${DIST}:/dist:ro" \
     -v "${OLD}:/old:ro" \
     -v "${SMOKE}:/smoke" \
+    -v "${ROOT}/LICENSE:/LICENSE:ro" \
     -v "${ROOT}/tools/packaging/check_desktop_entry.py:/check_desktop_entry.py:ro" \
     -v "${ROOT}/tests/e2e/walkthrough.py:/walkthrough.py:ro" \
     "${IMAGE}" bash -c '
@@ -72,7 +73,9 @@ docker run --rm \
     done < /tmp/old-files
     [ "$left" -eq 0 ]
 
-    # The LGPL needs the notice and the license texts in every download.
+    # Our own license (it sits in the DEP-5 copyright), the notice and the third-party texts.
+    title="$(grep -m1 "[^[:space:]]" /LICENSE | sed "s/^[[:space:]]*//")"
+    grep -qF "$title" /usr/share/doc/teachers-teammate/copyright
     test -s /usr/share/doc/teachers-teammate/NOTICE
     test -s /usr/share/doc/teachers-teammate/third_party_license.txt
 

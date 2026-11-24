@@ -31,8 +31,10 @@ cp -R "${APP_PATH}" "${STAGING}/"
 # Symlink to /Applications for drag-install UX
 ln -s /Applications "${STAGING}/Applications"
 
-# The notice and the license list next to the app, where a teacher sees them when the image opens
+# Our own license, the notice and the license list next to the app, where a teacher sees them
+# when the image opens.
 mkdir "${STAGING}/Licenses"
+cp "${ROOT}/LICENSE" "${STAGING}/Licenses/LICENSE.txt"
 cp "${ROOT}/NOTICE" "${STAGING}/Licenses/NOTICE.txt"
 cp "${ROOT}/third_party_licenses/third_party_license.txt" "${STAGING}/Licenses/"
 

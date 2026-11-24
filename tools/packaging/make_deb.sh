@@ -122,8 +122,8 @@ EOF
     cat <<EOF
 
  The bundled third-party components and their license texts are listed in
- third_party_license.txt next to this file, and in the application's
- "Third-Party Licenses" dialog. third_party_host_libraries.txt names the
+ third_party_license.txt next to this file, and in the "Third-Party Licenses" tab of
+ Help > Licenses in the application. third_party_host_libraries.txt names the
  libraries that came from the build machine, with their Debian copyright
  files. The Qt libraries are separate files in
  /opt/${PKG_NAME}/_internal/PySide6/Qt/lib and can be replaced with a

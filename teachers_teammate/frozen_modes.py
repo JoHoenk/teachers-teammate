@@ -73,10 +73,15 @@ _IMAGE_FORMATS: tuple[str, ...] = ("png", "jpg", "tiff", "webp")
 # The built-in reader runs its ONNX models through OpenCV's dnn module; the lock pins 5.x.
 _MIN_CV_MAJOR = 5
 
-# Files the installed app shows: the user guide pages, the license list, the icon and the
+#: The two texts the Licenses window shows, one per tab; an empty one is a broken build.
+_LICENSE_FILE = "teachers_teammate/assets/LICENSE.txt"
+_THIRD_PARTY_FILE = "teachers_teammate/assets/third_party_licenses.md"
+
+# Files the installed app shows: the user guide pages, the license texts, the icon and the
 # splash image. A missing one is silent in the GUI (an empty tab, no picture), so check it.
 _ASSETS: tuple[str, ...] = (
-    "teachers_teammate/assets/third_party_licenses.md",
+    _LICENSE_FILE,
+    _THIRD_PARTY_FILE,
     "teachers_teammate/assets/third_party_inventory.csv",
     "teachers_teammate/assets/teachers_teammate.png",
     "teachers_teammate/assets/teachers_teammate_icon.png",
@@ -369,9 +374,9 @@ def _check_assets() -> str | None:
     missing = [rel for rel in _ASSETS if not (root / rel).is_file()]
     if missing:
         return "missing " + ", ".join(missing)
-    licenses = root / _ASSETS[0]
-    if licenses.stat().st_size == 0:
-        return f"{_ASSETS[0]} is empty"
+    empty = [rel for rel in (_LICENSE_FILE, _THIRD_PARTY_FILE) if (root / rel).stat().st_size == 0]
+    if empty:
+        return "empty " + ", ".join(empty)
     return None
 
 

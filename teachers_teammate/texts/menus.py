@@ -29,10 +29,13 @@ HELP = "Help"
 USER_GUIDE = "User Guide…"
 OPEN_LOG_FOLDER = "Open Log Folder…"
 OPEN_LOG_FOLDER_TIP = "What the app wrote down when something went wrong, for whoever helps you."
-LICENSES = "Third-Party Licenses…"
 ABOUT = f"About {app.NAME_TYPOGRAPHIC}…"
 
 
 def entry(title: str) -> str:
     """Return a menu entry that opens a window: the page's name and an ellipsis."""
     return f"{title}…"
+
+
+#: Our own license and the third-party texts, one window with a tab each.
+LICENSES = entry(app.LICENSES_NAME)

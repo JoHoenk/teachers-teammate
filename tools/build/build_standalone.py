@@ -211,14 +211,15 @@ def _license_destination() -> Path | None:
 
 
 def _add_license_files() -> None:
-    """Copy NOTICE and the full third-party license list into the finished bundle.
+    """Copy our own license, NOTICE and the third-party license list into the bundle.
 
-    The LGPL needs the notice and the license texts to travel with every copy of Qt.
+    The license texts travel with every copy: ours, and the LGPL's notice with Qt's texts.
     """
     destination = _license_destination()
     if destination is None:
         return
     destination.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT / "LICENSE", destination / "LICENSE.txt")
     shutil.copyfile(ROOT / "NOTICE", destination / "NOTICE.txt")
     shutil.copyfile(
         ROOT / "third_party_licenses" / "third_party_license.txt",

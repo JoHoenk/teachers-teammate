@@ -90,9 +90,9 @@ You can run the assistant again at any time from **Tools → Setup Assistant…*
 ## License
 
 Teacher's Teammate is open-source software, released under the **Apache License 2.0**. It
-bundles the Qt user-interface toolkit (via **PySide6**) under the **GNU LGPL v3**. The full
-license and notice texts of every bundled component are inside the app under
-**Help → Third-Party Licenses**.
+bundles the Qt user-interface toolkit (via **PySide6**) under the **GNU LGPL v3**. The app's
+license and the license and notice texts of every bundled component are inside the app under
+**Help → Licenses**.
 
 ```{toctree}
 :hidden:

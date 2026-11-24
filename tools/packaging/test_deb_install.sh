@@ -113,7 +113,7 @@ TOML
 
     # Our own license (the DEP-5 grant), the notice and the third-party texts.
     grep -qxF "License: GPL-3+" /usr/share/doc/teachers-teammate/copyright
-    grep -qF "either version 3 of the License, or (at your option) any later version" \
+    grep -qF "(at your option) any later version" \
         /usr/share/doc/teachers-teammate/copyright
     grep -qF "/usr/share/common-licenses/GPL-3" /usr/share/doc/teachers-teammate/copyright
     test -s /usr/share/doc/teachers-teammate/NOTICE

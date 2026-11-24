@@ -193,7 +193,9 @@ def load_policy(path: Path = POLICY) -> Policy:
             (re.compile(entry["pattern"], re.IGNORECASE), entry["reason"])
             for entry in data.get("deny", [])
         ),
-        allow=frozenset(str(entry).casefold() for entry in data.get("allow", {}).get("licenses", [])),
+        allow=frozenset(
+            str(entry).casefold() for entry in data.get("allow", {}).get("licenses", [])
+        ),
         exceptions=frozenset(
             str(entry).casefold() for entry in data.get("allow", {}).get("exceptions", [])
         ),
@@ -575,7 +577,8 @@ def _refused_and(tokens: list[str], at: list[int], policy: Policy) -> str | None
     reason = _refused_factor(tokens, at, policy)
     while at[0] < len(tokens) and tokens[at[0]] == "AND":
         at[0] += 1
-        reason = reason or _refused_factor(tokens, at, policy)
+        other = _refused_factor(tokens, at, policy)
+        reason = reason or other
     return reason
 
 
@@ -609,7 +612,7 @@ def refused_reason(license_text: str, policy: Policy) -> str | None:
         return f"{license_text!r} names no license: {_NOT_ALLOWED}"
     at = [0]
     reason = _refused_or(tokens, at, policy)
-    if at[0] != len(tokens):
+    if at[0] != len(tokens) or tokens.count("(") != tokens.count(")"):
         return f"{license_text} is not one license expression: {_NOT_ALLOWED}"
     return reason
 
@@ -698,6 +701,40 @@ def copyleft_findings(rows: Iterable[Row], policy: Policy, store: Path = STORE) 
             found.append(
                 f"{row.component} carries a text that names the {family} "
                 f"({', '.join(labels[:3])}): name the part in [vendored]"
+            )
+    return found
+
+
+#: The other two platforms the releases carry.  A bundle package's wheel there can carry license
+#: files the Linux one does not, and that is a fact someone has to state in ``[variants]``.
+OTHER_PLATFORMS = ("win_amd64", "macosx_arm64")
+
+
+def variant_problems(
+    rows: Iterable[Row], policy: Policy, contents: dict[tuple[str, str], frozenset[str]]
+) -> list[str]:
+    """Return one sentence per bundle package whose platform wheels are not declared.
+
+    *contents* maps ``(component, platform)`` to the names of the license files that platform's
+    wheel carries.  A Windows or macOS wheel that carries a file the Linux one does not, or misses
+    one it has, needs a ``[variants]`` entry — the statement a person read it.  A platform PyPI has
+    no wheel for is not in *contents* and says nothing.
+    """
+    found: list[str] = []
+    for row in rows:
+        if row.scope != "bundle" or row.kind != "package":
+            continue
+        linux = contents.get((row.component, DEFAULT_PLATFORM))
+        if linux is None:
+            continue
+        declared = policy.variants.get(row.component, ())
+        for platform in OTHER_PLATFORMS:
+            names = contents.get((row.component, platform))
+            if names is None or names == linux or platform in declared:
+                continue
+            found.append(
+                f"{row.component} {row.version} carries other license files in its {platform} "
+                f"wheel ({', '.join(sorted(names ^ linux))}): list {platform} in [variants]"
             )
     return found
 
@@ -952,21 +989,15 @@ def _text_folder(component: str, platform: str) -> str:
     return component if platform == DEFAULT_PLATFORM else f"{component}@{platform}"
 
 
-def collect_texts(
+def fetch_texts(
     rows: Iterable[Row],
     policy: Policy,
-    store: Path = STORE,
     fetch_files: FetchFiles | None = None,
     hashes: dict[str, set[str]] | None = None,
-) -> None:
-    """Rewrite ``texts/`` from the locked wheels, and drop the folders of rows that are gone.
-
-    Every wheel is read before anything on disk changes, so a network error leaves the old
-    store as it was.
-    """
+) -> dict[str, dict[str, bytes]]:
+    """Return the license files of every locked wheel by text folder, writing nothing."""
     fetch_files = fetch_files or _pypi_files
     hashes = hashes or {}
-    texts = store / "texts"
     collected: dict[str, dict[str, bytes]] = {}
     for row in rows:
         if row.scope != "bundle" or row.kind != "package":
@@ -975,7 +1006,12 @@ def collect_texts(
         for platform in (DEFAULT_PLATFORM, *policy.variants.get(row.component, ())):
             entry = wheel_url(files, platform)
             collected[_text_folder(row.component, platform)] = _wheel_texts(row, entry, hashes)
+    return collected
 
+
+def write_texts(collected: dict[str, dict[str, bytes]], store: Path = STORE) -> None:
+    """Rewrite ``texts/`` from *collected*, and drop the folders of rows that are gone."""
+    texts = store / "texts"
     if texts.is_dir():
         for folder in texts.iterdir():
             if folder.is_dir() and folder.name not in collected:
@@ -990,6 +1026,53 @@ def collect_texts(
             target = folder / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
+
+
+def collect_texts(
+    rows: Iterable[Row],
+    policy: Policy,
+    store: Path = STORE,
+    fetch_files: FetchFiles | None = None,
+    hashes: dict[str, set[str]] | None = None,
+) -> None:
+    """Rewrite ``texts/`` from the locked wheels, and drop the folders of rows that are gone.
+
+    Every wheel is read before anything on disk changes, so a network error leaves the old
+    store as it was.
+    """
+    write_texts(fetch_texts(rows, policy, fetch_files, hashes), store)
+
+
+def wheel_contents(
+    rows: Iterable[Row],
+    store: Path = STORE,
+    fetch_files: FetchFiles | None = None,
+    hashes: dict[str, set[str]] | None = None,
+) -> dict[tuple[str, str], frozenset[str]]:
+    """Return the names of the license files every bundle package's platform wheels carry.
+
+    The Linux names are the ones :func:`write_texts` wrote to *store*, so this reads the other
+    two wheels for their names alone — that is what :func:`variant_problems` holds them against.
+    """
+    fetch_files = fetch_files or _pypi_files
+    hashes = hashes or {}
+    contents: dict[tuple[str, str], frozenset[str]] = {}
+    for row in rows:
+        if row.scope != "bundle" or row.kind != "package":
+            continue
+        folder = store / "texts" / _text_folder(row.component, DEFAULT_PLATFORM)
+        contents[(row.component, DEFAULT_PLATFORM)] = frozenset(
+            str(path.relative_to(folder)) for path in folder.rglob("*") if path.is_file()
+        )
+        files = fetch_files(row.component, row.version)
+        for platform in OTHER_PLATFORMS:
+            try:
+                entry = wheel_url(files, platform)
+            except SystemExit:
+                # PyPI has no wheel for that platform, so there is nothing to compare.
+                continue
+            contents[(row.component, platform)] = frozenset(_wheel_texts(row, entry, hashes))
+    return contents
 
 
 def _wheel_texts(row: Row, entry: dict, hashes: dict[str, set[str]]) -> dict[str, bytes]:
@@ -1083,11 +1166,40 @@ def write_compiled(
     shutil.copyfile(license_file, asset_license)
 
 
+def staged_problems(
+    rows: list[Row],
+    policy: Policy,
+    collected: dict[str, dict[str, bytes]],
+    hashes: dict[str, set[str]],
+    store: Path = STORE,
+) -> tuple[str, list[str]]:
+    """Return the heading and the problems the fetched texts bring, touching nothing in *store*.
+
+    The texts are checked in a temporary copy of the store, so a refused refresh leaves
+    ``texts/`` as it was.
+    """
+    with tempfile.TemporaryDirectory(prefix="license-stage-") as temporary:
+        staged = Path(temporary)
+        write_texts(collected, staged)
+        if (store / "curated").is_dir():
+            shutil.copytree(store / "curated", staged / "curated")
+        found = copyleft_findings(rows, policy, staged)
+        if found:
+            return "A text names a copyleft license that [vendored] does not:", found
+        contents = wheel_contents(rows, staged, hashes=hashes)
+        return (
+            "A platform wheel carries what [variants] does not declare:",
+            variant_problems(rows, policy, contents),
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Refresh the inventory and the texts, or run one of the offline checks.
 
-    Returns 1 when a license is denied, when the build environment holds a distribution the
-    inventory does not list, or when a resolved install is outside it.
+    Returns 1 when a license is denied, when a bundle row's texts name a copyleft part nothing
+    accounts for, when a platform wheel carries license files ``[variants]`` does not declare,
+    when the build environment holds a distribution the inventory does not list, or when a
+    resolved install is outside it.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -1148,14 +1260,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {problem}", file=sys.stderr)
         return 1
 
-    collect_texts(rows, policy, STORE, hashes=lock_hashes(TEST_LOCK.read_text(encoding="utf-8")))
-    found = copyleft_findings(rows, policy, STORE)
+    hashes = lock_hashes(TEST_LOCK.read_text(encoding="utf-8"))
+    collected = fetch_texts(rows, policy, hashes=hashes)
+    heading, found = staged_problems(rows, policy, collected, hashes)
     if found:
-        print("A text names a copyleft license that [vendored] does not:", file=sys.stderr)
+        print(heading, file=sys.stderr)
         for problem in found:
             print(f"  {problem}", file=sys.stderr)
         return 1
 
+    write_texts(collected, STORE)
     write_inventory(rows, INVENTORY)
     write_compiled(rows, policy, STORE, ASSET_TXT, ASSET_LICENSE, LICENSE)
     write_asset(rows, ASSET_CSV)

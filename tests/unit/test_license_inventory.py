@@ -94,7 +94,7 @@ def test_no_text_names_a_copyleft_license_the_vendored_table_does_not() -> None:
 
 def test_the_scan_finds_the_libiconv_inside_lxml() -> None:
     """
-    Given  the committed policy without lxml's entry, which is what the review found
+    Given  the committed policy without lxml's entry
     When   the texts are searched
     Then   lxml's LGPL is named, so the check cannot pass by seeing nothing
     """
@@ -229,7 +229,9 @@ def test_the_license_id_is_the_one_every_file_states() -> None:
     """
     license_id = app_text.LICENSE_ID
     pyproject = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    wheel_bzl = _file("LICENSE_WHEEL_BZL", "teachers_teammate/wheel.bzl").read_text(encoding="utf-8")
+    wheel_bzl = _file("LICENSE_WHEEL_BZL", "teachers_teammate/wheel.bzl").read_text(
+        encoding="utf-8"
+    )
     nsis = _file("LICENSE_NSI", "tools/packaging/windows.nsi").read_text(encoding="utf-8")
     deb = _file("LICENSE_DEB", "tools/packaging/make_deb.sh").read_text(encoding="utf-8")
 

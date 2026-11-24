@@ -190,7 +190,8 @@ def tree_contents(tree: Path = ROOT) -> Contents:
     a package than the one we ship is refused here rather than published.
 
     Raises:
-        ValueError: NOTICE and the inventory disagree, or the inventory lacks a row.
+        ValueError: NOTICE and the inventory disagree, the inventory lacks a row, NOTICE leaves
+            out a part whose source is owed, or names one this tool cannot place.
     """
     text = (tree / "NOTICE").read_text(encoding="utf-8")
     locked = artifacts.locked_versions(tree)
@@ -198,6 +199,12 @@ def tree_contents(tree: Path = ROOT) -> Contents:
     if pyside is None:
         raise ValueError("the inventory lacks a row for pyside6-essentials")
     vendored = notice.vendored_entries(text)
+    unnamed = sorted(set(PART_SOURCES) - {entry.part for entry in vendored})
+    if unnamed:
+        raise ValueError(
+            f"NOTICE's source section names no line for {', '.join(unnamed)}, "
+            "whose source the downloads owe"
+        )
     for entry in vendored:
         version = locked.get(entry.package)
         if version is None:
@@ -206,6 +213,8 @@ def tree_contents(tree: Path = ROOT) -> Contents:
             raise ValueError(
                 f"NOTICE names {entry.package} {entry.package_version}, the inventory {version}"
             )
+        part_source(entry.part)
+        package_rule(entry.package)
     return Contents(qt_version(pyside), notice.qt_modules(text), vendored)
 
 
@@ -371,9 +380,10 @@ def readme(sources: tuple[Source, ...]) -> str:
         "third_party_licenses/inventory.csv in the repository name them.",
         "",
         "Each file was held to the digest its author publishes: Qt's md5sums.txt next to the",
-        "tarballs, PyPI's sha256 for a source distribution. FFmpeg and libiconv publish a signature",
-        "(.asc, .sig) and no digest, so their tarballs travel with that signature unverified: check",
-        "each signature against its author's release key before you trust the tarball itself.",
+        "tarballs, PyPI's sha256 for a source distribution.",
+        "FFmpeg and libiconv publish a signature (.asc, .sig) and no digest, so their tarballs",
+        "travel with that signature unverified: check each signature against its author's release",
+        "key before you trust the tarball itself.",
         "",
         "| File | Version | The rule it satisfies |",
         "|---|---|---|",
@@ -549,11 +559,14 @@ def collect(
 
     # FFmpeg and libiconv publish a signature and no digest, so those tarballs are the files of
     # the set taken unchecked. The README says so; every other file needs a published digest.
+    recipes: set[str] = set()
     for entry in contents.vendored:
         source = part_source(entry.part)
         rule = package_rule(entry.package)
         names = listing_files(read(f"{source.folder}/"))
-        name = first_present(names, packaged(f"{entry.part.lower()}-{entry.version}"), source.folder)
+        name = first_present(
+            names, packaged(f"{entry.part.lower()}-{entry.version}"), source.folder
+        )
         signature = f"{name}{source.signature}"
         if signature not in names:
             raise ValueError(f"{source.folder} publishes no signature for {name}")
@@ -562,8 +575,10 @@ def collect(
         found.append(Source(name, f"{source.folder}/{name}", entry.version, source.rule))
         written += [name, signature]
 
-        recipe = pypi_sdist(entry.package, entry.package_version, read)
-        take(recipe[0], recipe[1], entry.package_version, rule, recipe[2])
+        if entry.package not in recipes:
+            recipes.add(entry.package)
+            recipe = pypi_sdist(entry.package, entry.package_version, read)
+            take(recipe[0], recipe[1], entry.package_version, rule, recipe[2])
 
     (folder / README_NAME).write_text(readme(tuple(found)), encoding="utf-8")
     checksums = write_checksums(folder, (*written, README_NAME))

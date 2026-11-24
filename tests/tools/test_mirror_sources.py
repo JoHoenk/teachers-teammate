@@ -115,9 +115,7 @@ def _answers(**overrides: str) -> dict[str, str]:
         f"{PYSIDE_DIR}/": _listing(PYSIDE, "sha256sums.txt"),
         f"{PYSIDE_DIR}/sha256sums.txt": f"{_sha256(files[PYSIDE])}  {PYSIDE}\n",
         f"{FFMPEG_DIR}/": _listing(FFMPEG_ARCHIVE, FFMPEG_SIGNATURE, "ffmpeg-9.0.1.tar.xz"),
-        f"{LIBICONV_DIR}/": _listing(
-            LIBICONV_ARCHIVE, LIBICONV_SIGNATURE, "libiconv-1.17.tar.gz"
-        ),
+        f"{LIBICONV_DIR}/": _listing(LIBICONV_ARCHIVE, LIBICONV_SIGNATURE, "libiconv-1.17.tar.gz"),
         **_sdist_answers("opencv-python-headless", OPENCV, SDIST, files),
         **_sdist_answers("lxml", LXML, LXML_SDIST, files),
     }
@@ -128,7 +126,7 @@ def _answers(**overrides: str) -> dict[str, str]:
 def _sdist_answers(
     package: str, version: str, name: str, files: dict[str, bytes]
 ) -> dict[str, str]:
-    """Return PyPI's answer for one release: its source distribution and that distribution's sha256."""
+    """Return PyPI's answer for one release: its source distribution and the sdist's sha256."""
     return {
         f"{mirror_sources.PYPI}/{package}/{version}/json": json.dumps(
             {
@@ -433,6 +431,62 @@ def test_tree_contents_refuse_a_package_the_inventory_does_not_list(tmp_path: Pa
         mirror_sources.tree_contents(tree)
 
 
+def test_tree_contents_refuse_a_notice_that_leaves_out_a_part(tmp_path: Path) -> None:
+    """
+    Given  a NOTICE whose FFmpeg line no longer has the form of a part line
+    When   tree_contents() is called
+    Then   a ValueError names FFmpeg, so the set cannot lose its tarball unnoticed
+    """
+    tree = _tree(tmp_path)
+    (tree / "NOTICE").write_text(
+        (tree / "NOTICE")
+        .read_text(encoding="utf-8")
+        .replace("(Linux and macOS):", "(Linux and macOS)."),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="no line for FFmpeg"):
+        mirror_sources.tree_contents(tree)
+
+
+def test_tree_contents_refuse_a_part_whose_source_is_unknown(tmp_path: Path) -> None:
+    """
+    Given  a NOTICE with a part this tool has no place for
+    When   tree_contents() is called
+    Then   a ValueError names the part, where the release gate can turn it into an error line
+    """
+    tree = _tree(tmp_path)
+    (tree / "NOTICE").write_text(
+        (tree / "NOTICE").read_text(encoding="utf-8")
+        + f"\nzlib 1.3, inside lxml {LXML} (Linux):\n  https://zlib.net/\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="NOTICE names zlib"):
+        mirror_sources.tree_contents(tree)
+
+
+def test_collect_takes_the_sdist_of_a_package_once(tmp_path: Path) -> None:
+    """
+    Given  two parts NOTICE says ride inside the same package
+    When   collect() runs
+    Then   the package's source distribution is in the set, and listed, once
+    """
+    contents = _contents(
+        vendored=(
+            notice.Vendored("FFmpeg", FFMPEG, "opencv-python-headless", OPENCV),
+            notice.Vendored("libiconv", LIBICONV, "opencv-python-headless", OPENCV),
+        )
+    )
+
+    found = mirror_sources.collect(
+        tmp_path, contents, fetch=_fetch(_files()), read=_read(_answers())
+    )
+
+    assert found.files.count(SDIST) == 1
+    assert [source.name for source in found.sources].count(SDIST) == 1
+
+
 def test_collect_fetches_the_set_and_writes_its_digests(tmp_path: Path) -> None:
     """
     Given  listings, digests and a PyPI answer for the shipped versions
@@ -535,9 +589,7 @@ def test_collect_refuses_a_part_whose_source_is_not_known(tmp_path: Path) -> Non
     contents = _contents(vendored=(notice.Vendored("zlib", "1.3", "lxml", LXML, ""),))
 
     with pytest.raises(ValueError, match="NOTICE names zlib, whose source this tool does not know"):
-        mirror_sources.collect(
-            tmp_path, contents, fetch=_fetch(_files()), read=_read(_answers())
-        )
+        mirror_sources.collect(tmp_path, contents, fetch=_fetch(_files()), read=_read(_answers()))
 
 
 def test_collect_refuses_a_package_whose_source_owes_no_known_rule(tmp_path: Path) -> None:
@@ -549,9 +601,7 @@ def test_collect_refuses_a_package_whose_source_owes_no_known_rule(tmp_path: Pat
     contents = _contents(vendored=(notice.Vendored("FFmpeg", FFMPEG, "openssl", "3.0.0", ""),))
 
     with pytest.raises(ValueError, match="nothing says why the source of openssl is owed"):
-        mirror_sources.collect(
-            tmp_path, contents, fetch=_fetch(_files()), read=_read(_answers())
-        )
+        mirror_sources.collect(tmp_path, contents, fetch=_fetch(_files()), read=_read(_answers()))
 
 
 def test_pypi_sdist_refuses_a_release_without_one() -> None:

@@ -25,7 +25,7 @@ _VENDORED = re.compile(
     r"(?: \((?P<platforms>[^)]*)\))?:$",
     re.MULTILINE,
 )
-"""The line that names a part inside a package: ``FFmpeg 9.0.2, inside opencv-python-headless ...``."""
+"""The line that names a part inside a package: ``FFmpeg 9.0.2, inside opencv-python-headless``."""
 
 
 @dataclass(frozen=True)

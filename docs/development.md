@@ -3521,9 +3521,14 @@ The constraints file says what an add-on may **not** change.  What it *gets* is 
   version from the two locks, and downloads each locked wheel for its license text.  The same run
   compiles the one license list, `teachers_teammate/assets/third_party_licenses.txt`, which the
   GUI shows and every download carries as `third_party_license.txt`.  `tools/licenses/policy.toml`
-  holds the denied licenses (what cannot join a GPL-3.0 program, AGPL, non-commercial), the
-  display names and the accepted exceptions; an `OR` expression is fine as soon as one alternative
-  is.  The Add-ons page shows a package's license as the tooltip of its row
+  holds the allow list — the SPDX ids and `WITH` exceptions a component may state — the deny rules
+  that explain a refusal, the spellings `[names]` folds, and the components a person accepted.
+  An expression is read as SPDX writes one: `OR` passes when one alternative does, `AND` when every
+  part does, `WITH` when license and exception are both listed, and anything else is refused until
+  someone adds it.  A copyleft family in a wheel's texts that neither the row's License column nor
+  `[vendored]` accounts for turns the refresh red, and so does a Windows or macOS wheel whose
+  license files differ from the Linux one without a `[variants]` entry.  The Add-ons page shows a
+  package's license as the tooltip of its row
   (`infrastructure/addon_licenses.py`, reading the bundled copy of the inventory).  `--compile`, `--check-env` and `--check-resolved` run offline
   and are what the tests and the builds call; only the maintainer refresh touches the network.
   `docs/deployment.md` "Third-party licenses" has the flow.

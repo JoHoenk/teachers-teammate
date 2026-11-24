@@ -6,8 +6,14 @@ load(":wheel.bzl", "app_wheel")
 # pip-compile expands the dynamic version (attr = teachers_teammate.__version__).
 # wheel.bzl for the test that holds the wheel's license field to the app's license id.
 exports_files(
-    ["__init__.py", "wheel.bzl"],
-    visibility = ["//tests:__pkg__"],
+    [
+        "__init__.py",
+        "wheel.bzl",
+    ],
+    visibility = [
+        "//:__pkg__",
+        "//tests:__pkg__",
+    ],
 )
 
 # The package root and the exception types: what every layer below imports.

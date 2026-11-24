@@ -1,12 +1,14 @@
 # The policy of the license inventory.
 #
 # Read by tools/licenses/inventory.py and by nothing else.  Every table here is a fact a person
-# has to state: what we refuse, which spellings mean one license, and the few components whose
-# license PyPI cannot tell us.  Versions never appear here — they come from the locks.
+# has to state: what we accept and what we refuse, which spellings mean one license, which parts a
+# wheel carries, and the few components whose license PyPI cannot tell us.  Versions never appear
+# here — they come from the locks.
 
-# Licenses we must not ship or install.  Applied to every row of every scope: a package inside
-# our download, a package the teacher downloads on our click, and a build tool alike.  An `OR`
-# expression passes as soon as one alternative does; an `AND` only if every part does.
+# The licenses we must not ship or install.  The allow list below already refuses every one of
+# them; a rule here is what gives the refusal a reason.  Applied to every row of every scope: a
+# package inside our download, a package the teacher downloads on our click, and a build tool
+# alike.
 #
 # The test is the app's own license: a component that cannot join a GPL-3.0 program would make the
 # whole download undistributable, in whatever scope it sits.
@@ -214,7 +216,8 @@ shiboken6 = [
 
 # Packages whose other platform wheels carry notices the Linux one does not.  The extra files are
 # stored beside the Linux ones and compiled as one union with a "Windows only" / "macOS only"
-# heading.
+# heading.  The refresh reads all three wheels, so a wheel whose license files differ from the
+# Linux one without an entry here fails it.
 [variants]
 # numpy's Windows and macOS wheels carry different vendored texts than the Linux one.
 numpy = ["win_amd64", "macosx_arm64"]

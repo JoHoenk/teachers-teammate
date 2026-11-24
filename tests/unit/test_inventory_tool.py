@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import zipfile
@@ -135,6 +136,35 @@ def test_parentheses_group_the_alternatives_they_hold() -> None:
     assert inventory.refused_reason("MIT AND (CDDL-1.0 OR AGPL-3.0)", policy) is not None
 
 
+def test_a_refused_part_does_not_hide_what_follows_it() -> None:
+    """
+    Given  expressions whose first `AND` part is refused
+    When   they are held against the policy
+    Then   the rest is still read: an `OR` alternative that passes decides, and a deny rule keeps
+           its own reason
+    """
+    policy = inventory.load_policy()
+
+    assert inventory.refused_reason("(LicenseRef-x AND MIT) OR Apache-2.0", policy) is None
+    reason = inventory.refused_reason("GPL-2.0-only AND MIT", policy)
+    assert reason is not None
+    assert "one license expression" not in reason
+
+
+def test_an_unbalanced_parenthesis_is_not_one_expression() -> None:
+    """
+    Given  expressions with a missing and with a stray closing parenthesis
+    When   they are held against the policy
+    Then   both are refused as not being one license expression
+    """
+    policy = inventory.load_policy()
+
+    for text in ("MIT AND (Apache-2.0", "MIT AND Apache-2.0)"):
+        reason = inventory.refused_reason(text, policy)
+        assert reason is not None
+        assert "one license expression" in reason
+
+
 def test_an_exception_is_read_with_the_license_it_amends() -> None:
     """
     Given  a license with an exception, one listed in ``[allow]`` and one that is not
@@ -146,7 +176,8 @@ def test_an_exception_is_read_with_the_license_it_amends() -> None:
     assert inventory.refused_reason("GPL-2.0-or-later WITH Bootloader-exception", policy) is None
     assert inventory.refused_reason("GPL-3.0-or-later WITH GCC-exception-3.1", policy) is None
     assert (
-        inventory.refused_reason("GPL-2.0-or-later WITH Classpath-exception-2.0", policy) is not None
+        inventory.refused_reason("GPL-2.0-or-later WITH Classpath-exception-2.0", policy)
+        is not None
     )
     assert inventory.refused_reason("AGPL-3.0 WITH Bootloader-exception", policy) is not None
 
@@ -161,7 +192,8 @@ def test_a_free_text_is_refused_until_a_name_folds_it() -> None:
     policy = inventory.load_policy()
 
     assert (
-        inventory.refused_reason("BSD-3-Clause, Apache-2.0, dependency licenses", policy) is not None
+        inventory.refused_reason("BSD-3-Clause, Apache-2.0, dependency licenses", policy)
+        is not None
     )
     assert inventory.refused_reason("GNU Library General Public License", policy) is not None
 
@@ -730,3 +762,100 @@ def test_a_failed_download_leaves_the_old_texts_in_place(tmp_path: Path) -> None
         )
 
     assert (folder / "LICENSE").read_text(encoding="utf-8") == "old\n"
+
+
+def test_a_refused_refresh_leaves_the_store_as_it_was(tmp_path: Path) -> None:
+    """
+    Given  fetched texts of a package that name the LGPL, and a store with an old text folder
+    When   the staged checks run
+    Then   the copyleft finding is returned and the store's ``texts/`` is untouched
+    """
+    folder = tmp_path / "texts" / "pkg"
+    folder.mkdir(parents=True)
+    (folder / "LICENSE").write_text("old\n", encoding="utf-8")
+    lgpl = b"GNU Lesser General Public License, version 2.1\n"
+
+    heading, found = inventory.staged_problems(
+        [inventory.Row("pkg", "1", "MIT", "bundle")],
+        inventory.load_policy(),
+        {"pkg": {"vendor/COPYING": lgpl}},
+        {},
+        tmp_path,
+    )
+
+    assert "copyleft" in heading
+    assert found
+    assert (folder / "LICENSE").read_text(encoding="utf-8") == "old\n"
+    assert not (folder / "vendor").exists()
+
+
+def test_a_wheel_the_lock_does_not_pin_is_refused_on_every_platform(tmp_path: Path) -> None:
+    """
+    Given  a platform wheel whose digest the lock does not list
+    When   the platform contents are read with the lock's hashes
+    Then   the run stops, as it does for the Linux wheel
+    """
+    wheel = _wheel(tmp_path, {"pkg-1.dist-info/licenses/LICENSE": "x"})
+    data = wheel.read_bytes()
+    entry = {
+        "filename": "pkg-1-py3-none-win_amd64.whl",
+        "url": wheel.as_uri(),
+        "digests": {"sha256": hashlib.sha256(data).hexdigest()},
+    }
+    store = tmp_path / "store"
+    (store / "texts" / "pkg").mkdir(parents=True)
+
+    with pytest.raises(SystemExit, match="lock pins"):
+        inventory.wheel_contents(
+            [inventory.Row("pkg", "1", "MIT", "bundle")],
+            store,
+            fetch_files=lambda _name, _version: [entry],
+            hashes={"pkg": {"sha256:" + "0" * 64}},
+        )
+
+
+def test_a_platform_wheel_with_other_license_files_must_be_declared() -> None:
+    """
+    Given  three bundle packages — one whose Windows wheel carries an extra text, one declared in
+    ``[variants]``, and one whose macOS wheel is the Linux one — and a build row
+    When   the platform contents are held against the policy
+    Then   only the undeclared one is named, with the file that differs and the platform
+    """
+    policy = inventory.load_policy()
+    rows = [
+        inventory.Row("pkg", "1.0", "MIT", "bundle"),
+        inventory.Row("numpy", "2.5.5", "BSD-3-Clause", "bundle"),
+        inventory.Row("pure", "1.0", "MIT", "bundle"),
+        inventory.Row("setuptools", "80.0", "MIT", "build"),
+    ]
+    contents = {
+        ("pkg", "manylinux"): frozenset({"LICENSE"}),
+        ("pkg", "win_amd64"): frozenset({"LICENSE", "LICENSE.rst"}),
+        ("numpy", "manylinux"): frozenset({"LICENSE.txt"}),
+        ("numpy", "win_amd64"): frozenset({"LICENSE.txt", "LICENSE_1_0.txt"}),
+        ("pure", "manylinux"): frozenset({"LICENSE"}),
+        ("pure", "macosx_arm64"): frozenset({"LICENSE"}),
+        ("setuptools", "manylinux"): frozenset({"LICENSE"}),
+        ("setuptools", "win_amd64"): frozenset({"LICENSE", "other"}),
+    }
+
+    assert inventory.variant_problems(rows, policy, contents) == [
+        "pkg 1.0 carries other license files in its win_amd64 wheel (LICENSE.rst): "
+        "list win_amd64 in [variants]"
+    ]
+
+
+def test_a_platform_pypi_has_no_wheel_for_says_nothing() -> None:
+    """
+    Given  a bundle package whose wheel exists for Linux alone
+    When   the platform contents are held against the policy
+    Then   the platforms without a wheel are silent, since there is nothing to compare
+    """
+    contents = {("pkg", "manylinux"): frozenset({"LICENSE"})}
+
+    assert (
+        inventory.variant_problems(
+            [inventory.Row("pkg", "1.0", "MIT", "bundle")], inventory.load_policy(), contents
+        )
+        == []
+    )

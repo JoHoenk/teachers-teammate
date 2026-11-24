@@ -145,6 +145,7 @@ _TESTS_DEVELOPER_TOOLS = [
     "//tools:scripts_lib",
     "//tools/build:lint_lib",
     "//tools/ci:lint_lib",
+    "//tools/dev:lint_lib",
     "//tools/licenses:lint_lib",
     "//tools/packaging:lint_lib",
     "//tools/release:lint_lib",
@@ -1462,14 +1463,14 @@ app_test(
 # comparison and the command line, with the endpoints' answers faked.
 app_test(
     "tools/test_compare_mistral_regions.py",
-    deps = _INFRASTRUCTURE_LIB + ["//tools:compare_mistral_regions_lib"],
+    deps = _INFRASTRUCTURE_LIB + ["//tools/dev:compare_mistral_regions_lib"],
 )
 
 # The developer tool that measures what a reading model costs on one page: the pure parts, so no
 # server and no page image.  The tool itself imports the image preprocessor, hence the CV deps.
 app_test(
     "tools/test_ocr_page_tokens.py",
-    deps = _TOOL_DEPS + _CV_DEPS + _IMAGE_DEPS + ["//tools:ocr_page_tokens"],
+    deps = _TOOL_DEPS + _CV_DEPS + _IMAGE_DEPS + ["//tools/dev:ocr_page_tokens"],
 )
 
 # One spelling per fact: the text id, the shared words (``ollama``, ``errors``, ``correct``) and the
@@ -1493,14 +1494,14 @@ app_test(
     "tools/test_tool_binaries.py",
     size = "medium",
     data = [
-        "//tools:compare_mistral_regions",
         "//tools:evaluate",
         "//tools:extract_test_specs",
-        "//tools:ocr_page_tokens",
         "//tools:prepare_gec_testset",
         "//tools:report",
         "//tools:store",
         "//tools:verify_model_catalog",
+        "//tools/dev:compare_mistral_regions",
+        "//tools/dev:ocr_page_tokens",
         "//tools/evaluation:gpu_agent",
     ],
 )

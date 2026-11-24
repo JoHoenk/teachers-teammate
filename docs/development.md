@@ -819,7 +819,7 @@ Nothing known at all gives no figure, which is better than a guess the teacher w
 
 Only the catalog entries with a `reference_speed` get an expected band, and no entry has a
 `read_tps`: a reading model gets no expected band, and `MachineFactors.reading` stays `None` until
-reading models are measured on the reference machine.  `tools/ocr_page_tokens.py` measures them,
+reading models are measured on the reference machine.  `tools/dev/ocr_page_tokens.py` measures them,
 and `report --performance --catalog-lines` prints the `answer_length` lines for the writing models.
 
 ### Who owns what (hardware detection and recommendations)
@@ -1702,7 +1702,7 @@ and **Original page** (`"none"`).  `infrastructure/preprocessing/` holds all of 
 - `recipes.py` — `steps_for(ocr, store)`: `none` → `[]`, anything else → `auto_steps(ocr.engine,
   store)`.  `stage_builder.default_build_preprocessor(tmp_dir, save_steps, ocr, store)` is
   `StepPipeline(steps_for(ocr, store or ModelStore()), …)`; the factory, `preprocess_preview`, the
-  speed probe and `tools/ocr_page_tokens.py` all pass the model store through.
+  speed probe and `tools/dev/ocr_page_tokens.py` all pass the model store through.
 
 **The gates are conservative on purpose.**  Every step acts only where its measurement says so
 and leaves the page alone otherwise, so a clean scan passes unchanged; a thing the steps get

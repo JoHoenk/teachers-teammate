@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.ocr_page_tokens import Reading, _catalog_lines, _pages, _reading, _report, _spread
+from tools.dev.ocr_page_tokens import Reading, _catalog_lines, _pages, _reading, _report, _spread
 from teachers_teammate.infrastructure.ollama_utils import ChatStats
 
 

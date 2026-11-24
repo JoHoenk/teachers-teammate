@@ -56,6 +56,7 @@ _LINTED = [
     "//tools:store",
     "//tools:verify_model_catalog",
     "//tools/build:lint_lib",
+    "//tools/dev:lint_lib",
     "//tools/ci:lint_lib",
     "//tools/evaluation:checks",
     "//tools/evaluation:convert",

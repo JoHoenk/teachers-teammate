@@ -150,8 +150,17 @@ class Row:
 
 
 @dataclass(frozen=True)
+class Part:
+    """A license a bundle package's texts name that the package's own License column does not."""
+
+    part: str
+    license: str
+    no_source: str = ""
+
+
+@dataclass(frozen=True)
 class Policy:
-    """What ``policy.toml`` says: the deny rules and the facts a person has to state."""
+    """What ``policy.toml`` says: the rules and the facts a person has to state."""
 
     deny: tuple[tuple[re.Pattern[str], str], ...]
     names: dict[str, str]
@@ -159,6 +168,7 @@ class Policy:
     accepted: dict[str, str]
     texts: dict[str, str]
     variants: dict[str, tuple[str, ...]]
+    vendored: dict[str, tuple[Part, ...]]
     build_only: tuple[str, ...]
     host_deny: tuple[str, ...]
     host_rows: dict[str, str]
@@ -186,6 +196,17 @@ def load_policy(path: Path = POLICY) -> Policy:
         accepted=dict(data.get("accepted", {})),
         texts=dict(data.get("text", {})),
         variants={name: tuple(tags) for name, tags in data.get("variants", {}).items()},
+        vendored={
+            package: tuple(
+                Part(
+                    str(entry["part"]),
+                    str(entry["license"]),
+                    str(entry.get("no_source", "")),
+                )
+                for entry in entries
+            )
+            for package, entries in data.get("vendored", {}).items()
+        },
         build_only=tuple(data.get("build_only", {}).get("packages", [])),
         host_deny=tuple(data.get("host_deny", {}).get("patterns", [])),
         host_rows=dict(data.get("host_rows", {})),
@@ -508,7 +529,7 @@ def denied_reason(license_text: str, deny: Iterable[tuple[re.Pattern[str], str]]
 
 
 def problems(rows: Iterable[Row], policy: Policy) -> list[str]:
-    """Return one sentence per row whose license we must not ship or install."""
+    """Return one sentence per row and per vendored part whose license we must not ship."""
     found: list[str] = []
     for row in rows:
         if row.component in policy.accepted:
@@ -521,6 +542,82 @@ def problems(rows: Iterable[Row], policy: Policy) -> list[str]:
             )
         if reason is not None:
             found.append(f"{row.component} {row.version} is {row.license} — {reason}")
+    for package, parts in policy.vendored.items():
+        for part in parts:
+            reason = denied_reason(part.license, policy.deny)
+            if reason is not None:
+                found.append(f"{package} carries {part.part}, which is {part.license} — {reason}")
+    return found
+
+
+#: The copyleft families a license text can name, and the two shapes a text names one in: the id
+#: with a version (``LGPL-2.1``, ``GPLv2``) and the full name with a version after it (``GNU LESSER
+#: GENERAL PUBLIC LICENSE Version 3``).  Prose that mentions a family without a version —
+#: "GPL-compatible", "use the Lesser General Public License instead" — names no part.
+_FAMILY_PATTERNS: dict[str, tuple[str, ...]] = {
+    "LGPL": (
+        r"\bLGPL\s*[- ]?\s*v?\d",
+        r"Lesser General Public Licen[cs]e\s*,?\s*v(?:ersion)?\.?\s*\d",
+    ),
+    "GPL": (
+        r"(?<!Lesser )(?<!Library )\bGPL\s*[- ]?\s*v?\d",
+        r"(?<!Lesser )(?<!Library )General Public Licen[cs]e\s*,?\s*v(?:ersion)?\.?\s*\d",
+    ),
+    "MPL": (
+        r"\bMPL\s*[- ]?\s*v?\d",
+        r"Mozilla Public Licen[cs]e\s*,?\s*v(?:ersion)?\.?\s*\d",
+    ),
+    "EPL": (
+        r"\bEPL\s*[- ]?\s*v?\d",
+        r"Eclipse Public Licen[cs]e\s*,?\s*v(?:ersion)?\.?\s*\d",
+    ),
+    "CDDL": (
+        r"\bCDDL\s*[- ]?\s*v?\d",
+        r"Common Development and Distribution Licen[cs]e\s*,?\s*v(?:ersion)?\.?\s*\d",
+    ),
+}
+
+FAMILIES: dict[str, tuple[re.Pattern[str], ...]] = {
+    family: tuple(re.compile(pattern, re.IGNORECASE) for pattern in patterns)
+    for family, patterns in _FAMILY_PATTERNS.items()
+}
+"""The patterns above, ready to search a license text with."""
+
+
+def names_family(text: str, family: str) -> bool:
+    """Return whether *text* names the copyleft *family* the way a license text names one."""
+    return any(pattern.search(text) for pattern in FAMILIES[family])
+
+
+def copyleft_findings(rows: Iterable[Row], policy: Policy, store: Path = STORE) -> list[str]:
+    """Return one sentence per bundle row whose texts name a family nothing accounts for.
+
+    A family is accounted for by the row's own License column or by an entry of ``[vendored]``:
+    either the row says it carries a part under that license, or a person has read the text and
+    said what it belongs to.  This is the check that finds a library linked into a wheel whose own
+    metadata names only the permissive license around it.
+
+    An LGPL text quotes the GPL — clause 3 lets a user switch — so in a text whose LGPL is
+    accounted for, a GPL mention is the quote and not a part.
+    """
+    found: list[str] = []
+    for row in rows:
+        if row.scope != "bundle":
+            continue
+        named = [row.license, *(part.license for part in policy.vendored.get(row.component, ()))]
+        accounted = {family for family in FAMILIES if any(names_family(t, family) for t in named)}
+        unaccounted: dict[str, list[str]] = {}
+        for label, text in texts_of(row.component, policy, store):
+            families = {family for family in FAMILIES if names_family(text, family)}
+            if "LGPL" in families and "LGPL" in accounted:
+                families.discard("GPL")
+            for family in families - accounted:
+                unaccounted.setdefault(family, []).append(label)
+        for family, labels in sorted(unaccounted.items()):
+            found.append(
+                f"{row.component} carries a text that names the {family} "
+                f"({', '.join(labels[:3])}): name the part in [vendored]"
+            )
     return found
 
 
@@ -971,6 +1068,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     collect_texts(rows, policy, STORE, hashes=lock_hashes(TEST_LOCK.read_text(encoding="utf-8")))
+    found = copyleft_findings(rows, policy, STORE)
+    if found:
+        print("A text names a copyleft license that [vendored] does not:", file=sys.stderr)
+        for problem in found:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
+
     write_inventory(rows, INVENTORY)
     write_compiled(rows, policy, STORE, ASSET_TXT, ASSET_LICENSE, LICENSE)
     write_asset(rows, ASSET_CSV)

@@ -33,15 +33,23 @@ General Public License, version 2.1, whose text is in the OpenCV entry of the th
 license list. FFmpeg ships in the Linux and macOS bundles
 only: the Windows bundle leaves out the separate DLL that OpenCV's Windows build carries.
 
+libiconv inside lxml (LGPL-2.1)
+-------------------------------
+The lxml package links libiconv statically, for character-set conversion, under the GNU Lesser
+General Public License, version 2.1; its text is in the lxml entry of the third-party license list
+(the LICENSES.txt of the wheel). A statically linked library cannot be replaced with a compatible
+build of its own, so section 6(a) of that license asks for the source of libiconv and for the
+source of lxml, the work that links it in; both are named below.
+
 Source code
 -----------
 The source of Teacher's Teammate itself is the "Source code" archive on the page of each release
 (https://github.com/JoHoenk/teachers-teammate/releases).
 
 The LGPL and MPL components above are open source, and this section says where their source
-is. The Qt, PySide6, FFmpeg and OpenCV entries name the version they were written for; a bump
-turns the license test red until the entry and the sources release below name the new one.
-certifi needs none: MPL-2.0 asks that its source be named, and every certifi release on PyPI
+is. The Qt, PySide6, FFmpeg, libiconv, lxml and OpenCV entries name the version they were written
+for; a bump turns the license test red until the entry and the sources release below name the new
+one. certifi needs none: MPL-2.0 asks that its source be named, and every certifi release on PyPI
 carries it.
 
 Qt 6.12.0 and PySide6 6.12.0, the versions the bundle carries:
@@ -53,21 +61,26 @@ FFmpeg 9.0.2, inside opencv-python-headless 5.1.0.95 (Linux and macOS):
   https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.gz
   The wheel's build recipe: https://github.com/opencv/opencv-python (tag 95)
 
+libiconv 1.18, inside lxml 6.1.3 (Linux, Windows and macOS):
+  https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.18.tar.gz
+  Its signature: https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.18.tar.gz.sig
+  lxml's own source, the work that links libiconv in: https://pypi.org/project/lxml/6.1.3/
+
 certifi (MPL-2.0), the version Help > Licenses lists:
   https://pypi.org/project/certifi/
 
 The same sources, as one download, are published with this release:
   https://github.com/JoHoenk/teachers-teammate/releases/tag/third-party-sources-qt6.12.0
-It holds the four Qt modules above, pyside-setup at the matching tag, the FFmpeg tarball with its
-signature and the opencv-python-headless source. It is never the "latest" release, so the app's
-update check does not see it.
+It holds the four Qt modules above, pyside-setup at the matching tag, the FFmpeg and libiconv
+tarballs with their signatures, and the opencv-python-headless and lxml sources. It is never the
+"latest" release, so the app's update check does not see it.
 
 Written offer
 -------------
 The sources release named above is the offer of corresponding source from the same place as the
-download (GPL-3.0 section 6(d), as used through LGPL-3.0; LGPL-2.1 section 6(d) for FFmpeg). Teacher's Teammate itself is offered the
-same way: the "Source code" archive on the page of each release is its Corresponding Source
-(GPL-3.0 section 6(d)).
+download (GPL-3.0 section 6(d), as used through LGPL-3.0; LGPL-2.1 section 6(d) for FFmpeg and
+libiconv). Teacher's Teammate itself is offered the same way: the "Source code" archive on the page
+of each release is its Corresponding Source (GPL-3.0 section 6(d)).
 
 The macOS OpenCV libraries and the Linux host libraries are covered by this offer. The Linux
 download's third_party_host_libraries.txt names the Ubuntu source package and version of every

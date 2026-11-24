@@ -130,6 +130,37 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 """
 
+# The parts a bundle package's wheel carries that its own license does not name — a library linked
+# into the binary, or a license text for something the wheel does not ship.  Each with an SPDX
+# license, which passes the same rules as a row's, and — where the part needs no line of its own
+# under NOTICE's "Source code" — the reason.  A wheel's texts that name a copyleft family nothing
+# here accounts for turn the license test red, so this table is what says "we looked".
+[vendored]
+lxml = [{ part = "libiconv", license = "LGPL-2.1-or-later" }]
+opencv-python-headless = [
+    { part = "FFmpeg", license = "LGPL-2.1-or-later" },
+    { part = "libsrt", license = "MPL-2.0", no_source = "the macOS OpenCV paragraph of NOTICE's written offer covers the libraries only the macOS wheel links" },
+]
+numpy = [
+    { part = "libgfortran", license = "GPL-3.0-or-later WITH GCC-exception-3.1", no_source = "the runtime library exception" },
+]
+pillow = [
+    { part = "xz's command-line tools", license = "LGPL-2.1-or-later", no_source = "the wheel carries liblzma, which is public domain; the LGPL getopt_long code is in the xz tools, which it does not" },
+    { part = "FreeType's GPL option", license = "GPL-2.0-or-later", no_source = "FreeType is used under the FreeType License, the first of the two licenses it offers" },
+]
+pip = [
+    { part = "certifi", license = "MPL-2.0", no_source = "pip carries an unmodified copy; its source is certifi's release" },
+]
+pypdfium2 = [
+    { part = "ICU's autoconf helpers", license = "GPL-2.0-or-later", no_source = "the GPL texts in deps/ cover ICU4C's configure helpers, which are not in the wheel; the LLVM exception that mentions GPLv2 licenses nothing" },
+]
+pyside6-essentials = [
+    { part = "Qt's GPL option", license = "GPL-3.0-or-later", no_source = "we take Qt under the LGPL-3.0; the GPL texts are the other license Qt offers" },
+]
+shiboken6 = [
+    { part = "Qt's GPL option", license = "GPL-3.0-or-later", no_source = "we take Qt under the LGPL-3.0; the GPL texts are the other license Qt offers" },
+]
+
 # Packages whose other platform wheels carry notices the Linux one does not.  The extra files are
 # stored beside the Linux ones and compiled as one union with a "Windows only" / "macOS only"
 # heading.

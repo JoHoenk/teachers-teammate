@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """Mirror the third-party sources our downloads promise: one release per version we ship.
 
-Nothing in this repository holds the Qt, PySide6 or FFmpeg sources, and the LGPL wants them next
-to the download, so every version a release carries gets a sources release of its own:
+Nothing in this repository holds the Qt, PySide6, FFmpeg or libiconv sources, and the LGPL wants
+them next to the download, so every version a release carries gets a sources release of its own:
 ``third-party-sources-qt<version>``.  This tool fetches the files NOTICE names, holds each one to
 the digest its author publishes, writes ``SHA256SUMS`` and a ``README.txt`` into the set, and
 uploads the set.  It is never marked *Latest*, so the app's update check cannot see it.
 
-FFmpeg publishes a signature (``.asc``) and no digest, so that one tarball is signature-only: the
-set carries the signature and neither the tool nor the set verifies it.  Every other file is
-refused when its author publishes no digest, never taken unchecked.
+FFmpeg and libiconv publish a signature (``.asc``, ``.sig``) and no digest, so those two tarballs
+are signature-only: the set carries the signature and neither the tool nor the set verifies it.
+Every other file is refused when its author publishes no digest, never taken unchecked.
 
 The versions come from ``third_party_licenses/inventory.csv`` and NOTICE, never from an argument:
 the set holds what the download promises.  The file names come from the authors' own directory
 listings, so a name that changed is an error here and not a 404 on a teacher's download page.
+
+Which parts and which packages owe a source is NOTICE's ``Source code`` section, read by
+``tools/licenses/notice.py``: a part it names is fetched from ``PART_SOURCES`` and the source
+distribution of the package it rides in joins the set as well.
 
 Usage (from the repository root; ``--upload`` needs ``gh`` and ``GH_TOKEN``):
 
@@ -54,6 +58,9 @@ PYSIDE6_SOURCES = "https://download.qt.io/official_releases/QtForPython/pyside6"
 FFMPEG_RELEASES = "https://ffmpeg.org/releases"
 """Where FFmpeg publishes its tarballs and their signatures."""
 
+LIBICONV_RELEASES = "https://ftp.gnu.org/pub/gnu/libiconv"
+"""Where libiconv publishes its tarballs and their signatures."""
+
 PYPI = "https://pypi.org/pypi"
 """The JSON of one package release names its source distribution and its digest."""
 
@@ -69,9 +76,6 @@ CHECKSUMS_NAME = "SHA256SUMS"
 README_NAME = "README.txt"
 """What the set holds, which version, and the rule each file satisfies."""
 
-SIGNATURE_SUFFIX = ".asc"
-"""What FFmpeg names the signature of a tarball it publishes, its only authenticity evidence."""
-
 SUMS_NAMES = ("sha256sums.txt", "md5sums.txt")
 """The digest lists Qt publishes next to its tarballs, the stronger one first."""
 
@@ -80,7 +84,9 @@ USER_AGENT = "teachers-teammate-sources-mirror (+https://github.com/JoHoenk/teac
 QT_LICENSE_RULE = "LGPL-3.0 section 4: the Corresponding Source of the Qt libraries the app loads"
 PYSIDE_RULE = "LGPL-3.0: the sources of the PySide6 bindings and the Qt for Python build"
 FFMPEG_RULE = "LGPL-2.1: the source of the FFmpeg that ships inside OpenCV (Linux and macOS)"
+LIBICONV_RULE = "LGPL-2.1: the source of the libiconv that lxml links statically"
 OPENCV_RULE = "the build recipe and the FFmpeg version of the OpenCV wheel (Apache-2.0)"
+LXML_RULE = "LGPL-2.1 section 6(a): the source of the work that links libiconv in"
 
 #: Which Qt submodule archive carries which module: the ``libQt6<Module>`` files of a bundle have
 #: to be accounted for by one of the archives NOTICE names.  A module PySide6 gains is a red check
@@ -108,6 +114,37 @@ MODULE_ARCHIVE: dict[str, str] = {
     "WaylandCompositor": "qtwayland",
     "WaylandEglClientHwIntegration": "qtwayland",
 }
+
+
+@dataclass(frozen=True)
+class PartSource:
+    """Where the author of a part publishes its source, and the rule that file satisfies."""
+
+    folder: str
+    signature: str
+    rule: str
+
+
+PART_SOURCES: dict[str, PartSource] = {
+    "FFmpeg": PartSource(FFMPEG_RELEASES, ".asc", FFMPEG_RULE),
+    "libiconv": PartSource(LIBICONV_RELEASES, ".sig", LIBICONV_RULE),
+}
+"""Where the source of each part NOTICE names is published, by the name NOTICE gives the part."""
+
+PACKAGE_RULES: dict[str, str] = {
+    "opencv-python-headless": OPENCV_RULE,
+    "lxml": LXML_RULE,
+}
+"""Why the source distribution of a package whose wheel carries a part joins the set."""
+
+
+@dataclass(frozen=True)
+class Contents:
+    """What the sources release of a tree's downloads has to hold."""
+
+    qt: str
+    modules: tuple[str, ...]
+    vendored: tuple[notice.Vendored, ...]
 
 
 @dataclass(frozen=True)
@@ -146,28 +183,58 @@ def qt_version(pyside: str) -> str:
     return ".".join(pyside.split(".")[:3])
 
 
-def tree_versions(tree: Path = ROOT) -> tuple[str, str, str]:
-    """Return the Qt, OpenCV and FFmpeg versions the downloads of *tree* carry.
+def tree_contents(tree: Path = ROOT) -> Contents:
+    """Return what the sources release of *tree*'s downloads has to hold.
+
+    The versions come from the rows the inventory lists, so a notice that names another version of
+    a package than the one we ship is refused here rather than published.
 
     Raises:
         ValueError: NOTICE and the inventory disagree, or the inventory lacks a row.
     """
+    text = (tree / "NOTICE").read_text(encoding="utf-8")
     locked = artifacts.locked_versions(tree)
     pyside = locked.get("pyside6-essentials")
-    opencv = locked.get("opencv-python-headless")
-    if pyside is None or opencv is None:
-        raise ValueError("the inventory lacks a row for PySide6 or opencv-python-headless")
-    ffmpeg, notice_opencv = notice.ffmpeg_versions((tree / "NOTICE").read_text(encoding="utf-8"))
-    if notice_opencv != opencv:
+    if pyside is None:
+        raise ValueError("the inventory lacks a row for pyside6-essentials")
+    vendored = notice.vendored_entries(text)
+    for entry in vendored:
+        version = locked.get(entry.package)
+        if version is None:
+            raise ValueError(f"the inventory lacks a row for {entry.package}")
+        if version != entry.package_version:
+            raise ValueError(
+                f"NOTICE names {entry.package} {entry.package_version}, the inventory {version}"
+            )
+    return Contents(qt_version(pyside), notice.qt_modules(text), vendored)
+
+
+def part_source(part: str) -> PartSource:
+    """Return where the source of *part* is published.
+
+    Raises:
+        ValueError: NOTICE names a part whose source no one has said where to find.
+    """
+    source = PART_SOURCES.get(part)
+    if source is None:
         raise ValueError(
-            f"NOTICE names opencv-python-headless {notice_opencv}, the inventory {opencv}"
+            f"NOTICE names {part}, whose source this tool does not know: add it to PART_SOURCES"
         )
-    return qt_version(pyside), opencv, ffmpeg
+    return source
 
 
-def qt_module_archives(tree: Path = ROOT) -> tuple[str, ...]:
-    """Return the Qt submodule archives NOTICE names as the sources of the shipped libraries."""
-    return notice.qt_modules((tree / "NOTICE").read_text(encoding="utf-8"))
+def package_rule(package: str) -> str:
+    """Return why the source distribution of *package* joins the set.
+
+    Raises:
+        ValueError: no one has said why the source of that package is owed.
+    """
+    rule = PACKAGE_RULES.get(package)
+    if rule is None:
+        raise ValueError(
+            f"nothing says why the source of {package} is owed: add it to PACKAGE_RULES"
+        )
+    return rule
 
 
 def listing_files(html: str) -> tuple[str, ...]:
@@ -244,15 +311,13 @@ def uncovered(modules: tuple[str, ...], archives: tuple[str, ...]) -> list[str]:
     return found
 
 
-def asset_patterns(
-    versions: tuple[str, str, str], modules: tuple[str, ...]
-) -> dict[str, re.Pattern[str]]:
-    """Return what a sources release of *versions* has to hold: what it is -> how its name ends.
+def asset_patterns(contents: Contents) -> dict[str, re.Pattern[str]]:
+    """Return what a sources release of *contents* has to hold: what it is -> how its name ends.
 
     The names are patterns because the authors' own names may differ from the version (Qt for
     Python drops the patch number) and because a tarball's compression has changed before.
     """
-    qt, opencv, ffmpeg = versions
+    qt = contents.qt
     archive = ARCHIVE_PATTERN
 
     def pattern(prefix: str) -> re.Pattern[str]:
@@ -261,44 +326,44 @@ def asset_patterns(
 
     patterns = {
         f"{module} source of Qt {qt}": pattern(f"{module}-everywhere-src-{qt}")
-        for module in modules
+        for module in contents.modules
     }
     series = ".".join(qt.split(".")[:2])
     patterns[f"PySide6 {qt} source"] = re.compile(
         rf"^pyside-setup-everywhere-src-({re.escape(qt)}|{re.escape(series)}){archive}$"
     )
-    patterns[f"FFmpeg {ffmpeg} source"] = pattern(f"ffmpeg-{ffmpeg}")
-    patterns[f"FFmpeg {ffmpeg} signature"] = re.compile(
-        rf"^ffmpeg-{re.escape(ffmpeg)}{archive}{re.escape(SIGNATURE_SUFFIX)}$"
-    )
-    patterns[f"opencv-python-headless {opencv} source"] = pattern(
-        f"opencv_python_headless-{opencv}"
-    )
+    for entry in contents.vendored:
+        source = part_source(entry.part)
+        stem = f"{entry.part.lower()}-{entry.version}"
+        patterns[f"{entry.part} {entry.version} source"] = pattern(stem)
+        patterns[f"{entry.part} {entry.version} signature"] = re.compile(
+            rf"^{re.escape(stem)}{archive}{re.escape(source.signature)}$"
+        )
+        patterns[f"{entry.package} {entry.package_version} source"] = pattern(
+            f"{entry.package.replace('-', '_')}-{entry.package_version}"
+        )
     patterns["digest list"] = re.compile(rf"^{re.escape(CHECKSUMS_NAME)}$")
     patterns["readme"] = re.compile(rf"^{re.escape(README_NAME)}$")
     return patterns
 
 
-def missing_assets(
-    names: Iterable[str], versions: tuple[str, str, str], modules: tuple[str, ...]
-) -> list[str]:
-    """Return what a release holding *names* lacks of the sources of *versions*.
+def missing_assets(names: Iterable[str], contents: Contents) -> list[str]:
+    """Return what a release holding *names* lacks of the sources of *contents*.
 
     A release keeps the name ``third-party-sources-qt<version>`` while the Qt version stays the
     same, so its name alone says nothing about what is inside it.
     """
     return [
         f"it holds no {what}"
-        for what, pattern in asset_patterns(versions, modules).items()
+        for what, pattern in asset_patterns(contents).items()
         if not any(pattern.search(name) for name in names)
     ]
 
 
-def readme(versions: tuple[str, str, str], sources: tuple[Source, ...]) -> str:
+def readme(sources: tuple[Source, ...]) -> str:
     """Return the ``README.txt`` of a set: what each file is, its version and its rule."""
-    qt, opencv, ffmpeg = versions
     lines = [
-        f"Teacher's Teammate: third-party sources of Qt {qt}, OpenCV {opencv}, FFmpeg {ffmpeg}",
+        "Teacher's Teammate: the third-party sources the downloads carry",
         "",
         "The LGPL asks for the source of the libraries a download carries. This release holds it:",
         "every file is unmodified, exactly as its author published it, and SHA256SUMS holds the",
@@ -306,9 +371,9 @@ def readme(versions: tuple[str, str, str], sources: tuple[Source, ...]) -> str:
         "third_party_licenses/inventory.csv in the repository name them.",
         "",
         "Each file was held to the digest its author publishes: Qt's md5sums.txt next to the",
-        "tarballs, PyPI's sha256 for the opencv-python-headless source. FFmpeg publishes a",
-        "signature (.asc) and no digest, so its tarball travels with that signature unverified:",
-        "check the signature against FFmpeg's release key before you trust the tarball itself.",
+        "tarballs, PyPI's sha256 for a source distribution. FFmpeg and libiconv publish a signature",
+        "(.asc, .sig) and no digest, so their tarballs travel with that signature unverified: check",
+        "each signature against its author's release key before you trust the tarball itself.",
         "",
         "| File | Version | The rule it satisfies |",
         "|---|---|---|",
@@ -322,14 +387,14 @@ def readme(versions: tuple[str, str, str], sources: tuple[Source, ...]) -> str:
     return "\n".join(lines)
 
 
-def release_notes(versions: tuple[str, str, str]) -> str:
+def release_notes(contents: Contents) -> str:
     """Return the release body: what the set holds and that it is never a version of the app."""
-    qt, opencv, ffmpeg = versions
+    parts = ", ".join(f"{entry.part} {entry.version}" for entry in contents.vendored)
     return (
-        f"The sources of the third-party libraries our downloads carry: the Qt {qt} submodules "
-        f"NOTICE names, pyside-setup, FFmpeg {ffmpeg} and the opencv-python-headless {opencv} "
-        "source. Unmodified, with SHA256SUMS. This release is never an application version and is "
-        "never marked *Latest*; see NOTICE in the repository."
+        f"The sources of the third-party libraries our downloads carry: the Qt {contents.qt} "
+        f"submodules NOTICE names, pyside-setup, {parts}, and the source of every package that "
+        "carries one of them. Unmodified, with SHA256SUMS. This release is never an application "
+        "version and is never marked *Latest*; see NOTICE in the repository."
     )
 
 
@@ -425,24 +490,23 @@ def published_digest(sums: Mapping[str, str], name: str, where: str) -> str:
     return digest
 
 
-def pypi_sdist(opencv: str, read: Callable[[str], str]) -> tuple[str, str, str]:
-    """Return the name, url and sha256 of the OpenCV wheel's source distribution.
+def pypi_sdist(package: str, version: str, read: Callable[[str], str]) -> tuple[str, str, str]:
+    """Return the name, url and sha256 of one release's source distribution.
 
     Raises:
         ValueError: PyPI knows no source distribution for that version.
     """
-    payload = json.loads(read(f"{PYPI}/opencv-python-headless/{opencv}/json"))
+    payload = json.loads(read(f"{PYPI}/{package}/{version}/json"))
     sdists = [item for item in payload.get("urls", []) if item.get("packagetype") == "sdist"]
     if not sdists:
-        raise ValueError(f"PyPI lists no source distribution of opencv-python-headless {opencv}")
+        raise ValueError(f"PyPI lists no source distribution of {package} {version}")
     return str(sdists[0]["filename"]), str(sdists[0]["url"]), str(sdists[0]["digests"]["sha256"])
 
 
 def collect(
     folder: Path,
-    versions: tuple[str, str, str],
+    contents: Contents,
     *,
-    modules: tuple[str, ...],
     fetch: Callable[[str, Path], Path] = download,
     read: Callable[[str], str] = read_url,
 ) -> SourceSet:
@@ -453,10 +517,10 @@ def collect(
     there fails here, before anything is uploaded.
 
     Raises:
-        ValueError: a listing does not carry a file, a folder publishes no digest for one, or a
-            digest does not match.
+        ValueError: a listing does not carry a file, a folder publishes no digest for one, a part
+            or a package has no source or rule of its own, or a digest does not match.
     """
-    qt, opencv, ffmpeg = versions
+    qt = contents.qt
     series = ".".join(qt.split(".")[:2])
     found: list[Source] = []
     written: list[str] = []
@@ -471,7 +535,7 @@ def collect(
     submodules = f"{QT_ARCHIVE}/{series}/{qt}/submodules"
     qt_files = listing_files(read(f"{submodules}/"))
     qt_sums = published_sums(read, submodules, qt_files)
-    for module in modules:
+    for module in contents.modules:
         name = first_present(qt_files, packaged(f"{module}-everywhere-src-{qt}"), submodules)
         digest = published_digest(qt_sums, name, submodules)
         take(name, f"{submodules}/{name}", qt, QT_LICENSE_RULE, digest)
@@ -483,22 +547,25 @@ def collect(
     digest = published_digest(pyside_sums, name, pyside_dir)
     take(name, f"{pyside_dir}/{name}", qt, PYSIDE_RULE, digest)
 
-    # FFmpeg publishes a signature and no digest, so this tarball is the one file of the set that
-    # is taken unchecked. The README says so; every other file needs a published digest.
-    ffmpeg_files = listing_files(read(f"{FFMPEG_RELEASES}/"))
-    name = first_present(ffmpeg_files, packaged(f"ffmpeg-{ffmpeg}"), FFMPEG_RELEASES)
-    signature = f"{name}{SIGNATURE_SUFFIX}"
-    if signature not in ffmpeg_files:
-        raise ValueError(f"{FFMPEG_RELEASES} publishes no signature for {name}")
-    fetch(f"{FFMPEG_RELEASES}/{name}", folder / name)
-    fetch(f"{FFMPEG_RELEASES}/{signature}", folder / signature)
-    found.append(Source(name, f"{FFMPEG_RELEASES}/{name}", ffmpeg, FFMPEG_RULE))
-    written += [name, signature]
+    # FFmpeg and libiconv publish a signature and no digest, so those tarballs are the files of
+    # the set taken unchecked. The README says so; every other file needs a published digest.
+    for entry in contents.vendored:
+        source = part_source(entry.part)
+        rule = package_rule(entry.package)
+        names = listing_files(read(f"{source.folder}/"))
+        name = first_present(names, packaged(f"{entry.part.lower()}-{entry.version}"), source.folder)
+        signature = f"{name}{source.signature}"
+        if signature not in names:
+            raise ValueError(f"{source.folder} publishes no signature for {name}")
+        fetch(f"{source.folder}/{name}", folder / name)
+        fetch(f"{source.folder}/{signature}", folder / signature)
+        found.append(Source(name, f"{source.folder}/{name}", entry.version, source.rule))
+        written += [name, signature]
 
-    recipe = pypi_sdist(opencv, read)
-    take(recipe[0], recipe[1], opencv, OPENCV_RULE, recipe[2])
+        recipe = pypi_sdist(entry.package, entry.package_version, read)
+        take(recipe[0], recipe[1], entry.package_version, rule, recipe[2])
 
-    (folder / README_NAME).write_text(readme(versions, tuple(found)), encoding="utf-8")
+    (folder / README_NAME).write_text(readme(tuple(found)), encoding="utf-8")
     checksums = write_checksums(folder, (*written, README_NAME))
     return SourceSet(tuple(found), (*written, README_NAME, checksums.name))
 
@@ -663,8 +730,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        versions = tree_versions()
-        modules = qt_module_archives()
+        contents = tree_contents()
     except (KeyError, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -675,7 +741,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{lib_dir} is missing; build the bundle first", file=sys.stderr)
             return 1
         try:
-            problems = uncovered(bundle_modules(lib_dir), modules)
+            problems = uncovered(bundle_modules(lib_dir), contents.modules)
         except ValueError as exc:
             print(exc, file=sys.stderr)
             return 1
@@ -700,21 +766,21 @@ def main(argv: list[str] | None = None) -> int:
             folder = args.keep
             folder.mkdir(parents=True, exist_ok=True)
         try:
-            found = collect(folder, versions, modules=modules)
+            found = collect(folder, contents)
         except (OSError, ValueError) as exc:
             print(exc, file=sys.stderr)
             return 1
         for source in found.sources:
             print(f"{source.name}\t{source.version}\t{source.rule}")
         print(f"{len(found.sources)} sources and {len(found.files)} files in {folder}")
-        print("FFmpeg's signature is fetched but not verified: FFmpeg publishes no digest.")
+        print("FFmpeg and libiconv publish no digest: their signatures travel unverified.")
         if args.upload and args.repo:
             upload(
-                sources_release_tag(versions[0]),
+                sources_release_tag(contents.qt),
                 folder,
                 found.files,
                 args.repo,
-                notes=release_notes(versions),
+                notes=release_notes(contents),
             )
     return 0
 

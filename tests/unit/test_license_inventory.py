@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -68,6 +69,58 @@ def test_every_row_passes_the_deny_rules_or_is_accepted() -> None:
     Then   nothing we must not ship or install is listed
     """
     assert inventory.problems(_committed(), inventory.load_policy()) == []
+
+
+def test_no_text_names_a_copyleft_license_the_vendored_table_does_not() -> None:
+    """
+    Given  the committed inventory and the license texts of every bundle row
+    When   each text is searched for the copyleft families
+    Then   every family a text names is accounted for by the row's license or by a [vendored]
+           entry — which is how a library linked into a wheel is found
+    """
+    policy = inventory.load_policy()
+
+    assert inventory.copyleft_findings(_committed(), policy, _STORE) == [], (
+        "a text names a copyleft license that nothing accounts for: name the part in the "
+        "[vendored] table of tools/licenses/policy.toml, or say there why no source is owed"
+    )
+
+
+def test_the_scan_finds_the_libiconv_inside_lxml() -> None:
+    """
+    Given  the committed policy without lxml's entry, which is what the review found
+    When   the texts are searched
+    Then   lxml's LGPL is named, so the check cannot pass by seeing nothing
+    """
+    policy = inventory.load_policy()
+    without = replace(
+        policy, vendored={name: parts for name, parts in policy.vendored.items() if name != "lxml"}
+    )
+
+    found = inventory.copyleft_findings(_committed(), without, _STORE)
+
+    assert [line for line in found if line.startswith("lxml carries")] == [
+        "lxml carries a text that names the LGPL (LICENSES.txt): name the part in [vendored]"
+    ]
+
+
+def test_every_part_that_owes_a_source_is_named_in_notice() -> None:
+    """
+    Given  the [vendored] table and NOTICE
+    When   each part without a reason it needs no source is looked for in the source section
+    Then   NOTICE names it inside its package, so the sources release fetches it
+    """
+    policy = inventory.load_policy()
+    named = {(entry.part, entry.package) for entry in notice.vendored_entries(_notice())}
+
+    missing = [
+        f"{package} carries {part.part} ({part.license}): name it in NOTICE's Source code section"
+        for package, parts in policy.vendored.items()
+        for part in parts
+        if not part.no_source and (part.part, package) not in named
+    ]
+
+    assert missing == []
 
 
 def test_every_bundle_row_has_a_text() -> None:
@@ -194,7 +247,7 @@ def test_notice_names_the_locked_versions_in_its_source_section() -> None:
     """
     versions = {row.component: row.version for row in _committed()}
     qt = versions["pyside6-essentials"]
-    opencv = versions["opencv-python-headless"]
+    lxml = versions["lxml"]
 
     section = notice.section(_notice(), notice.SOURCE_CODE)
 
@@ -203,26 +256,47 @@ def test_notice_names_the_locked_versions_in_its_source_section() -> None:
     assert f"/archive/qt/{'.'.join(qt.split('.')[:2])}/{qt}/submodules/" in section, _BUMP_STEPS
     assert f"PySide6-{qt}-src" in section, _BUMP_STEPS
     assert f"third-party-sources-qt{qt}" in section, _BUMP_STEPS
-    assert f"opencv-python-headless {opencv}" in section, _BUMP_STEPS
+    assert f"inside lxml {lxml}" in section, _BUMP_STEPS
 
 
 def test_notice_names_the_sources_the_mirror_publishes() -> None:
     """
     Given  NOTICE and the table that says which Qt submodule carries which module
     When   the archives a sources release is built from are held against the notice
-    Then   NOTICE names no archive the table cannot place, and the FFmpeg source set is the
-           notice's version.  The table knows archives the set does not hold (qttools); the gate
-           asks for one the moment a bundle carries its module.
+    Then   NOTICE names no archive the table cannot place, and every part it names has a source
+           URL this tool knows how to fetch.  The table knows archives the set does not hold
+           (qttools); the gate asks for one the moment a bundle carries its module.
     """
     text = _notice()
     section = notice.section(text, notice.SOURCE_CODE)
-    ffmpeg, _ = notice.ffmpeg_versions(text)
+    entries = notice.vendored_entries(text)
 
     assert set(notice.qt_modules(text)) - _PLUGIN_ONLY <= set(
         mirror_sources.MODULE_ARCHIVE.values()
     )
-    assert f"ffmpeg-{ffmpeg}.tar" in section
-    assert "the opencv-python-headless source" in section
+    assert entries, "NOTICE names no part inside a package"
+    for entry in entries:
+        assert mirror_sources.part_source(entry.part).folder in section, _BUMP_STEPS
+        assert f"{entry.part.lower()}-{entry.version}.tar" in section, _BUMP_STEPS
+
+
+def test_notice_holds_every_part_to_the_version_the_inventory_lists() -> None:
+    """
+    Given  the parts NOTICE says ride inside a package, and the committed inventory
+    When   each entry's package version is held against its row
+    Then   they are the same version, so an lxml or OpenCV bump stays red until a person has
+           read the version of the part inside it
+    """
+    versions = {row.component: row.version for row in _committed()}
+
+    stale = [
+        f"NOTICE names {entry.part} {entry.version} inside {entry.package} "
+        f"{entry.package_version}, the inventory {versions.get(entry.package)}"
+        for entry in notice.vendored_entries(_notice())
+        if versions.get(entry.package) != entry.package_version
+    ]
+
+    assert stale == [], _BUMP_STEPS
 
 
 def test_notice_carries_the_written_offer() -> None:

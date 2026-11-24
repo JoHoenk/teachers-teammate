@@ -1,4 +1,4 @@
-"""NOTICE, read: its sections, the Qt modules it names, the versions it promises.
+"""NOTICE, read: its sections, the Qt modules it names, the parts inside the packages it names.
 
 ``NOTICE`` is hand-written and a test keeps it on the locked versions.  Two tools read it —
 ``tests/unit/test_license_inventory.py`` for the versions, and ``tools/release/mirror_sources.py``
@@ -8,6 +8,7 @@ nothing but the standard library.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 
 SOURCE_CODE = "Source code"
@@ -19,10 +20,23 @@ _UNDERLINE = re.compile(r"-+")
 _QT_MODULES = re.compile(r"^\s*\((?P<modules>[a-z0-9][a-z0-9, ]*)\)\s*$", re.MULTILINE)
 """The ``(qtbase, qtsvg, qtimageformats, qtwayland)`` line of the Qt entry."""
 
-_FFMPEG = re.compile(
-    r"^FFmpeg (?P<version>\S+), inside opencv-python-headless (?P<opencv>\S+)", re.MULTILINE
+_VENDORED = re.compile(
+    r"^(?P<part>\S+) (?P<version>\S+), inside (?P<package>\S+) (?P<package_version>\S+?)"
+    r"(?: \((?P<platforms>[^)]*)\))?:$",
+    re.MULTILINE,
 )
-"""The FFmpeg entry: the FFmpeg version and the wheel it rides in."""
+"""The line that names a part inside a package: ``FFmpeg 9.0.2, inside opencv-python-headless ...``."""
+
+
+@dataclass(frozen=True)
+class Vendored:
+    """A part NOTICE says rides inside a bundled package, with the versions it was written for."""
+
+    part: str
+    version: str
+    package: str
+    package_version: str
+    platforms: str = ""
 
 
 def sections(text: str) -> dict[str, str]:
@@ -61,13 +75,15 @@ def qt_modules(text: str) -> tuple[str, ...]:
     return tuple(name.strip() for name in match.group("modules").split(",") if name.strip())
 
 
-def ffmpeg_versions(text: str) -> tuple[str, str]:
-    """Return the FFmpeg version and the ``opencv-python-headless`` version NOTICE names.
-
-    Raises:
-        ValueError: the source section carries no ``FFmpeg <version>, inside ...`` line.
-    """
-    match = _FFMPEG.search(section(text, SOURCE_CODE))
-    if match is None:
-        raise ValueError("NOTICE's source section names no FFmpeg version")
-    return match.group("version"), match.group("opencv")
+def vendored_entries(text: str) -> tuple[Vendored, ...]:
+    """Return the parts NOTICE says ride inside a bundled package, in the order it writes them."""
+    return tuple(
+        Vendored(
+            match.group("part"),
+            match.group("version"),
+            match.group("package"),
+            match.group("package_version"),
+            match.group("platforms") or "",
+        )
+        for match in _VENDORED.finditer(section(text, SOURCE_CODE))
+    )

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stamp the release version into the package's __init__.py and the py_wheel version in BUILD."""
+"""Stamp the release version into the package's __init__.py."""
 
 from __future__ import annotations
 
@@ -52,69 +52,10 @@ def stamp_init_version(content: str, version: str) -> str:
     return updated
 
 
-def _find_py_wheel_block(lines: list[str], target_name: str) -> tuple[int, int]:
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if "py_wheel(" not in line:
-            i += 1
-            continue
-
-        start = i
-        depth = line.count("(") - line.count(")")
-        i += 1
-
-        while i < len(lines) and depth > 0:
-            depth += lines[i].count("(") - lines[i].count(")")
-            i += 1
-
-        end = i
-        name = None
-        for block_line in lines[start:end]:
-            m = re.match(r'^\s*name\s*=\s*"([^"]+)"\s*,\s*$', block_line)
-            if m:
-                name = m.group(1)
-                break
-
-        if name == target_name:
-            return start, end
-
-    msg = f"could not find py_wheel target '{target_name}' in teachers_teammate/BUILD"
-    raise ValueError(msg)
-
-
-def stamp_bazel_wheel_version(content: str, version: str, target_name: str) -> str:
-    """Stamp the version field inside one named py_wheel target."""
-    lines = content.splitlines(keepends=True)
-    block_start, block_end = _find_py_wheel_block(lines, target_name)
-
-    version_line_count = 0
-    for index in range(block_start, block_end):
-        new_line, matched = re.subn(
-            r'^(\s*version\s*=\s*")[^"]*("\s*,\s*)$',
-            rf"\g<1>{version}\g<2>",
-            lines[index],
-        )
-        if matched:
-            lines[index] = new_line
-            version_line_count += 1
-
-    if version_line_count != 1:
-        msg = f'expected exactly one version field inside py_wheel(name="{target_name}")'
-        raise ValueError(msg)
-
-    return "".join(lines)
-
-
-def stamp_files(version: str, init_path: Path, build_path: Path, target_name: str) -> None:
-    """Stamp both __init__.py and Bazel BUILD with a normalized version."""
-    init_content = init_path.read_text(encoding="utf-8")
-    init_updated = stamp_init_version(init_content, version)
-    init_path.write_text(init_updated, encoding="utf-8")
-
-    build_content = build_path.read_text(encoding="utf-8")
-    build_updated = stamp_bazel_wheel_version(build_content, version, target_name)
-    build_path.write_text(build_updated, encoding="utf-8")
+def stamp_init_file(version: str, init_path: Path) -> None:
+    """Write a normalized version into __init__.py."""
+    content = init_path.read_text(encoding="utf-8")
+    init_path.write_text(stamp_init_version(content, version), encoding="utf-8")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -131,14 +72,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Path to teachers_teammate/__init__.py",
     )
     parser.add_argument(
-        "--build-file",
-        default="teachers_teammate/BUILD",
-        help="Path to Bazel BUILD file containing py_wheel target",
-    )
-    parser.add_argument(
-        "--wheel-target",
-        default="teachers_teammate_wheel",
-        help="Name of the py_wheel target whose version should be stamped",
+        "--github-output",
+        help="append `version=<resolved>` to this file ($GITHUB_OUTPUT)",
     )
     return parser.parse_args(argv)
 
@@ -149,12 +84,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         version = normalize_version(args.version)
         if not args.check:
-            stamp_files(
-                version=version,
-                init_path=Path(args.init_file),
-                build_path=Path(args.build_file),
-                target_name=args.wheel_target,
-            )
+            stamp_init_file(version, Path(args.init_file))
+        if args.github_output:
+            with Path(args.github_output).open("a", encoding="utf-8") as handle:
+                handle.write(f"version={version}\n")
     except (OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

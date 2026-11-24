@@ -138,7 +138,14 @@ QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_addon_sm
 ### Python wheel
 
 ```bash
-bazel build //teachers_teammate:teachers_teammate_wheel
+bazel build //teachers_teammate:teachers_teammate_wheel   # the development version
+```
+
+A release build stamps the version into the wheel's metadata and file name; the file is in the
+`.dist` folder, because the name is fixed before the label is substituted:
+
+```bash
+bazel build --stamp --embed_label=1.2.3 //teachers_teammate:teachers_teammate_release_wheel.dist
 ```
 
 ### Installers

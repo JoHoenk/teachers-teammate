@@ -1,5 +1,6 @@
 load("@rules_python//python:defs.bzl", "py_library")
-load("@rules_python//python:packaging.bzl", "py_package", "py_wheel")
+load("@rules_python//python:packaging.bzl", "py_package")
+load(":wheel.bzl", "app_wheel")
 
 # Exposed so //:requirements_{dev,test} can stage it next to pyproject.toml when
 # pip-compile expands the dynamic version (attr = teachers_teammate.__version__).
@@ -608,32 +609,20 @@ genrule(
     tools = ["//tools/release:extract_wheel_requires"],
 )
 
-py_wheel(
+# The version in ``teachers_teammate/__init__.py``: an unstamped build is installable, and
+# ``tests/unit/test_wheel.py`` compares the two.
+app_wheel(
     name = "teachers_teammate_wheel",
-    abi = "none",
-    description_content_type = "text/markdown",
-    description_file = "//:README.md",
-    distribution = "teachers-teammate",
-    entry_points = {
-        "console_scripts": [
-            "teachers-teammate = teachers_teammate.cli:main",
-            "teachers-teammate-gui = teachers_teammate.gui:main_gui",
-            "teachers-teammate-benchmark = teachers_teammate.gui.benchmark:main_benchmark",
-        ],
-    },
-    extra_requires_files = {
-        "wheel_requires_llm.txt": "llm",
-        "wheel_requires_privacy.txt": "privacy",
-    },
-    license = "GPL-3.0-or-later",
-    platform = "any",
-    python_requires = ">=3.14",
-    python_tag = "py3",
-    requires_file = "wheel_requires.txt",
-    summary = "OCR pipeline for handwritten documents",
     version = "0.0.0.dev0",
-    visibility = ["//visibility:public"],
-    deps = [":ocr_pkg"],
+)
+
+# A release build stamps the version: `--stamp --embed_label=<version>`. The file name is fixed
+# before the substitution, so build `:teachers_teammate_release_wheel.dist` and publish the wheel
+# in its folder.
+app_wheel(
+    name = "teachers_teammate_release_wheel",
+    tags = ["manual"],
+    version = "{BUILD_EMBED_LABEL}",
 )
 
 # Every module of the app, for the ratchet test that keeps teacher-facing text in

@@ -211,7 +211,8 @@ def test_the_wheel_version_is_the_package_version(metadata, package_dir: Path) -
     """
     Given  `__version__` in teachers_teammate/__init__.py
     When   the wheel's Version is compared with it
-    Then   they are the same (stamp_versions.py writes both for a release)
+    Then   they are the same — a release stamps `__init__.py` and hands the same version to
+           Bazel as the embed label, and this is the development pair
     """
     init = (package_dir / "__init__.py").read_text(encoding="utf-8")
     match = re.search(r'^__version__\s*=\s*"([^"]+)"', init, flags=re.MULTILINE)

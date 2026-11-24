@@ -45,17 +45,24 @@ jobs:
         with:
           disk-cache: wheel
 
-      - name: Stamp the version into the package and the wheel
+      - name: Stamp the version into the package
+        id: version
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          python tools/release/stamp_versions.py --version "$VERSION"
+          python tools/release/stamp_versions.py --version "$VERSION" \
+            --github-output "$GITHUB_OUTPUT"
 
+      # Bazel substitutes the embed label into the wheel's version and file name, so the tag and
+      # the installed metadata cannot disagree. `.dist` is the folder holding the stamped name.
       - name: Build wheel with Bazel
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          bazel build --config=ci //teachers_teammate:teachers_teammate_wheel
+          bazel build --config=ci --stamp --embed_label="$VERSION" \
+            //teachers_teammate:teachers_teammate_release_wheel.dist
           mkdir -p dist
-          cp bazel-bin/teachers_teammate/*.whl dist/
+          cp bazel-bin/teachers_teammate/teachers_teammate_release_wheel_dist/*.whl dist/
 
       # What a teacher does: `pip install` the file into a clean environment with the versions
       # the app is tested with (the constraints are the test lock), and start what it installed.

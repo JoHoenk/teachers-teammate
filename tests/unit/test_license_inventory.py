@@ -123,6 +123,36 @@ def test_the_compiled_outputs_are_what_the_store_compiles_to() -> None:
     )
 
 
+def test_the_package_carries_the_license_we_ship_under() -> None:
+    """
+    Given  the repository's LICENSE
+    When   the copy the app shows is read
+    Then   it is byte for byte the same text — a relicensed LICENSE without a compile is red
+    """
+    asset = _ROOT / "teachers_teammate" / "assets" / "LICENSE.txt"
+
+    assert asset.is_file(), "the app's own license does not ship: run inventory.py --compile"
+    assert asset.read_bytes() == (_ROOT / "LICENSE").read_bytes(), (
+        "teachers_teammate/assets/LICENSE.txt is stale: run inventory.py --compile"
+    )
+
+
+def test_the_license_the_app_names_is_the_one_in_license() -> None:
+    """
+    Given  the license name the About window and --version print
+    When   it is compared with the first line of the repository's LICENSE
+    Then   the name contains that line, so a relicense that forgets the texts is red
+    """
+    from teachers_teammate.texts import app as app_text  # noqa: PLC0415
+
+    text = (_ROOT / "LICENSE").read_text(encoding="utf-8")
+    heading = next(line.strip() for line in text.splitlines() if line.strip())
+
+    assert heading.casefold() in app_text.LICENSE_TITLE.casefold(), (
+        f"texts/app.py names {app_text.LICENSE_TITLE!r}, LICENSE opens with {heading!r}"
+    )
+
+
 def _notice() -> str:
     """Return the NOTICE of the checkout."""
     return (_ROOT / "NOTICE").read_text(encoding="utf-8")

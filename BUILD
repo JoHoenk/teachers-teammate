@@ -8,6 +8,7 @@ exports_files(
     [
         ".python-version",
         "AGENTS.md",
+        "LICENSE",
         "NOTICE",
         "pyproject.toml",
         "README.md",

@@ -199,7 +199,8 @@ and commit the result; the diff shows any license change. A license that
 | `third_party_licenses/inventory.csv` | tool | one row per component: version, scope, license |
 | `third_party_licenses/texts/` | tool | the license texts from the locked wheels |
 | `third_party_licenses/curated/` | hand | texts no wheel carries (Qt, CPython, the PaddleOCR models); a Qt or Python minor bump leaves a test red until it is refreshed |
-| `teachers_teammate/assets/third_party_licenses.md` | tool | what **Help → Third-Party Licenses** shows |
+| `teachers_teammate/assets/LICENSE.txt` | tool | a copy of `LICENSE`: what the first tab of **Help → Licenses** shows, and every download carries as `LICENSE.txt` |
+| `teachers_teammate/assets/third_party_licenses.md` | tool | what the third-party tab of **Help → Licenses** shows |
 | `NOTICE` | hand | attributions and source pointers; a test checks its versions |
 
 The bundle carries Qt under the LGPL v3 as separate, replaceable files

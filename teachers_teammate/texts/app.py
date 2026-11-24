@@ -1,4 +1,4 @@
-"""The app itself: its name, the names of its steps, and the Help, About and licence windows.
+"""The app itself: its name, the names of its steps, and the Help, About and license windows.
 
 The name is spelled once here, so the main window, the windows' titles and the About text can
 never drift apart.  The step names are shared the same way: the boxes of the main window, the
@@ -22,7 +22,22 @@ BENCHMARK_WINDOW_TITLE = f"{NAME} — OCR Benchmark"
 
 GUIDE_TITLE = f"User Guide — {NAME}"
 ABOUT_TITLE = f"About {NAME}"
-LICENSES_TITLE = f"Third-Party Licenses — {NAME}"
+LICENSES_TITLE = f"Licenses — {NAME}"
+
+#: The license the app is under, where a teacher reads it, and who holds the rights.  One place:
+#: the About window and the ``--version`` notice name the same license.
+COPYRIGHT = "Copyright 2026 Teacher's Teammate contributors"
+LICENSE_TITLE = "Apache License, Version 2.0"
+LICENSE_URL = "https://www.apache.org/licenses/LICENSE-2.0"
+NO_WARRANTY = (
+    "This is free software: you are free to change and redistribute it. "
+    "There is NO WARRANTY, to the extent permitted by law."
+)
+
+#: The two tabs of the Licenses window, and the menu entry that opens it.
+LICENSE_TAB = "This App"
+THIRD_PARTY_TAB = "Third-Party Licenses"
+LICENSES_NAME = "Licenses"
 
 #: The user guide's three tabs, one per page of ``docs/``.
 GUIDE_OVERVIEW = "Overview"
@@ -51,7 +66,12 @@ def guide_page_missing(name: str) -> str:
     return f"Page not found: {name}"
 
 
-LICENSES_MISSING = (
+LICENSE_MISSING = (
+    "The license of this app is not part of this installation.\n\n"
+    "It ships as teachers_teammate/assets/LICENSE.txt."
+)
+
+THIRD_PARTY_MISSING = (
     "Third-party license information is not available in this installation.\n\n"
     "Run tools/licenses/inventory.py --compile to generate it."
 )
@@ -103,5 +123,17 @@ ABOUT_CREDITS = (
     "pypdfium2 &bull; PySide6 &bull; qdarkstyle<br><br>"
     'Inspired by <a href="https://github.com/imanoop7/Ollama-OCR">'
     "Ollama-OCR</a> by imanoop7."
+    "</p>"
+)
+
+#: The license block under the version: who holds the rights, the license, that there is no
+#: warranty, and where the license is read.
+ABOUT_LICENSE = (
+    '<p style="font-size:8pt;">'
+    f"{COPYRIGHT}<br>"
+    f"Licensed under the {LICENSE_TITLE}.<br>"
+    f"{NO_WARRANTY}<br>"
+    f'<a href="{LICENSE_URL}">{LICENSE_URL}</a><br>'
+    f"Help &rarr; {LICENSES_NAME}"
     "</p>"
 )

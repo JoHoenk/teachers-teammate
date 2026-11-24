@@ -557,6 +557,7 @@ genrule(
 filegroup(
     name = "wheel_data",
     srcs = [
+        "assets/LICENSE.txt",
         "assets/teachers_teammate.png",
         "assets/teachers_teammate_icon.png",
         "assets/third_party_inventory.csv",

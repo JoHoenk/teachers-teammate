@@ -290,6 +290,10 @@ options override the file. To see every option:
 teachers-teammate --help
 ```
 
+`teachers-teammate --version` prints the version, the copyright line and the license the app is
+under, and needs no folders. It works where the command line is installed (with pip); in a
+download, the same text is in **Help → About** and **Help → Licenses**.
+
 A typical run:
 
 ```bash

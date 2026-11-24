@@ -1147,6 +1147,7 @@ py_test(
     args = ["unit/test_license_inventory.py"],
     data = [
         "//:.python-version",
+        "//:LICENSE",
         "//:NOTICE",
         "//:license_store",
         "//:pyproject.toml",
@@ -2615,6 +2616,7 @@ py_test(
     size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_widgets.py"],
     args = ["gui/test_gui_widgets.py"],
+    data = ["//teachers_teammate:assets"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )

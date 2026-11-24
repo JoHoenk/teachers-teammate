@@ -698,6 +698,81 @@ def test_about_dialog_has_version_label(qtbot) -> None:
     assert any("Version" in lbl.text() for lbl in labels)
 
 
+@pytest.mark.gui
+def test_about_dialog_names_the_license_and_the_copyright(qtbot) -> None:
+    """
+    Given  an AboutDialog
+    When   it is created
+    Then   one label carries who holds the rights and the license, and where to read it
+    """
+    from teachers_teammate.gui._help_dialog import AboutDialog  # noqa: PLC0415
+    from teachers_teammate.texts import app as app_text  # noqa: PLC0415
+
+    dialog = AboutDialog()
+    qtbot.addWidget(dialog)
+
+    texts = [lbl.text() for lbl in dialog.findChildren(QLabel)]
+    block = next((text for text in texts if app_text.COPYRIGHT in text), None)
+    assert block is not None, "the About window shows no copyright line"
+    assert app_text.LICENSE_TITLE in block
+    assert "NO WARRANTY" in block
+    assert app_text.LICENSE_URL in block
+
+
+# ── LicensesDialog ────────────────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_the_licenses_dialog_has_a_tab_for_our_license_and_one_for_the_rest(qtbot) -> None:
+    """
+    Given  a LicensesDialog
+    When   it is created
+    Then   it has two tabs, and the first one shows the license file as it ships
+    """
+    from PySide6.QtWidgets import QTabWidget, QTextBrowser  # noqa: PLC0415
+    from teachers_teammate.gui._help_dialog import _LICENSE_PATH, LicensesDialog  # noqa: PLC0415
+    from teachers_teammate.texts import app as app_text  # noqa: PLC0415
+
+    dialog = LicensesDialog()
+    qtbot.addWidget(dialog)
+
+    tabs = dialog.findChild(QTabWidget)
+    assert tabs is not None
+    assert [tabs.tabText(index) for index in range(tabs.count())] == [
+        app_text.LICENSE_TAB,
+        app_text.THIRD_PARTY_TAB,
+    ]
+    own_page = tabs.widget(0).findChild(QTextBrowser)
+    shipped = _LICENSE_PATH.read_text(encoding="utf-8")
+    assert own_page.toPlainText().strip() == shipped.strip()
+
+
+@pytest.mark.gui
+def test_a_missing_license_file_says_so_instead_of_showing_an_empty_tab(qtbot, monkeypatch) -> None:
+    """
+    Given  an installation without our own license and without the third-party page
+    When   the LicensesDialog is created
+    Then   each tab says its text is missing instead of showing nothing
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    from PySide6.QtWidgets import QTabWidget, QTextBrowser  # noqa: PLC0415
+
+    from teachers_teammate.gui import _help_dialog  # noqa: PLC0415
+    from teachers_teammate.texts import app as app_text  # noqa: PLC0415
+
+    nowhere = Path("/nonexistent/LICENSE")
+    monkeypatch.setattr(_help_dialog, "_LICENSE_PATH", nowhere)
+    monkeypatch.setattr(_help_dialog, "_LICENSES_PATH", nowhere)
+
+    dialog = _help_dialog.LicensesDialog()
+    qtbot.addWidget(dialog)
+
+    tabs = dialog.findChild(QTabWidget)
+    assert tabs.widget(0).findChild(QTextBrowser).toPlainText() == app_text.LICENSE_MISSING
+    assert tabs.widget(1).findChild(QTextBrowser).toPlainText() == app_text.THIRD_PARTY_MISSING
+
+
 # ── Bug 1: load_pixmap (safe unicode-path image loading) ──────────────────
 
 

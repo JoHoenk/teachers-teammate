@@ -50,7 +50,8 @@ hdiutil detach "${OLD_MOUNT}"
 MOUNT="${WORK}/dmg"
 mkdir -p "${MOUNT}"
 hdiutil attach "${NEW_DMG}" -nobrowse -mountpoint "${MOUNT}"
-# The LGPL needs the notice and the license texts in every download.
+# Our own license, and the LGPL's notice and license texts, in every download.
+test -s "${MOUNT}/Licenses/LICENSE.txt"
 test -s "${MOUNT}/Licenses/NOTICE.txt"
 test -s "${MOUNT}/Licenses/third_party_license.txt"
 # Finder replaces the bundle rather than merging into it. What stands in /Applications

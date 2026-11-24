@@ -22,6 +22,19 @@ DESCRIPTION = (
     "and builds DOCX documents with grammar/spelling correction proposals."
 )
 
+
+def version_notice(version: str) -> str:
+    """Return the four lines ``--version`` prints: what this is, whose it is, and its license."""
+    return "\n".join(
+        (
+            f"{NAME} {version}",
+            app.COPYRIGHT,
+            f"Licensed under the {app.LICENSE_TITLE}: <{app.LICENSE_URL}>.",
+            app.NO_WARRANTY,
+        )
+    )
+
+
 HELP_CONFIG = (
     "Path to a TOML config file. Defaults to ocr.toml in the app's settings folder "
     "(the file the app window saves) when it exists.  CLI arguments override file values."

@@ -21,6 +21,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 import sys
 
+from . import __version__
 from ._model_defaults import default_model_for_task
 from .application.composition import AppServices, inject_addon_packages_dir, start_logging
 from .config import Config, load_config_file
@@ -175,6 +176,26 @@ def _parse_args(
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
+def _add_version_arg(parser: argparse.ArgumentParser) -> None:
+    """Add ``--version``: the notice with the copyright and the license, then exit 0."""
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=cli_text.version_notice(__version__),
+    )
+
+
+def exit_on_version(argv: Sequence[str] | None) -> None:
+    """Print the version notice and exit 0 when *argv* asks for it.
+
+    ``main()`` calls it before the services are built, the log starts or the config file is read,
+    so a broken setup does not hide the version.
+    """
+    early = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    _add_version_arg(early)
+    early.parse_known_args(list(argv) if argv is not None else None)
+
+
 def _make_parser(providers: list[str] | None) -> argparse.ArgumentParser:
     """Return the command line, with one function per group of arguments."""
     parser = argparse.ArgumentParser(
@@ -188,6 +209,7 @@ def _make_parser(providers: list[str] | None) -> argparse.ArgumentParser:
         metavar="FILE",
         help=cli_text.HELP_CONFIG,
     )
+    _add_version_arg(parser)
     _add_io_args(parser)
     _add_ocr_args(parser)
     _add_correction_args(parser, providers)
@@ -594,6 +616,7 @@ def main(
     """CLI entry point that exits the process with the computed return code."""
     # A wheel install starts here, not in __main__ or run_gui.py: packages added under
     # Settings → Add-ons must be importable after a restart in every way of starting the app.
+    exit_on_version(argv)
     inject_addon_packages_dir()
     if app_service is None:
         from .cli_composition import build_cli_app_service  # noqa: PLC0415  # imports this module

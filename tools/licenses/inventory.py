@@ -55,8 +55,10 @@ TEXTS = STORE / "texts"
 CURATED = STORE / "curated"
 COMPILED = STORE / "third_party_license.txt"
 NOTICE = ROOT / "NOTICE"
+LICENSE = ROOT / "LICENSE"
 ASSET_MD = ROOT / "teachers_teammate" / "assets" / "third_party_licenses.md"
 ASSET_CSV = ROOT / "teachers_teammate" / "assets" / "third_party_inventory.csv"
+ASSET_LICENSE = ROOT / "teachers_teammate" / "assets" / "LICENSE.txt"
 POLICY = Path(__file__).resolve().parent / "policy.toml"
 TEST_LOCK = ROOT / "requirements_test_lock.txt"
 ADDON_LOCK = ROOT / "requirements_addons_lock.txt"
@@ -886,13 +888,17 @@ def write_compiled(
     store: Path = STORE,
     compiled: Path = COMPILED,
     asset_md: Path = ASSET_MD,
+    asset_license: Path = ASSET_LICENSE,
+    license_file: Path = LICENSE,
 ) -> None:
-    """Write the two compiled outputs from the committed store."""
+    """Write the compiled outputs, and the copy of our own license the app shows."""
     rows = list(rows)
     compiled.parent.mkdir(parents=True, exist_ok=True)
     compiled.write_text(compile_text(rows, policy, store), encoding="utf-8")
     asset_md.parent.mkdir(parents=True, exist_ok=True)
     asset_md.write_text(compile_markdown(rows, policy, store), encoding="utf-8")
+    asset_license.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(license_file, asset_license)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -925,7 +931,7 @@ def main(argv: list[str] | None = None) -> int:
     policy = load_policy(POLICY)
     if arguments.compile:
         rows = read_inventory(INVENTORY)
-        write_compiled(rows, policy, STORE, COMPILED, ASSET_MD)
+        write_compiled(rows, policy, STORE, COMPILED, ASSET_MD, ASSET_LICENSE, LICENSE)
         write_asset(rows, ASSET_CSV)
         print(f"Compiled {len(rows)} rows")
         return 0
@@ -962,7 +968,7 @@ def main(argv: list[str] | None = None) -> int:
 
     collect_texts(rows, policy, STORE, hashes=lock_hashes(TEST_LOCK.read_text(encoding="utf-8")))
     write_inventory(rows, INVENTORY)
-    write_compiled(rows, policy, STORE, COMPILED, ASSET_MD)
+    write_compiled(rows, policy, STORE, COMPILED, ASSET_MD, ASSET_LICENSE, LICENSE)
     write_asset(rows, ASSET_CSV)
     print(f"Wrote {len(rows)} rows to {INVENTORY}")
     return 0

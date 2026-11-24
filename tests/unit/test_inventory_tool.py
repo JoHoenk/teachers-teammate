@@ -48,6 +48,7 @@ def _into(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ("COMPILED", "third_party_license.txt"),
         ("ASSET_CSV", "third_party_inventory.csv"),
         ("ASSET_MD", "third_party_licenses.md"),
+        ("ASSET_LICENSE", "LICENSE.txt"),
     ):
         monkeypatch.setattr(inventory, name, tmp_path / relative)
 

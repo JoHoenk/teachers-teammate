@@ -23,6 +23,7 @@ import pytest
 #: Everything besides Python files that a wheel install needs (see ``wheel_data`` in
 #: ``teachers_teammate/BUILD``).
 _DATA_FILES = (
+    "teachers_teammate/assets/LICENSE.txt",
     "teachers_teammate/assets/teachers_teammate.png",
     "teachers_teammate/assets/teachers_teammate_icon.png",
     "teachers_teammate/assets/third_party_inventory.csv",

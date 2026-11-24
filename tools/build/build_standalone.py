@@ -66,7 +66,6 @@ def _ensure_icns(source_png: Path, out_icns: Path) -> None:
                 ],
                 check=True,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
             )
             double = size * 2
             subprocess.run(
@@ -81,13 +80,11 @@ def _ensure_icns(source_png: Path, out_icns: Path) -> None:
                 ],
                 check=True,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
             )
         subprocess.run(
             ["iconutil", "-c", "icns", str(iconset), "-o", str(out_icns)],
             check=True,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
         )
 
 

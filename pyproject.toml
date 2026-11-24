@@ -53,7 +53,7 @@ privacy = [
 
 # ── Tooling extras ──────────────────────────────────────────────────────────
 # These are the single source of truth for the lint and test toolchains. The Bazel
-# lock files are compiled from them via `bazel run //:requirements_{dev,test}.update`
+# lock files are compiled from them via `bazel run //:requirements{,_dev,_addons}.update`
 # (see //BUILD). Installing the extra also pulls the base runtime deps, so a
 # `pip install -e ".[test]"` env can run the full suite.
 test = [
@@ -86,7 +86,7 @@ teachers-teammate-benchmark = "teachers_teammate.gui.benchmark:main_benchmark"
 # expression and `license-files` need 77 (PEP 639).
 #
 # The help pages live in `docs/`, outside the package, so a wheel built here has none; the wheel
-# the release ships is Bazel's (//teachers_teammate:teachers_teammate_wheel), which copies them in
+# the release ships is Bazel's (//teachers_teammate:teachers_teammate_release_wheel), which copies them in
 # as `teachers_teammate/_docs/`.  An editable install finds them where they are.
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"

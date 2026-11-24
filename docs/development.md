@@ -20,7 +20,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
 The same script builds the bundle's venv (`--for build`) and the one the tests run in
 (`--for test`), so a developer environment and CI install the same versions. Running it again
-recreates the venv; it refuses a folder that is not one.
+(after `deactivate`) recreates the venv; it refuses a folder that is not one.
 
 ## Development checks
 
@@ -95,6 +95,10 @@ How tests are written, run and given their Bazel dependencies: see *Testing Guid
 bazel build //docs:html
 bazel run //docs:html.serve
 ```
+
+The diagrams are drawn by PlantUML, whose jar is the one Maven artifact (`MODULE.bazel`) and is
+pinned in `maven_install.json`. A different PlantUML version needs
+`bazel run @blueprint_maven_dependencies//:pin` afterwards, which rewrites that file.
 
 ## Dependency lock updates
 

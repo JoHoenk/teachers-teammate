@@ -46,8 +46,8 @@ jobs:
         run: python3 tools/release/release_tag.py check "$TAG" --repo "$REPO" --sha "$SHA"
 
   # ── Quality gate ─────────────────────────────────────────────────────────
-  # The merge queue keeps `main` green, but a tag can be pushed at any time and the release
-  # publishes artifacts publicly, so lint + tests run again as a hard gate.
+  # `main` requires the merge gate with up-to-date branches, but a tag can be pushed at any time
+  # and the release publishes artifacts publicly, so lint + tests run again as a hard gate.
   lint:
     needs: [validate]
     uses: ./.github/workflows/format_lint.yml

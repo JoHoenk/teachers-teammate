@@ -384,8 +384,8 @@ def test_bundled_models_check_ignores_models_downloaded_earlier(
     assert READER_MODELS[0].key in result
 
 
-def test_gpl_only_qt_files_names_the_library_and_the_python_module() -> None:
-    """Given file names of a bundle, When they are checked, Then only GPL-only Qt modules are named."""
+def test_unused_qt_files_names_the_library_and_the_python_module() -> None:
+    """Given file names of a bundle, When they are checked, Then only unused Qt modules are named."""
     names = [
         "libQt6Core.so.6",
         "libQt6Charts.so.6",
@@ -398,7 +398,7 @@ def test_gpl_only_qt_files_names_the_library_and_the_python_module() -> None:
         "libqjpeg.so",
     ]
 
-    assert frozen_modes.gpl_only_qt_files(names) == [
+    assert frozen_modes.unused_qt_files(names) == [
         "Qt6Graphs.dll",
         "Qt6GraphsWidgets.dll",
         "QtCharts.abi3.so",
@@ -407,28 +407,28 @@ def test_gpl_only_qt_files_names_the_library_and_the_python_module() -> None:
     ]
 
 
-def test_qt_license_check_fails_on_a_gpl_only_module(tmp_path: Path, monkeypatch) -> None:
-    """Given a bundle folder with QtCharts, When the license check runs, Then it names the file."""
+def test_qt_module_check_fails_on_an_unused_module(tmp_path: Path, monkeypatch) -> None:
+    """Given a bundle folder with QtCharts, When the Qt module check runs, Then it names the file."""
     lib = tmp_path / "PySide6" / "Qt" / "lib"
     lib.mkdir(parents=True)
     (lib / "libQt6Core.so.6").write_bytes(b"")
     (lib / "libQt6Charts.so.6").write_bytes(b"")
     monkeypatch.setattr(frozen_modes, "_root", lambda: tmp_path)
 
-    problem = frozen_modes._check_qt_licenses()
+    problem = frozen_modes._check_qt_modules()
 
     assert problem is not None
     assert "libQt6Charts.so.6" in problem
     assert "libQt6Core" not in problem
 
 
-def test_qt_license_check_passes_on_an_lgpl_bundle(tmp_path: Path, monkeypatch) -> None:
-    """Given a bundle folder with only LGPL Qt modules, When the license check runs, Then it passes."""
+def test_qt_module_check_passes_on_a_bundle_of_used_modules(tmp_path: Path, monkeypatch) -> None:
+    """Given a bundle folder with only the Qt modules the app uses, When the Qt module check runs, Then it passes."""
     (tmp_path / "libQt6Core.so.6").write_bytes(b"")
     (tmp_path / "QtWidgets.abi3.so").write_bytes(b"")
     monkeypatch.setattr(frozen_modes, "_root", lambda: tmp_path)
 
-    assert frozen_modes._check_qt_licenses() is None
+    assert frozen_modes._check_qt_modules() is None
 
 
 def test_reported_version_takes_the_wheels_opencv_version() -> None:
@@ -459,18 +459,18 @@ def test_reported_version_takes_the_dunder_version_of_other_packages() -> None:
     assert reported == "6.12.0"
 
 
-def test_spec_drops_the_same_gpl_only_modules_as_the_smoke_test() -> None:
-    """Given the build spec, When its GPL-only list is read, Then it equals the smoke test's list."""
+def test_spec_drops_the_same_unused_modules_as_the_smoke_test() -> None:
+    """Given the build spec, When its unused-Qt list is read, Then it equals the smoke test's list."""
     spec = _SPEC
     tree = ast.parse(spec.read_text(encoding="utf-8"))
     listed = next(
         ast.literal_eval(node.value)
         for node in tree.body
         if isinstance(node, ast.Assign)
-        and any(isinstance(t, ast.Name) and t.id == "GPL_ONLY_QT_MODULES" for t in node.targets)
+        and any(isinstance(t, ast.Name) and t.id == "UNUSED_QT_MODULES" for t in node.targets)
     )
 
-    assert tuple(listed) == frozen_modes.GPL_ONLY_QT_MODULES
+    assert tuple(listed) == frozen_modes.UNUSED_QT_MODULES
 
 
 # ── the add-on smoke test ────────────────────────────────────────────────────

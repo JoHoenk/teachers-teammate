@@ -9,18 +9,17 @@ This guide covers contributor workflows and the codebase. What teachers see is i
 
 - Python 3.14
 - [Bazel](https://bazel.build/) — used as the build and test harness; all `bazel` commands below assume it is on `PATH`
-- [uv](https://docs.astral.sh/uv/) (optional — speeds up venv creation)
 
 ### Set up the development environment
 
 ```bash
-# Create a virtualenv and install all dependencies (including dev and test extras)
-python -m venv .venv
+# A venv with every extra, installed against the pinned constraints
+python tools/build/make_venv.py .venv --for dev
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[dev,test,llm]"
 ```
 
-If you have `uv` installed, use `uv venv` and `uv pip install -e ".[dev,test,llm]"` instead.
+The same script builds the bundle's venv (`--for build`) and the one the tests run in
+(`--for test`), so a developer environment and CI install the same versions.
 
 ## Development checks
 

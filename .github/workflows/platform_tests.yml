@@ -42,7 +42,7 @@ jobs:
       - name: Create the build environment
         uses: ./.github/actions/build-venv
         with:
-          install: "-e .[test]"
+          for: test
 
       - name: Run the unit and GUI tests
         run: >-

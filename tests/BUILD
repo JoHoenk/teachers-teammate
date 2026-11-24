@@ -1353,6 +1353,16 @@ py_test(
 )
 
 py_test(
+    name = "test_make_venv",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_make_venv.py"],
+    args = ["unit/test_make_venv.py"],
+    main = "run_test.py",
+    tags = ["unit"],
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+)
+
+py_test(
     name = "test_make_version_resource",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_make_version_resource.py"],

@@ -934,7 +934,7 @@ def main_gui(
     if diagnostics is not None:
         diagnostics.phase("main_gui entered (imports and the early splash are done)")
         diagnostics.start_watching()
-    # Idempotent: run_gui.py and __main__.py did it already; a wheel install's entry point
+    # Idempotent: frozen_entry.py and __main__.py did it already; a wheel install's entry point
     # did not, and a language model downloaded in a session would be lost after a restart.
     inject_addon_packages_dir()
     diagnostics_phase("add-on packages folder on sys.path")

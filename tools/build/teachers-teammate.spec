@@ -269,7 +269,7 @@ for _shared in ("numpy", "pydantic", "requests", "pillow"):
     datas += copy_metadata(_shared)
 
 a = Analysis(
-    [str(ROOT / "tools" / "build" / "run_gui.py")],
+    [str(ROOT / "teachers_teammate" / "frozen_entry.py")],
     pathex=[str(ROOT)],
     binaries=binaries,
     datas=datas,

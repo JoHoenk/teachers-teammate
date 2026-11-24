@@ -1,6 +1,6 @@
 """Bazel targets for the standalone-build tools.
 
-The other scripts in this folder run as programs (build_standalone.py, run_gui.py);
+The other scripts in this folder run as programs (build_standalone.py);
 addon_constraints.py, addon_lock.py, check_addon_resolution.py, fetch_models.py,
 make_constraints.py, make_venv.py, check_pins.py, check_linux_bundle.py and check_macos_bundle.py
 are also libraries, so a unit test can drive them.  The license inventory lives in
@@ -48,7 +48,7 @@ py_library(
 )
 
 # Every script of this folder, for //:py_ruff and //:py_ty: build_tools_lib above holds only the
-# ones a unit test imports, and the rest (build_standalone.py, run_gui.py, ...) is what ships.
+# ones a unit test imports, and the rest (build_standalone.py, ...) is what ships.
 py_library(
     name = "all_lib",
     srcs = glob(["*.py"]),

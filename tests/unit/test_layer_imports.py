@@ -26,6 +26,7 @@ _COMPOSITION_MODULES: frozenset[str] = frozenset(
     {
         "__main__.py",
         "cli_composition.py",
+        "frozen_entry.py",
         "frozen_modes.py",
         "gui/__main__.py",
         "gui/benchmark/__main__.py",
@@ -69,7 +70,7 @@ def _layer_of(parts: list[str], package: Path) -> str:
         return "core"
     if first in _CLI_MODULES:
         return "cli"
-    if first == "frozen_modes":
+    if first in {"frozen_entry", "frozen_modes"}:
         return "gui"
     raise AssertionError(f"{first} is in no layer: add it to teachers_teammate/BUILD and here")
 

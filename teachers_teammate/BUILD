@@ -350,7 +350,8 @@ _GUI_SRCS = [
     "gui/setup/_flow.py",
     "gui/setup/_pages.py",
     "gui/setup/_summary.py",
-    # Imports GUI modules (the smoke test) and is only run by the installed app.
+    # Import GUI modules (the smoke test) and are only run by the installed app.
+    "frozen_entry.py",
     "frozen_modes.py",
 ]
 

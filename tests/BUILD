@@ -1041,14 +1041,13 @@ py_test(
 )
 
 py_test(
-    name = "test_run_gui",
+    name = "test_frozen_entry",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_run_gui.py"],
-    args = ["unit/test_run_gui.py"],
-    data = ["//tools/build:all_sources"],
+    srcs = _COMMON_SRCS + ["unit/test_frozen_entry.py"],
+    args = ["unit/test_frozen_entry.py"],
     main = "run_test.py",
     tags = ["unit"],
-    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(

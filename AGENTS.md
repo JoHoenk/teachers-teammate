@@ -45,7 +45,8 @@ gui/ / cli.py    — adapters; no discovery or availability logic
 `gui/` and `cli.py` import `pkg`, `core`, `domain`, `application` and `texts` only — never
 `infrastructure`. The modules that wire concrete classes are the exception and the only
 exception: `gui/composition.py`, `gui/__main__.py`, `gui/benchmark/composition.py`,
-`gui/benchmark/__main__.py`, `cli_composition.py`, `__main__.py` and `frozen_modes.py`.
+`gui/benchmark/__main__.py`, `cli_composition.py`, `__main__.py`, `frozen_entry.py` and
+`frozen_modes.py`.
 A module does not re-export a name it does not define either: a name has one home, and a
 caller imports it from there.
 

@@ -3409,13 +3409,13 @@ update" below.
 (`paddlepaddle`, `paddleocr`, `paddlex`, `opencv-contrib-python`, which shadowed the app's own
 OpenCV) is deleted by its `RECORD` files only; numpy is left alone.  It is then called:
 
-- At application startup (`run_gui.py`, `gui/__main__.py`, `__main__.py`), so packages
+- At application startup (`frozen_entry.py`, `gui/__main__.py`, `__main__.py`), so packages
   installed during a previous session are immediately available.
 - After every successful install or model download, so the newly installed package is
   usable in the same session without a restart.
 
 The function is idempotent — safe to call multiple times.  Every entry point calls it first
-(`application/composition.inject_addon_packages_dir()`): `run_gui.py` and `__main__.py`,
+(`application/composition.inject_addon_packages_dir()`): `frozen_entry.py` and `__main__.py`,
 and `main_gui()`, `main_benchmark()` and `cli.main()` for a wheel install, so a spaCy model
 downloaded in one session is found after a restart however the app was started.
 
@@ -3514,11 +3514,12 @@ dispatch flag and launches the GUI again instead of pip.
 
 To avoid this, every pip install in a frozen build re-invokes the exe with the custom flag
 `--_pip_install_mode` followed by the normal pip arguments, plus `--target <packages_dir>`.
-The entry script (`tools/build/run_gui.py`) intercepts this flag before any GUI code is loaded
+The entry module (`teachers_teammate/frozen_entry.py`) intercepts this flag before any GUI code
+is loaded
 and calls `pip._internal.cli.main()` directly:
 
 ```python
-# tools/build/run_gui.py
+# teachers_teammate/frozen_entry.py
 if "--_pip_install_mode" in sys.argv:
     _pip_args = sys.argv[sys.argv.index("--_pip_install_mode") + 1:]
     from pip._internal.cli.main import main as _pip_main
@@ -3582,7 +3583,7 @@ In frozen builds pip must run inside the frozen Python interpreter, so the exe i
 with `--_spacy_download_mode <url> --target <packages_dir>`:
 
 ```python
-# tools/build/run_gui.py
+# teachers_teammate/frozen_entry.py
 if "--_spacy_download_mode" in sys.argv:
     _download_url = sys.argv[idx + 1]
     # call pip._internal.cli.main(["install", "--target", ..., _download_url])

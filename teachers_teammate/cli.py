@@ -660,7 +660,7 @@ def main(
     exit_fn: Callable[[int], None] = sys.exit,
 ) -> None:
     """CLI entry point that exits the process with the computed return code."""
-    # A wheel install starts here, not in __main__ or run_gui.py: packages added under
+    # A wheel install starts here, not in __main__ or frozen_entry.py: packages added under
     # Settings → Add-ons must be importable after a restart in every way of starting the app.
     exit_on_version(argv)
     inject_addon_packages_dir()

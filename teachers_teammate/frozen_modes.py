@@ -1,7 +1,7 @@
 """Hidden command-line modes of the installed app.
 
 The frozen build is ``--windowed``: on Windows it has no console, so these modes report
-through a file and through the exit code. ``tools/build/run_gui.py`` dispatches them
+through a file and through the exit code. ``teachers_teammate/frozen_entry.py`` dispatches them
 before the splash screen and before any heavy import.
 
 ``run_smoke_test`` is what proves a build is complete: the modules the app loads lazily,

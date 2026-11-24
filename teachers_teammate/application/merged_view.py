@@ -16,16 +16,17 @@ from functools import lru_cache
 import logging
 from pathlib import Path
 
+from ..domain.document_state import DocumentState, machine_texts, reset_fields
 from ..domain.formatted_text import TextFormat
 from ..domain.freshness import (
+    ExpectedHashes,
     correction_kept_over_settings,
     first_stale_stage_for_hashes,
+    stage_hashes,
 )
 from ..domain.proofreading.review import CorrectionReview, fitted_review
 from ..domain.stages import Stage
 from ..domain.teacher_work import TeacherWork, current_texts, work_status
-from ..infrastructure.state_repository import DocumentState, machine_texts, reset_fields
-from ..infrastructure.workflow.cache_service import ExpectedHashes, stage_hashes
 from .document_view import DocumentStateView, to_view
 from .formatting import TextFormatter
 

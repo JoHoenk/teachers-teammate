@@ -1,20 +1,32 @@
-"""Domain freshness and reset policy helpers for cached document state."""
+"""When a stored result no longer holds: the stage hashes and what they say is stale.
+
+A result is stored with the hash of the settings it was made under.  A run computes the hash its
+settings ask for today and compares the two; a different hash means the result was made by other
+settings, so the file is read (and sent) again.  Nothing here does I/O: the facts a hash needs
+from the machine are passed in (see ``teachers_teammate.cache_keys``).
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+from typing import TYPE_CHECKING
 
-from .stages import Stage, normalize_stage
+from .document_state import DocumentState, machine_texts
+from .stages import Stage
+from .teacher_work import current_texts, text_identity
+
+if TYPE_CHECKING:
+    from .teacher_work import TeacherWork
 
 
-@dataclass(frozen=True)
-class ResetPolicy:
-    """Describes which cached outputs should be cleared for a reset request."""
-
-    clear_ocr: bool
-    clear_correction: bool
-    clear_evaluation: bool
-    clear_preview_artifacts: bool
+def compute_config_hash(*parts: str) -> str:
+    """Return SHA-256 hash over ordered configuration parts."""
+    hasher = hashlib.sha256()
+    for part in parts:
+        hasher.update(part.encode("utf-8"))
+        hasher.update(b"\0")
+    return hasher.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -49,28 +61,51 @@ class StageHashes:
     """The run reviews the content: only then can its settings make a stored review stale."""
 
 
-def reset_policy_from_stage(stage: str) -> ResetPolicy:
-    """Return reset policy for stage invalidation beginning at *stage*."""
-    stage_name = normalize_stage(stage)
-    if stage_name is Stage.OCR:
-        return ResetPolicy(
-            clear_ocr=True,
-            clear_correction=True,
-            clear_evaluation=True,
-            clear_preview_artifacts=True,
-        )
-    if stage_name is Stage.CORRECTION:
-        return ResetPolicy(
-            clear_ocr=False,
-            clear_correction=True,
-            clear_evaluation=True,
-            clear_preview_artifacts=False,
-        )
-    return ResetPolicy(
-        clear_ocr=False,
-        clear_correction=False,
-        clear_evaluation=True,
-        clear_preview_artifacts=False,
+@dataclass(frozen=True)
+class ExpectedHashes:
+    """The stage hashes the current settings and the document's content ask for."""
+
+    ocr_config_hash: str
+    correction_config_hash: str
+    eval_config_hash: str
+    correction_enabled: bool = True
+    """The run proofreads: only then can its settings make a stored proofreading stale."""
+    evaluation_enabled: bool = True
+    """The run reviews the content: only then can its settings make a stored review stale."""
+
+
+def stage_hashes(
+    state: DocumentState, work: TeacherWork | None, expected: ExpectedHashes
+) -> StageHashes:
+    """Return the freshness snapshot of *state* under *expected*, with the teacher's work.
+
+    The one place that turns a work into the three flags freshness needs: a transcription part
+    freezes the reading, and so does a corrections part the teacher worked on (reading the pages
+    again could change the transcription the proofreading was made from, and the corrections
+    would stop applying); the current transcription is what a proofreading must have been made
+    from, and a corrections part the teacher worked on keeps its answer.  Both the run
+    (``CacheReconciliationService.prepare``) and the queue (``reconciled_view``) ask
+    here, so they agree on what is stale and what is kept.
+    """
+    texts = current_texts(machine_texts(state), work)
+    corrections = texts.corrections_work
+    return StageHashes(
+        ocr_done=state.ocr_done,
+        ocr_config_hash=state.ocr_config_hash,
+        expected_ocr_config_hash=expected.ocr_config_hash,
+        correction_done=state.correction_done,
+        correction_config_hash=state.correction_config_hash,
+        expected_correction_config_hash=expected.correction_config_hash,
+        evaluation_done=state.evaluation_done,
+        eval_config_hash=state.eval_config_hash,
+        expected_eval_config_hash=expected.eval_config_hash,
+        ocr_frozen=(work is not None and work.transcription is not None)
+        or (corrections is not None and corrections.worked_on),
+        correction_source=state.correction_source_hash,
+        expected_correction_source=text_identity(texts.transcription),
+        correction_kept=corrections is not None and corrections.worked_on,
+        correction_enabled=expected.correction_enabled,
+        evaluation_enabled=expected.evaluation_enabled,
     )
 
 

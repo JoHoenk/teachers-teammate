@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from teachers_teammate.domain.document_state import reset_policy_from_stage
 from teachers_teammate.domain.freshness import (
     StageHashes,
     correction_kept_over_settings,
     first_stale_stage_for_hashes,
-    reset_policy_from_stage,
     should_invalidate_preview_artifact,
 )
 from teachers_teammate.domain.pdf_text_layer import (

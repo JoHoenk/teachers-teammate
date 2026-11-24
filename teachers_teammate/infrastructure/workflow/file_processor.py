@@ -10,6 +10,7 @@ import threading
 from typing import TYPE_CHECKING
 
 from ...domain.anonymization import leftover_placeholders, restore_with_offsets
+from ...domain.document_state import machine_texts
 from ...domain.formatted_text import TextFormat, join_labelled_pages
 from ...domain.output_files import (
     ANONYMIZED_TEXT_SUFFIX,
@@ -71,7 +72,6 @@ from ...texts.run import RESULTS_CACHED, docx_failed, output_not_saved, text_fil
 from ..ocr_formats import plain_text_of
 from ..reporting import StdoutReporter
 from ..run_stats import RunStatsCollector
-from ..state_repository import machine_texts
 from .cache_service import CacheContext, CacheReconciliationService
 from .ocr_service import OCRStageService
 from .preprocess_service import PreparedInput, PreprocessService

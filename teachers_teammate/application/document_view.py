@@ -11,10 +11,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..domain.data_location import SentRecord, SentStatus
+from ..domain.document_state import DocumentState
 from ..domain.proofreading.review import CorrectionReview
 from ..domain.stages import Stage
 from ..domain.teacher_work import WorkStatus
-from ..infrastructure.state_repository import DocumentState
 
 
 @dataclass(frozen=True)

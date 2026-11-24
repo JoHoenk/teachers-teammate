@@ -13,7 +13,7 @@ from teachers_teammate.application.document_view import to_view
 from teachers_teammate.application.merged_view import merged_view
 from teachers_teammate.domain.proofreading.edits import edits
 from teachers_teammate.domain.proofreading.review import CorrectionReview, edit_note
-from teachers_teammate.infrastructure.state_repository import DocumentState
+from teachers_teammate.domain.document_state import DocumentState
 
 RAW = "Der bunte Hund bellt laut."
 CORRECTED = "Der braune Hund bellt laut."

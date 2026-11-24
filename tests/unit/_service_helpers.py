@@ -14,6 +14,7 @@ import pytest
 from teachers_teammate.config import Config
 from teachers_teammate.application.composition import AppServices, build_app_services
 from teachers_teammate.application.commands import DocumentCommands
+from teachers_teammate.domain.document_state import machine_texts
 from teachers_teammate.domain.teacher_work import text_identity
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.infrastructure.onnx.store import ModelStore
@@ -22,7 +23,6 @@ from teachers_teammate.infrastructure.state_repository import (
     OcrResultRecord,
     StateRepository,
     compute_file_hash,
-    machine_texts,
 )
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore
 from teachers_teammate.infrastructure.workflow.cache_service import CacheReconciliationService

@@ -23,7 +23,7 @@ from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.domain.stages import Stage
 from teachers_teammate.infrastructure.ocr_processor import get_ocr_prompt
 from teachers_teammate.infrastructure.onnx.store import ModelStore
-from teachers_teammate.infrastructure.state_repository import compute_config_hash
+from teachers_teammate.domain.freshness import compute_config_hash
 from teachers_teammate.infrastructure.workflow.cache_service import (
     _preprocess_fingerprint,
     compute_correction_config_hash,
@@ -265,10 +265,7 @@ def _review_keys(tmp_path: Path) -> dict[str, str]:
 
 def _privacy_keys(tmp_path: Path) -> dict[str, str]:
     """Return the privacy fingerprint of every case of the matrix."""
-    return {
-        name: privacy_fingerprint(config)
-        for name, config in _hidden_configs(tmp_path).items()
-    }
+    return {name: privacy_fingerprint(config) for name, config in _hidden_configs(tmp_path).items()}
 
 
 def _sent_records(tmp_path: Path) -> dict[str, str]:

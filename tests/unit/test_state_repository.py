@@ -15,11 +15,11 @@ from teachers_teammate.domain.data_location import SentRecord
 from teachers_teammate.application.document_view import to_view
 from teachers_teammate.domain.freshness import StageHashes, first_stale_stage_for_hashes
 from teachers_teammate.domain.stages import STAGE_ORDER, Stage
+from teachers_teammate.domain.document_state import DocumentState
+from teachers_teammate.domain.freshness import compute_config_hash
 from teachers_teammate.infrastructure.state_repository import (
-    DocumentState,
     OcrResultRecord,
     StateRepository,
-    compute_config_hash,
     compute_file_hash,
 )
 from teachers_teammate.infrastructure.storage_root import document_stem
@@ -935,7 +935,6 @@ def test_state_without_preprocess_info_loads_with_unknown_steps(tmp_path: Path) 
     assert to_view(src, loaded).preprocess_steps is None
 
 
-
 def test_invalidate_from_stage_ocr_clears_original_and_steps(tmp_path: Path) -> None:
     """
     Given  a state with OCR text, an original image and steps
@@ -1154,7 +1153,6 @@ def test_a_missing_preview_leaves_no_pages(tmp_path: Path) -> None:
     assert loaded.pages == ()
 
 
-
 def test_resetting_from_ocr_clears_the_pages(tmp_path: Path) -> None:
     """
     Given  a state with OCR text and three pages
@@ -1329,7 +1327,6 @@ def test_a_missing_first_original_leaves_no_originals(tmp_path: Path) -> None:
 
     assert loaded is not None
     assert loaded.originals == ()
-
 
 
 def test_resetting_from_ocr_clears_the_originals(tmp_path: Path) -> None:

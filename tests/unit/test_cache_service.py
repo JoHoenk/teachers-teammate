@@ -20,14 +20,18 @@ from teachers_teammate.infrastructure.input_provider_factory import (
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.preprocessing.identity import AUTO_VERSION
 from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
+from teachers_teammate.domain.document_state import DocumentState
 from teachers_teammate.infrastructure.state_repository import (
-    DocumentState,
     OcrResultRecord,
     StateRepository,
     compute_file_hash,
 )
 from teachers_teammate.infrastructure.storage_root import document_stem
-from teachers_teammate.domain.freshness import first_stale_stage_for_hashes
+from teachers_teammate.domain.freshness import (
+    ExpectedHashes,
+    first_stale_stage_for_hashes,
+    stage_hashes,
+)
 from teachers_teammate.domain.teacher_work import (
     CorrectionsWork,
     TeacherWork,
@@ -38,12 +42,10 @@ from teachers_teammate.domain.teacher_work import (
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheContext,
     CacheReconciliationService,
-    ExpectedHashes,
     _preprocess_fingerprint,
     compute_ocr_config_hash,
     privacy_fingerprint,
     sent_record,
-    stage_hashes,
 )
 from tests.conftest import fake_page_models_store, make_config
 

@@ -4,8 +4,9 @@ The cache holds what the models produced; the teacher's work holds what the teac
 decided.  ``application/merged_view.py`` is the one place the two become the view a reader shows,
 so a module that reads a ``DocumentState`` text itself would show the machine's text where the
 teacher's exists — in the queue, in the Check tab, in an output file.  This test keeps that from
-growing back: the cache's own type may be named only in the cache, in the view it becomes, in the
-merge and in the service that hands it to the merge.
+growing back: the cache's own type may be named only in the domain module that defines it, in the
+rules that turn it into a verdict, in the cache, in the view it becomes, in the merge and in the
+service that hands it to the merge.
 """
 
 from __future__ import annotations
@@ -21,12 +22,15 @@ PACKAGE = "teachers_teammate"
 """The package the rule applies to."""
 
 ALLOWED = {
+    "teachers_teammate/domain/document_state.py",
+    "teachers_teammate/domain/freshness.py",
     "teachers_teammate/application/document_view.py",
     "teachers_teammate/application/documents.py",
     "teachers_teammate/application/merged_view.py",
 }
-"""The modules that may name ``DocumentState``: the view it becomes, the merge that fills in the
-teacher's texts, and the queries that call both."""
+"""The modules that may name ``DocumentState``: the domain module that defines it, the freshness
+rules that read it, the view it becomes, the merge that fills in the teacher's texts, and the
+queries that call both."""
 
 CACHE = "teachers_teammate/infrastructure/"
 """The cache's own code, which is where a ``DocumentState`` is read and written."""

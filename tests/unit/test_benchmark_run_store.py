@@ -133,7 +133,6 @@ def test_keep_last_n_evicts_oldest(tmp_path: Path) -> None:
     assert {r.raw_text for r in runs} == {"two", "three"}
 
 
-
 @pytest.mark.use_case("OCR_Run_Comparison")
 def test_save_round_trips_all_preprocessing_fields(tmp_path: Path) -> None:
     """

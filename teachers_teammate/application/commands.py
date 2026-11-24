@@ -14,7 +14,9 @@ from pathlib import Path
 
 from ..config import Config
 from ..domain.context_budget import RunWindows
+from ..domain.document_state import machine_texts
 from ..domain.formatted_text import normalize_text_format
+from ..domain.freshness import ExpectedHashes
 from ..domain.stages import Stage, normalize_stage
 from ..domain.teacher_work import (
     TeacherWork,
@@ -30,14 +32,9 @@ from ..domain.teacher_work import (
 )
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.stage_builder import resolve_run_windows
-from ..infrastructure.state_repository import (
-    StateRepository,
-    compute_file_hash_cached,
-    machine_texts,
-)
+from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
 from ..infrastructure.teacher_work_store import TeacherWorkStore
 from ..infrastructure.workflow.cache_service import (
-    ExpectedHashes,
     compute_correction_config_hash,
     expected_hashes,
 )

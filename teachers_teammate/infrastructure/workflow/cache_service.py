@@ -11,33 +11,25 @@ from ...config import Config, OcrConfig
 from ...domain.context_budget import RunWindows, window_from_setting
 from ...domain.correction_policy import CorrectionOutput
 from ...domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, PROVIDER_OLLAMA, SentRecord
+from ...domain.document_state import DocumentState
 from ...domain.freshness import (
-    StageHashes,
+    ExpectedHashes,
+    compute_config_hash,
     correction_kept_over_settings,
     first_stale_stage_for_hashes,
+    stage_hashes,
 )
 from ...domain.local_models import reader_fingerprint
 from ...domain.ollama_address import ollama_host
 from ...domain.stages import Stage
-from ...domain.teacher_work import (
-    TeacherWork,
-    current_texts,
-    text_identity,
-)
+from ...domain.teacher_work import TeacherWork, text_identity
 from ..input_provider_factory import InputOptions, input_settings_fingerprint
 from ..ocr_processor import get_ocr_prompt
 from ..onnx.store import ModelStore
 from ..preprocessing.identity import auto_identity
 from ..preview_image_store import PreviewImageStore
 from ..proofreading.corrector import exchange_identity
-from ..state_repository import (
-    DocumentState,
-    OcrResultRecord,
-    StateRepository,
-    compute_config_hash,
-    compute_file_hash,
-    machine_texts,
-)
+from ..state_repository import OcrResultRecord, StateRepository, compute_file_hash
 from ..storage_root import document_stem
 from ..teacher_work_store import TeacherWorkStore
 
@@ -252,22 +244,6 @@ def compute_eval_config_hash(config: Config, windows: RunWindows | None = None) 
     )
 
 
-# ── Freshness ─────────────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class ExpectedHashes:
-    """The stage hashes the current settings and the document's content ask for."""
-
-    ocr_config_hash: str
-    correction_config_hash: str
-    eval_config_hash: str
-    correction_enabled: bool = True
-    """The run proofreads: only then can its settings make a stored proofreading stale."""
-    evaluation_enabled: bool = True
-    """The run reviews the content: only then can its settings make a stored review stale."""
-
-
 def expected_hashes(
     config: Config, file: Path, windows: RunWindows | None, model_store: ModelStore | None
 ) -> ExpectedHashes:
@@ -284,41 +260,6 @@ def expected_hashes(
         eval_config_hash=compute_eval_config_hash(config, windows),
         correction_enabled=config.correction_enabled,
         evaluation_enabled=config.evaluation_enabled,
-    )
-
-
-def stage_hashes(
-    state: DocumentState, work: TeacherWork | None, expected: ExpectedHashes
-) -> StageHashes:
-    """Return the freshness snapshot of *state* under *expected*, with the teacher's work.
-
-    The one place that turns a work into the three flags freshness needs: a transcription part
-    freezes the reading, and so does a corrections part the teacher worked on (reading the pages
-    again could change the transcription the proofreading was made from, and the corrections
-    would stop applying); the current transcription is what a proofreading must have been made
-    from, and a corrections part the teacher worked on keeps its answer.  Both the run
-    (``CacheReconciliationService.prepare``) and the queue (``reconciled_view``) ask
-    here, so they agree on what is stale and what is kept.
-    """
-    texts = current_texts(machine_texts(state), work)
-    corrections = texts.corrections_work
-    return StageHashes(
-        ocr_done=state.ocr_done,
-        ocr_config_hash=state.ocr_config_hash,
-        expected_ocr_config_hash=expected.ocr_config_hash,
-        correction_done=state.correction_done,
-        correction_config_hash=state.correction_config_hash,
-        expected_correction_config_hash=expected.correction_config_hash,
-        evaluation_done=state.evaluation_done,
-        eval_config_hash=state.eval_config_hash,
-        expected_eval_config_hash=expected.eval_config_hash,
-        ocr_frozen=(work is not None and work.transcription is not None)
-        or (corrections is not None and corrections.worked_on),
-        correction_source=state.correction_source_hash,
-        expected_correction_source=text_identity(texts.transcription),
-        correction_kept=corrections is not None and corrections.worked_on,
-        correction_enabled=expected.correction_enabled,
-        evaluation_enabled=expected.evaluation_enabled,
     )
 
 

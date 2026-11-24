@@ -206,16 +206,14 @@ def test_the_rule_recognises_a_name_passed_through(tmp_path: Path) -> None:
     """
     module = tmp_path / "passing_on.py"
     module.write_text(
-        'from teachers_teammate.domain.teacher_work import WorkTooNewError as WorkTooNewError\n'
+        "from teachers_teammate.domain.teacher_work import WorkTooNewError as WorkTooNewError\n"
         "from teachers_teammate.exceptions import OCRError\n"
         '__all__ = ["WorkTooNewError", "OCRError", "own_name"]\n'
         "own_name = 1\n",
         encoding="utf-8",
     )
 
-    assert _re_exports(module, []) == [
-        ("WorkTooNewError", "teachers_teammate.domain.teacher_work")
-    ]
+    assert _re_exports(module, []) == [("WorkTooNewError", "teachers_teammate.domain.teacher_work")]
     assert _exported(module) == ["WorkTooNewError", "OCRError", "own_name"]
     assert _imported(module, []) == {
         "WorkTooNewError": "teachers_teammate.domain.teacher_work",

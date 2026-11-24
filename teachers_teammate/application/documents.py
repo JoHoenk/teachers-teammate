@@ -16,26 +16,24 @@ from pathlib import Path
 from ..config import Config
 from ..domain.context_budget import RunWindows
 from ..domain.correction_prompts import notes_block
+from ..domain.document_state import DocumentState, machine_texts
 from ..domain.formatted_text import TextFormat, normalize_text_format
-from ..domain.freshness import correction_kept_over_settings
+from ..domain.freshness import (
+    ExpectedHashes,
+    correction_kept_over_settings,
+    stage_hashes,
+)
 from ..domain.notation import with_notation_hint
 from ..domain.stages import Stage
 from ..domain.teacher_work import current_texts
 from ..infrastructure.anonymizer import anonymizer_config_from
 from ..infrastructure.onnx.store import ModelStore
-from ..infrastructure.state_repository import (
-    DocumentState,
-    StateRepository,
-    compute_file_hash_cached,
-    machine_texts,
-)
+from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
 from ..infrastructure.teacher_work_store import TeacherWorkStore
 from ..infrastructure.workflow.cache_service import (
-    ExpectedHashes,
     compute_correction_config_hash,
     expected_hashes,
     privacy_fingerprint,
-    stage_hashes,
 )
 from ..settings_schema import DEFAULTS
 from .anonymization import AnonymizationService

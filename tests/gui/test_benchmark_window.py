@@ -9,7 +9,8 @@ import pytest
 
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.domain.setting_values import PreprocessMethod
-from teachers_teammate.config import DEFAULTS, OcrConfig
+from teachers_teammate.config import OcrConfig
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.benchmark import compare_pair
 from teachers_teammate.gui import _handles
 from teachers_teammate.gui.benchmark.composition import build_benchmark_window

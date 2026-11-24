@@ -7,7 +7,7 @@ from typing import Any
 
 from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QVBoxLayout, QWidget
 
-from ...config import DEFAULTS
+from ...settings_schema import DEFAULTS
 from ...texts import settings as st
 from ._page import SettingsContext, SettingsPage, SettingsPageBase
 

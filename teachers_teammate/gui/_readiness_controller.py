@@ -17,7 +17,6 @@ from PySide6.QtWidgets import QWidget
 
 from ..application.composition import AppServices
 from ..application.run import RunPreflight
-from ..config import DEFAULTS
 from ..domain.ollama_discovery import (
     OLLAMA_DOWNLOAD_URL,
     DiscoveredServer,
@@ -26,6 +25,7 @@ from ..domain.ollama_discovery import (
 )
 from ..domain.requirements import IssueKind, RequirementIssue
 from ..domain.stages import Stage
+from ..settings_schema import DEFAULTS
 from ..texts import dialogs as dlg
 from ..texts import main_window as txt
 from . import _dialogs

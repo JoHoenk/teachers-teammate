@@ -34,9 +34,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...config import DEFAULTS
 from ...domain.anonymization import AnonymizerConfig
 from ...domain.install_item import InstallItem
+from ...settings_schema import DEFAULTS
 from ...texts import privacy as priv
 from ...texts import review as txt
 from ...texts import settings as st

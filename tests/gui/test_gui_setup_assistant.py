@@ -16,7 +16,7 @@ from teachers_teammate.application.setup_plan import (
     ProofreadingPlace,
     SetupPlan,
 )
-from teachers_teammate.config import DEFAULTS
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui.setup import SetupAssistant, SetupContext, SetupResult
 from teachers_teammate.gui.setup._flow import ORDER, SetupPageId

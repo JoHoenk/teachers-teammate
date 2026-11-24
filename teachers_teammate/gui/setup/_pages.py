@@ -46,7 +46,6 @@ from ...application.setup_plan import (
     SetupAnswers,
     SetupPlan,
 )
-from ...config import DEFAULTS
 from ...domain.data_location import (
     PROVIDER_OLLAMA,
     STAGE_ANONYMIZATION,
@@ -65,6 +64,7 @@ from ...domain.model_catalog import (
     short_model_name,
 )
 from ...domain.stages import Stage
+from ...settings_schema import DEFAULTS
 from ...texts import addons as addon_text
 from ...texts import review as txt
 from ...texts.models import compact_suitability_text

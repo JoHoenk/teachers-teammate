@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.stored_results import RunInProgressError, StoredSummary
-from ...config import DEFAULTS
+from ...settings_schema import DEFAULTS
 from ...texts import dialogs as dlg
 from ...texts import privacy as priv
 from .. import _dialogs

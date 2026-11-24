@@ -25,7 +25,6 @@ import logging
 import threading
 from urllib.parse import urlparse
 
-from ..config import DEFAULTS
 from ..domain.model_catalog import (
     OLLAMA_CATALOG,
     DetectionReason,
@@ -51,6 +50,7 @@ from ..domain.model_catalog import (
 from ..domain.ollama_address import normalize_ollama_url
 from ..domain.stages import Stage
 from ..exceptions import OllamaUnreachableError
+from ..settings_schema import DEFAULTS
 from .context_choice import ContextChoice, context_choice
 from .ports import HardwareProbe, OllamaServer
 

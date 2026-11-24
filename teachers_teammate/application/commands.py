@@ -18,6 +18,7 @@ from ..domain.formatted_text import normalize_text_format
 from ..domain.stages import Stage, normalize_stage
 from ..domain.teacher_work import (
     TeacherWork,
+    WorkTooNewError,
     current_texts,
     kept_over,
     with_checked,
@@ -34,7 +35,7 @@ from ..infrastructure.state_repository import (
     compute_file_hash_cached,
     machine_texts,
 )
-from ..infrastructure.teacher_work_store import TeacherWorkStore, WorkTooNewError
+from ..infrastructure.teacher_work_store import TeacherWorkStore
 from ..infrastructure.workflow.cache_service import (
     ExpectedHashes,
     compute_correction_config_hash,

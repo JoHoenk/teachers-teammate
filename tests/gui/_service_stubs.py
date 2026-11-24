@@ -25,7 +25,8 @@ from teachers_teammate.application.composition import AppServices
 from teachers_teammate.application.context_choice import ContextChoice, context_choice
 from teachers_teammate.application.data_flow import text_goes_online
 from teachers_teammate.application.speed_estimates import SpeedChoices, SpeedSummary
-from teachers_teammate.config import DEFAULTS, Config
+from teachers_teammate.config import Config
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.data_location import (
     STAGE_ANONYMIZATION,
     DataFlow,

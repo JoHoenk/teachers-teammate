@@ -266,7 +266,7 @@ def _check_setup_assistant() -> str | None:
     temporary folder for the duration of the check.
     """
     from teachers_teammate.application.composition import build_app_services  # noqa: PLC0415
-    from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
+    from teachers_teammate.settings_schema import DEFAULTS  # noqa: PLC0415
 
     frozen = bool(getattr(sys, "frozen", False))
     previous = {

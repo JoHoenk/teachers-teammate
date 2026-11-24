@@ -36,7 +36,7 @@ from ..application.correction_options import (
     proofreading_prompts,
 )
 from ..application.data_flow import ticked_steps
-from ..config import DEFAULTS, Config
+from ..config import Config
 from ..domain.anonymization import AnonymizerConfig
 from ..domain.correction_policy import LEVELS, CorrectionOutput
 from ..domain.correction_prompts import NOTES_LIMIT
@@ -48,7 +48,7 @@ from ..domain.data_location import (
 from ..domain.install_item import InstallItem
 from ..domain.output_files import folder_problem
 from ..domain.stages import Stage
-from ..settings_schema import SECONDARY_MODEL_NONE, normalize_notes, normalize_settings
+from ..settings_schema import DEFAULTS, SECONDARY_MODEL_NONE, normalize_notes, normalize_settings
 from ..texts import dialogs as dlg
 from ..texts import main_window as win
 from ..texts import review as txt

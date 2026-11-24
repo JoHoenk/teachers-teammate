@@ -19,8 +19,8 @@ from PySide6.QtWidgets import (
 from ...application.benchmark_service import BenchmarkApplicationService
 from ...application.composition import inject_addon_packages_dir, start_logging
 from ...application.ollama_server import OllamaServerService
-from ...config import DEFAULTS
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
+from ...settings_schema import DEFAULTS
 from ...texts import benchmark as bench_text
 from ...texts import dialogs as dlg
 from .. import _dialogs

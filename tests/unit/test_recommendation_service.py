@@ -17,7 +17,7 @@ from teachers_teammate.application.model_recommendations import ModelRecommendat
 from teachers_teammate.application.ports import OllamaServer
 from teachers_teammate.domain.ollama_address import is_local_ollama_url
 from teachers_teammate.infrastructure.gpu_detector import SystemHardwareProbe
-from teachers_teammate.config import DEFAULTS
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.model_catalog import (
     DetectionReason,
     GpuInfo,

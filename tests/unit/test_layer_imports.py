@@ -130,12 +130,39 @@ def _re_exports(path: Path, relative_to: list[str]) -> list[tuple[str, str]]:
     return found
 
 
-def test_no_module_re_exports_a_name_of_another_layer() -> None:
+def _exported(path: Path) -> list[str]:
+    """Return the names *path* lists in a module-level ``__all__``."""
+    names: list[str] = []
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets
+        ):
+            names += [
+                element.value
+                for element in getattr(node.value, "elts", [])
+                if isinstance(element, ast.Constant)
+            ]
+    return names
+
+
+def _imported(path: Path, relative_to: list[str]) -> dict[str, str]:
+    """Return ``name -> module`` for every name *path* imports from the package."""
+    found: dict[str, str] = {}
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom):
+            module = _absolute_module(node, relative_to)
+            if module.split(".")[0] == _PACKAGE:
+                found.update({(alias.asname or alias.name): module for alias in node.names})
+    return found
+
+
+def test_no_module_re_exports_a_name_it_does_not_define() -> None:
     """
     Given  the layers of the package and the modules in them
-    When   every ``from … import Name as Name`` — this code base's way of re-exporting — is read
-    Then   none of them takes the name from another layer, so a name has one home and a caller
-           is pointed there instead of to a second copy that can drift from it
+    When   every way of passing a name through is read: ``from … import Name as Name``, and a
+           name of ``__all__`` that the module imported from another layer
+    Then   a module publishes only what it defines, so a caller is pointed at the one home
+           instead of at a second copy that can drift from it
     """
     package = _package_dir()
     violations: list[str] = []
@@ -147,13 +174,50 @@ def test_no_module_re_exports_a_name_of_another_layer() -> None:
             else list(relative.with_suffix("").parts)
         )
         layer = _layer_of(own, package)
-        for name, module in _re_exports(path, list(relative.parts[:-1])):
-            parts = module.split(".")
-            if parts[0] != _PACKAGE:
+        relative_to = list(relative.parts[:-1])
+        for name, module in _re_exports(path, relative_to):
+            if module.split(".")[0] == _PACKAGE:
+                violations.append(
+                    f"{relative} re-exports {name} from {module}: import it from there instead"
+                )
+        imported = _imported(path, relative_to)
+        # A subpackage's ``__init__`` lists the names of its own modules, which is the API of that
+        # package; a name of another layer in ``__all__`` is a second home like any other.
+        for name in _exported(path):
+            module = imported.get(name)
+            if module is None:
                 continue
-            other = _layer_of(parts[1:], package)
+            other = _layer_of(module.split(".")[1:], package)
             if other != layer:
                 violations.append(
-                    f"{relative} ({layer}) re-exports {name} from {'.'.join(parts)} ({other})"
+                    f"{relative} ({layer}) lists {name} in __all__, imported from {module} "
+                    f"({other}): import it from there instead"
                 )
     assert not violations, "\n".join(violations)
+
+
+def test_the_rule_recognises_a_name_passed_through(tmp_path: Path) -> None:
+    """
+    Given  a module that passes a name on with ``import Name as Name``, imports another, and
+           lists all of them in ``__all__``
+    When   the three ways it can publish a name are read
+    Then   the two names it imported are seen, with the module each comes from, and the name it
+           defines itself is only in ``__all__``
+    """
+    module = tmp_path / "passing_on.py"
+    module.write_text(
+        'from teachers_teammate.domain.teacher_work import WorkTooNewError as WorkTooNewError\n'
+        "from teachers_teammate.exceptions import OCRError\n"
+        '__all__ = ["WorkTooNewError", "OCRError", "own_name"]\n'
+        "own_name = 1\n",
+        encoding="utf-8",
+    )
+
+    assert _re_exports(module, []) == [
+        ("WorkTooNewError", "teachers_teammate.domain.teacher_work")
+    ]
+    assert _exported(module) == ["WorkTooNewError", "OCRError", "own_name"]
+    assert _imported(module, []) == {
+        "WorkTooNewError": "teachers_teammate.domain.teacher_work",
+        "OCRError": "teachers_teammate.exceptions",
+    }

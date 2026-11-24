@@ -61,8 +61,12 @@ from .preview_image_store import PreviewImageStore
 from .reporting import StdoutReporter
 from .run_stats import RunStatsCollector
 from .speed_store import SampleStore
-from .stage_builder import PipelineComponentFactory as PipelineComponentFactory  # noqa: PLC0414
-from .stage_builder import PreprocessorBuilder, StageBuilder, default_build_preprocessor
+from .stage_builder import (
+    PipelineComponentFactory,
+    PreprocessorBuilder,
+    StageBuilder,
+    default_build_preprocessor,
+)
 from .state_repository import StateRepository
 from .storage_root import resolve_artifact_dir, resolve_storage_root
 from .teacher_work_store import TeacherWorkStore

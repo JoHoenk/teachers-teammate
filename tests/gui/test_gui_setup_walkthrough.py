@@ -49,7 +49,8 @@ from teachers_teammate.application.setup_plan import (
     SetupPlan,
     SetupService,
 )
-from teachers_teammate.config import DEFAULTS, dump_config_file, load_config_file
+from teachers_teammate.config import dump_config_file, load_config_file
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.model_catalog import HardwareProfile, ModelCategory, best_model
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui import _dialogs

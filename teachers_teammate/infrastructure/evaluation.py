@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
     from .ollama_utils import OllamaClient
 
-from ..config import DEFAULTS
 from ..domain.context_budget import (
     EVALUATION_ANSWER_TOKENS,
     EVALUATION_NUM_CTX_CAP,
@@ -26,6 +25,7 @@ from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
 from ..domain.stages import Stage
 from ..interfaces import Evaluator
+from ..settings_schema import DEFAULTS
 from ..texts.review import TOO_LONG_FOR_REVIEW_WARNING, evaluation_failed
 from ._llm_invoke import (
     ChatRequest,

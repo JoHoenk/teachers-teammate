@@ -33,14 +33,8 @@ from .domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
 from .domain.setting_values import ContextSetting, PreprocessMethod
 from .domain.stages import Stage
 from .exceptions import ConfigFileParseError
-from .interfaces import SUPPORTED_SUFFIXES as SUPPORTED_SUFFIXES  # noqa: PLC0414
-
-# ``DEFAULTS`` is read from here by most of the app; every other name of the schema is imported
-# from ``settings_schema`` itself.
 from .settings_schema import (
-    DEFAULTS as DEFAULTS,  # noqa: PLC0414
-)
-from .settings_schema import (
+    DEFAULTS,
     SECONDARY_MODEL_AUTO,
     LoadedSettings,
     normalize_ocr_engine,

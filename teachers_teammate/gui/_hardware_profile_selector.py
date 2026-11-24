@@ -21,13 +21,13 @@ from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ..application.composition import AppServices
-from ..config import DEFAULTS
 from ..domain.model_catalog import (
     PROFILE_SETTINGS,
     HardwareDetection,
     HardwareProfileSetting,
     profile_setting,
 )
+from ..settings_schema import DEFAULTS
 from ..texts.models import (
     CHECK_COMPUTER_FAILED,
     CHECKING_COMPUTER,

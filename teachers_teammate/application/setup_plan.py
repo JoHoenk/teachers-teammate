@@ -21,7 +21,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from ..config import DEFAULTS, INSTALLER_SETTING_KEYS, load_config_file
+from ..config import INSTALLER_SETTING_KEYS, load_config_file
 from ..domain.data_location import (
     ENGINE_PPOCR,
     PROVIDER_OLLAMA,
@@ -50,7 +50,7 @@ from ..domain.model_catalog import (
 )
 from ..domain.ollama_discovery import OllamaState
 from ..domain.stages import Stage
-from ..settings_schema import normalize_preprocess_method
+from ..settings_schema import DEFAULTS, normalize_preprocess_method
 from .addons import AddonService
 from .anonymization import AnonymizationService
 from .correction_options import review_has_own_model

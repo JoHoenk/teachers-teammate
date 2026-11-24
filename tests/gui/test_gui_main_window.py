@@ -2517,7 +2517,7 @@ def test_first_start_non_ollama_correction_provider_untouched(
     When   background detection finishes
     Then   correction_model is not replaced
     """
-    from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
+    from teachers_teammate.settings_schema import DEFAULTS  # noqa: PLC0415
     from teachers_teammate.gui import _config_panel  # noqa: PLC0415
 
     # The panel seeds its settings from this module's ``DEFAULTS``: patch it there.

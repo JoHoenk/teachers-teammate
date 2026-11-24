@@ -120,8 +120,10 @@ The presentation layer never imports `infrastructure`. The modules that wire con
 are the exception, and the only one: `gui/composition.py`, `gui/__main__.py`,
 `gui/benchmark/composition.py`, `gui/benchmark/__main__.py`, `cli_composition.py`,
 `__main__.py` and `frozen_modes.py`. `tests/unit/test_layer_imports.py` holds both rules, and a
-third: a module does not re-export a name of another layer (`from … import Name as Name`) — a
-name has one home, and a caller imports it from there.
+third: a module publishes only the names it defines, neither with `from … import Name as Name`
+nor as an `__all__` entry it imported from another layer (a subpackage's `__init__.py` lists the
+names of its own modules, which is that package's API) — a name has one home, and a caller
+imports it from there.
 
 A service in `application/` does not reach into `infrastructure` from a method body. What it
 needs of a module comes in through its constructor, typed by a `Protocol` in
@@ -3042,9 +3044,8 @@ The codebase follows three principles for error handling:
 
 ### Exception hierarchy
 
-All custom exceptions live in `teachers_teammate/exceptions.py` and are
-re-exported from the package root for convenience. A stage error is raised with a text or with a
-`Message` (see "Where text lives"); `str(exc)` gives the sentence either way.
+All custom exceptions live in `teachers_teammate/exceptions.py`. A stage error is raised with a
+text or with a `Message` (see "Where text lives"); `str(exc)` gives the sentence either way.
 
 ```{uml} assets/error_handling.puml
 :align: center

@@ -30,7 +30,8 @@ from pathlib import Path
 import shutil
 import uuid
 
-from ...config import DEFAULTS, OcrConfig
+from ...config import OcrConfig
+from ...settings_schema import DEFAULTS
 from ..storage_root import resolve_data_folder
 
 BENCHMARK_KEEP_LAST_N = 20

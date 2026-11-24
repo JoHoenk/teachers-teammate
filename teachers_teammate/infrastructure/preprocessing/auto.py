@@ -34,7 +34,6 @@ import numpy as np
 
 from ...domain.local_models import PAGE_MODELS_NOT_DOWNLOADED
 from ..onnx.store import ModelStore
-from .identity import AUTO_VERSION as AUTO_VERSION  # noqa: PLC0414  # re-exported
 from .identity import auto_output
 from .page_models import NetFactory, PageModels
 from .steps import Step, StepContext, StepResult

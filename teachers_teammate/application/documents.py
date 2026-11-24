@@ -13,7 +13,7 @@ import functools
 import logging
 from pathlib import Path
 
-from ..config import DEFAULTS, Config
+from ..config import Config
 from ..domain.context_budget import RunWindows
 from ..domain.correction_prompts import notes_block
 from ..domain.formatted_text import TextFormat, normalize_text_format
@@ -37,6 +37,7 @@ from ..infrastructure.workflow.cache_service import (
     privacy_fingerprint,
     stage_hashes,
 )
+from ..settings_schema import DEFAULTS
 from .anonymization import AnonymizationService
 from .check_document import CheckDocument, check_document_of
 from .correction_options import proofreading_prompts

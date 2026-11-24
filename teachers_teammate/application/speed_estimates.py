@@ -29,7 +29,7 @@ import logging
 from statistics import median
 import threading
 
-from ..config import DEFAULTS, Config, OcrConfig
+from ..config import Config, OcrConfig
 from ..domain.correction_policy import CorrectionOutput, normalize_output_mode
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import (
@@ -84,6 +84,7 @@ from ..infrastructure.speed_store import (
     StoredSpeed,
     now_stamp,
 )
+from ..settings_schema import DEFAULTS
 from .ports import OllamaClientFactory, OllamaServer
 
 _logger = logging.getLogger(__name__)

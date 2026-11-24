@@ -12,7 +12,8 @@ from typing import Any
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QWidget
 
-from ...config import DEFAULTS, OcrConfig
+from ...config import OcrConfig
+from ...settings_schema import DEFAULTS
 from ...texts import settings as st
 from ...texts.models import EXPERT_SETTINGS
 from .._collapsible_section import CollapsibleSection

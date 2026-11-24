@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.config import DEFAULTS
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.language import LANGUAGES, language_from_locale
 from teachers_teammate.domain.name_models import (

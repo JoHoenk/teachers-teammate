@@ -17,7 +17,7 @@ from teachers_teammate.application.setup_plan import (
     build_model_choices,
     build_setup_plan,
 )
-from teachers_teammate.config import DEFAULTS
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.local_models import (
     PAGE_MODELS_ADDON_ID,
     PAGE_MODELS_SIZE_GB,

@@ -15,8 +15,8 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ...application.composition import AppServices
 from ...application.speed_estimates import CLASS_SET_FILES
-from ...config import DEFAULTS
 from ...domain.model_catalog import HardwareProfileSetting
+from ...settings_schema import DEFAULTS
 from ...texts import review as txt
 from ...texts.privacy import CHANGE_LINK
 from ...texts.settings import PAGE_AI_SETUP

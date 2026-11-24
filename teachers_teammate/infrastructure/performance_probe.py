@@ -585,10 +585,10 @@ def _writing_request(
     the temperature and thinking that step runs at.  It is the request every run sends, and the
     test measures rates, not answer lengths.
     """
-    from ..config import DEFAULTS  # noqa: PLC0415
     from ..domain.correction_policy import DEFAULT_LEVEL  # noqa: PLC0415
     from ..domain.correction_prompts import correct_system, correct_user  # noqa: PLC0415
     from ..domain.notation import with_notation_hint  # noqa: PLC0415
+    from ..settings_schema import DEFAULTS  # noqa: PLC0415
 
     paragraph = sample_paragraph(request.language)
     if step is SpeedStep.REVIEW:

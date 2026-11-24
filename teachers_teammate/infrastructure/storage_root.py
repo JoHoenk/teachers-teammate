@@ -55,10 +55,7 @@ from ..config import override_root
 from ..exceptions import ConfigFileNotFoundError, StorageResolutionError
 from ..messages import config_file_missing, storage_root_unresolved
 
-# StorageResolutionError is defined in exceptions.py; re-exported here for
-# backwards-compatibility with any code that imported it from this module.
 __all__ = [
-    "StorageResolutionError",
     "StorageRoot",
     "artifacts_root",
     "compute_cache_key",

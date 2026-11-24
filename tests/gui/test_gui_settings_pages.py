@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton
 import pytest
 
-from teachers_teammate.config import DEFAULTS
+from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.install_item import InstallItem, InstallKind
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_WRITING_MODEL,

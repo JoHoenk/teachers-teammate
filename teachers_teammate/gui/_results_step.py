@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config import DEFAULTS
+from ..settings_schema import DEFAULTS
 from ..texts import dialogs as dlg
 from ..texts import main_window as txt
 from . import _dialogs, _handles

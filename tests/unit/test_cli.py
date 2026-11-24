@@ -45,7 +45,7 @@ class _AppServiceStub:
         raise AssertionError("nothing may be downloaded")
 
     def collect_input_files(self, config) -> list[Path]:
-        return []
+        return [Path("page.png")]
 
     def run_selected(self, config, files, /, **kwargs) -> RunSummary:
         raise AssertionError("the run must not start")
@@ -1196,6 +1196,33 @@ def test_run_cli_refuses_an_output_folder_the_service_rejects(tmp_path: Path, ca
     assert service.configs == []
 
 
+def test_run_cli_over_no_files_does_not_ask_the_preflight(tmp_path: Path) -> None:
+    """
+    Given  an input folder with no supported file and a preflight that would refuse the run
+    When   run_cli() is called
+    Then   the preflight is not asked, so the run itself says there is nothing to do
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    asked: list[bool] = []
+
+    class _FakeAppService(_TextFlagsAppService):
+        def collect_input_files(self, config) -> list[Path]:
+            return []
+
+        def check_run_preflight(self, config, **kwargs) -> RunPreflight:
+            asked.append(True)
+            return RunPreflight(ollama_unreachable="Connection refused")
+
+    service = _FakeAppService()
+
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=services_of(service))
+
+    assert rc == 0
+    assert asked == []
+    assert len(service.configs) == 1
+
+
 def test_run_cli_refuses_a_run_that_would_make_the_computer_swap(tmp_path: Path, capsys) -> None:
     """
     Given  an application service that reports too little free memory for the model
@@ -1418,6 +1445,24 @@ def test_the_hint_for_no_model_at_all_has_no_placeholder() -> None:
 
     assert "ollama pull" in hint
     assert "<" not in hint
+
+
+@pytest.mark.unit
+def test_a_missing_package_can_be_installed_without_the_app() -> None:
+    """
+    Given  a provider package and spaCy that are not installed
+    When   the command line asks for their hints
+    Then   each names the app and the pip extra that installs it from the wheel
+    """
+    from teachers_teammate.texts.cli import cli_issue_hint  # noqa: PLC0415
+
+    package = cli_issue_hint(RequirementIssue(IssueKind.PACKAGE_MISSING, provider="openai"))
+    spacy = cli_issue_hint(RequirementIssue(IssueKind.PRIVACY_ADDON_MISSING))
+
+    assert "Add-ons" in package
+    assert "[llm]" in package
+    assert "Add-ons" in spacy
+    assert "[privacy]" in spacy
 
 
 @pytest.mark.unit

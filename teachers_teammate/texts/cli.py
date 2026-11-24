@@ -225,6 +225,12 @@ def timeout_out_of_range(seconds: int, low: int, high: int) -> str:
 
 _INSTALL_IN_APP = f"Install it in the app: {WHERE_ADDONS}"
 
+
+def _install_with_extra(extra: str) -> str:
+    """Return the hint to install it in the app, or from the wheel with its pip *extra*."""
+    return f'{_INSTALL_IN_APP}, or run: pip install "<wheel>[{extra}]"'
+
+
 #: What the command line says for an issue whose hint does not depend on its data.
 _FIXED_HINTS: dict[IssueKind, str] = {
     IssueKind.READER_MODEL_MISSING: f"Download it with: {READER_DOWNLOAD_COMMAND}",
@@ -238,9 +244,9 @@ _FIXED_HINTS: dict[IssueKind, str] = {
     IssueKind.OUTPUT_IN_INPUT_FOLDER: (
         "Choose an output folder with -o/--output that is not the input folder."
     ),
-    IssueKind.PACKAGE_MISSING: _INSTALL_IN_APP,
+    IssueKind.PACKAGE_MISSING: _install_with_extra("llm"),
     IssueKind.NAME_DETECTION_MISSING: _INSTALL_IN_APP,
-    IssueKind.PRIVACY_ADDON_MISSING: _INSTALL_IN_APP,
+    IssueKind.PRIVACY_ADDON_MISSING: _install_with_extra("privacy"),
     IssueKind.ADDONS_OUTDATED: _INSTALL_IN_APP,
 }
 

@@ -637,14 +637,16 @@ def run_cli(
     files = service.run.collect_input_files(config)
     if args.preview_only:
         return service.run.run_preview_only(config, files).exit_code
-    # The one answer to "can this run start?", the same one the window asks.
-    stopped = _preflight_exit(
-        service.run.check_run_preflight(config, files=files, fresh=True),
-        service,
-        ignore_memory_check=args.ignore_memory_check,
-    )
-    if stopped is not None:
-        return stopped
+    # The one answer to "can this run start?", the same one the window asks.  A run over no
+    # file says so itself, without asking a server or a key first.
+    if files:
+        stopped = _preflight_exit(
+            service.run.check_run_preflight(config, files=files, fresh=True),
+            service,
+            ignore_memory_check=args.ignore_memory_check,
+        )
+        if stopped is not None:
+            return stopped
     _print_data_flow(service.data_flow.describe_data_flow(config))
     return service.run.run_selected(
         config, files, config_file=config_path, battery_warning=BATTERY_WARNING

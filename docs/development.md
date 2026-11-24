@@ -132,7 +132,7 @@ needs of a module comes in through its constructor, typed by a `Protocol` in
 What still needs a lazy import — an add-on package that must not be imported at start-up, a
 module that imports back — carries `# noqa: PLC0415`, and the count of those in `application/`
 is the ratchet of `tests/unit/test_lazy_import_budget.py`. The modules that still import
-`infrastructure` at all, and how often each does, are pinned the same way by
+`infrastructure` at all, and how many names each imports, are pinned the same way by
 `tests/unit/test_application_infrastructure_budget.py`: a store, the pipeline or a subprocess the
 service starts. A pure rule is never among them — it is imported from `domain` or the core.
 `application/composition.py` is not in the table: naming the concrete classes is its job.

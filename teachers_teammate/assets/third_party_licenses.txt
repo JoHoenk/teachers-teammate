@@ -18466,7 +18466,7 @@ SOFTWARE.
 =============================================
 pypdfium2
 Version 5.15.2
-License: BSD-3-Clause, Apache-2.0, dependency licenses
+License: BSD-3-Clause AND Apache-2.0 AND CC-BY-4.0
 =============================================
 
 --- LICENSES/Apache-2.0.txt ---

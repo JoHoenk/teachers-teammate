@@ -13,7 +13,7 @@ them.
 
 How a part reaches the teacher decides what we owe, not what kind of part it is.  Inside our
 download: the full texts, in every download and in the in-app dialog.  Downloaded from its
-author on the teacher's click: a known license that passes the deny rules, shown as a tooltip.
+author on the teacher's click: a license the allow list holds, shown as a tooltip.
 Same list, same rules.
 
 Generated and hand-written files are kept apart: ``texts/`` and the compiled output belong to
@@ -163,6 +163,8 @@ class Policy:
     """What ``policy.toml`` says: the rules and the facts a person has to state."""
 
     deny: tuple[tuple[re.Pattern[str], str], ...]
+    allow: frozenset[str]
+    exceptions: frozenset[str]
     names: dict[str, str]
     licenses: dict[str, str]
     accepted: dict[str, str]
@@ -190,6 +192,10 @@ def load_policy(path: Path = POLICY) -> Policy:
         deny=tuple(
             (re.compile(entry["pattern"], re.IGNORECASE), entry["reason"])
             for entry in data.get("deny", [])
+        ),
+        allow=frozenset(str(entry).casefold() for entry in data.get("allow", {}).get("licenses", [])),
+        exceptions=frozenset(
+            str(entry).casefold() for entry in data.get("allow", {}).get("exceptions", [])
         ),
         names=dict(data.get("names", {})),
         licenses=dict(data.get("license", {})),
@@ -509,23 +515,103 @@ def apply_policy(rows: Iterable[Row], policy: Policy) -> list[Row]:
     return _sorted(applied)
 
 
-def denied_reason(license_text: str, deny: Iterable[tuple[re.Pattern[str], str]]) -> str | None:
-    """Return why *license_text* is refused, or ``None`` when it is acceptable.
+#: What an id the allow list does not hold says; only a person can add it there.
+_NOT_ALLOWED = (
+    "not on the allow list: read it, then add it to [allow] or the component to [accepted]"
+)
 
-    An ``OR`` expression is acceptable as soon as one alternative is: the package can be used
-    under that one (``LGPL-3.0-only OR GPL-3.0-only`` is fine, ``GPL-3.0-only OR AGPL-3.0`` is
-    not).  ``AND`` is not split — every part then applies.  Only the upper-case SPDX operator
-    splits: a free-text "or later" is part of one license's name.
+_OPERATOR = re.compile(r"\(|\)|\bAND\b|\bOR\b|\bWITH\b")
+"""The operators of an SPDX expression and its parentheses; only the upper-case ones count."""
+
+
+def license_tokens(text: str) -> list[str]:
+    """Return the ids, parentheses and operators of a license expression, in order."""
+    tokens: list[str] = []
+    position = 0
+    for match in _OPERATOR.finditer(text):
+        atom = text[position : match.start()].strip()
+        if atom:
+            tokens.append(atom)
+        tokens.append(match.group())
+        position = match.end()
+    atom = text[position:].strip()
+    if atom:
+        tokens.append(atom)
+    return tokens
+
+
+def _refused_atom(atom: str, policy: Policy) -> str | None:
+    """Return why one license id is refused, or ``None`` when the allow list holds it."""
+    for pattern, reason in policy.deny:
+        if pattern.search(atom):
+            return reason
+    return None if atom.casefold() in policy.allow else f"{atom} is {_NOT_ALLOWED}"
+
+
+def _refused_factor(tokens: list[str], at: list[int], policy: Policy) -> str | None:
+    """Return why the factor at *at* is refused, and step *at* past it."""
+    if at[0] < len(tokens) and tokens[at[0]] == "(":
+        at[0] += 1
+        reason = _refused_or(tokens, at, policy)
+        if at[0] < len(tokens) and tokens[at[0]] == ")":
+            at[0] += 1
+        return reason
+    if at[0] >= len(tokens):
+        return f"the expression ends where an id belongs: {_NOT_ALLOWED}"
+    atom = tokens[at[0]]
+    at[0] += 1
+    reason = _refused_atom(atom, policy)
+    if at[0] < len(tokens) and tokens[at[0]] == "WITH":
+        at[0] += 1
+        exception = tokens[at[0]] if at[0] < len(tokens) else ""
+        at[0] += 1
+        if exception.casefold() not in policy.exceptions:
+            reason = reason or f"{atom} WITH {exception} is {_NOT_ALLOWED}"
+    return reason
+
+
+def _refused_and(tokens: list[str], at: list[int], policy: Policy) -> str | None:
+    """Return why the ``AND`` expression at *at* is refused, and step *at* past it."""
+    reason = _refused_factor(tokens, at, policy)
+    while at[0] < len(tokens) and tokens[at[0]] == "AND":
+        at[0] += 1
+        reason = reason or _refused_factor(tokens, at, policy)
+    return reason
+
+
+def _refused_or(tokens: list[str], at: list[int], policy: Policy) -> str | None:
+    """Return why the ``OR`` expression at *at* is refused, and step *at* past it."""
+    reason = _refused_and(tokens, at, policy)
+    while at[0] < len(tokens) and tokens[at[0]] == "OR":
+        at[0] += 1
+        other = _refused_and(tokens, at, policy)
+        if reason is not None and other is None:
+            reason = None
+    return reason
+
+
+def refused_reason(license_text: str, policy: Policy) -> str | None:
+    """Return why *license_text* is refused, or ``None`` when the allow list covers all of it.
+
+    The expression is read the way SPDX writes one: ``OR`` passes when one alternative does,
+    ``AND`` when every part does, ``WITH`` when the license and its exception are both allowed.
+    ``unknown`` is refused in any case — the state of PyPI's metadata is all we know about a
+    package.  A deny rule that matches an id keeps its own reason, which says more than the allow
+    list can.
     """
-    deny = tuple(deny)
-    alternatives = [part.strip() for part in re.split(r"\s+OR\s+", license_text)]
-    reasons: list[str] = []
-    for alternative in alternatives:
-        matched = [reason for pattern, reason in deny if pattern.search(alternative)]
-        if not matched:
-            return None
-        reasons.extend(matched)
-    return reasons[0] if reasons else None
+    if license_text == UNKNOWN:
+        return (
+            "PyPI states no license: read it, then list the component in [accepted] with the "
+            "reason it is acceptable"
+        )
+    tokens = license_tokens(license_text)
+    if not tokens:
+        return f"{license_text!r} names no license: {_NOT_ALLOWED}"
+    at = [0]
+    reason = _refused_or(tokens, at, policy)
+    if at[0] != len(tokens):
+        return f"{license_text} is not one license expression: {_NOT_ALLOWED}"
+    return reason
 
 
 def problems(rows: Iterable[Row], policy: Policy) -> list[str]:
@@ -534,17 +620,12 @@ def problems(rows: Iterable[Row], policy: Policy) -> list[str]:
     for row in rows:
         if row.component in policy.accepted:
             continue
-        reason = denied_reason(row.license, policy.deny)
-        if reason is None and row.license == UNKNOWN:
-            reason = (
-                "PyPI states no license: read it, then list the component in [accepted] "
-                "with the reason it is acceptable"
-            )
+        reason = refused_reason(row.license, policy)
         if reason is not None:
             found.append(f"{row.component} {row.version} is {row.license} — {reason}")
     for package, parts in policy.vendored.items():
         for part in parts:
-            reason = denied_reason(part.license, policy.deny)
+            reason = refused_reason(part.license, policy)
             if reason is not None:
                 found.append(f"{package} carries {part.part}, which is {part.license} — {reason}")
     return found

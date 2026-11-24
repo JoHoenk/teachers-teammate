@@ -62,10 +62,10 @@ def test_a_package_the_add_on_lock_and_the_platform_pins_share_is_one_row() -> N
     assert [row.version for row in rows if row.component == locked.component] == [locked.version]
 
 
-def test_every_row_passes_the_deny_rules_or_is_accepted() -> None:
+def test_every_row_is_allowed_or_accepted() -> None:
     """
     Given  the committed inventory
-    When   every row is held against the deny rules
+    When   every row is held against the allow list
     Then   nothing we must not ship or install is listed
     """
     assert inventory.problems(_committed(), inventory.load_policy()) == []

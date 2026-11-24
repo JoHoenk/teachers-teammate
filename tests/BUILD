@@ -2235,6 +2235,15 @@ py_test(
 )
 
 py_test(
+    name = "test_cache_keys",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_cache_keys.py"],
+    args = ["unit/test_cache_keys.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _CORE_LIB,
+)
+
+py_test(
     name = "test_cache_keys_golden",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_cache_keys_golden.py"],
@@ -3126,6 +3135,7 @@ test_suite(
         ":test_benchmark_run_store",
         ":test_benchmark_runner",
         ":test_benchmark_service",
+        ":test_cache_keys",
         ":test_cache_keys_golden",
         ":test_cache_service",
         ":test_check_desktop_entry",
@@ -3249,9 +3259,9 @@ test_suite(
         ":test_request_profile",
         ":test_review_v2",
         ":test_run_gui",
+        ":test_run_rules",
         ":test_run_service",
         ":test_run_stats",
-        ":test_run_rules",
         ":test_run_summary",
         ":test_sent_text",
         ":test_sentences",

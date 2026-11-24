@@ -39,6 +39,7 @@ _PKG_MODULES = {"exceptions", "__version__", "messages"}
 """The package root's own modules (``_PKG_SRCS`` in ``teachers_teammate/BUILD``)."""
 _CORE_MODULES = {
     "atomic_file",
+    "cache_keys",
     "config",
     "interfaces",
     "run_rules",

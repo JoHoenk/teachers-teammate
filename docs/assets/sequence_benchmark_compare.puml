@@ -46,7 +46,7 @@ group Background thread (BenchmarkWorker)
   deactivate STAGES
   RUN --> SVC          : OcrRunResult(raw_text, preview_img, elapsed, error)
   deactivate RUN
-  SVC -> SVC           : compute_file_hash + compute_ocr_config_hash
+  SVC -> SVC           : compute_file_hash + ocr_key
   SVC -> STORE         : save(NewRunRequest(...))
   activate STORE
   STORE -> EXT         : write <ts>-<cfg>.json + images/  (+ keep-last-N evict)

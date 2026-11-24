@@ -188,6 +188,7 @@ def reader_fingerprint() -> str:
         f"/v{READER_VERSION}"
     )
 
+
 #: Bump whenever a step, a threshold or a page model revision of the automatic preparation
 #: changes (``infrastructure/preprocessing/auto.py``): it is part of the cache identity of a
 #: prepared page, so stored pages are then read again.

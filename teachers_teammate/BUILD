@@ -26,6 +26,7 @@ _DOMAIN_SRCS = [
     "domain/formatted_text.py",
     "domain/freshness.py",
     "domain/install_item.py",
+    "domain/key_facts.py",
     "domain/language.py",
     "domain/local_models.py",
     "domain/model_catalog.py",
@@ -64,6 +65,7 @@ _DOMAIN_SRCS = [
 _CORE_SRCS = [
     "_model_defaults.py",
     "atomic_file.py",
+    "cache_keys.py",
     "config.py",
     "interfaces.py",
     "run_rules.py",
@@ -114,6 +116,7 @@ _INFRASTRUCTURE_SRCS = [
     "infrastructure/gpu_detector.py",
     "infrastructure/image_io.py",
     "infrastructure/input_provider_factory.py",
+    "infrastructure/key_facts.py",
     "infrastructure/input_providers.py",
     "infrastructure/llm_factory.py",
     "infrastructure/logging_setup.py",

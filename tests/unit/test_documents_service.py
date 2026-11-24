@@ -23,10 +23,10 @@ from teachers_teammate.domain.teacher_work import (
 )
 from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
 from teachers_teammate.infrastructure.state_repository import StateRepository
+from teachers_teammate.cache_keys import correction_key, sent_record
+from teachers_teammate.infrastructure.key_facts import MachineKeyFacts
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheReconciliationService,
-    compute_correction_config_hash,
-    sent_record,
 )
 from tests.conftest import make_config
 from ._service_helpers import (
@@ -71,7 +71,9 @@ def test_a_privacy_setting_change_keeps_the_proofreading_and_says_so(tmp_path: P
     row = svc.documents.queue_rows(on, [source])[0]
 
     assert row.correction is StageState.DONE
-    assert row.sent[Stage.CORRECTION].record == sent_record(off, Stage.CORRECTION)
+    assert row.sent[Stage.CORRECTION].record == sent_record(
+        off, Stage.CORRECTION, facts=MachineKeyFacts()
+    )
     assert row.sent[Stage.CORRECTION].other_privacy_settings is True
 
     # The next run with the new settings: nothing is invalidated, so the corrector is skipped
@@ -82,7 +84,10 @@ def test_a_privacy_setting_change_keeps_the_proofreading_and_says_so(tmp_path: P
 
     assert after.state.correction_done is True
     assert after.state.correction_text == "hello corrected"
-    assert after.state.correction_sent == sent_record(off, Stage.CORRECTION).to_dict()
+    assert (
+        after.state.correction_sent
+        == sent_record(off, Stage.CORRECTION, facts=MachineKeyFacts()).to_dict()
+    )
 
 
 @pytest.mark.unit
@@ -224,9 +229,7 @@ def test_views_without_a_stored_result_cost_no_privacy_fingerprint(tmp_path: Pat
     recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
 
-    with patch(
-        "teachers_teammate.application.documents.privacy_fingerprint", side_effect=AssertionError
-    ):
+    with patch("teachers_teammate.application.documents.privacy_key", side_effect=AssertionError):
         assert svc.documents.load_view(cfg, source) is not None
         assert svc.documents.queue_rows(cfg, [source])
 
@@ -468,8 +471,8 @@ def test_worked_on_documents_does_not_ask_again_after_keep_my_changes(tmp_path: 
     )
     other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    expected = compute_correction_config_hash(
-        other, windows_for(other, recommendations=svc.recommendations)
+    expected = correction_key(
+        other, windows_for(other, recommendations=svc.recommendations), MachineKeyFacts()
     )
 
     _change_work(

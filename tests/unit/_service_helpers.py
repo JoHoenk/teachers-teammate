@@ -24,6 +24,7 @@ from teachers_teammate.infrastructure.state_repository import (
     StateRepository,
     compute_file_hash,
 )
+from teachers_teammate.infrastructure.key_facts import MachineKeyFacts
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore
 from teachers_teammate.infrastructure.workflow.cache_service import CacheReconciliationService
 from tests.conftest import fake_reader_store, make_config
@@ -141,6 +142,7 @@ def _commands_for(repo: StateRepository, **kwargs) -> DocumentCommands:
     """The window's write commands over *repo*, with the teacher's work in a temporary folder."""
     return DocumentCommands(
         state_store_factory=lambda _config: repo,
+        facts=MachineKeyFacts(),
         **kwargs,
     )
 

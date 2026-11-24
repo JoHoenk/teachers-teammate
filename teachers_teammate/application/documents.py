@@ -13,6 +13,7 @@ import functools
 import logging
 from pathlib import Path
 
+from ..cache_keys import correction_key, expected_hashes, privacy_key
 from ..config import Config
 from ..domain.context_budget import RunWindows
 from ..domain.correction_prompts import notes_block
@@ -23,17 +24,12 @@ from ..domain.freshness import (
     correction_kept_over_settings,
     stage_hashes,
 )
+from ..domain.key_facts import KeyFacts
 from ..domain.notation import with_notation_hint
 from ..domain.stages import Stage
 from ..domain.teacher_work import current_texts
-from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
 from ..infrastructure.teacher_work_store import TeacherWorkStore
-from ..infrastructure.workflow.cache_service import (
-    compute_correction_config_hash,
-    expected_hashes,
-    privacy_fingerprint,
-)
 from ..settings_schema import DEFAULTS
 from .anonymization import AnonymizationService
 from .check_document import CheckDocument, check_document_of
@@ -88,14 +84,14 @@ class DocumentQueries:
         *,
         state_store_factory: Callable[[Config], StateRepository],
         work_store: TeacherWorkStore,
-        model_store: ModelStore,
+        facts: KeyFacts,
         windows_for: Callable[[Config], RunWindows],
         data_flow: DataFlowService,
         anonymization: AnonymizationService,
     ) -> None:
         self._state_store = state_store_factory
         self._work_store = work_store
-        self._model_store = model_store
+        self._facts = facts
         # The context windows a run would use; the run service owns them.
         self._windows_for = windows_for
         # Where each step takes place, and the shared anonymizer used to show what is sent.
@@ -109,14 +105,14 @@ class DocumentQueries:
 
         The one place a stored document becomes a view.  *reconciled* marks the stages the next
         run would read again, worked out exactly as the run works them out
-        (:func:`~teachers_teammate.infrastructure.workflow.cache_service.stage_hashes`), so the
+        (:func:`~teachers_teammate.domain.freshness.stage_hashes`), so the
         queue and the next run agree on what is stale and what the teacher's work keeps; without
         it the view says what is stored.  A file the store has no result for yields ``None`` for
         both.
         """
         store = self._state_store(config)
         windows = self._windows_for(config) if reconciled else None
-        current_privacy = functools.cache(lambda: privacy_fingerprint(config))
+        current_privacy = functools.cache(lambda: privacy_key(config, self._facts))
         for file in files:
             state = store.load_valid(file)
             if state is None:
@@ -127,7 +123,7 @@ class DocumentQueries:
                     file,
                     state,
                     self._work_store.load(state.source_hash),
-                    expected_hashes(config, file, windows, self._model_store),
+                    expected_hashes(config, file, windows, self._facts),
                 )
             else:
                 view = self._merged(to_view(file, state), state)
@@ -193,7 +189,7 @@ class DocumentQueries:
         """
 
         store = self._state_store(config)
-        expected_correction_hash = compute_correction_config_hash(config, self._windows_for(config))
+        expected_correction_hash = correction_key(config, self._windows_for(config), self._facts)
 
         kept_stale: list[Path] = []
         unanswered: list[Path] = []

@@ -102,7 +102,7 @@ def reconciled_view(
     """Return the view of *state* as the next run would find it, merged with *work*.
 
     A stage whose settings changed is shown as not done, unless the teacher's work keeps it
-    (:func:`~teachers_teammate.infrastructure.workflow.cache_service.stage_hashes` decides, the
+    (:func:`~teachers_teammate.domain.freshness.stage_hashes` decides, the
     same way for the queue, the run and the commands that edit), and a proofreading kept over
     other settings says so.  The texts stay: the queue still shows them.
     """

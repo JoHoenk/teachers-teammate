@@ -990,9 +990,9 @@ so it is stored with the result:
   one of ours — including a record without a provider, which would otherwise read as an
   unnamed online service.
 - `SentStatus` pairs the record with `other_privacy_settings`, the comparison with the current
-  `privacy_fingerprint(config)`.  The comparison is by settings, not by text: working out the
-  text would need a spaCy pass per document.
-- `cache_service.py:sent_record(config, stage, *, names_hidden)` builds it (it holds the
+  `privacy_key(config)` of `cache_keys.py`.  The comparison is by settings, not by text: working
+  out the text would need a spaCy pass per document.
+- `cache_keys.py:sent_record(config, stage, *, names_hidden, facts)` builds it (it holds the
   `Config`); `application/data_flow.py:sent_location(record)` classifies it through the same
   `llm_location()` the box uses, so the two cannot disagree.
 - `DocumentState` keeps `correction_sent_text`, `correction_sent_map`, `correction_sent` and
@@ -1635,7 +1635,7 @@ back to the default.
 
 `Config.recognition_enabled` (default `True`, setting key of the same name, CLI `--no-recognition`)
 says whether scans are read at all.  It lives on `Config`, **not** on `OcrConfig`: `OcrConfig` says
-*how* pages are read and feeds `compute_ocr_config_hash` (an explicit field list), so a flag that
+*how* pages are read and feeds `cache_keys.ocr_key` (an explicit field list), so a flag that
 decides *whether* a file is read changes no cache key.
 
 Off, the layers behave like this:
@@ -1716,14 +1716,15 @@ the size it was given, so the page goes to it scaled to at most `FLATTEN_MAX_SID
 
 **Identity.**  `domain/local_models.auto_identity(engine, page_steps)` is the identity; for
 `auto` it adds `v<AUTO_VERSION>`, `colour` / `gray`, and `+turn` / `+flatten` for the page models
-that are downloaded, and `cache_service._preprocess_fingerprint(ocr, source, store)` puts the
+that are downloaded, and `cache_keys.preprocess_fingerprint(ocr, source, facts)` puts the
 method in front of it, then the PDF DPI and text-layer entries.  Downloading the page models, a
 new `AUTO_VERSION` or another engine's output re-reads pages **once**, and that is intended.
 Bump `AUTO_VERSION` (`domain/local_models.py`) whenever a step, a threshold or a page model
 revision changes.  The model
-store reaches the key through `CacheReconciliationService(model_store=…)`,
-`DocumentCommands(model_store=…)` and `compute_ocr_config_hash(…, store)`; with `None` it is
-the default folder (the tests point that at an empty temporary one).
+store reaches the key through the `KeyFacts` port
+(`domain/key_facts.py`), which `infrastructure/key_facts.py:MachineKeyFacts` answers with the
+`ModelStore` it was given; with `None` that is the default folder (the tests point that at an
+empty temporary one).
 
 **How to change it.**  A new step is a `Step` in `auto_steps`, with its gate and a named
 constant, a `STEP_LABELS` entry in `texts/review.py` if it is worth a word in the preview
@@ -1841,9 +1842,15 @@ settings switch removes `ocr.toml`, `benchmark\`, `speed\` and `work\` there.
 
 ### Hashing scheme
 
+Every stage key and the keys of the stored results are computed by `cache_keys.py`, a module of the
+core: pure functions of the settings, the windows a run resolved and a `KeyFacts` port
+(`domain/key_facts.py`) that `infrastructure/key_facts.py:MachineKeyFacts` answers for the computer
+the app runs on.  So a key can be computed and tested without a file system, a server or a model
+store, and `tests/unit/test_cache_keys_golden.py` holds the digests that must not move.
+
 - `compute_file_hash(path)` (`state_repository.py`) — SHA-256 of the file
   contents; the **identity of a document** regardless of its path or name.
-- `compute_ocr_config_hash(config, ocr_prompt)` (`workflow/cache_service.py`) — a
+- `ocr_key(config, source, facts)` (`cache_keys.py`) — a
   fingerprint of the OCR stage configuration (engine, model, preprocess
   method — for `auto` with its version, output and available page models —, language, prompt,
   temperature). The engine is hashed twice (the shape of the hash is kept so cached OCR results stay
@@ -1854,11 +1861,11 @@ settings switch removes `ocr.toml`, `benchmark\`, `speed\` and `work\` there.
   `READER_VERSION` does. A test pins an Ollama key, so the Ollama shape cannot drift.
   The models themselves live in the user data folder (`models/`), not in the cache. Used by the cache to detect stale stages and by the benchmark store to label
   runs.
-- `compute_correction_config_hash` / `compute_eval_config_hash` deliberately leave the
+- `correction_key` / `review_key` deliberately leave the
   anonymizer settings out: a text proofread with names hidden is the same text, so
   switching *Remove personal information* on or off does not send it again.  What was sent
   is recorded with the result instead (`SentRecord`, see *How a stored result was sent*),
-  and `privacy_fingerprint(config)` — the hash of the anonymizer settings alone, computed
+  and `privacy_key(config)` — the hash of the anonymizer settings alone, computed
   without importing spaCy — says whether a stored result was made with other settings than
   the current ones.  The resolved anonymizer settings (primary and secondary spaCy model plus every
   regex pattern, `tag=pattern`) are part of that fingerprint, so a changed pattern shows up
@@ -1951,7 +1958,7 @@ is sent* and `check_document` read the view.  **Nothing outside the cache's own 
 `DocumentState` text** for display or output: `tests/unit/test_teacher_work_readers.py` holds the
 package to that, and the GUI may not name the type at all.
 
-**One helper for the flags.**  `cache_service.stage_hashes(state, work, expected)` is the only
+**One helper for the flags.**  `domain/freshness.py:stage_hashes(state, work, expected)` is the only
 place that turns a work into the three flags freshness needs: `ocr_frozen` (a transcription part
 exists, or a corrections part was worked on), `expected_correction_source` (`text_identity` of the current transcription) and
 `correction_kept` (the corrections part applies and was worked on).  The run

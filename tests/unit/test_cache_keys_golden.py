@@ -17,21 +17,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from teachers_teammate.cache_keys import (
+    correction_key,
+    ocr_key,
+    preview_key,
+    privacy_key,
+    review_key,
+    sent_record,
+)
 from teachers_teammate.config import Config, OcrConfig
 from teachers_teammate.domain.context_budget import RunWindows
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.domain.stages import Stage
-from teachers_teammate.infrastructure.ocr_processor import get_ocr_prompt
+from teachers_teammate.infrastructure.key_facts import MachineKeyFacts
 from teachers_teammate.infrastructure.onnx.store import ModelStore
-from teachers_teammate.domain.freshness import compute_config_hash
-from teachers_teammate.infrastructure.workflow.cache_service import (
-    _preprocess_fingerprint,
-    compute_correction_config_hash,
-    compute_eval_config_hash,
-    compute_ocr_config_hash,
-    privacy_fingerprint,
-    sent_record,
-)
 from tests.conftest import fake_page_models_store, make_config
 
 _PNG = Path("page.png")
@@ -225,7 +224,7 @@ def _hidden_configs(tmp_path: Path) -> dict[str, Config]:
 def _ocr_keys(tmp_path: Path) -> dict[str, str]:
     """Return the OCR key of every case of the matrix."""
     return {
-        name: compute_ocr_config_hash(config, get_ocr_prompt(config.language), source, store)
+        name: ocr_key(config, source, MachineKeyFacts(store))
         for name, (config, source, store) in _ocr_configs(tmp_path).items()
     }
 
@@ -236,9 +235,7 @@ def _preview_keys(tmp_path: Path) -> dict[str, str]:
     keys: dict[str, str] = {}
     for name in ("ppocr/auto/models/pdf", "ollama/auto/models/pdf-never"):
         config, source, store = configs[name]
-        keys[name] = compute_config_hash(
-            "preview", "6f1c2a", *_preprocess_fingerprint(config.ocr, source, store)
-        )
+        keys[name] = preview_key(config, source, "6f1c2a", MachineKeyFacts(store))
     return keys
 
 
@@ -249,7 +246,7 @@ def _correction_keys(tmp_path: Path) -> dict[str, str]:
         "ollama/windows-wide": _WIDE,
     }
     return {
-        name: compute_correction_config_hash(config, windows.get(name))
+        name: correction_key(config, windows.get(name), MachineKeyFacts())
         for name, config in _proofreading_configs(tmp_path).items()
     }
 
@@ -258,14 +255,15 @@ def _review_keys(tmp_path: Path) -> dict[str, str]:
     """Return the content-review key of every case of the matrix."""
     windows = {"ollama/windows-wide": _WIDE}
     return {
-        name: compute_eval_config_hash(config, windows.get(name))
+        name: review_key(config, windows.get(name))
         for name, config in _review_configs(tmp_path).items()
     }
 
 
 def _privacy_keys(tmp_path: Path) -> dict[str, str]:
     """Return the privacy fingerprint of every case of the matrix."""
-    return {name: privacy_fingerprint(config) for name, config in _hidden_configs(tmp_path).items()}
+    facts = MachineKeyFacts()
+    return {name: privacy_key(config, facts) for name, config in _hidden_configs(tmp_path).items()}
 
 
 def _sent_records(tmp_path: Path) -> dict[str, str]:
@@ -283,10 +281,14 @@ def _sent_records(tmp_path: Path) -> dict[str, str]:
     )
     return {
         "proofreading": json.dumps(
-            sent_record(config, Stage.CORRECTION, names_hidden=3).to_dict(), sort_keys=True
+            sent_record(
+                config, Stage.CORRECTION, names_hidden=3, facts=MachineKeyFacts()
+            ).to_dict(),
+            sort_keys=True,
         ),
         "content-review": json.dumps(
-            sent_record(config, Stage.EVALUATION).to_dict(), sort_keys=True
+            sent_record(config, Stage.EVALUATION, facts=MachineKeyFacts()).to_dict(),
+            sort_keys=True,
         ),
     }
 

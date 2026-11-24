@@ -16,16 +16,15 @@ import dataclasses
 from pathlib import Path
 import threading
 
+from ..cache_keys import ocr_key
 from ..config import Config, OcrConfig, load_config_file
 from ..domain.benchmark import PairComparison, compare_pair
 from ..domain.data_location import ENGINE_OLLAMA
 from ..domain.model_catalog import normalize_tag
-from ..domain.ocr_prompt import get_ocr_prompt
 from ..infrastructure.benchmark.run_store import BenchmarkRunStore, NewRunRequest, StoredRun
 from ..infrastructure.benchmark.runner import OcrRunResult, run_ocr
 from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.state_repository import compute_file_hash
-from ..infrastructure.workflow.cache_service import compute_ocr_config_hash
 from ..settings_schema import DEFAULTS
 from .composition import AppServices
 from .formatting import TextFormatter
@@ -53,6 +52,8 @@ class BenchmarkApplicationService:
         runner: _Runner | None = None,
     ) -> None:
         self.services = app_services
+        #: What this computer adds to the key of a stored benchmark result.
+        self._facts = app_services.key_facts
         self._setup = app_services.setup
         self._store = run_store or BenchmarkRunStore()
         self._component_factory = component_factory or PipelineComponentFactory()
@@ -146,9 +147,7 @@ class BenchmarkApplicationService:
         if result.error is not None:
             raise BenchmarkRunError(result.error)
 
-        ocr_config_hash = compute_ocr_config_hash(
-            config, get_ocr_prompt(language), source, self.services.model_store
-        )
+        ocr_config_hash = ocr_key(config, source, self._facts)
         if on_progress is not None:
             on_progress("Storing run…")
         return self._store.save(

@@ -11,10 +11,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.domain.setting_values import PreprocessMethod
-from teachers_teammate.config import OcrConfig
-from teachers_teammate.settings_schema import DEFAULTS
-from teachers_teammate.infrastructure.onnx.store import ModelStore
-from teachers_teammate.domain.local_models import AUTO_VERSION
+from teachers_teammate.config import Config, OcrConfig
+from teachers_teammate.domain.context_budget import RunWindows
 from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
 from teachers_teammate.domain.document_state import DocumentState
 from teachers_teammate.infrastructure.state_repository import (
@@ -23,7 +21,6 @@ from teachers_teammate.infrastructure.state_repository import (
     compute_file_hash,
 )
 from teachers_teammate.infrastructure.storage_root import document_stem
-from teachers_teammate.domain.pdf_text_layer import input_fingerprint
 from teachers_teammate.domain.freshness import (
     ExpectedHashes,
     first_stale_stage_for_hashes,
@@ -36,15 +33,13 @@ from teachers_teammate.domain.teacher_work import (
     proofreading_id,
     text_identity,
 )
+from teachers_teammate.cache_keys import correction_key, review_key, sent_record
+from teachers_teammate.infrastructure.key_facts import MachineKeyFacts
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheContext,
     CacheReconciliationService,
-    _preprocess_fingerprint,
-    compute_ocr_config_hash,
-    privacy_fingerprint,
-    sent_record,
 )
-from tests.conftest import fake_page_models_store, make_config
+from tests.conftest import make_config
 
 _PDF = Path("worksheet.pdf")
 
@@ -66,6 +61,11 @@ def _make_ctx(state: DocumentState | None = None) -> CacheContext:
         eval_config_hash="eval_h",
         preview_config_hash="prev_h",
     )
+
+
+def _correction_key(config: Config, windows: RunWindows | None = None) -> str:
+    """The proofreading key of *config*, made with the facts of this computer."""
+    return correction_key(config, windows, MachineKeyFacts())
 
 
 def _make_svc(
@@ -203,12 +203,12 @@ def test_the_eval_hash_describes_the_settings_whatever_the_switch(tmp_path: Path
 def test_ocr_config_hash_is_deterministic(tmp_path: Path) -> None:
     """
     Given  the same config object
-    When   _ocr_config_hash is called twice with the same prompt
+    When   _ocr_config_hash is called twice
     Then   both calls return the same string
     """
     svc, _, _ = _make_svc(tmp_path)
-    h1 = svc._ocr_config_hash("Transcribe.", _PDF)
-    h2 = svc._ocr_config_hash("Transcribe.", _PDF)
+    h1 = svc._ocr_config_hash(_PDF)
+    h2 = svc._ocr_config_hash(_PDF)
     assert h1 == h2
     assert h1 != ""
 
@@ -221,7 +221,7 @@ def test_ocr_config_hash_changes_with_pdf_text_layer(tmp_path: Path) -> None:
     """
     svc_auto, _, _ = _make_svc(tmp_path, ocr=OcrConfig(engine="ppocr", pdf_text_layer="auto"))
     svc_never, _, _ = _make_svc(tmp_path, ocr=OcrConfig(engine="ppocr", pdf_text_layer="never"))
-    assert svc_auto._ocr_config_hash("p", _PDF) != svc_never._ocr_config_hash("p", _PDF)
+    assert svc_auto._ocr_config_hash(_PDF) != svc_never._ocr_config_hash(_PDF)
 
 
 def test_ocr_config_hash_changes_with_engine(tmp_path: Path) -> None:
@@ -232,7 +232,7 @@ def test_ocr_config_hash_changes_with_engine(tmp_path: Path) -> None:
     """
     svc_a, _, _ = _make_svc(tmp_path, ocr_engine="ppocr")
     svc_b, _, _ = _make_svc(tmp_path, ocr_engine="ollama")
-    assert svc_a._ocr_config_hash("p", _PDF) != svc_b._ocr_config_hash("p", _PDF)
+    assert svc_a._ocr_config_hash(_PDF) != svc_b._ocr_config_hash(_PDF)
 
 
 @pytest.mark.use_case("Config_Aware_Cache_Reuse")
@@ -375,14 +375,12 @@ def test_eval_config_hash_ignores_anonymization(tmp_path: Path) -> None:
 def test_ocr_config_hash_independent_of_correction_provider(tmp_path: Path) -> None:
     """
     Given  two services differing only in correction_provider (all OCR params identical)
-    When   _ocr_config_hash() is called on each with the same prompt
+    When   _ocr_config_hash() is called on each
     Then   the two hashes are equal (correction provider does not affect OCR hash)
     """
     svc_a, _, _ = _make_svc(tmp_path, ocr_engine="ppocr", correction_provider="openai")
     svc_b, _, _ = _make_svc(tmp_path, ocr_engine="ppocr", correction_provider="anthropic")
-    assert svc_a._ocr_config_hash("Transcribe.", _PDF) == svc_b._ocr_config_hash(
-        "Transcribe.", _PDF
-    )
+    assert svc_a._ocr_config_hash(_PDF) == svc_b._ocr_config_hash(_PDF)
 
 
 @pytest.mark.use_case("Multi_Provider_Stage_Configuration")
@@ -400,7 +398,7 @@ def test_three_stage_hashes_are_all_different_when_providers_differ(tmp_path: Pa
         evaluation_enabled=True,
         evaluate_provider="anthropic",
     )
-    ocr_h = svc._ocr_config_hash("Transcribe.", _PDF)
+    ocr_h = svc._ocr_config_hash(_PDF)
     corr_h = svc._correction_config_hash()
     eval_h = svc._eval_config_hash()
     assert ocr_h != ""
@@ -411,60 +409,15 @@ def test_three_stage_hashes_are_all_different_when_providers_differ(tmp_path: Pa
     assert ocr_h != eval_h
 
 
-def test_the_ollama_ocr_key_does_not_depend_on_the_reader_models(tmp_path: Path) -> None:
-    """
-    Given  a fixed Ollama configuration
-    When   its OCR config hash is computed with another reader fingerprint
-    Then   the key is the same (only the built-in reader's key follows its models)
-    """
-    cfg = make_config(
-        tmp_path,
-        language="German",
-        ocr=OcrConfig(
-            engine="ollama",
-            model="qwen3-vl:8b",
-            preprocess_method=PreprocessMethod.NONE,
-            temperature=0.0,
-        ),
-    )
-
-    key = compute_ocr_config_hash(cfg, "PROMPT", Path("page.png"))
-    with patch(
-        "teachers_teammate.infrastructure.workflow.cache_service.reader_fingerprint",
-        return_value="PP-OCRv6_small@new+new/v2",
-    ):
-        assert compute_ocr_config_hash(cfg, "PROMPT", Path("page.png")) == key
-
-
-def test_the_reader_key_ignores_language_and_ollama_model_but_not_the_models(
-    tmp_path: Path,
-) -> None:
-    """
-    Given  configurations of the built-in reader differing in language, Ollama model and prompt
-    When   the OCR config hashes are computed
-    Then   they are equal, and another reader fingerprint gives another key
-    """
-    base = make_config(tmp_path, language="German", ocr_engine="ppocr", ocr_model="a:1")
-    other = make_config(tmp_path, language="French", ocr_engine="ppocr", ocr_model="b:2")
-
-    key = compute_ocr_config_hash(base, "one prompt", Path("page.png"))
-    assert key == compute_ocr_config_hash(other, "another prompt", Path("page.png"))
-    with patch(
-        "teachers_teammate.infrastructure.workflow.cache_service.reader_fingerprint",
-        return_value="PP-OCRv6_small@new+new/v2",
-    ):
-        assert compute_ocr_config_hash(base, "one prompt", Path("page.png")) != key
-
-
 def test_ocr_config_hash_changes_with_temperature(tmp_path: Path) -> None:
     """
     Given  two services differing only in ocr_temperature
-    When   _ocr_config_hash() is called with the same prompt
+    When   _ocr_config_hash() is called on each
     Then   the two hashes differ (temperature affects OCR cache invalidation)
     """
     svc_a, _, _ = _make_svc(tmp_path, ocr_engine="ollama", ocr_temperature=0.0)
     svc_b, _, _ = _make_svc(tmp_path, ocr_engine="ollama", ocr_temperature=0.7)
-    assert svc_a._ocr_config_hash("p", _PDF) != svc_b._ocr_config_hash("p", _PDF)
+    assert svc_a._ocr_config_hash(_PDF) != svc_b._ocr_config_hash(_PDF)
 
 
 @pytest.mark.use_case("Config_Aware_Cache_Reuse")
@@ -483,7 +436,7 @@ def test_ocr_config_hash_changes_with_each_preprocessing_field(
     """
     Given  two configs differing only in one preprocessing field (PDF DPI, the method, or the
            engine, which decides whether the automatic preparation hands over gray or colour)
-    When   _ocr_config_hash() is called with the same prompt
+    When   _ocr_config_hash() is called on each
     Then   the two hashes differ, so changing the field invalidates the OCR cache
 
     Without this, the cache (which has no expiry) returns stale OCR text after a change.
@@ -491,91 +444,7 @@ def test_ocr_config_hash_changes_with_each_preprocessing_field(
     base = OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.AUTO)
     svc_a, _, _ = _make_svc(tmp_path, ocr=base)
     svc_b, _, _ = _make_svc(tmp_path, ocr=mutate(base))
-    assert svc_a._ocr_config_hash("p", _PDF) != svc_b._ocr_config_hash("p", _PDF)
-
-
-def test_the_automatic_fingerprint_names_version_output_and_available_model_steps(
-    tmp_path: Path,
-) -> None:
-    """
-    Given  the automatic preparation for the built-in reader, with no page models, and with them
-    When   _preprocess_fingerprint() is called
-    Then   the entries are the method, the AUTO_VERSION, the output, the available model steps
-           ("+turn", "+flatten"), the DPI and the text-layer entries
-    """
-    ocr = OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.AUTO, pdf_render_dpi=600)
-    empty = ModelStore(tmp_path / "empty")
-    full = fake_page_models_store(tmp_path)
-
-    assert _preprocess_fingerprint(ocr, _PDF, empty) == (
-        "auto",
-        f"v{AUTO_VERSION}",
-        "colour",
-        "600",
-        *input_fingerprint(".pdf", ocr.pdf_text_layer),
-    )
-    assert _preprocess_fingerprint(ocr, _PDF, full)[1:5] == (
-        f"v{AUTO_VERSION}",
-        "colour",
-        "+turn",
-        "+flatten",
-    )
-
-
-def test_downloading_the_page_models_changes_the_automatic_key_once(tmp_path: Path) -> None:
-    """
-    Given  a config with the automatic preparation
-    When   the OCR config hash is computed without and with the page models downloaded
-    Then   the two keys differ (pages are read again once), and a store with them gives the
-           same key every time
-    """
-    cfg = make_config(
-        tmp_path, ocr=OcrConfig(engine="ollama", preprocess_method=PreprocessMethod.AUTO)
-    )
-    empty = ModelStore(tmp_path / "empty")
-    full = fake_page_models_store(tmp_path)
-
-    without = compute_ocr_config_hash(cfg, "p", _PDF, empty)
-    with_models = compute_ocr_config_hash(cfg, "p", _PDF, full)
-
-    assert without != with_models
-    assert with_models == compute_ocr_config_hash(cfg, "p", _PDF, full)
-
-
-def test_the_original_page_key_is_the_method_alone(tmp_path: Path) -> None:
-    """
-    Given  "Original page" (method none)
-    When   the fingerprint is computed without and with the page models
-    Then   both are the method, the DPI and the text-layer entries: the models change nothing
-    """
-    ocr = OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.NONE)
-
-    plain = _preprocess_fingerprint(ocr, _PDF, ModelStore(tmp_path / "empty"))
-
-    assert plain[0] == "none"
-    assert plain == _preprocess_fingerprint(ocr, _PDF, fake_page_models_store(tmp_path))
-
-
-@pytest.mark.use_case("Preview_Preprocessing")
-def test_preview_hash_changes_with_preprocessing_field(tmp_path: Path) -> None:
-    """
-    Given  two configs differing only in the image preparation method
-    When   prepare() computes the preview config hash for each
-    Then   the two preview hashes differ, so the cached preview image is regenerated
-    """
-    src = tmp_path / "doc.png"
-    src.write_bytes(b"fake-image-bytes")
-
-    def _prepare(ocr: OcrConfig) -> str:
-        svc, repo, _ = _make_svc(tmp_path, ocr=ocr)
-        state = _make_state(str(src))
-        repo.load_or_create.return_value = state
-        repo.reconcile.return_value = state
-        return svc.prepare(src).preview_config_hash
-
-    h_auto = _prepare(OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.AUTO))
-    h_none = _prepare(OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.NONE))
-    assert h_auto != h_none
+    assert svc_a._ocr_config_hash(_PDF) != svc_b._ocr_config_hash(_PDF)
 
 
 def test_correction_config_hash_changes_with_the_step_one_temperature(tmp_path: Path) -> None:
@@ -715,7 +584,7 @@ def test_record_correction_delegates_to_repo(tmp_path: Path) -> None:
         correction_warning="",
         sent_text="",
         sent_map=None,
-        sent=sent_record(svc._config, Stage.CORRECTION),
+        sent=sent_record(svc._config, Stage.CORRECTION, facts=MachineKeyFacts()),
         source_hash=text_identity(""),
     )
     assert result.state is new_state
@@ -768,69 +637,12 @@ def test_record_evaluation_delegates_to_repo(tmp_path: Path) -> None:
         evaluation_text="quality: good",
         eval_config_hash=ctx.eval_config_hash,
         evaluation_warning="",
-        sent=sent_record(svc._config, Stage.EVALUATION),
+        sent=sent_record(svc._config, Stage.EVALUATION, facts=MachineKeyFacts()),
     )
     assert result.state is new_state
 
 
 # ── How a result was sent ─────────────────────────────────────────────────
-
-
-def test_sent_record_names_the_step_and_where_it_ran(tmp_path: Path) -> None:
-    """
-    Given  a config that proofreads on the local Ollama and reviews on an online provider
-    When   sent_record() is asked for each stage
-    Then   each names its own provider and model, and only the Ollama one carries a host
-    """
-    cfg = make_config(
-        tmp_path,
-        correction_enabled=True,
-        correction_provider="ollama",
-        correction_model="qwen3.5:9b",
-        evaluation_enabled=True,
-        evaluate_provider="mistral_eu",
-        evaluate_model="mistral-large-latest",
-    )
-
-    proofreading = sent_record(cfg, Stage.CORRECTION, names_hidden=3)
-    review = sent_record(cfg, Stage.EVALUATION)
-
-    assert proofreading.provider == "ollama"
-    assert proofreading.model == "qwen3.5:9b"
-    assert proofreading.endpoint == "127.0.0.1"
-    assert proofreading.names_hidden == 3
-    assert proofreading.hiding_on is False
-    assert review.provider == "mistral_eu"
-    assert review.model == "mistral-large-latest"
-    assert review.endpoint == ""
-    assert review.names_hidden == 0
-
-
-def test_sent_record_says_whether_hiding_was_on_when_no_name_was_found(tmp_path: Path) -> None:
-    """
-    Given  a config with personal info removal on, and a text in which nothing was hidden
-    When   sent_record() is asked for the proofreading
-    Then   the record says hiding was on although it counts no names
-    """
-    cfg = make_config(tmp_path, correction_enabled=True, anonymization_enabled=True)
-
-    record = sent_record(cfg, Stage.CORRECTION, names_hidden=0)
-
-    assert record.hiding_on is True
-    assert record.names_hidden == 0
-
-
-def test_the_privacy_fingerprint_follows_the_anonymizer_settings(tmp_path: Path) -> None:
-    """
-    Given  two configs that differ only in whether personal info is removed
-    When   privacy_fingerprint() is asked for each
-    Then   the fingerprints differ, and the same settings give the same fingerprint
-    """
-    plain = make_config(tmp_path, anonymization_enabled=False)
-    hidden = make_config(tmp_path, anonymization_enabled=True)
-
-    assert privacy_fingerprint(plain) != privacy_fingerprint(hidden)
-    assert privacy_fingerprint(hidden) == privacy_fingerprint(hidden)
 
 
 def test_record_correction_forwards_the_text_that_was_sent(tmp_path: Path) -> None:
@@ -1076,9 +888,9 @@ def test_pdf_text_layer_mode_changes_hash_only_for_pdfs(tmp_path: Path, mode: st
     svc_mode, _, _ = _make_svc(tmp_path, ocr=replace(base, pdf_text_layer=mode))
 
     jpg, txt = Path("scan.jpg"), Path("notes.TXT")
-    assert svc_auto._ocr_config_hash("p", _PDF) != svc_mode._ocr_config_hash("p", _PDF)
-    assert svc_auto._ocr_config_hash("p", jpg) == svc_mode._ocr_config_hash("p", jpg)
-    assert svc_auto._ocr_config_hash("p", txt) == svc_mode._ocr_config_hash("p", txt)
+    assert svc_auto._ocr_config_hash(_PDF) != svc_mode._ocr_config_hash(_PDF)
+    assert svc_auto._ocr_config_hash(jpg) == svc_mode._ocr_config_hash(jpg)
+    assert svc_auto._ocr_config_hash(txt) == svc_mode._ocr_config_hash(txt)
 
 
 @pytest.mark.parametrize(
@@ -1143,9 +955,6 @@ def test_the_fingerprint_changes_when_the_context_window_is_pinned(
     so every setting gives the same window, and this test is about the key.
     """
     from teachers_teammate.domain import context_budget  # noqa: PLC0415
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_correction_config_hash,
-    )
 
     monkeypatch.setattr(context_budget, "PROOFREADING_NUM_CTX_CAP", 16384)
     auto = make_config(tmp_path, correction_enabled=True, correction_provider="ollama")
@@ -1156,7 +965,7 @@ def test_the_fingerprint_changes_when_the_context_window_is_pinned(
         proofreading_context="16384",
     )
 
-    assert compute_correction_config_hash(auto) != compute_correction_config_hash(pinned)
+    assert _correction_key(auto) != _correction_key(pinned)
 
 
 def test_settings_that_give_the_same_window_give_the_same_fingerprint(
@@ -1171,9 +980,6 @@ def test_settings_that_give_the_same_window_give_the_same_fingerprint(
     so every setting gives the same window, and this test is about the key.
     """
     from teachers_teammate.domain import context_budget  # noqa: PLC0415
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_correction_config_hash,
-    )
 
     monkeypatch.setattr(context_budget, "PROOFREADING_NUM_CTX_CAP", 16384)
     first = make_config(
@@ -1189,7 +995,7 @@ def test_settings_that_give_the_same_window_give_the_same_fingerprint(
         proofreading_context="32768",
     )
 
-    assert compute_correction_config_hash(first) == compute_correction_config_hash(second)
+    assert _correction_key(first) == _correction_key(second)
 
 
 def test_the_window_setting_does_not_change_the_fingerprint_of_an_online_provider(
@@ -1200,10 +1006,6 @@ def test_the_window_setting_does_not_change_the_fingerprint_of_an_online_provide
     When   the correction fingerprint is computed
     Then   the keys are equal, because an online provider never receives the window
     """
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_correction_config_hash,
-    )
-
     auto = make_config(tmp_path, correction_enabled=True, correction_provider="openai")
     pinned = make_config(
         tmp_path,
@@ -1212,7 +1014,7 @@ def test_the_window_setting_does_not_change_the_fingerprint_of_an_online_provide
         proofreading_context="16384",
     )
 
-    assert compute_correction_config_hash(auto) == compute_correction_config_hash(pinned)
+    assert _correction_key(auto) == _correction_key(pinned)
 
 
 def test_a_profile_change_changes_the_cache_key_of_that_model_only(tmp_path: Path) -> None:
@@ -1223,9 +1025,6 @@ def test_a_profile_change_changes_the_cache_key_of_that_model_only(tmp_path: Pat
     """
     from teachers_teammate.domain import model_catalog  # noqa: PLC0415
     from teachers_teammate.domain.model_catalog import OLLAMA_CATALOG  # noqa: PLC0415
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_correction_config_hash,
-    )
 
     changed = "gemma4:e4b"
     untouched = "qwen3:4b"
@@ -1241,10 +1040,10 @@ def test_a_profile_change_changes_the_cache_key_of_that_model_only(tmp_path: Pat
         )
         for tag in (changed, untouched)
     }
-    before = {tag: compute_correction_config_hash(cfg) for tag, cfg in configs.items()}
+    before = {tag: _correction_key(cfg) for tag, cfg in configs.items()}
 
     with patch.object(model_catalog, "OLLAMA_CATALOG", catalog):
-        after = {tag: compute_correction_config_hash(cfg) for tag, cfg in configs.items()}
+        after = {tag: _correction_key(cfg) for tag, cfg in configs.items()}
 
     assert after[changed] != before[changed]
     assert after[untouched] == before[untouched]
@@ -1259,17 +1058,10 @@ def test_the_resolved_window_changes_the_correction_key(tmp_path: Path) -> None:
     When   the correction fingerprint is computed for each window
     Then   the keys differ, so results made at 8192 are not reused at 16384
     """
-    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_correction_config_hash,
-    )
-
     config = make_config(tmp_path, correction_enabled=True, correction_provider="ollama")
 
-    base = compute_correction_config_hash(config, RunWindows(proofreading=8192, evaluation=8192))
-    larger = compute_correction_config_hash(
-        config, RunWindows(proofreading=16384, evaluation=16384)
-    )
+    base = _correction_key(config, RunWindows(proofreading=8192, evaluation=8192))
+    larger = _correction_key(config, RunWindows(proofreading=16384, evaluation=16384))
 
     assert base != larger
 
@@ -1286,11 +1078,6 @@ def test_a_pinned_window_without_resolved_windows_keeps_todays_key(
     so the setting alone gives 8192, and this test is about the key.
     """
     from teachers_teammate.domain import context_budget  # noqa: PLC0415
-    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_correction_config_hash,
-    )
-
     monkeypatch.setattr(context_budget, "PROOFREADING_NUM_CTX_CAP", 16384)
     config = make_config(
         tmp_path,
@@ -1299,7 +1086,7 @@ def test_a_pinned_window_without_resolved_windows_keeps_todays_key(
         proofreading_context="16384",
     )
 
-    assert compute_correction_config_hash(config) == compute_correction_config_hash(
+    assert _correction_key(config) == _correction_key(
         config, RunWindows(proofreading=16384, evaluation=16384)
     )
 
@@ -1312,17 +1099,10 @@ def test_an_online_provider_has_no_window_part_even_with_resolved_windows(
     When   the correction fingerprint is computed for each
     Then   the keys are equal, because an online provider never receives the window
     """
-    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_correction_config_hash,
-    )
-
     config = make_config(tmp_path, correction_enabled=True, correction_provider="openai")
 
-    base = compute_correction_config_hash(config, RunWindows(proofreading=8192, evaluation=8192))
-    larger = compute_correction_config_hash(
-        config, RunWindows(proofreading=16384, evaluation=16384)
-    )
+    base = _correction_key(config, RunWindows(proofreading=8192, evaluation=8192))
+    larger = _correction_key(config, RunWindows(proofreading=16384, evaluation=16384))
 
     assert base == larger
 
@@ -1333,11 +1113,6 @@ def test_the_evaluation_key_follows_the_review_window(tmp_path: Path) -> None:
     When   the evaluation fingerprint is computed for each window
     Then   the keys differ, so a review that failed as "too long" is tried again
     """
-    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_eval_config_hash,
-    )
-
     config = make_config(
         tmp_path,
         correction_enabled=True,
@@ -1346,8 +1121,8 @@ def test_the_evaluation_key_follows_the_review_window(tmp_path: Path) -> None:
         evaluate_provider="ollama",
     )
 
-    base = compute_eval_config_hash(config, RunWindows(proofreading=8192, evaluation=8192))
-    larger = compute_eval_config_hash(config, RunWindows(proofreading=8192, evaluation=32768))
+    base = review_key(config, RunWindows(proofreading=8192, evaluation=8192))
+    larger = review_key(config, RunWindows(proofreading=8192, evaluation=32768))
 
     assert base != larger
 
@@ -1358,11 +1133,6 @@ def test_an_online_content_review_has_no_window_part(tmp_path: Path) -> None:
     When   the evaluation fingerprint is computed for each
     Then   the keys are equal, because the app does not set an online provider's window
     """
-    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_eval_config_hash,
-    )
-
     config = make_config(
         tmp_path,
         correction_enabled=True,
@@ -1371,8 +1141,8 @@ def test_an_online_content_review_has_no_window_part(tmp_path: Path) -> None:
         evaluate_provider="openai",
     )
 
-    base = compute_eval_config_hash(config, RunWindows(proofreading=8192, evaluation=8192))
-    larger = compute_eval_config_hash(config, RunWindows(proofreading=8192, evaluation=32768))
+    base = review_key(config, RunWindows(proofreading=8192, evaluation=8192))
+    larger = review_key(config, RunWindows(proofreading=8192, evaluation=32768))
 
     assert base == larger
 
@@ -1390,9 +1160,6 @@ def test_todays_catalog_keeps_the_cache_key_of_a_pinned_base_window(tmp_path: Pa
         HardwareDetection,
         HardwareProfile,
         find_spec,
-    )
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_correction_config_hash,
     )
 
     tag = "gemma4:e4b"
@@ -1419,7 +1186,7 @@ def test_todays_catalog_keeps_the_cache_key_of_a_pinned_base_window(tmp_path: Pa
     )
 
     assert windows.proofreading == 8192
-    assert compute_correction_config_hash(auto, windows) == compute_correction_config_hash(pinned)
+    assert _correction_key(auto, windows) == _correction_key(pinned)
 
 
 def test_the_cache_service_keys_the_window_it_was_given(tmp_path: Path) -> None:
@@ -1428,8 +1195,6 @@ def test_the_cache_service_keys_the_window_it_was_given(tmp_path: Path) -> None:
     When   each computes its correction hash
     Then   the hashes differ, because the service keys the window it uses
     """
-    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
-
     cfg = make_config(tmp_path, correction_enabled=True, correction_provider="ollama")
     base = CacheReconciliationService(
         state_repo=MagicMock(),
@@ -1456,9 +1221,6 @@ def test_a_changed_temperature_of_steps_two_and_three_changes_the_correction_key
     Then   the key differs, though step ①'s measured temperature is the same
     """
     from teachers_teammate.domain import model_catalog  # noqa: PLC0415
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_correction_config_hash,
-    )
 
     cfg = make_config(
         tmp_path,
@@ -1466,11 +1228,11 @@ def test_a_changed_temperature_of_steps_two_and_three_changes_the_correction_key
         correction_provider="ollama",
         correction_model="qwen3.5:9b",
     )
-    before = compute_correction_config_hash(cfg)
+    before = _correction_key(cfg)
 
     monkeypatch.setitem(model_catalog.MAKER_TEMPERATURES, "qwen3.5:9b", 0.5)
 
-    assert compute_correction_config_hash(cfg) != before
+    assert _correction_key(cfg) != before
 
 
 def test_correction_config_hash_changes_with_a_prompt_variant_and_only_then(
@@ -1773,11 +1535,7 @@ def test_the_correction_key_of_the_default_profile_is_pinned(tmp_path: Path) -> 
     When   the correction config hash is computed
     Then   it is the pinned value, so stored proofreadings stay fresh
     """
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        compute_correction_config_hash,
-    )
-
     assert (
-        compute_correction_config_hash(make_config(tmp_path))
+        _correction_key(make_config(tmp_path))
         == "9b95c89d1b6f679277f7b3d19565e3e49873a04cf524f1834f517e08eef9cfe7"
     )

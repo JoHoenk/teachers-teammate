@@ -1,109 +1,29 @@
-"""Update check against GitHub Releases, run on the background pool."""
+"""The update check on the background pool: the ask off the GUI thread, the answer on it."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-import logging
-import re
 
 from PySide6.QtCore import QObject
 
-import teachers_teammate as _pkg
-
+from ..application.releases import ReleaseOffer
 from ._background import run_in_background
-
-_logger = logging.getLogger(__name__)
-
-#: The version of a build nobody stamped, which sorts below every release.
-_DEVELOPMENT_VERSION = "0.0.0.dev0"
-_RELEASES_API = "https://api.github.com/repos/JoHoenk/teachers-teammate/releases/latest"
-#: Every release page of this project is under this prefix.  The banner is a link, and the
-# answer comes from the network: what points elsewhere is not opened.
-_RELEASE_URL_PREFIX = "https://github.com/JoHoenk/teachers-teammate/"
-
-# A release version, either as the app writes it (0.5.7rc1, PEP 440) or as a tag reads
-# (v0.5.7-rc.1): the pre-release label sits right after the release part or behind a dash.
-# A development, post or local suffix (0.5.7.dev0, 0.5.7.post1, 0.5.7+abc) is read as the
-# plain release, so such a build is never offered the release it already is. The number
-# behind a dashed label is either absent (-pre) or whole (-rc1, -rc.1), never a bare dot.
-_VERSION_PATTERN = re.compile(
-    r"^v?(?P<release>\d+(?:\.\d+)*)"
-    r"(?:-(?P<label>alpha|beta|rc|pre)(?:\.?\d+)?|(?P<pep_label>a|b|rc)\d+)?"
-    r"(?:\.(?:dev|post)\d+)*(?:\+[0-9A-Za-z.]+)?$"
-)
-
-
-def _version_tuple(tag: str) -> tuple[int, ...]:
-    """Convert a version string like '1.2.3', 'v1.2.3-rc.1' or '1.2.3rc1' to a comparable tuple.
-
-    Trailing zeros of the release part are dropped, so '1.2' and '1.2.0' are the same version.
-    The release part is followed by a pre-release flag: 0 for a final release, -1 for a
-    pre-release, so a pre-release sorts below the release it belongs to. A string that is not
-    a version at all gives (), which compares below every version.
-    """
-    match = _VERSION_PATTERN.match(tag.strip())
-    if not match:
-        return ()
-    release = [int(part) for part in match.group("release").split(".")]
-    while len(release) > 1 and release[-1] == 0:
-        release.pop()
-    is_prerelease = match.group("label") is not None or match.group("pep_label") is not None
-    return (*release, -1 if is_prerelease else 0)
-
-
-def _is_development_build(version: str) -> bool:
-    """Whether *version* is a development build, which names no release to compare with."""
-    return version == _DEVELOPMENT_VERSION
-
-
-def _is_release_url(url: str) -> bool:
-    """Whether *url* names a page of this project's own releases."""
-    return url.startswith(_RELEASE_URL_PREFIX) and len(url) > len(_RELEASE_URL_PREFIX)
-
-
-def fetch_newer_release() -> tuple[str, str] | None:
-    """Return the release ``(version, url)`` that is newer than this one, or ``None``.
-
-    Best effort: no answer, no network and an unreadable answer all give ``None``.  An
-    installed version that cannot be read gives no banner either: better silent than offering
-    the same release on every launch.  A development build asks nobody: its placeholder sorts
-    below every release, so every answer would offer one.
-    """
-    if _is_development_build(_pkg.__version__):
-        return None
-    try:
-        import json  # noqa: PLC0415
-        import urllib.request  # noqa: PLC0415
-
-        req = urllib.request.Request(
-            _RELEASES_API,
-            headers={"Accept": "application/vnd.github+json"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read())
-
-        tag = data.get("tag_name", "")
-        url = data.get("html_url", "")
-        latest = _version_tuple(tag)
-        installed = _version_tuple(_pkg.__version__)
-        if tag and _is_release_url(url) and latest and installed and latest > installed:
-            return tag.lstrip("v"), url
-    except Exception as exc:  # noqa: BLE001  # update check is best-effort; network/parse errors are silently ignored
-        # Info, not warning: no network at a start is normal.  The status tells a rate limit
-        # (403, 429) from a real failure; what the answer held is never logged.
-        status = getattr(exc, "code", "")
-        kind = f"{type(exc).__name__} {status}" if status else type(exc).__name__
-        _logger.info("The update check failed: %s", kind)
-    return None
 
 
 def check_for_update(
-    on_available: Callable[[str, str], None], *, owner: QObject | None = None
+    newer_release: Callable[[], ReleaseOffer | None],
+    on_available: Callable[[str, str], None],
+    *,
+    owner: QObject | None = None,
 ) -> None:
-    """Ask GitHub Releases off the GUI thread; *on_available* gets a newer ``(version, url)``."""
+    """Ask *newer_release* off the GUI thread; *on_available* gets a newer ``(version, url)``.
+
+    Which release is newer, and whether one is offered at all, is the service's answer; this
+    function only decides where the ask runs and where the answer lands.
+    """
 
     def deliver(result: object, error: BaseException | None) -> None:
-        if error is None and isinstance(result, tuple) and len(result) == 2:
-            on_available(result[0], result[1])
+        if error is None and isinstance(result, ReleaseOffer):
+            on_available(result.version, result.url)
 
-    run_in_background(fetch_newer_release, deliver, owner=owner, network=True)
+    run_in_background(newer_release, deliver, owner=owner, network=True)

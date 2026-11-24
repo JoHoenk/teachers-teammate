@@ -543,6 +543,24 @@ app_test(
     deps = _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
+# This project's releases: which one is newer than this build, and the page a banner may open.
+app_test(
+    "unit/test_releases_domain.py",
+    deps = _DOMAIN_LIB,
+)
+
+# The one HTTPS request the update check makes: GitHub's feed, and the failure it reports.
+app_test(
+    "unit/test_release_feed.py",
+    deps = _INFRASTRUCTURE_LIB,
+)
+
+# The update check as a service: the feed, the version rule and the one line a failure writes.
+app_test(
+    "unit/test_release_service.py",
+    deps = _APPLICATION_LIB,
+)
+
 # The engines of text recognition, their models, and the reader's model files.
 app_test(
     "unit/test_reader_service.py",

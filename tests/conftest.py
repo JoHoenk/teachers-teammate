@@ -320,13 +320,14 @@ def pipeline_dependencies(tmp_path: Path, **fields: object):
 def _no_background_network_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
     """Never let MainWindow reach the network for the update check during tests.
 
-    MainWindow asks GitHub Releases at construction; no test may wait on a socket.
+    MainWindow asks the release service at construction; no test may wait on a socket.  The
+    module's own name is patched, so a test of the service itself keeps the real one.
     """
     try:
-        from teachers_teammate.gui import _update_check  # noqa: PLC0415
-    except ImportError:  # pure-unit targets without PySide6
+        from teachers_teammate.gui import _main_window  # noqa: PLC0415
+    except ImportError:  # a target without PySide6
         return
-    monkeypatch.setattr(_update_check, "fetch_newer_release", lambda: None)
+    monkeypatch.setattr(_main_window, "check_for_update", lambda *args, **kwargs: None)
 
 
 @pytest.fixture(autouse=True)

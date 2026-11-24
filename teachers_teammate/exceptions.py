@@ -261,3 +261,19 @@ class AddonUpdateError(RuntimeError):
     def __init__(self, errors: list[tuple[str, RuntimeError]]) -> None:
         super().__init__("; ".join(f"{requirement}: {error}" for requirement, error in errors))
         self.errors = errors
+
+
+class ReleaseFeedError(RuntimeError):
+    """The newest release could not be read from the feed.
+
+    ``status`` is the HTTP status of a refused answer, or ``None`` when there was no answer at all:
+    no network, a timeout, or an answer that is not the JSON of a release.  ``rate_limited`` tells
+    GitHub's hourly limit from a refusal that would work later.  No teacher reads this failure —
+    the update check stays silent — so it carries no :class:`~teachers_teammate.messages.Message`;
+    the log line names the type and the status.
+    """
+
+    def __init__(self, status: int | None = None, *, rate_limited: bool = False) -> None:
+        super().__init__(f"the release feed answered {status}" if status else "no answer")
+        self.status = status
+        self.rate_limited = rate_limited

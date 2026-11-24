@@ -34,10 +34,11 @@ interfaces.py    — ABCs for every pipeline stage; SUPPORTED_SUFFIXES lives her
 infrastructure/  — concrete implementations (OCR engines, LLM providers, DOCX builder, etc.)
 infrastructure/workflow/ — FileProcessor (per-file stage orchestrator), run_files() coordinator
 application/     — the services, one per topic: RunService (the run) in `run.py`, plus
-                   providers, reader, recommendations, speeds, anonymization, addons, data_flow,
-                   setup, export, stored results (what earlier runs kept), DocumentQueries
-                   (reads) and DocumentCommands (writes), reached as `.run` / `.stored` /
-                   `.documents` / `.commands`; the only entry for GUI and CLI
+                   providers, reader, recommendations, speeds, anonymization, addons, releases
+                   (the update check), data_flow, setup, export, stored results (what earlier
+                   runs kept), DocumentQueries (reads) and DocumentCommands (writes), reached
+                   as `.run` / `.stored` / `.documents` / `.commands`; the only entry for GUI
+                   and CLI
 gui/ / cli.py    — adapters; no discovery or availability logic
                    (gui/settings/ = the Settings window, one page per topic)
 ```

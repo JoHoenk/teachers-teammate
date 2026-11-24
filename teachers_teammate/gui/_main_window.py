@@ -265,7 +265,11 @@ class MainWindow(QMainWindow):
         if self._config_panel.get_settings_dict().get(
             "check_for_updates", DEFAULTS["check_for_updates"]
         ):
-            check_for_update(self._show_update_banner, owner=self)
+            check_for_update(
+                self._app_service.releases.newer_release,
+                self._show_update_banner,
+                owner=self,
+            )
 
     def _build_widgets(self) -> None:
         """Build what the window shows and the controllers work on."""

@@ -69,6 +69,7 @@ def test_frozen_only_checks_are_skipped_in_source_mode() -> None:
     assert "assets" not in names
     assert "pip" not in names
     assert "addon constraints" not in names
+    assert "ca store" not in names
     assert {"imports", "qt", "reader", "pdf", "docx", "providers"} <= set(names)
 
 
@@ -349,6 +350,32 @@ def test_addon_lock_check_wants_every_addon_pinned(tmp_path: Path, monkeypatch) 
 
     lock.unlink()
     assert "is not in the bundle" in (frozen_modes._check_addon_lock() or "")
+
+
+def test_ca_store_check_wants_certificates_in_the_default_context(monkeypatch) -> None:
+    """
+    Given  a default TLS context that holds CA certificates, and one that holds none
+    When   the CA store check runs on each
+    Then   the first passes and the second names the missing store
+    """
+    import ssl  # noqa: PLC0415
+
+    class Store:
+        """A TLS context whose store holds *count* CA certificates."""
+
+        def __init__(self, count: int) -> None:
+            self._count = count
+
+        def cert_store_stats(self) -> dict[str, int]:
+            return {"x509": self._count, "x509_ca": self._count}
+
+    monkeypatch.setattr(ssl, "create_default_context", lambda *args, **kwargs: Store(141))
+
+    assert frozen_modes._check_ca_store() is None
+
+    monkeypatch.setattr(ssl, "create_default_context", lambda *args, **kwargs: Store(0))
+
+    assert "no CA certificate" in (frozen_modes._check_ca_store() or "")
 
 
 def test_bundled_models_check_ignores_models_downloaded_earlier(

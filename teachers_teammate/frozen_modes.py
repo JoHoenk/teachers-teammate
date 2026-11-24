@@ -473,6 +473,18 @@ def _check_addon_lock() -> str | None:
     return f"not pinned: {', '.join(missing)}" if missing else None
 
 
+def _check_ca_store() -> str | None:
+    """Check that the bundle's ``ssl`` finds CA certificates (frozen only).
+
+    A frozen ``urllib`` has no certificate store of its own: with none, every HTTPS request the
+    app makes — the update check, a provider call — fails at the handshake.
+    """
+    import ssl  # noqa: PLC0415
+
+    count = ssl.create_default_context().cert_store_stats()["x509_ca"]
+    return None if count else "ssl finds no CA certificate (x509_ca: 0)"
+
+
 def _check_bundled_models() -> str | None:
     """Check that the reader and the page models ship with the app (frozen only).
 
@@ -521,6 +533,7 @@ def _checks() -> list[tuple[str, Check]]:
             ("pip", _check_pip),
             ("addon constraints", _check_addon_constraints),
             ("addon lock", _check_addon_lock),
+            ("ca store", _check_ca_store),
         ]
     if sys.platform in ("win32", "darwin"):
         checks.append(("keychain", _check_keychain))

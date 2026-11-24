@@ -45,7 +45,7 @@ class _BlockedRun:
         return None
 
     def collect_input_files(self, config) -> list[Path]:
-        return []
+        return [Path("page.png")]
 
     def check_run_preflight(self, config, **kwargs) -> RunPreflight:
         return RunPreflight(stage=Stage.CORRECTION, stage_issues=(self._issue,))

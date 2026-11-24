@@ -269,8 +269,9 @@ texts, the runs, the marks — go to the private repository `teachers-teammate-e
 the app's own lists (`[project] dependencies`, `addon_manager.addon_package_names()`, the
 `LocalModel`s, `SPACY_MODEL_PINS`) and the two locks, so a new dependency, add-on, model or spaCy
 language is a red test until the tool runs. `tools/licenses/policy.toml` holds the denied
-licenses, display names and accepted exceptions. `NOTICE` is hand-written; a test keeps its
-versions on the locked ones. See {doc}`deployment` → "Third-party licenses"
+licenses — what cannot join a GPL-3.0 program, AGPL included — the display names and the accepted
+exceptions. `NOTICE` is hand-written; a test keeps its versions on the locked ones. See
+{doc}`deployment` → "Third-party licenses"
 
 ## Also in `development.md`
 

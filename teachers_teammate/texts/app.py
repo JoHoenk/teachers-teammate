@@ -27,12 +27,11 @@ LICENSES_TITLE = f"Licenses — {NAME}"
 #: The license the app is under, where a teacher reads it, and who holds the rights.  One place:
 #: the About window and the ``--version`` notice name the same license.
 COPYRIGHT = "Copyright 2026 Teacher's Teammate contributors"
-LICENSE_TITLE = "Apache License, Version 2.0"
-LICENSE_URL = "https://www.apache.org/licenses/LICENSE-2.0"
-NO_WARRANTY = (
-    "This is free software: you are free to change and redistribute it. "
-    "There is NO WARRANTY, to the extent permitted by law."
-)
+LICENSE_TITLE = "GNU General Public License, version 3 or later"
+#: The same license by its SPDX identifier, for a line that has room for one name only.
+LICENSE_ID = "GPL-3.0-or-later"
+LICENSE_URL = "https://www.gnu.org/licenses/gpl-3.0.html"
+NO_WARRANTY = "This is free software: you may share and change it; ABSOLUTELY NO WARRANTY."
 
 #: The two tabs of the Licenses window, and the menu entry that opens it.
 LICENSE_TAB = "This App"

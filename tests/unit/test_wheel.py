@@ -179,6 +179,16 @@ def test_requires_python_is_the_one_in_pyproject(metadata, pyproject: dict) -> N
     assert metadata["Requires-Python"] == pyproject["project"]["requires-python"]
 
 
+def test_the_wheel_states_the_license_pyproject_declares(metadata, pyproject: dict) -> None:
+    """
+    Given  license in pyproject.toml
+    When   the wheel's License field is read
+    Then   it is that identifier — rules_python writes it into the legacy field, a relicense that
+           changes only one of the two is red
+    """
+    assert metadata["License"] == pyproject["project"]["license"]
+
+
 def test_the_wheel_version_is_the_package_version(metadata, package_dir: Path) -> None:
     """
     Given  `__version__` in teachers_teammate/__init__.py

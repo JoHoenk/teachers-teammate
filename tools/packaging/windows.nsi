@@ -302,7 +302,7 @@ VIAddVersionKey "FileVersion"     "${APP_VERSION}"
 !else
   VIAddVersionKey "FileDescription" "Installer for ${APP_NAME}"
 !endif
-VIAddVersionKey "LegalCopyright"  "${U+00A9} 2026 Teacher's Teammate contributors ${U+00B7} Apache-2.0"
+VIAddVersionKey "LegalCopyright"  "${U+00A9} 2026 Teacher's Teammate contributors ${U+00B7} GPL-3.0-or-later"
 
 ; ── Initialisation ───────────────────────────────────────────────────────────
 

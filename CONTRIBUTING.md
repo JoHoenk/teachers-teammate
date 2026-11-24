@@ -67,5 +67,5 @@ installed copy may report different results.
 
 ## License
 
-By contributing, you agree that your contributions are licensed under the
-[Apache License 2.0](LICENSE).
+Your contributions come in under the license the project goes out under (inbound = outbound):
+the [GNU General Public License, version 3 or later](LICENSE).

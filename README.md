@@ -234,11 +234,10 @@ request a signature and what the app does with your data is written down in the
 ## License
 
 Teacher's Teammate is released under the
-[Apache License 2.0](https://github.com/JoHoenk/teachers-teammate/blob/main/LICENSE). It bundles
-third-party components, including the Qt toolkit (via PySide6) under the LGPL v3 — see
+[GNU General Public License, version 3 or later](https://github.com/JoHoenk/teachers-teammate/blob/main/LICENSE).
+It bundles third-party components, including the Qt toolkit (via PySide6) under the LGPL v3 — see
 [NOTICE](https://github.com/JoHoenk/teachers-teammate/blob/main/NOTICE) for details. The full
-license texts are also available in the app under **Help → Third-Party
-Licenses**.
+license texts are also available in the app under **Help → Licenses**.
 
 The AI models are not part of this repository: the app downloads them from their authors, so each
 model comes under its own license. Most are Apache-2.0 or MIT; the default reading model

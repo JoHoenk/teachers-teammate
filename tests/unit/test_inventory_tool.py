@@ -111,25 +111,74 @@ def test_an_or_expression_is_allowed_when_one_alternative_is() -> None:
 
     assert inventory.denied_reason("LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only", deny) is None
     assert inventory.denied_reason("GPL-3.0-only OR MIT", deny) is None
+    assert inventory.denied_reason("GPL-2.0-only OR MIT", deny) is None
     assert inventory.denied_reason("MIT", deny) is None
-    assert inventory.denied_reason("GPL-3.0-only OR AGPL-3.0", deny) is not None
+    assert inventory.denied_reason("AGPL-3.0 OR SSPL-1.0", deny) is not None
+
+
+def test_a_free_text_or_later_is_no_alternative() -> None:
+    """
+    Given  PyPI's free-text names, whose "or later" is part of one license
+    When   each is held against the deny list
+    Then   the words after "or" are not read as a second, acceptable alternative
+    """
+    deny = inventory.load_policy().deny
+
+    assert (
+        inventory.denied_reason("GNU Affero General Public License v3 or later (AGPLv3+)", deny)
+        is not None
+    )
+    assert inventory.denied_reason("GNU General Public License v2 or later (GPLv2+)", deny) is None
 
 
 @pytest.mark.parametrize(
     "spelling",
     [
         "GPL-3.0-only",
-        "GNU GPL 3.0",
-        "GPL v3",
-        "GPL",
+        "GPL-3.0-or-later",
         "GPLv3+",
+        "GPL-2.0-or-later",
+        "LGPL-2.1-or-later",
+        "LGPL-3.0-only",
+        "MPL-2.0",
+        "Apache-2.0",
+        "EPL-2.0",
+        "Eclipse Public License 2.0",
+        "Mozilla Public License 2.0 (MPL 2.0)",
         "GNU General Public License v3 (GPLv3)",
-        "GNU General Public License (GPL)",
+        "GNU General Public License v2 or later (GPLv2+)",
     ],
 )
-def test_every_spelling_of_the_gpl_is_refused(spelling: str) -> None:
+def test_a_license_gpl3_takes_along_is_allowed(spelling: str) -> None:
     """
-    Given  the ways PyPI and spaCy spell a GPL-only license
+    Given  the licenses of components a GPL-3.0 program may carry
+    When   each is held against the deny list
+    Then   none is refused
+    """
+    assert inventory.denied_reason(spelling, inventory.load_policy().deny) is None
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "GPL-2.0-only",
+        "GPL",
+        "AGPL-3.0",
+        "EPL-1.0",
+        "CDDL-1.0",
+        "BSD-4-Clause",
+        "CC-BY-NC-4.0",
+        "GNU Affero General Public License v3",
+        "GNU Affero General Public License v3 or later (AGPLv3+)",
+        "GNU General Public License v2 (GPLv2)",
+        "Eclipse Public License 1.0",
+        "Mozilla Public License 1.1 (MPL 1.1)",
+        "Server Side Public License",
+    ],
+)
+def test_a_license_gpl3_cannot_take_along_is_refused(spelling: str) -> None:
+    """
+    Given  the licenses that cannot join a GPL-3.0 program
     When   each is held against the deny list
     Then   it is refused
     """
@@ -148,7 +197,7 @@ def test_every_spelling_of_the_gpl_is_refused(spelling: str) -> None:
 )
 def test_the_lgpl_is_not_taken_for_the_gpl(spelling: str) -> None:
     """
-    Given  LGPL licenses, which an Apache-2.0 application may link
+    Given  LGPL licenses, which a GPL-3.0 program may link
     When   each is held against the deny list
     Then   none is refused
     """
@@ -163,7 +212,7 @@ def test_an_and_expression_is_refused_when_any_part_is() -> None:
     """
     deny = inventory.load_policy().deny
 
-    assert inventory.denied_reason("MIT AND GPL-3.0-only", deny) is not None
+    assert inventory.denied_reason("MIT AND GPL-2.0-only", deny) is not None
     assert inventory.denied_reason("CC-BY-NC-4.0", deny) is not None
 
 

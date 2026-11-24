@@ -7,13 +7,58 @@
 # Licenses we must not ship or install.  Applied to every row of every scope: a package inside
 # our download, a package the teacher downloads on our click, and a build tool alike.  An `OR`
 # expression passes as soon as one alternative does; an `AND` only if every part does.
+#
+# The test is the app's own license: a component that cannot join a GPL-3.0 program would make the
+# whole download undistributable, in whatever scope it sits.
 [[deny]]
-pattern = '\bAGPL'
-reason = "AGPL: the app would have to offer its own source to anyone using it over a network"
+pattern = '\bAGPL|\bAffero\b'
+reason = "AGPL: GPL-3.0 section 13 would let it in, but its network clause passes to anyone serving the app, many schools ban it, and its packages are usually commercially dual-licensed (SignPath)"
 
 [[deny]]
-pattern = '\bGPL|(?<!Lesser )(?<!Library )General Public License'
-reason = "GPL-only: loading it into the app's process is the argument we avoid (LGPL is not matched)"
+# Version 2 is the one GPL that GPL-3.0 cannot take along: an "or later" is what makes it compatible.
+pattern = '(?i)^(?!.*\bor[- ]later\b)(?!.*\+).*(?:\bGPL[- ]?v?2\b|(?<!Lesser )(?<!Library )General Public License[,\s]*(?:version\s*|v\s*)?2)'
+reason = "GPL-2.0 without 'or later': incompatible with GPL-3.0"
+
+[[deny]]
+# A GPL that names no version tells us nothing; the rule below refuses it until a person looks.
+pattern = '(?i)(?:\bGNU )?(?:(?<!Lesser )(?<!Library )General Public License|\bGPL)\b(?![\s,-]*(?:v(?:ersion)?\s*)?\d)'
+reason = "GPL with no version: read the license, then list it in [names] or [accepted]"
+
+[[deny]]
+pattern = '\bEPL-1\.0\b|Eclipse Public License[,\s]*(?:v(?:ersion)?\s*)?1\b'
+reason = "EPL-1.0: incompatible with GPL-3.0 (EPL-2.0 is, through its secondary license)"
+
+[[deny]]
+pattern = '\bCDDL\b'
+reason = "CDDL: incompatible with GPL-3.0"
+
+[[deny]]
+pattern = '\bMPL[- ]1\.1\b|Mozilla Public License[,\s]*(?:v(?:ersion)?\s*)?1\.1\b'
+reason = "MPL-1.1: incompatible with GPL-3.0 (MPL-2.0 is, through its secondary license)"
+
+[[deny]]
+pattern = '\bBSD[- ]4[- ]Clause\b'
+reason = "BSD-4-Clause: its advertising clause is incompatible with GPL-3.0"
+
+[[deny]]
+pattern = '\bJSON\b'
+reason = "the JSON license: 'used for Good, not Evil' is a restriction GPL-3.0 cannot carry"
+
+[[deny]]
+pattern = '\bSSPL\b|Server Side Public License'
+reason = "SSPL: not an open source license, and incompatible with GPL-3.0"
+
+[[deny]]
+pattern = '\bBUSL\b|\bBusiness Source License\b'
+reason = "BUSL: source-available, not open source, and incompatible with GPL-3.0"
+
+[[deny]]
+pattern = '(?i)Commons Clause'
+reason = "the Commons Clause: forbids selling what GPL-3.0 grants, so the two cannot combine"
+
+[[deny]]
+pattern = '\bApache[- ]1\.1\b'
+reason = "Apache-1.1: its advertising clause is incompatible with GPL-3.0"
 
 [[deny]]
 pattern = 'non[- ]commercial|CC[- ]BY[- ]NC'
@@ -49,9 +94,6 @@ pyinstaller = "GPL-2.0-or-later WITH Bootloader-exception"
 # A row the deny rules or an `unknown` license refuse, with the reason a person accepted it.
 # Empty on purpose: the gate is closed exactly where it has no information.
 [accepted]
-# The bootloader is the only GPL part of PyInstaller, and its exception is exactly the permission
-# to ship it inside a bundled application.  The rest of PyInstaller is not in the bundle.
-pyinstaller = "GPL-2.0-or-later WITH Bootloader-exception: the exception permits shipping the bootloader in a bundled app"
 
 # A license text for a bundle row whose wheel carries none.  The two components without a wheel
 # of their own (Qt, the interpreter) are covered by a folder under `curated/` instead, because

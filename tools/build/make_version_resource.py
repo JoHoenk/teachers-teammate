@@ -34,7 +34,7 @@ PRODUCT_NAME = "Teacher's Teammate"
 #: ``APP_PUBLISHER`` in ``windows.nsi``: what Programs and Features shows as the publisher.
 COMPANY_NAME = "Teacher's Teammate Contributors"
 FILE_DESCRIPTION = "Teacher's Teammate"
-LEGAL_COPYRIGHT = "\u00a9 2026 Teacher's Teammate contributors \u00b7 Apache-2.0"
+LEGAL_COPYRIGHT = "\u00a9 2026 Teacher's Teammate contributors \u00b7 GPL-3.0-or-later"
 ORIGINAL_FILENAME = "teachers-teammate.exe"
 
 #: The leading release numbers of a version, with or without a ``v`` and whatever follows them

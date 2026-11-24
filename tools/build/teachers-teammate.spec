@@ -19,11 +19,10 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 ROOT = Path(SPECPATH).resolve().parent.parent
 ASSETS = ROOT / "teachers_teammate" / "assets"
 
-# Qt modules that Qt offers only under the GPL-3.0 or a commercial license. The rest of Qt is
-# LGPL-3.0, which lets an Apache-2.0 application link it; one of these in the bundle would make
-# the whole application GPL-3.0, so a future import must never drag one in. The smoke test
-# (teachers_teammate/frozen_modes.py) checks the finished bundle, and a unit test keeps this
-# list equal to its GPL_ONLY_QT_MODULES.
+# Qt modules the app does not use: Qt offers them only under the GPL-3.0 or a commercial license,
+# and one in the bundle would be size for nothing, so a future import must never drag one in. The
+# smoke test (teachers_teammate/frozen_modes.py) checks the finished bundle, and a unit test keeps
+# this list equal to its GPL_ONLY_QT_MODULES.
 GPL_ONLY_QT_MODULES = (
     "Charts",
     "DataVisualization",
@@ -356,7 +355,7 @@ if sys.platform == "darwin":
     # already (the spec put it there for fetch_models).
     from teachers_teammate import __version__ as _pkg_version  # noqa: E402
     from tools.build.check_macos_bundle import MACOS_MINIMUM  # noqa: E402
-    from tools.build.make_version_resource import numeric_version  # noqa: E402
+    from tools.build.make_version_resource import LEGAL_COPYRIGHT, numeric_version  # noqa: E402
 
     _numbers = numeric_version(_pkg_version)
     _short_version = ".".join(str(number) for number in _numbers[:3])
@@ -370,6 +369,7 @@ if sys.platform == "darwin":
             "CFBundleShortVersionString": _short_version,
             "CFBundleVersion": ".".join(str(number) for number in _numbers),
             "NSHighResolutionCapable": True,
+            "NSHumanReadableCopyright": LEGAL_COPYRIGHT,
             "LSMinimumSystemVersion": MACOS_MINIMUM,
         },
     )

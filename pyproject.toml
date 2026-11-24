@@ -6,7 +6,8 @@ dynamic = ["version"]
 description = "OCR pipeline for handwritten documents"
 readme = "README.md"
 requires-python = ">=3.14"
-license = { text = "Apache-2.0" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE", "NOTICE"]
 dependencies = [
     # Only the Essentials half of PySide6. The `PySide6` meta package would also pull
     # PySide6_Addons, PySide6_Pdf and PySide6_WebEngine (Chromium) since 6.12 — none is used.
@@ -86,8 +87,9 @@ teachers-teammate-gui = "teachers_teammate.gui:main_gui"
 teachers-teammate-benchmark = "teachers_teammate.gui.benchmark:main_benchmark"
 
 [build-system]
-# `wheel` is not needed: setuptools builds wheels itself since 70.1.
-requires = ["setuptools>=70.1"]
+# `wheel` is not needed: setuptools builds wheels itself since 70.1.  `license` as an SPDX
+# expression and `license-files` need 77 (PEP 639).
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

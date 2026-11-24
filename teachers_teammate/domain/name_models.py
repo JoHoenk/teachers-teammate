@@ -9,9 +9,9 @@ instead of asking spaCy's compatibility table at run time: the model a teacher g
 this file names, whatever spaCy release happens to be installed.  A unit test holds each pin's
 major.minor to the locked spaCy's.
 
-Two languages have no model: Spanish (`es_core_news_sm` is GPL-3.0) and Italian
-(`it_core_news_sm` is CC BY-NC-SA, non-commercial).  Both are refused by the license policy, so
-they fall back to the multilingual model like any other language without one.
+Two languages have no model: Spanish (none listed; `es_core_news_sm` is GPL-3.0, which the
+license policy accepts) and Italian (`it_core_news_sm` is CC BY-NC-SA, non-commercial, which it
+refuses).  They fall back to the multilingual model like any other language without one.
 """
 
 from __future__ import annotations

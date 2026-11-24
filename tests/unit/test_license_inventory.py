@@ -5,10 +5,16 @@ from __future__ import annotations
 from dataclasses import replace
 import os
 from pathlib import Path
+import tomllib
 from unittest.mock import patch
 
+from teachers_teammate.texts import app as app_text
+from tools.build.make_version_resource import LEGAL_COPYRIGHT
 from tools.licenses import inventory, notice
 from tools.release import mirror_sources
+
+#: The license id in the DEP-5 spelling the Debian copyright uses, which is its own vocabulary.
+_DEP5 = {"GPL-3.0-or-later": "GPL-3+"}
 
 #: The checkout as Bazel's runfiles see it, or the source tree when the test runs directly.
 _ROOT = (
@@ -208,14 +214,41 @@ def test_the_package_carries_the_license_we_ship_under() -> None:
     )
 
 
+def _file(env: str, default: str) -> Path:
+    """Return the checkout's *default* file, as Bazel's runfiles hand it over when it is data."""
+    if os.environ.get("TEST_SRCDIR") and os.environ.get(env):
+        return Path(os.environ["TEST_SRCDIR"]) / os.environ[env]
+    return _ROOT / default
+
+
+def test_the_license_id_is_the_one_every_file_states() -> None:
+    """
+    Given  the license id the About window and --version print
+    When   every file that writes the license out by hand is compared with it
+    Then   none disagrees, and LICENSE is the text of the version that id names
+    """
+    license_id = app_text.LICENSE_ID
+    pyproject = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    wheel_bzl = _file("LICENSE_WHEEL_BZL", "teachers_teammate/wheel.bzl").read_text(encoding="utf-8")
+    nsis = _file("LICENSE_NSI", "tools/packaging/windows.nsi").read_text(encoding="utf-8")
+    deb = _file("LICENSE_DEB", "tools/packaging/make_deb.sh").read_text(encoding="utf-8")
+
+    assert pyproject["project"]["license"] == license_id
+    assert f'license = "{license_id}"' in wheel_bzl
+    assert LEGAL_COPYRIGHT.endswith(license_id)
+    assert f"${{U+00B7}} {license_id}" in nsis
+    assert f"License: {_DEP5[license_id]}" in deb
+    assert (_ROOT / "LICENSE").read_text(encoding="utf-8").splitlines()[1].strip() == (
+        "Version 3, 29 June 2007"
+    )
+
+
 def test_the_license_the_app_names_is_the_one_in_license() -> None:
     """
     Given  the license name the About window and --version print
     When   it is compared with the first line of the repository's LICENSE
     Then   the name contains that line, so a relicense that forgets the texts is red
     """
-    from teachers_teammate.texts import app as app_text  # noqa: PLC0415
-
     text = (_ROOT / "LICENSE").read_text(encoding="utf-8")
     heading = next(line.strip() for line in text.splitlines() if line.strip())
 

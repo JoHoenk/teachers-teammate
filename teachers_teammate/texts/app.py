@@ -31,7 +31,10 @@ LICENSE_TITLE = "GNU General Public License, version 3 or later"
 #: The same license by its SPDX identifier, for a line that has room for one name only.
 LICENSE_ID = "GPL-3.0-or-later"
 LICENSE_URL = "https://www.gnu.org/licenses/gpl-3.0.html"
-NO_WARRANTY = "This is free software: you may share and change it; ABSOLUTELY NO WARRANTY."
+NO_WARRANTY = (
+    "This is free software: you are free to change and redistribute it. "
+    "There is NO WARRANTY, to the extent permitted by law."
+)
 
 #: The two tabs of the Licenses window, and the menu entry that opens it.
 LICENSE_TAB = "This App"

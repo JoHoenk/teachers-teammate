@@ -49,8 +49,9 @@ The source of Teacher's Teammate itself is the "Source code" archive on the page
 The LGPL and MPL components above are open source, and this section says where their source
 is. The Qt, PySide6, FFmpeg, libiconv, lxml and OpenCV entries name the version they were written
 for; a bump turns the license test red until the entry and the sources release below name the new
-one. certifi needs none: MPL-2.0 asks that its source be named, and every certifi release on PyPI
-carries it.
+one. certifi's entry names no version of its own: MPL-2.0 asks for the source of the version in
+use, and its PyPI release is that source. The source of every other bundled package is its PyPI
+release at the version in third_party_licenses/inventory.csv.
 
 Qt 6.12.0 and PySide6 6.12.0, the versions the bundle carries:
   https://download.qt.io/archive/qt/6.12/6.12.0/submodules/

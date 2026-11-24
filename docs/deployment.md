@@ -255,6 +255,12 @@ one run that passes `--skip-sources`.
 A sources release is never deleted while a download that carries its version exists; that download
 promises it.
 
+A bumped `pyside6-essentials`, `shiboken6` or `opencv-python-headless` is therefore three steps:
+re-run the mirror, name the new versions in the Qt/PySide6 and FFmpeg entries of `NOTICE`, then
+`python tools/licenses/inventory.py --compile`. Dependabot groups the three, so they never hold up
+the weekly minor updates. `certifi` needs none of this: its entry names no version, because every
+certifi release on PyPI carries its own source.
+
 ---
 
 ## Windows installer reference

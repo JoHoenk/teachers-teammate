@@ -40,8 +40,10 @@ The source of Teacher's Teammate itself is the "Source code" archive on the page
 (https://github.com/JoHoenk/teachers-teammate/releases).
 
 The LGPL and MPL components above are open source, and this section says where their source
-is. Each entry names the version it was written for; a version bump turns the license test
-red until the entry and the sources release below name the new one.
+is. The Qt, PySide6, FFmpeg and OpenCV entries name the version they were written for; a bump
+turns the license test red until the entry and the sources release below name the new one.
+certifi needs none: MPL-2.0 asks that its source be named, and every certifi release on PyPI
+carries it.
 
 Qt 6.12.0 and PySide6 6.12.0, the versions the bundle carries:
   https://download.qt.io/archive/qt/6.12/6.12.0/submodules/
@@ -52,9 +54,8 @@ FFmpeg 9.0.2, inside opencv-python-headless 5.1.0.95 (Linux and macOS):
   https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.gz
   The wheel's build recipe: https://github.com/opencv/opencv-python (tag 95)
 
-certifi 2026.10.23 (MPL-2.0):
-  https://github.com/certifi/python-certifi
-  https://pypi.org/project/certifi/2026.10.23/
+certifi (MPL-2.0), the version Help > Licenses lists:
+  https://pypi.org/project/certifi/
 
 The same sources, as one download, are published with this release:
   https://github.com/JoHoenk/teachers-teammate/releases/tag/third-party-sources-qt6.12.0

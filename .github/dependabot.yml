@@ -19,6 +19,11 @@ updates:
       pip-security:
         applies-to: security-updates
         patterns: ["*"]
+      # Each new version of these needs a sources release of its own before a tag (see NOTICE),
+      # so a batch that carries one waits for that step instead of the weekly group.
+      sources-release:
+        applies-to: version-updates
+        patterns: ["pyside6-essentials", "shiboken6", "opencv-python-headless"]
       pip-minor-patch:
         applies-to: version-updates
         update-types: ["minor", "patch"]

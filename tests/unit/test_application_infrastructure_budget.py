@@ -38,10 +38,10 @@ PINNED = {
     "ollama_server.py": 14,
     "ports.py": 1,
     "providers.py": 7,
-    "reader.py": 5,
+    "reader.py": 4,
     "run.py": 15,
     "setup_plan.py": 5,
-    "speed_estimates.py": 16,
+    "speed_estimates.py": 15,
     "stored_results.py": 2,
 }
 """The ratchet: a module's imported names from ``infrastructure``.  Only ever lowered."""

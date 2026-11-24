@@ -273,12 +273,12 @@ def _stopped_result(
 class _LazyAnonymization:
     """The anonymized extracted text of one file: computed on the first call, then reused."""
 
-    def __init__(self, compute: Callable[[str], tuple[str, AnonymizationMap]]) -> None:
+    def __init__(self, compute: Callable[[Stage | str], tuple[str, AnonymizationMap]]) -> None:
         self._compute = compute
         #: ``(text, mapping)`` once it was computed, else ``None``.
         self.result: tuple[str, AnonymizationMap] | None = None
 
-    def __call__(self, stage: Stage | str = "") -> tuple[str, AnonymizationMap]:
+    def __call__(self, stage: Stage | str) -> tuple[str, AnonymizationMap]:
         if self.result is None:
             self.result = self._compute(stage)
         return self.result
@@ -366,7 +366,7 @@ class FileProcessor:
             # else would ask, so it runs here to fill the session cache the previews read.
             anonymized = self._lazy_personal_info_removal(texts.transcription)
             if self._correction is None and self._anonymizer is not None and not self._stopping():
-                anonymized()
+                anonymized("")  # the anonymized text file, not one stage's request
 
             review, ctx, correction_warnings = self._run_correction_or_cache(
                 file, texts, preview_img, ctx, anonymized

@@ -38,7 +38,17 @@ from .domain.run_summary import FileOutcome, KeepAwakeState
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-SUPPORTED_SUFFIXES: frozenset[str] = frozenset({".pdf", ".png", ".jpg", ".jpeg", ".txt"})
+#: What reads each input suffix: ``"pdf"``, ``"image"`` or ``"text"``.
+INPUT_KINDS: dict[str, str] = {
+    ".pdf": "pdf",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".txt": "text",
+}
+
+#: Every input suffix the app accepts, and so every one a provider is built for.
+SUPPORTED_SUFFIXES: frozenset[str] = frozenset(INPUT_KINDS)
 
 
 @runtime_checkable

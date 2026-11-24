@@ -18,9 +18,9 @@ from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from ..domain.context_budget import BASE_NUM_CTX
 from ..exceptions import TRUNCATED_MESSAGE, RunStoppedError
 from ..texts.review import ANSWER_NOT_STRUCTURED, correction_failed
-from .ollama_utils import PROOFREADING_NUM_CTX
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,7 +53,7 @@ class ChatRequest:
     #: Sent as a system message; empty sends none.
     system: str = ""
     #: The context window this request asks Ollama for (resolved once per run).
-    num_ctx: int = PROOFREADING_NUM_CTX
+    num_ctx: int = BASE_NUM_CTX
     #: Reasoning on, off, or at the level the server names.
     think: bool | str = False
     #: A JSON schema the answer is constrained to; ``None`` leaves it free.

@@ -18,6 +18,7 @@ from teachers_teammate.exceptions import (
     ResponseTruncatedError,
     RunStoppedError,
 )
+from teachers_teammate.domain.context_budget import BASE_NUM_CTX
 from teachers_teammate.domain.ollama_address import ollama_host
 from teachers_teammate.infrastructure import ollama_utils
 from teachers_teammate.infrastructure.ollama_utils import (
@@ -1439,8 +1440,8 @@ def test_proofreading_options_hold_one_fixed_context_size() -> None:
     """
     options = ollama_utils.proofreading_options(0.7)
 
-    assert options == {"temperature": 0.7, "num_ctx": ollama_utils.PROOFREADING_NUM_CTX}
-    assert ollama_utils.PROOFREADING_NUM_CTX == 8192
+    assert options == {"temperature": 0.7, "num_ctx": BASE_NUM_CTX}
+    assert BASE_NUM_CTX == 8192
 
 
 def test_chat_can_return_a_cut_off_answer_when_the_caller_allows_it(monkeypatch) -> None:

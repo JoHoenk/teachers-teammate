@@ -33,7 +33,11 @@ from dataclasses import dataclass
 import json
 from typing import Any
 
-from teachers_teammate.domain.context_budget import ContextBudget, answers_with_the_same_text
+from teachers_teammate.domain.context_budget import (
+    BASE_NUM_CTX,
+    ContextBudget,
+    answers_with_the_same_text,
+)
 from teachers_teammate.domain.correction_policy import DEFAULT_LEVEL
 from teachers_teammate.domain.correction_prompts import CORRECT_VARIANTS
 from teachers_teammate.domain.formatted_text import PLAIN, TextFormat
@@ -42,7 +46,7 @@ from teachers_teammate.domain.model_catalog import (
     RequestProfile,
     StepProfile,
 )
-from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX, OllamaClient
+from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 from teachers_teammate.infrastructure.proofreading.corrector import ollama_exchange_corrector
 from teachers_teammate.infrastructure.proofreading.port import PortAnswer, StepRequest
 from teachers_teammate.infrastructure.proofreading.runner import repair_message
@@ -71,7 +75,7 @@ from .app_corrector import (
 from .one_request.answer_format import ANSWER_FORMAT_VERSION
 from .one_request.correction import instruction_parts
 
-NUM_CTX = PROOFREADING_NUM_CTX
+NUM_CTX = BASE_NUM_CTX
 """The window the protocol measures at; the run and the fingerprint both use it."""
 
 SETUPS: tuple[Setup, ...] = RUNNABLE_SETUPS

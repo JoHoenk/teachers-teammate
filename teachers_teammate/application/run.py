@@ -46,7 +46,7 @@ from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
 from ..infrastructure.storage_root import resolve_artifact_dir
 from ..infrastructure.teacher_work_store import TeacherWorkStore
-from ..interfaces import SUPPORTED_SUFFIXES, ProgressCallbacks, SleepBlocker
+from ..interfaces import ProgressCallbacks, SleepBlocker
 from ..run_rules import ollama_models, resolve_run_windows, uses_ollama, window_of_model
 from .addons import AddonService
 from .anonymization import AnonymizationService
@@ -343,7 +343,7 @@ class RunService:
 
     def list_supported_suffixes(self) -> frozenset[str]:
         """Return input file suffixes accepted by the pipeline."""
-        return SUPPORTED_SUFFIXES
+        return self._discovery.supported_suffixes()
 
     def collect_input_files_from_dir(self, input_dir: Path, recursive: bool) -> list[Path]:
         """Collect supported input files without a full Config (for partial GUI state)."""

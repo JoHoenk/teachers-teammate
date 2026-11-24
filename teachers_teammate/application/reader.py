@@ -13,9 +13,13 @@ import threading
 import uuid
 
 from ..config import OcrConfig
-from ..domain.data_location import PROVIDER_OLLAMA, StageLocation, is_ollama_cloud_model
+from ..domain.data_location import (
+    LOCAL_OCR_ENGINES,
+    PROVIDER_OLLAMA,
+    StageLocation,
+    is_ollama_cloud_model,
+)
 from ..domain.local_models import PAGE_MODELS, READER_MODELS
-from ..infrastructure.ocr_processor import SUPPORTED_OCR_ENGINES
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import preprocess_preview
 from ..infrastructure.stage_builder import PipelineComponentFactory
@@ -45,7 +49,7 @@ class ReaderService:
 
     def list_ocr_engines(self) -> list[str]:
         """Return supported OCR engine identifiers."""
-        return list(SUPPORTED_OCR_ENGINES)
+        return list(LOCAL_OCR_ENGINES)
 
     def list_ocr_models(self, base_url: str = "") -> list[str]:
         """Return the Ollama models usable for text recognition (cloud models are left out)."""

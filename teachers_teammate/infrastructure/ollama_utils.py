@@ -18,6 +18,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ..domain.context_budget import (
+    BASE_NUM_CTX,
     ContextBudget,
     answers_with_the_same_text,
 )
@@ -71,21 +72,6 @@ logger = logging.getLogger(__name__)
 # How long to wait for the TCP connection to be established.
 _CONNECT_TIMEOUT = 10
 
-#: Context window (tokens) requested for proofreading and content-review answers.
-#:
-#: Ollama otherwise applies its own default of 4k on graphics cards under 24 GiB, which a
-#: one-page, error-dense essay in review mode overruns.  One fixed value for every text on
-#: purpose: a changed ``num_ctx`` makes Ollama reload the model, so sizing it per text would
-#: reload before every file.  8k fits a full page in the longest-tokenising language (German);
-#: ``tools/verify_model_catalog.py`` shows when it does not.
-#:
-#: Two accepted costs.  A server started with a larger ``OLLAMA_CONTEXT_LENGTH`` is overridden
-#: downwards for these requests.  And when one model both reads scans (OCR keeps Ollama's own
-#: window) and proofreads, Ollama reloads it on every switch between the two stages, because the
-#: window differs; that setup is rare, and with a separate OCR model on a small graphics card the
-#: models swap anyway.
-PROOFREADING_NUM_CTX = 8192
-
 #: Model families that indicate a model can read images (used as a fallback on
 #: older Ollama servers that do not report capabilities).
 _KNOWN_VISION_FAMILIES = frozenset({"clip", "vision", "deepseekocr"})
@@ -120,7 +106,7 @@ def ensure_prompt_fits(
 
 def proofreading_options(
     temperature: float,
-    num_ctx: int = PROOFREADING_NUM_CTX,
+    num_ctx: int = BASE_NUM_CTX,
     sampling: Mapping[str, float] | None = None,
 ) -> dict:
     """Return the Ollama options of a proofreading or content-review request.
@@ -159,7 +145,7 @@ def warm_up_own_host_names() -> None:
 
 
 @dataclass(frozen=True)
-class OllamaServer:
+class ServerAddress:
     """What the privacy rules need to know about the server at an Ollama URL."""
 
     host: str
@@ -169,14 +155,14 @@ class OllamaServer:
     is_private: bool
 
 
-def ollama_server(url: str) -> OllamaServer:
+def ollama_server(url: str) -> ServerAddress:
     """Return where the Ollama server at *url* is: the one place that reads the address.
 
     Every classification of a step on Ollama (the badge, the refusal of online text
     recognition, the number of tries) starts here, so they cannot disagree about a URL.
     """
     host = ollama_host(url)
-    return OllamaServer(
+    return ServerAddress(
         host=host,
         is_this_computer=is_local_ollama_url(
             url, own_addresses=own_host_names, windows_hosts=windows_host_addresses

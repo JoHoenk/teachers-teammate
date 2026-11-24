@@ -20,6 +20,7 @@ from ...application.benchmark_service import BenchmarkApplicationService
 from ...application.composition import inject_addon_packages_dir, start_logging
 from ...application.ollama_server import OllamaServerService
 from ...domain.model_catalog import HardwareProfileSetting, profile_setting
+from ...domain.ollama_address import normalize_ollama_url
 from ...settings_schema import DEFAULTS
 from ...texts import benchmark as bench_text
 from ...texts import dialogs as dlg
@@ -188,7 +189,7 @@ class BenchmarkWindow(QMainWindow):
         """Return the Ollama server and the "My computer" choice the main app saved."""
         saved = self._service.load_saved_settings()
         return (
-            str(saved.get("ollama_url") or DEFAULTS["ollama_url"]),
+            normalize_ollama_url(str(saved.get("ollama_url", ""))),
             profile_setting(saved.get("hardware_profile") or DEFAULTS["hardware_profile"]),
         )
 

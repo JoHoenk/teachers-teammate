@@ -177,6 +177,17 @@ def test_every_default_is_taken_as_it_is() -> None:
     }
 
 
+def test_a_saved_ollama_address_of_blanks_is_the_default_server() -> None:
+    """
+    Given  a saved Ollama address of nothing but spaces
+    When   the settings are normalised
+    Then   the address is the one the app looks at first, not an empty server address
+    """
+    loaded = normalize_settings({"ollama_url": "  "})
+
+    assert loaded.values["ollama_url"] == DEFAULTS["ollama_url"]
+
+
 def test_the_defaults_cannot_be_changed_by_a_caller() -> None:
     """
     Given  the defaults of the schema

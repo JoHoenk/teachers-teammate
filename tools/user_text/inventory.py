@@ -236,11 +236,6 @@ INVARIANT_MESSAGES: frozenset[tuple[str, str]] = frozenset(
             "the pip process opened no output stream",
         ),
         (
-            "teachers_teammate/infrastructure/input_provider_factory.py",
-            "f'_SUFFIX_TO_BUILDER keys {set(_SUFFIX_TO_BUILDER)} do not match "
-            "SUPPORTED_SUFFIXES {SUPPORTED_SUFFIXES} — update both together'",
-        ),
-        (
             "teachers_teammate/infrastructure/proofreading/schemas.py",
             "Category names other categories than CHANGE_CATEGORIES does",
         ),

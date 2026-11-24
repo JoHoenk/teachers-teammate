@@ -1290,6 +1290,24 @@ def concrete_profile(setting: object) -> HardwareProfile | None:
     return HardwareProfile(parsed.value)
 
 
+#: The profile assumed before this computer (or the Ollama server) has been looked at.
+UNKNOWN_PROFILE = HardwareProfile.CARD_8GB
+
+
+def active_profile(detection: HardwareDetection | None, setting: object) -> HardwareProfile:
+    """Return the profile the model suggestions follow.
+
+    A profile chosen by hand decides at once: the teacher's choice must not wait for a detection
+    that may still be running, and a detection of another computer must not override it.
+    *detection* decides only when *setting* leaves the choice to the app; before it lands, the
+    weakest profile is assumed.
+    """
+    chosen = concrete_profile(setting)
+    if chosen is not None:
+        return chosen
+    return detection.profile if detection is not None else UNKNOWN_PROFILE
+
+
 def _profile_for_memory_gb(memory_gb: float) -> HardwareProfile:
     """Map a known GPU memory size to a profile using the documented thresholds."""
     if memory_gb >= GPU_16GB_THRESHOLD_GB:

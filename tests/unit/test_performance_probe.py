@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 
 from teachers_teammate.config import OcrConfig
+from teachers_teammate.domain.context_budget import BASE_NUM_CTX
 from teachers_teammate.domain.correction_prompts import correct_system
 from teachers_teammate.domain.model_catalog import LoadedModel, ServerFacts, request_profile
 from teachers_teammate.domain.performance_estimate import SpeedStep, StepOutcome
@@ -19,7 +20,6 @@ from teachers_teammate.exceptions import (
 )
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.ollama_utils import (
-    PROOFREADING_NUM_CTX,
     ChatStats,
     OllamaClient,
 )
@@ -132,7 +132,7 @@ def _request(
     reading_model: str = "glm-ocr:q8_0",
     writing_model: str = "gemma4:e4b",
     review_model: str = "",
-    num_ctx: int = PROOFREADING_NUM_CTX,
+    num_ctx: int = BASE_NUM_CTX,
 ) -> SpeedTestRequest:
     """Return a request for the two models the fake server has installed."""
     return SpeedTestRequest(

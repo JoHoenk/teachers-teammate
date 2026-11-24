@@ -17,6 +17,7 @@ from teachers_teammate.application.commands import DocumentCommands
 from teachers_teammate.domain.document_state import machine_texts
 from teachers_teammate.domain.teacher_work import text_identity
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
+from teachers_teammate.infrastructure.input_provider_factory import supported_suffixes
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
 from teachers_teammate.infrastructure.state_repository import (
@@ -31,7 +32,10 @@ from tests.conftest import fake_reader_store, make_config, make_key_facts
 
 def _discovery_of(*names: str) -> MagicMock:
     """File discovery that finds the files called *names* (none by default)."""
-    return MagicMock(collect_input_files=MagicMock(return_value=[Path(n) for n in names]))
+    return MagicMock(
+        collect_input_files=MagicMock(return_value=[Path(n) for n in names]),
+        supported_suffixes=MagicMock(return_value=supported_suffixes()),
+    )
 
 
 #: The module the Ollama program lookup lives in, as the tests patch it.
@@ -56,7 +60,7 @@ def _make_svc(
     mock_state_factory = state_repository_factory or MagicMock(
         return_value=MagicMock(load_valid=MagicMock(return_value=None))
     )
-    mock_discovery = discovery or MagicMock()
+    mock_discovery = discovery or _discovery_of()
     return _build_services(
         discovery=mock_discovery,
         pipeline_factory=mock_pipeline_factory,

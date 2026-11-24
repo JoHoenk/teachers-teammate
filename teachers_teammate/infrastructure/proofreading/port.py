@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import time
 from typing import TYPE_CHECKING, Protocol
 
-from ...domain.context_budget import ContextBudget
+from ...domain.context_budget import BASE_NUM_CTX, ContextBudget
 from ...domain.proofreading.result import FailureKind, StepName
 from ...exceptions import TRUNCATED_MESSAGE
 from ...texts.review import correction_failed, evaluation_failed
@@ -25,7 +25,6 @@ from .._llm_invoke import (
     invoke_langchain_chain,
     invoke_langchain_structured,
 )
-from ..ollama_utils import PROOFREADING_NUM_CTX
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -122,7 +121,7 @@ class OllamaPort:
         model: str,
         *,
         timeout: float = 120.0,
-        num_ctx: int = PROOFREADING_NUM_CTX,
+        num_ctx: int = BASE_NUM_CTX,
     ) -> None:
         self._client = client
         self._model = model

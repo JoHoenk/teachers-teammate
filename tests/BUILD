@@ -730,6 +730,13 @@ app_test(
     data = ["//teachers_teammate:all_sources"],
 )
 
+# A start-up failure is worded for a teacher: each entry point installs the wording first.
+app_test(
+    "unit/test_wording_is_installed.py",
+    data = ["//teachers_teammate:all_sources"],
+    deps = _PIPELINE_DEPS + _CLI_LIB,
+)
+
 app_test(
     "unit/test_layer_imports.py",
     data = ["//teachers_teammate:all_sources"],

@@ -242,17 +242,6 @@ class ModelRecommendationService:
         """Return the curated Ollama model catalog."""
         return OLLAMA_CATALOG
 
-    def best_ollama_model(
-        self,
-        category: ModelCategory,
-        profile: HardwareProfile,
-        *,
-        system_memory_gb: float | None = None,
-        card_gb: float | None = None,
-    ) -> str:
-        """Return the BEST Ollama model tag for *category* on this computer."""
-        return best_model(category, profile, system_memory_gb=system_memory_gb, card_gb=card_gb)
-
     def first_run_model_settings(
         self,
         profile: HardwareProfile,

@@ -30,6 +30,7 @@ from statistics import median
 import threading
 
 from ..config import Config, OcrConfig
+from ..domain.context_budget import BASE_NUM_CTX
 from ..domain.correction_policy import CorrectionOutput, normalize_output_mode
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import (
@@ -65,7 +66,6 @@ from ..domain.performance_estimate import (
 )
 from ..domain.proofreading.result import StepName
 from ..domain.stages import Stage
-from ..infrastructure.ollama_utils import PROOFREADING_NUM_CTX
 from ..infrastructure.performance_probe import (
     PerformanceProbe,
     ProbeResult,
@@ -121,7 +121,7 @@ class SpeedChoices:
     """``"review"`` or ``"text"``: how the answer of the proofreading is written, which decides
     how long it is."""
     language: str = "English"
-    num_ctx: int = PROOFREADING_NUM_CTX
+    num_ctx: int = BASE_NUM_CTX
     ocr: OcrConfig = field(default_factory=OcrConfig)
 
     @classmethod
@@ -145,7 +145,7 @@ class SpeedChoices:
         """
         ocr = OcrConfig.from_settings(settings)
         return cls._of(
-            ollama_url=str(settings.get("ollama_url") or DEFAULTS["ollama_url"]),
+            ollama_url=normalize_ollama_url(str(settings.get("ollama_url", ""))),
             ocr=ocr,
             reading=True,
             correction=(
@@ -174,7 +174,7 @@ class SpeedChoices:
         those steps alone, so the time left must not count the others.
         """
         return cls._of(
-            ollama_url=config.ollama_url or DEFAULTS["ollama_url"],
+            ollama_url=config.ollama_url,
             ocr=config.ocr,
             reading=config.recognition_enabled,
             correction=(
@@ -219,7 +219,7 @@ class SpeedChoices:
             review_model=ollama_model(evaluation, Stage.EVALUATION),
             correction_output=normalize_output_mode(correction_output),
             language=language,
-            num_ctx=PROOFREADING_NUM_CTX,
+            num_ctx=BASE_NUM_CTX,
             ocr=ocr,
         )
 

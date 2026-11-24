@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 
 from teachers_teammate.domain.data_location import PROVIDER_OLLAMA, DataRegion
 from teachers_teammate.domain.ollama_address import normalize_ollama_url
-from teachers_teammate.domain.ollama_discovery import DEFAULT_SERVER_URL
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.exceptions import ProviderNotAvailableError
 from teachers_teammate.messages import package_not_installed
@@ -32,14 +31,14 @@ PROVIDER = ProviderInfo(
 )
 
 
-def list_models(*, base_url: str = DEFAULT_SERVER_URL, **_kwargs: object) -> list[str]:
+def list_models(*, base_url: str, **_kwargs: object) -> list[str]:
     """Return model names from the Ollama server, or ``[]`` when unreachable."""
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
     return OllamaClient(base_url).list_models()
 
 
-def check_connection(*, base_url: str = DEFAULT_SERVER_URL, **_kwargs: object) -> tuple[bool, str]:
+def check_connection(*, base_url: str, **_kwargs: object) -> tuple[bool, str]:
     """Return ``(ok, message)`` for the Ollama server at *base_url*."""
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
@@ -47,9 +46,7 @@ def check_connection(*, base_url: str = DEFAULT_SERVER_URL, **_kwargs: object) -
     return _connected, message
 
 
-def create(
-    model: str, *, base_url: str = DEFAULT_SERVER_URL, temperature: float, **_kwargs: object
-) -> BaseChatModel:
+def create(model: str, *, base_url: str, temperature: float, **_kwargs: object) -> BaseChatModel:
     """Return a ``ChatOllama`` instance for *model*.
 
     Args:

@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX
+from teachers_teammate.domain.context_budget import BASE_NUM_CTX
 from teachers_teammate.interfaces import Corrector
 
 from ..core.modes import ALL_STEPS, ONE_REQUEST_OUTPUT, Exchange, Setup, Step
@@ -71,7 +71,7 @@ def app_corrector_factory(
     timeout: float,
     exchange: Exchange,
     steps: tuple[Step, ...],
-    num_ctx: int = PROOFREADING_NUM_CTX,
+    num_ctx: int = BASE_NUM_CTX,
     profile: RequestProfile | None = None,
 ) -> CorrectorFactory:
     """Return a factory building the corrector of *exchange* with *steps* on *client*.

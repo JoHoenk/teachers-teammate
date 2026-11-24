@@ -42,6 +42,7 @@ from .domain.model_catalog import (
     HardwareProfileSetting,
     parse_profile_setting,
 )
+from .domain.ollama_address import normalize_ollama_url
 from .domain.ollama_discovery import DEFAULT_SERVER_URL
 from .domain.output_files import DocxFormat
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES, parse_pdf_text_layer
@@ -218,6 +219,16 @@ def _evaluate_prompt(value: object) -> str:
     return migrate_saved_default(str(value).rstrip(), _DEFAULT_EVALUATE_PROMPT)
 
 
+def normalize_saved_ollama_url(value: object) -> str:
+    """Return *value* as the address the app uses: the default server when it is blank.
+
+    A saved setup can hold an empty address (a cleared field, an older file).  The one meaning
+    of that is :data:`~teachers_teammate.domain.ollama_discovery.DEFAULT_SERVER_URL`, decided
+    here so no reader of ``Config.ollama_url`` has to decide it again.
+    """
+    return normalize_ollama_url(str(value))
+
+
 def normalize_ocr_engine(value: object) -> str:
     """Return *value* if it is a local OCR engine, else the engine used instead.
 
@@ -291,7 +302,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         "preprocess_method", PreprocessMethod.AUTO, SettingScope.RUN, normalize_preprocess_method
     ),
-    Setting("ollama_url", DEFAULT_SERVER_URL, SettingScope.RUN),
+    Setting("ollama_url", DEFAULT_SERVER_URL, SettingScope.RUN, normalize_saved_ollama_url),
     Setting("ocr_timeout", 180, SettingScope.RUN, _count_between(*OCR_TIMEOUT_RANGE)),
     # Whether scans (images, PDFs without a text layer) are read.  Off = only text that already
     # exists is used (text files, PDFs with a text layer) and scans are skipped.

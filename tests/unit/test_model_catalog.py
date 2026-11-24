@@ -23,6 +23,8 @@ from teachers_teammate.domain.model_catalog import (
     PROFILE_SETTINGS,
     RECOMMENDED,
     RequestProfile,
+    UNKNOWN_PROFILE,
+    active_profile,
     best_model,
     DetectionReason,
     DiskVerdict,
@@ -628,6 +630,32 @@ def test_hardware_detection_dataclass_defaults() -> None:
     detection = HardwareDetection(profile=HardwareProfile.CPU, reason=DetectionReason.NO_GPU_FOUND)
     assert detection.gpu_name is None
     assert detection.memory_gb is None
+
+
+def test_a_profile_chosen_by_hand_wins_before_and_after_a_detection() -> None:
+    """
+    Given  the teacher has chosen a 16 GB card by hand
+    When   the active profile is asked for before and after a detection lands
+    Then   the choice decides both times, so the suggestion does not jump when it arrives
+    """
+    card = HardwareDetection(profile=HardwareProfile.CARD_8GB, reason=DetectionReason.MANUAL)
+    chosen = HardwareProfileSetting.CARD_16GB
+
+    assert active_profile(None, chosen) == HardwareProfile.CARD_16GB
+    assert active_profile(card, chosen) == HardwareProfile.CARD_16GB
+
+
+def test_the_active_profile_follows_the_detection_while_the_choice_is_auto() -> None:
+    """
+    Given  the setting left to the app, and no detection yet
+    When   the active profile is asked for
+    Then   the weakest profile is assumed, and a detection replaces it once it lands
+    """
+    card = HardwareDetection(profile=HardwareProfile.CARD_16GB, reason=DetectionReason.GPU_DETECTED)
+
+    assert active_profile(None, "auto") == UNKNOWN_PROFILE
+    assert active_profile(None, HardwareProfileSetting.AUTO) == UNKNOWN_PROFILE
+    assert active_profile(card, "auto") == HardwareProfile.CARD_16GB
 
 
 def test_profile_settings_cover_auto_and_all_profiles() -> None:

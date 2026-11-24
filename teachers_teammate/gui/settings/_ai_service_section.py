@@ -27,6 +27,7 @@ from ...application.composition import AppServices
 from ...domain.data_location import PROVIDER_OLLAMA, DataLocation, DataRegion
 from ...domain.model_catalog import HardwareProfile, HardwareProfileSetting
 from ...domain.model_listing import ListedModel, ModelListing
+from ...domain.ollama_address import normalize_ollama_url
 from ...domain.providers import ProviderInfo
 from ...domain.stages import Stage
 from ...settings_schema import DEFAULTS
@@ -240,7 +241,7 @@ class AiServiceSection(QWidget):
         self._saved_model_provider = ""
         #: The list the field was last filled from, so a status link can restore its status line.
         self._shown_listing: ModelListing | None = None
-        self._ollama_url = self._suggestions.ollama_url or DEFAULTS["ollama_url"]
+        self._ollama_url = normalize_ollama_url(self._suggestions.ollama_url)
         self._open_downloads = offer.open_downloads
         self._shared_selector = self._suggestions.selector
         #: Which services miss their package (asked again only when a package may have changed).
@@ -407,7 +408,7 @@ class AiServiceSection(QWidget):
 
     def set_ollama_url(self, url: str) -> None:
         """Use another local AI server: re-resolve, re-hint, and ask it for its models."""
-        new_url = url or DEFAULTS["ollama_url"]
+        new_url = normalize_ollama_url(url)
         if new_url == self._ollama_url:
             return
         self._ollama_url = new_url

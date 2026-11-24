@@ -41,6 +41,7 @@ from ..domain.model_catalog import (
     ModelCategory,
     ModelRating,
     Suitability,
+    best_model,
     catalog_uses,
     disk_verdict,
     find_spec,
@@ -787,7 +788,7 @@ class SetupService:
             )[0]
 
         def best(task: ModelCategory) -> str:
-            return self._recommendations.best_ollama_model(
+            return best_model(
                 task,
                 facts.profile,
                 system_memory_gb=facts.system_memory_gb,

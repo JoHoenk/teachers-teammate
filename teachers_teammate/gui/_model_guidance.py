@@ -27,6 +27,7 @@ from ..domain.model_catalog import (
     ModelCategory,
     ModelRating,
     Suitability,
+    active_profile,
     best_model,
     normalize_tag,
     suitability_rank,
@@ -165,11 +166,8 @@ class OllamaModelGuidance(QWidget):
         self._update_button()
 
     def active_profile(self) -> HardwareProfile:
-        """Return the active hardware profile (8 GB until detection lands)."""
-        detection = self._selector.resolved()
-        if detection is not None:
-            return detection.profile
-        return HardwareProfile.CARD_8GB
+        """Return the profile the ratings follow (a hand-picked one at once)."""
+        return active_profile(self._selector.resolved(), self._selector.setting())
 
     def active_system_memory_gb(self) -> float | None:
         """Return the computer's memory in GB when known (it rates models too big for the card)."""

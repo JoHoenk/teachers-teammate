@@ -63,6 +63,7 @@ from ...domain.model_catalog import (
     profile_setting,
     short_model_name,
 )
+from ...domain.ollama_address import normalize_ollama_url
 from ...domain.stages import Stage
 from ...settings_schema import DEFAULTS
 from ...texts import addons as addon_text
@@ -395,7 +396,7 @@ class LocalAiPage(SetupPage):
         self._status_layout.setContentsMargins(0, 0, 0, 4)
         layout.addWidget(self._status_holder)
 
-        saved = str(context.settings.get("ollama_url") or DEFAULTS["ollama_url"])
+        saved = normalize_ollama_url(str(context.settings.get("ollama_url", "")))
         local = self._context.app_service.ollama.is_local(saved, include_wsl_host=True)
         self._here = QRadioButton(LOCAL_AI_HERE)
         self._server = QRadioButton(LOCAL_AI_SERVER)
@@ -444,7 +445,7 @@ class LocalAiPage(SetupPage):
             text, include_wsl_host=True
         ):
             return DEFAULTS["ollama_url"]
-        return text or DEFAULTS["ollama_url"]
+        return normalize_ollama_url(text)
 
     def hardware_profile(self) -> HardwareProfileSetting:
         """Return the computer profile the suggestions follow."""

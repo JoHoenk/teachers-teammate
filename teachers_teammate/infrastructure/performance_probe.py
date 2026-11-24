@@ -26,6 +26,7 @@ import tempfile
 import threading
 
 from ..config import OcrConfig
+from ..domain.context_budget import BASE_NUM_CTX
 from ..domain.model_catalog import (
     OCR_TEMPERATURE,
     ServerFacts,
@@ -54,7 +55,6 @@ from ..texts.review import (
     SPEED_NO_TOKEN_COUNTS_PARAGRAPH,
 )
 from .ollama_utils import (
-    PROOFREADING_NUM_CTX,
     ChatStats,
     OllamaClient,
     proofreading_options,
@@ -103,7 +103,7 @@ class SpeedTestRequest:
     review_model: str = ""
     """The content review's own model; empty when it shares the proofreading one."""
     language: str = "English"
-    num_ctx: int = PROOFREADING_NUM_CTX
+    num_ctx: int = BASE_NUM_CTX
     ocr: OcrConfig = field(default_factory=OcrConfig)
 
     def models(self) -> tuple[str, ...]:

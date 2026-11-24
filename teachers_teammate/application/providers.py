@@ -229,7 +229,9 @@ class ProviderService:
         cached = self.get_cached_listing(provider, base_url=base_url)
         if cached is not None:
             return cached
-        kwargs: dict[str, str] = {"base_url": base_url} if base_url else {}
+        # Ollama is always asked at a real address; the others take no URL.
+        url = normalize_ollama_url(base_url) if provider == PROVIDER_OLLAMA else ""
+        kwargs: dict[str, str] = {"base_url": url} if url else {}
         kwargs["api_key"] = self._credentials.key_for(provider) or ""
         listing = list_provider_models_checked(provider, **kwargs)
         self.remember_listing(provider, listing, base_url=base_url)

@@ -169,8 +169,8 @@ READER_NOT_DOWNLOADED = (
 READER_SIZE_GB = round(sum(m.size for m in READER_MODELS) / 1e9, 3)
 """The reader's download size in GB, the unit the setup plan counts in."""
 
-READER_SIZE_LABEL = "31 MB"
-"""The reader's download size as teachers read it (``sum(m.size)`` is 31,191,354 bytes)."""
+READER_SIZE_LABEL = f"{round(READER_SIZE_GB * 1000)} MB"
+"""The reader's download size as teachers read it, in whole megabytes."""
 
 #: Bump when detection, recognition, reading order or joining changes what the reader returns:
 #: stored texts read with the old code are then read again.

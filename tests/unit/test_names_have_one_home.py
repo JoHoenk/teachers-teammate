@@ -44,6 +44,9 @@ _STAGE_WORDS_LEFT: dict[str, int] = {
 _ADDRESS_MARKER = "11434"
 _ADDRESS_HOME = "domain/ollama_discovery.py"
 
+#: The key of the saved Ollama address in the settings dict.
+_ADDRESS_KEY = "ollama_url"
+
 #: The provider id ``domain/data_location.py`` spells as ``PROVIDER_OLLAMA``.
 _PROVIDER_ID = "ollama"
 _PROVIDER_HOME = "domain/data_location.py"
@@ -147,3 +150,59 @@ def test_the_ollama_provider_id_is_spelled_in_domain_data_location_only() -> Non
     assert off == {}, (
         f"use PROVIDER_OLLAMA instead, or fix the pin (`module: (now, pinned)`): {off}"
     )
+
+
+def _reads_saved_address(node: ast.AST) -> bool:
+    """Return whether *node* reads the saved Ollama address out of a mapping."""
+    return any(
+        isinstance(sub, ast.Subscript)
+        and isinstance(sub.slice, ast.Constant)
+        and sub.slice.value == _ADDRESS_KEY
+        for sub in ast.walk(node)
+    )
+
+
+def _defaulted_parameters(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Return the names of the parameters of *node* that carry a default."""
+    positional = [*node.args.posonlyargs, *node.args.args]
+    keyword = [
+        arg
+        for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True)
+        if default is not None
+    ]
+    carrying = positional[len(positional) - len(node.args.defaults) :]
+    return {arg.arg for arg in (*carrying, *keyword)}
+
+
+def test_a_saved_ollama_address_is_never_a_fallback_behind_an_or() -> None:
+    """
+    Given  every module of the package
+    When   an ``or`` that reads the saved Ollama address is looked for
+    Then   there is none, so a blank address is normalised instead of silently replaced
+    """
+    found = {
+        f"{module}:{node.lineno}"
+        for module, path in _modules()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.BoolOp)
+        and isinstance(node.op, ast.Or)
+        and any(_reads_saved_address(operand) for operand in node.values)
+    }
+    assert found == set(), f"normalize_ollama_url() instead of a default: {sorted(found)}"
+
+
+def test_the_ollama_provider_asks_for_its_address() -> None:
+    """
+    Given  every provider module
+    When   the parameters that carry a default are read
+    Then   none names ``base_url``: the address comes from the caller that owns it
+    """
+    providers = _package_dir() / "infrastructure" / "providers"
+    defaulted = {
+        f"{path.name}:{node.lineno}"
+        for path in sorted(providers.rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and "base_url" in _defaulted_parameters(node)
+    }
+    assert defaulted == set(), f"take base_url as a required argument: {sorted(defaulted)}"

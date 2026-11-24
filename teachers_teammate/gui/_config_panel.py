@@ -52,6 +52,7 @@ from ..settings_schema import SECONDARY_MODEL_NONE, normalize_notes, normalize_s
 from ..texts import dialogs as dlg
 from ..texts import main_window as win
 from ..texts import review as txt
+from ..texts import run as run_text
 from ..texts.privacy import uses_tooltip
 from . import _anonymizer_settings
 from ._constants import _LANGUAGES
@@ -705,7 +706,7 @@ class ConfigPanel(QScrollArea):
         the note is hidden.
         """
         if not self._recognition_enabled.isChecked() and skipped:
-            self._recognition_note.setText(win.scans_skipped_note(skipped))
+            self._recognition_note.setText(run_text.scans_skipped_note(skipped))
             self._recognition_note.setStyleSheet("color: #e67e22; font-size: 8pt;")
             self._recognition_note.setVisible(True)
         elif self._recognition_enabled.isChecked() and not_needed:

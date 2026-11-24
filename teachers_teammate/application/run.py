@@ -20,7 +20,6 @@ import threading
 from ..config import Config
 from ..domain.context_budget import RunWindows, memory_at_context_gb
 from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, PROVIDER_OLLAMA
-from ..domain.local_models import READER_NOT_DOWNLOADED
 from ..domain.model_catalog import (
     RUN_MEMORY_MARGIN_GB,
     DetectionReason,
@@ -32,9 +31,9 @@ from ..domain.model_catalog import (
 from ..domain.model_listing import ModelListing
 from ..domain.ollama_address import models_include
 from ..domain.ollama_discovery import WaitDetail
-from ..domain.output_files import TEXT_SUFFIX, output_folder_refusal
+from ..domain.output_files import TEXT_SUFFIX, FolderProblem, output_folder_problem
 from ..domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
-from ..domain.requirements import IssueKind, RequirementIssue
+from ..domain.requirements import IssueKind, MemoryShortfall, RequirementIssue
 from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..domain.stages import Stage
 from ..infrastructure.file_discovery import FileDiscovery
@@ -67,6 +66,9 @@ _logger = logging.getLogger(__name__)
 class RunPreflight:
     """Outcome of the checks made before a run starts (first blocker wins)."""
 
+    #: Why the output folder must not be used (``None`` when it is fine), e.g. text files
+    #: saved where the run looks for inputs.  The first thing a teacher can fix.
+    output_problem: FolderProblem | None = None
     #: Why text recognition may not run with these settings ("" when it may), e.g. an
     #: Ollama cloud model: pages must be read on a computer the user controls.
     ocr_not_allowed: str = ""
@@ -80,10 +82,13 @@ class RunPreflight:
     #: Stage whose requirements are unmet ("" when all are met) and the unmet issues.
     stage: str = ""
     stage_issues: tuple[RequirementIssue, ...] = ()
-    #: Why the configured Ollama models do not fit in the memory that is free now ("" when they
-    #: do, or when Ollama runs on another computer).  A warning, not a refusal: free memory
+    #: Why the configured Ollama models do not fit in the memory that is free now (``None`` when
+    #: they do, or when Ollama runs on another computer).  A warning, not a refusal: free memory
     #: changes from run to run, so the user decides ("Run anyway" in the GUI, a flag in the CLI).
-    memory_warning: str = ""
+    memory_shortfall: MemoryShortfall | None = None
+    #: The run reads pages with the automatic preparation while the page models are not
+    #: downloaded, so it skips turning and flattening them.  A notice, never a refusal.
+    page_models_skipped: bool = False
     #: Text recognition is switched off and not one queued file can be used without it.
     nothing_to_read: bool = False
     #: The queued files this run leaves out because text recognition is switched off (scans).
@@ -100,10 +105,11 @@ class RunPreflight:
     def blocked(self) -> bool:
         """Whether a requirement of the run is unmet, so it must not start at all.
 
-        The memory warning does not block: the user decides whether to run anyway.
+        A memory shortfall does not block: the user decides whether to run anyway.
         """
         return bool(
-            self.nothing_to_read
+            self.output_problem is not None
+            or self.nothing_to_read
             or self.ocr_not_allowed
             or self.ollama_unreachable
             or self.missing_models
@@ -118,6 +124,8 @@ class RunPreflight:
         and ``""`` for a server or a model that does not belong to one stage.  One shape for
         every blocker, so the GUI shows and fixes them all the same way.
         """
+        if self.output_problem is not None:
+            return "", RequirementIssue(IssueKind.OUTPUT_IN_INPUT_FOLDER)
         if self.nothing_to_read:
             return Stage.OCR, RequirementIssue(IssueKind.NOTHING_TO_READ)
         if self.ocr_not_allowed:
@@ -336,19 +344,7 @@ class RunService:
         """Collect supported input files without a full Config (for partial GUI state)."""
         return self._discovery.collect_input_files_from_dir(input_dir, recursive)
 
-    @staticmethod
-    def ocr_refusal_for_run(config: Config) -> str:
-        """Return why this run must not start, or ``""`` when text recognition is allowed.
-
-        Needs no network access.  Settings that would read pages online are refused for
-        every run, whatever files it holds: the fix is one model choice, and it keeps the
-        rule independent of which files happen to need recognition.
-        """
-        if not config.recognition_enabled:
-            return ""  # no page is read, so what would read it does not matter
-        return ocr_refusal(config.ocr.engine, config.ocr.model, config.ollama_url)
-
-    def page_models_skipped(self, config: Config) -> bool:
+    def _page_models_skipped(self, config: Config) -> bool:
         """Return whether a run skips turning and flattening the pages.
 
         That is a run that reads pages with the automatic preparation while the page models
@@ -360,35 +356,14 @@ class RunService:
             and not self._reader.page_models_installed()
         )
 
-    def reader_refusal_for_run(self, config: Config, files: Sequence[Path]) -> str:
-        """Return why the built-in reader cannot start a run over *files*, or ``""`` when it can.
-
-        Only a run that reads pages with the reader and has no model files is refused; the
-        sentence names the command line flag that downloads them.  A run over files that need
-        no reading (text files, text that is already recognised) is not: the model files are
-        only opened when a page is read, as in the main window
-        (see :meth:`needs_text_recognition`).
-        """
-        if not (
-            config.recognition_enabled
-            and config.ocr.engine == ENGINE_PPOCR
-            and not self._reader.reader_installed()
-        ):
-            return ""
-        if not self.needs_text_recognition(
-            files, recognised=self._documents.recognised_files(config, files)
-        ):
-            return ""
-        return READER_NOT_DOWNLOADED
-
     @staticmethod
-    def output_refusal_for_run(config: Config) -> str:
-        """Return why this run's output folder must not be used, or ``""`` when it is fine.
+    def output_problem_for_run(config: Config) -> FolderProblem | None:
+        """Return why this run's output folder must not be used, or ``None`` when it is fine.
 
         Text files saved where the run looks for inputs would be read as new documents
         the next time.
         """
-        return output_folder_refusal(
+        return output_folder_problem(
             writes_text_files=config.writes_text_files,
             output_dir=config.output_dir.resolve(),
             input_dir=config.input_dir.resolve(),
@@ -477,24 +452,38 @@ class RunService:
         self,
         config: Config,
         *,
-        memory: bool = True,
-        recognition: bool = True,
-        fresh: bool = False,
         files: Collection[Path] | None = None,
         recognised: Collection[Path] = (),
+        recognition: bool | None = None,
+        memory: bool = True,
+        fresh: bool = False,
         ask_about_work: bool = False,
     ) -> RunPreflight:
         """Return the unmet requirements before a run, or an all-clear result.
+
+        This is the one answer to "can this run start?" for the window and the command line.
 
         With text recognition switched off and *files* given, the result also lists the files
         the run leaves out (``skipped``), and is blocked (``nothing_to_read``) when none of
         them can be used.  Such a check opens PDFs, see :meth:`_plan_recognition`.  A document
         whose transcription the teacher stored is read from that, so it is not left out.
 
+        *recognition* says whether the run reads pages at all; without it, *files* and
+        *recognised* answer that (:meth:`needs_text_recognition`), so a caller need not ask.
+
         *ask_about_work* adds ``worked_on``: the documents whose corrections or transcription the
         teacher worked on, for the question before a run.  It reads every file that was not
         read since it last changed, so only the check that starts a run asks for it.
         """
+        problem = self.output_problem_for_run(config)
+        if problem is not None:
+            return RunPreflight(output_problem=problem)
+        if recognition is None:
+            recognition = (
+                self.needs_text_recognition(files, recognised=recognised)
+                if files is not None
+                else True
+            )
         skipped: tuple[Path, ...] = ()
         if not config.recognition_enabled and files:
             plan = self._plan_recognition(
@@ -547,7 +536,7 @@ class RunService:
         the GUI thread.  Order: text recognition allowed → Ollama reachable → models
         downloaded → stage requirements (text recognition engine, anonymizer, correction,
         evaluation) → memory (a warning, so a blocked run still reports its stage issues
-        first).  ``memory=False`` skips the memory warning: the readiness line only asks
+        first).  ``memory=False`` skips the memory shortfall: the readiness line only asks
         whether a run can start, and the question about free memory belongs to Run.
         ``recognition=False`` skips the check of the text recognition engine for a run that
         reads no page (only text files, or text that is already recognised): a reader that is
@@ -555,9 +544,12 @@ class RunService:
         asks the Ollama server again instead of using the list it gave within the last minutes:
         for a teacher who just ran ``ollama pull`` in a terminal and pressed "Check again".
         """
-        ocr_reason = self.ocr_refusal_for_run(config)
-        if ocr_reason:
-            return RunPreflight(ocr_not_allowed=ocr_reason)
+        # Settings that would read pages online are refused with every file list: the fix is
+        # one model choice, so the rule holds whatever files the run happens to hold.
+        if config.recognition_enabled:
+            ocr_reason = ocr_refusal(config.ocr.engine, config.ocr.model, config.ollama_url)
+            if ocr_reason:
+                return RunPreflight(ocr_not_allowed=ocr_reason)
         if self._ollama_needed(config):
             if fresh:
                 self._providers.forget_ollama_model_list(config.ollama_url)
@@ -584,7 +576,8 @@ class RunService:
             if issues:
                 return RunPreflight(stage=stage, stage_issues=tuple(issues))
         return RunPreflight(
-            memory_warning=self.memory_warning_for_run(config) if memory else "",
+            memory_shortfall=self._memory_shortfall(config) if memory else None,
+            page_models_skipped=self._page_models_skipped(config),
             ollama_wait=self._ollama_wait(config) if memory else WaitDetail(),
         )
 
@@ -661,8 +654,8 @@ class RunService:
             return WaitDetail()
         return self._ollama.wait_for(config.ollama_url, models[0])
 
-    def memory_warning_for_run(self, config: Config) -> str:
-        """Return why the configured Ollama models do not fit in memory now, or ``""``.
+    def _memory_shortfall(self, config: Config) -> MemoryShortfall | None:
+        """Return the configured model that does not fit in memory now, or ``None``.
 
         A warning for the user, not a refusal: free memory changes from run to run, so the
         caller offers to run anyway.  For an Ollama on this computer: the part of each catalogued
@@ -670,7 +663,7 @@ class RunService:
         *right now* (keeping
         :data:`~teachers_teammate.domain.model_catalog.RUN_MEMORY_MARGIN_GB`), because a model
         that spills over would make the computer swap to disk and become unusable.  A model that
-        is not catalogued, a server on another computer and an unreadable memory give ``""``.
+        is not catalogued, a server on another computer and an unreadable memory give ``None``.
 
         A model Ollama already has loaded is not credited as already counted: whether the
         processor-side part of a loaded model leaves the "available" figure depends on the kernel
@@ -681,12 +674,12 @@ class RunService:
         other loaded models as free; see docs/development.md.
         """
         if not self._ollama_needed(config):
-            return ""
+            return None
         if not self._ollama.is_local(config.ollama_url):
-            return ""
+            return None
         available = self._recommendations.available_memory_gb()
         if available is None:
-            return ""
+            return None
         detection = self._recommendations.resolve_hardware_profile(
             config.hardware_profile, config.ollama_url
         )
@@ -698,13 +691,8 @@ class RunService:
             memory = self._memory_gb_at_resolved_window(config, tag, spec, detection)
             needed = ram_needed_gb(memory, detection.profile, detection.card_gb, unified=unified)
             if needed > available - RUN_MEMORY_MARGIN_GB:
-                return (
-                    f"{tag} needs about {needed:.0f} GB of free memory, but only "
-                    f"{available:.0f} GB are free on this computer right now. Close other "
-                    "programs or choose a smaller model; otherwise the computer would have to "
-                    "use its disk as memory and become extremely slow."
-                )
-        return ""
+                return MemoryShortfall(model=tag, needed_gb=needed, free_gb=available)
+        return None
 
     @staticmethod
     def _memory_gb_at_resolved_window(

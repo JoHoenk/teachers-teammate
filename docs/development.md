@@ -645,8 +645,8 @@ measured where possible (*Model sizes*, above).
 The two share thresholds come from speeds measured on one 8 GB card and one processor; they are
 ratios, so they scale with the computer.
 
-`RunService.memory_warning_for_run()` is the run-time counterpart, used by
-`check_run_preflight()` (GUI) and the command line before a run: for an Ollama on this computer,
+`RunService._memory_shortfall()` is the run-time counterpart, used by
+`check_run_preflight()` (both adapters) before a run: for an Ollama on this computer,
 the part of every catalogued model that does not fit the card (all of it on Apple Silicon) has to
 fit the main memory that is free *right now*, minus `RUN_MEMORY_MARGIN_GB` (2 GB).  It reads
 `ModelRecommendationService.available_memory_gb()` (`psutil`'s `available`, never swap).  It is a
@@ -654,7 +654,7 @@ fit the main memory that is free *right now*, minus `RUN_MEMORY_MARGIN_GB` (2 GB
 the command line needs `--ignore-memory-check`.  `check_run_preflight()` therefore runs the memory
 check last, after the stage requirements (reading, anonymizing, correcting, evaluating), and reports
 a memory warning and a blocking issue separately.  A model that is not catalogued, a remote server
-and an unreadable memory give `""`.  It rates the models through
+and an unreadable memory give `None`.  It rates the models through
 `resolve_hardware_profile()`, so a hand-picked profile counts as it will at run time, and at the
 window the run really gives the model (`memory_at_context_gb`).  The wording of all this is in
 `texts/models.py`.
@@ -1647,9 +1647,9 @@ Off, the layers behave like this:
   (exit code 0).  `ProcessingResult.skipped` -> `FileOutcome(status=SKIPPED)`; a file that is
   gone since it was queued is skipped the same way.  The main window opens
   no error dialog for it and `ResultsTable.add_result` shows "skipped" in grey.
-- `_ollama_needed` / `_configured_ollama_models` / `ocr_refusal_for_run` ignore the OCR model, the
-  pipeline does not check it, and `describe_data_flow` leaves the recognition stage out (no page
-  leaves anywhere).  `describe_steps` forces it back on so the line under the step can still say
+- The refusal of settings that would read pages online, `_ollama_needed` and
+  `_configured_ollama_models` ignore the OCR model, the pipeline does not check it, and
+  `describe_data_flow` leaves the recognition stage out (no page leaves anywhere).  `describe_steps` forces it back on so the line under the step can still say
   what ticking it would use.
 - `check_run_preflight(config, files=..., recognised=...)` asks `_plan_recognition()` (images are
   scans; PDFs are opened with `pdf_has_text_layer()`, cached by path/size/mtime/mode, so call it from
@@ -1771,8 +1771,9 @@ SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
 - A run reads the store its service checks (`RunService(model_store=)` →
   `PipelineDependencies.model_store` / `run_ocr(model_store=)` → `StageBuilder.model_store`), so
   the readiness check and the run never look at different folders.
-- `reader_refusal_for_run` (CLI) refuses only a run that has a file to read: a folder of text
-  files, or of files whose text is stored, starts without the model files, as in the main window.
+- `check_run_preflight()` reports `IssueKind.READER_MODEL_MISSING` (the built-in reader's model
+  files are not downloaded) only for a run that has a file to read: a folder of text files, or of
+  files whose text is stored, starts without the model files, as in the main window.
 - Errors are sentences a teacher or an IT department can act on (`ModelDownloadError`): the
   host that could not be reached (`huggingface.co`), a damaged download, no space, a folder that
   cannot be written.

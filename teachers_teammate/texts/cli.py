@@ -12,10 +12,18 @@ from collections.abc import Iterable, Sequence
 
 from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import DataFlow
-from ..domain.local_models import HUGGING_FACE_HOST, PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
+from ..domain.local_models import (
+    HUGGING_FACE_HOST,
+    PAGE_MODELS_SIZE_LABEL,
+    READER_DOWNLOAD_COMMAND,
+    READER_SIZE_LABEL,
+)
+from ..domain.ollama_discovery import OLLAMA_DOWNLOAD_URL
+from ..domain.requirements import IssueKind, RequirementIssue
 from . import app, privacy
 from .app import NAME
 from .privacy import level_text
+from .settings import WHERE_ADDONS, WHERE_ONLINE_SERVICES
 
 DESCRIPTION = (
     f"{NAME} — batch OCR pipeline that extracts text from PDFs/images "
@@ -213,3 +221,41 @@ def dpi_out_of_range(dpi: int, low: int, high: int) -> str:
 def timeout_out_of_range(seconds: int, low: int, high: int) -> str:
     """Return what ``--ocr-timeout`` says about *seconds* outside *low*..*high*."""
     return f"the timeout must be between {low} and {high} seconds, got {seconds}"
+
+
+def cli_issue_hint(issue: RequirementIssue, *, env_key: str = "") -> str:
+    """Return what the command line suggests for *issue*, or ``""`` when nothing helps.
+
+    *env_key* is the environment variable the key of ``issue.provider`` is read from.
+    """
+    kind = issue.kind
+    if kind is IssueKind.READER_MODEL_MISSING:
+        return f"Download it with: {READER_DOWNLOAD_COMMAND}"
+    if kind in (IssueKind.MODEL_MISSING, IssueKind.NO_OLLAMA_MODEL):
+        model = issue.models[0] if issue.models else "<model>"
+        return f"Download it in Ollama: ollama pull {model}"
+    if kind is IssueKind.KEY_MISSING:
+        where = WHERE_ONLINE_SERVICES
+        if env_key:
+            return f"Set {env_key} in the environment, or save the key under {where}."
+        return f"Save the key under {where}."
+    if kind in (
+        IssueKind.PACKAGE_MISSING,
+        IssueKind.NAME_DETECTION_MISSING,
+        IssueKind.PRIVACY_ADDON_MISSING,
+        IssueKind.ADDONS_OUTDATED,
+        IssueKind.ADDON_RESTART_NEEDED,
+    ):
+        return f"Install it in the app: {WHERE_ADDONS}"
+    if kind is IssueKind.NOTHING_TO_READ:
+        return "Run again with --recognition, or queue files that have text."
+    if kind in (IssueKind.OLLAMA_NOT_RUNNING, IssueKind.OLLAMA_NOT_FOUND):
+        fix = (
+            "Start Ollama"
+            if kind is IssueKind.OLLAMA_NOT_RUNNING
+            else f"Install Ollama from {OLLAMA_DOWNLOAD_URL}"
+        )
+        return f"{fix}, then run again."
+    if kind is IssueKind.OUTPUT_IN_INPUT_FOLDER:
+        return "Choose an output folder with -o/--output that is not the input folder."
+    return ""

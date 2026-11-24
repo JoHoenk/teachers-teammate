@@ -24,6 +24,7 @@ import sys
 from . import __version__
 from ._model_defaults import default_model_for_task
 from .application.composition import AppServices, inject_addon_packages_dir, start_logging
+from .application.run import RunPreflight
 from .config import Config, load_config_file
 from .domain.data_location import LOCAL_OCR_ENGINES, PROVIDER_OLLAMA, DataFlow
 from .domain.output_files import folder_problem
@@ -41,6 +42,8 @@ from .settings_schema import (
 from .texts import addons as addon_text
 from .texts import cli as cli_text
 from .texts import dialogs as dlg
+from .texts import run as run_text
+from .texts.issues import issue_text
 from .texts.run import BATTERY_WARNING
 
 
@@ -533,6 +536,38 @@ def _download_only(args: argparse.Namespace, service: AppServices) -> int | None
     return None
 
 
+def _preflight_exit(
+    preflight: RunPreflight, service: AppServices, *, ignore_memory_check: bool
+) -> int | None:
+    """Print what the preflight found on stderr; return the exit code, or ``None`` to go on.
+
+    A blocker stops the run and names the way to fix it; a memory shortfall stops it unless
+    *ignore_memory_check* says the teacher decided otherwise; the page models and the skipped
+    scans are notices before a run that goes ahead.
+    """
+    blocker = preflight.blocker
+    if blocker is not None:
+        _, issue = blocker
+        env_key = service.providers.env_key(issue.provider) if issue.provider else ""
+        print(dlg.cli_error(issue_text(issue)), file=sys.stderr)
+        hint = cli_text.cli_issue_hint(issue, env_key=env_key)
+        if hint:
+            print(hint, file=sys.stderr)
+        return 1
+    if preflight.memory_shortfall is not None:
+        shortfall = dlg.memory_shortfall_text(preflight.memory_shortfall)
+        if not ignore_memory_check:
+            print(dlg.cli_error(shortfall), file=sys.stderr)
+            print(cli_text.IGNORE_MEMORY_CHECK_HINT, file=sys.stderr)
+            return 1
+        print(dlg.cli_warning(shortfall), file=sys.stderr)
+    if preflight.page_models_skipped:
+        print(addon_text.PAGE_MODELS_SKIPPED_NOTICE, file=sys.stderr)
+    if preflight.skipped:
+        print(dlg.cli_warning(run_text.scans_skipped_note(len(preflight.skipped))), file=sys.stderr)
+    return None
+
+
 def run_cli(
     argv: Sequence[str] | None = None,
     *,
@@ -598,23 +633,14 @@ def run_cli(
     files = service.run.collect_input_files(config)
     if args.preview_only:
         return service.run.run_preview_only(config, files).exit_code
-    refusal = (
-        service.run.ocr_refusal_for_run(config)
-        or service.run.reader_refusal_for_run(config, files)
-        or service.run.output_refusal_for_run(config)
+    # The one answer to "can this run start?", the same one the window asks.
+    stopped = _preflight_exit(
+        service.run.check_run_preflight(config, files=files, fresh=True),
+        service,
+        ignore_memory_check=args.ignore_memory_check,
     )
-    if refusal:
-        print(dlg.cli_error(refusal), file=sys.stderr)
-        return 1
-    warning = service.run.memory_warning_for_run(config)
-    if warning:
-        if not args.ignore_memory_check:
-            print(dlg.cli_error(warning), file=sys.stderr)
-            print(cli_text.IGNORE_MEMORY_CHECK_HINT, file=sys.stderr)
-            return 1
-        print(dlg.cli_warning(warning), file=sys.stderr)
-    if service.run.page_models_skipped(config):
-        print(addon_text.PAGE_MODELS_SKIPPED_NOTICE, file=sys.stderr)
+    if stopped is not None:
+        return stopped
     _print_data_flow(service.data_flow.describe_data_flow(config))
     return service.run.run_selected(
         config, files, config_file=config_path, battery_warning=BATTERY_WARNING

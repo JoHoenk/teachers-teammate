@@ -59,12 +59,6 @@ RECOGNIZE_TEXT_TOOLTIP = (
 RECOGNIZE_NOT_NEEDED = "Not needed here: the text of these documents is already available."
 
 
-def scans_skipped_note(count: int) -> str:
-    """Return the note under a switched-off "Recognize text" when *count* scans are queued."""
-    noun = "scan" if count == 1 else "scans"
-    return f"{count} {noun} will be skipped because text recognition is off."
-
-
 #: The tooltip of a "skipped" cell in the queue (the same sentence the pipeline reports).
 RECOGNITION_OFF_REASON = RECOGNITION_OFF_MESSAGE
 NOTHING_TO_READ_LINE = "Nothing to read: no document has text to use without recognition"

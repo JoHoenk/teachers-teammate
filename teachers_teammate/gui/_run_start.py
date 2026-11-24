@@ -19,6 +19,7 @@ from ..application.composition import AppServices
 from ..application.documents import WorkedOn
 from ..application.run import RunPreflight
 from ..config import Config
+from ..domain.requirements import MemoryShortfall
 from ..domain.stages import Stage
 from ..texts import app as app_text
 from ..texts import dialogs as dlg
@@ -131,9 +132,9 @@ class RunStartController(QObject):
         in, Run is disabled and :attr:`preflight_running` reports busy, so no second
         worker can be started from the Run button or the right-click menu.
         """
-        refusal = self._app_service.run.output_refusal_for_run(config)
-        if refusal:
-            _dialogs.notify(self._view.window, dlg.output_folder_refused(refusal))
+        problem = self._app_service.run.output_problem_for_run(config)
+        if problem is not None:
+            _dialogs.notify(self._view.window, dlg.output_folder_refused(problem))
             return
         self._preflight_running = True
         self._view.run_button.setEnabled(False)
@@ -177,19 +178,21 @@ class RunStartController(QObject):
         if note:
             # A note, not a question: the run works, the first file just waits.
             self._view.log.append_text(note + "\n")
-        if result.memory_warning:
-            self._confirm_memory_warning(result.memory_warning, lambda: on_ready(result))
+        if result.memory_shortfall is not None:
+            self._confirm_memory_warning(result.memory_shortfall, lambda: on_ready(result))
             return
         on_ready(result)
 
-    def _confirm_memory_warning(self, warning: str, on_ready: Callable[[], None]) -> None:
+    def _confirm_memory_warning(
+        self, shortfall: MemoryShortfall, on_ready: Callable[[], None]
+    ) -> None:
         """Ask before a run whose models do not fit the memory that is free now.
 
         A warning rather than a refusal, because free memory changes from run to run — so
         there is no "don't ask again" here, and Cancel is the default button: Enter must not
         start a run that could make the computer swap.
         """
-        if _dialogs.ask(self._view.window, dlg.not_enough_memory(warning)):
+        if _dialogs.ask(self._view.window, dlg.not_enough_memory(shortfall)):
             on_ready()
 
     def _confirm_data_flow_then(self, config: Config, on_ready: Callable[[], None]) -> None:

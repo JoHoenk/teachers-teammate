@@ -13,6 +13,13 @@ from ..domain.stages import Stage
 #: What the banner and the main window say when a run starts on battery power.
 BATTERY_WARNING = "Running on battery: plug in the charger, and keep the lid open."
 
+
+def scans_skipped_note(count: int) -> str:
+    """Return the line for a run with text recognition off that leaves *count* scans out."""
+    noun = "scan" if count == 1 else "scans"
+    return f"{count} {noun} will be skipped because text recognition is off."
+
+
 #: What a row says about a file a stop cut short, by the step it did not get to.
 _STOPPED: dict[str, str] = {
     Stage.OCR: "Stopped before the text was read.",

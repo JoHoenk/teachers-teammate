@@ -308,7 +308,7 @@ class ReadinessController(QObject):
         panel = self._panel
         if panel.results_problem():
             return results_fix(RESULTS_NO_FOLDER)
-        if panel.get_input_dir() and self._services.run.output_refusal_for_run(
+        if panel.get_input_dir() and self._services.run.output_problem_for_run(
             panel.lookup_config()
         ):
             return results_fix(RESULTS_TEXT_IN_INPUT)

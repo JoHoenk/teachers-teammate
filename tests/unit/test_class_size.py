@@ -60,7 +60,6 @@ OVERSIZED_FUNCTIONS: dict[str, int] = {
     "teachers_teammate/application/setup_plan.py::_downloads_plan": 81,
     "teachers_teammate/cli.py::_add_correction_args": 91,
     "teachers_teammate/cli.py::_add_ocr_args": 85,
-    "teachers_teammate/cli.py::run_cli": 86,
     "teachers_teammate/gui/_config_panel.py::ConfigPanel.__init__": 81,
     "teachers_teammate/gui/_fix_targets.py::fix_for": 73,
     "teachers_teammate/gui/_main_window.py::main_gui": 80,
@@ -79,7 +78,6 @@ OVERSIZED_FUNCTIONS: dict[str, int] = {
 #: The functions still over the branch limit, at the number of branches they have today.
 COMPLEX_FUNCTIONS: dict[str, int] = {
     "teachers_teammate/application/setup_plan.py::_downloads_plan": 21,
-    "teachers_teammate/cli.py::run_cli": 21,
     "teachers_teammate/gui/_results_table.py::ResultsTable._draw_stage_cells": 22,
     (
         "teachers_teammate/gui/settings/addons/_ollama_models_tab.py"

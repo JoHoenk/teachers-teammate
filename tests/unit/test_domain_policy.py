@@ -24,9 +24,9 @@ from teachers_teammate.domain.pdf_text_layer import (
     use_text_layer,
 )
 from teachers_teammate.domain.output_files import (
-    TEXT_IN_INPUT_FOLDER,
+    FolderProblem,
     feeds_inputs,
-    output_folder_refusal,
+    output_folder_problem,
     output_path,
 )
 from teachers_teammate.domain.stages import normalize_stage
@@ -418,23 +418,23 @@ def test_feeds_inputs() -> None:
         (False, "/in", True, False),
     ],
 )
-def test_output_folder_refusal(
+def test_output_folder_problem(
     writes_text: bool, output_dir: str, recursive: bool, refused: bool
 ) -> None:
     """
     Given  an input folder and an output folder, with or without text files
-    When   output_folder_refusal() is asked
+    When   output_folder_problem() is asked
     Then   only text files in a folder the next run reads (the input folder, or below it when
-           subfolders are read) are refused, with the reason
+           subfolders are read) are a problem, and the reason is data, not a sentence
     """
-    reason = output_folder_refusal(
+    problem = output_folder_problem(
         writes_text_files=writes_text,
         output_dir=Path(output_dir),
         input_dir=Path("/in"),
         recursive=recursive,
     )
 
-    assert reason == (TEXT_IN_INPUT_FOLDER if refused else "")
+    assert problem is (FolderProblem.TEXT_IN_INPUT if refused else None)
 
 
 # ── how often a cut-off review request is sent ──────────────────────────────

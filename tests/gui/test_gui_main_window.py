@@ -26,7 +26,11 @@ from teachers_teammate.application.run import RunPreflight, RunService
 from teachers_teammate.application.setup_plan import SetupService
 from teachers_teammate.config import broken_settings_copy, load_config_file
 from teachers_teammate.settings_schema import LoadedSettings
-from teachers_teammate.domain.requirements import IssueKind, RequirementIssue
+from teachers_teammate.domain.requirements import (
+    IssueKind,
+    MemoryShortfall,
+    RequirementIssue,
+)
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
     RECOMMENDED,
@@ -3055,6 +3059,9 @@ def test_run_shows_unmet_stage_requirement_dialog(
     assert main_window._run_controller._worker is None
 
 
+_SHORTFALL = MemoryShortfall("qwen3.5:9b", 7.0, 6.0)
+
+
 @pytest.mark.gui
 def test_insufficient_memory_runs_anyway_only_when_the_user_says_so(
     qtbot, main_window, monkeypatch, tmp_path: Path
@@ -3069,7 +3076,7 @@ def test_insufficient_memory_runs_anyway_only_when_the_user_says_so(
     monkeypatch.setattr(
         RunService,
         "check_run_preflight",
-        lambda self, config, **_kw: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
+        lambda self, config, **_kw: RunPreflight(memory_shortfall=_SHORTFALL),
     )
     asked = _answer_questions(monkeypatch, yes=True)
     main_window._results_table.set_queue([queue_row(str(tmp_path / "a.png"), "a.png")])
@@ -3079,7 +3086,7 @@ def test_insufficient_memory_runs_anyway_only_when_the_user_says_so(
     qtbot.waitUntil(lambda: main_window._run_controller._worker is not None, timeout=3000)
 
     assert asked[0].title == "Not enough free memory"
-    assert asked[0].body == "qwen3.5:9b needs about 7 GB."
+    assert asked[0].body == dlg.memory_shortfall_text(_SHORTFALL)
     assert asked[0].choices[0].label == "Run anyway"
     # Enter must not start a run that could swap: the default is the platform's Cancel.
     assert asked[0].choices[1].standard is StandardButton.CANCEL
@@ -3100,7 +3107,7 @@ def test_cancelling_the_memory_warning_does_not_start_the_run(
     monkeypatch.setattr(
         RunService,
         "check_run_preflight",
-        lambda self, config, **_kw: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
+        lambda self, config, **_kw: RunPreflight(memory_shortfall=_SHORTFALL),
     )
     asked = _answer_questions(monkeypatch, yes=False)
     main_window._results_table.set_queue([queue_row(str(tmp_path / "a.png"), "a.png")])

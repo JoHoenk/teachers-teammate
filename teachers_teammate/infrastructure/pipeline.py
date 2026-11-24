@@ -46,7 +46,7 @@ from ..config import Config, OcrConfig
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import WaitDetail
-from ..domain.output_files import output_folder_refusal
+from ..domain.output_files import output_folder_problem
 from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..exceptions import OllamaUnreachableError, ProviderNotAvailableError
 from ..interfaces import ImageUnit, PreparedPreview, ProgressCallbacks, Reporter
@@ -270,12 +270,13 @@ class OCRPipeline:
     def _refuse_folders(self) -> str:
         """Return why a run may not write there, or ``""`` when both folders are fine."""
         cfg = self._config
-        return output_folder_refusal(
+        problem = output_folder_problem(
             writes_text_files=cfg.writes_text_files,
             output_dir=cfg.output_dir.resolve(),
             input_dir=cfg.input_dir.resolve(),
             recursive=cfg.recursive,
         )
+        return report_text.folder_problem(problem) if problem is not None else ""
 
     def _prepare_run(self) -> _RunStart:
         """Create the run's folders and stores, and say where the teacher's work is kept."""

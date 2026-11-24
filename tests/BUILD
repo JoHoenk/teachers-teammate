@@ -2321,6 +2321,23 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_run_start",
+    size = "medium",
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_run_start.py",
+    ],
+    args = ["gui/test_gui_run_start.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS +
+           _GUI_DEPS +
+           _PIPELINE_DEPS +
+           _CLI_LIB + [
+        "//teachers_teammate:gui_layer_lib",
+    ],
+)
+
+py_test(
     name = "test_gui_results_table",
     size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_results_table.py"],
@@ -3282,6 +3299,7 @@ test_suite(
         ":test_gui_readiness",
         ":test_gui_results_table",
         ":test_gui_run_session",
+        ":test_gui_run_start",
         ":test_gui_run_status",
         ":test_gui_scan_view",
         ":test_gui_settings_pages",

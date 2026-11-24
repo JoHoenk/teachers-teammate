@@ -628,7 +628,7 @@ py_wheel(
     python_tag = "py3",
     requires_file = "wheel_requires.txt",
     summary = "OCR pipeline for handwritten documents",
-    version = "0.1.0",
+    version = "0.0.0.dev0",
     visibility = ["//visibility:public"],
     deps = [":ocr_pkg"],
 )

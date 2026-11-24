@@ -5,10 +5,12 @@ This product is licensed under the GNU General Public License, version 3 or (at 
 later version (see LICENSE).
 
 This product includes software developed by third parties. The full license
-and notice texts for all bundled third-party components are reproduced in:
+and notice texts for all bundled third-party components are in one list:
 
-  - third_party_licenses/third_party_license.txt   (repository)
+  - teachers_teammate/assets/third_party_licenses.txt   (repository)
   - the "Third-Party Licenses" tab of Help > Licenses inside the application
+
+Every download carries the same list as third_party_license.txt.
 
 Qt / PySide6 (LGPL-3.0)
 -----------------------

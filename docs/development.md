@@ -3519,12 +3519,12 @@ The constraints file says what an add-on may **not** change.  What it *gets* is 
   writes it: it reads the app's own lists (`[project] dependencies`,
   `addon_manager.addon_package_names()`, the `LocalModel`s, `SPACY_MODEL_PINS`), takes every
   version from the two locks, and downloads each locked wheel for its license text.  The same run
-  compiles `third_party_licenses/third_party_license.txt` and the copy the GUI shows,
-  `teachers_teammate/assets/third_party_licenses.md`.  `tools/licenses/policy.toml` holds the
-  denied licenses (what cannot join a GPL-3.0 program, AGPL, non-commercial), the display names and the accepted
-  exceptions; an `OR` expression is fine as soon as one alternative is.  The Add-ons page shows a
-  package's license as the tooltip of its row (`infrastructure/addon_licenses.py`, reading the
-  bundled copy of the inventory).  `--compile`, `--check-env` and `--check-resolved` run offline
+  compiles the one license list, `teachers_teammate/assets/third_party_licenses.txt`, which the
+  GUI shows and every download carries as `third_party_license.txt`.  `tools/licenses/policy.toml`
+  holds the denied licenses (what cannot join a GPL-3.0 program, AGPL, non-commercial), the
+  display names and the accepted exceptions; an `OR` expression is fine as soon as one alternative
+  is.  The Add-ons page shows a package's license as the tooltip of its row
+  (`infrastructure/addon_licenses.py`, reading the bundled copy of the inventory).  `--compile`, `--check-env` and `--check-resolved` run offline
   and are what the tests and the builds call; only the maintainer refresh touches the network.
   `docs/deployment.md` "Third-party licenses" has the flow.
 

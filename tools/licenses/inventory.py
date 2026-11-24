@@ -16,13 +16,13 @@ download: the full texts, in every download and in the in-app dialog.  Downloade
 author on the teacher's click: a known license that passes the deny rules, shown as a tooltip.
 Same list, same rules.
 
-Generated and hand-written files are kept apart: ``texts/`` and the compiled outputs belong to
+Generated and hand-written files are kept apart: ``texts/`` and the compiled output belong to
 this tool, ``curated/`` belongs to a person and is never touched, so no run is destructive.
 
 Usage (from the repo root):
 
     python tools/licenses/inventory.py            # refresh the inventory and the texts
-    python tools/licenses/inventory.py --compile  # rebuild the outputs from the committed store
+    python tools/licenses/inventory.py --compile  # rebuild the list from the committed store
 
 The first form needs the network (PyPI); ``--compile`` and the checks in
 ``tests/unit/test_license_inventory.py`` do not.
@@ -53,10 +53,9 @@ STORE = ROOT / "third_party_licenses"
 INVENTORY = STORE / "inventory.csv"
 TEXTS = STORE / "texts"
 CURATED = STORE / "curated"
-COMPILED = STORE / "third_party_license.txt"
 NOTICE = ROOT / "NOTICE"
 LICENSE = ROOT / "LICENSE"
-ASSET_MD = ROOT / "teachers_teammate" / "assets" / "third_party_licenses.md"
+ASSET_TXT = ROOT / "teachers_teammate" / "assets" / "third_party_licenses.txt"
 ASSET_CSV = ROOT / "teachers_teammate" / "assets" / "third_party_inventory.csv"
 ASSET_LICENSE = ROOT / "teachers_teammate" / "assets" / "LICENSE.txt"
 POLICY = Path(__file__).resolve().parent / "policy.toml"
@@ -876,7 +875,7 @@ def _notice() -> str:
 
 
 def compile_text(rows: Iterable[Row], policy: Policy, store: Path = STORE) -> str:
-    """Return the compiled ``third_party_license.txt``: NOTICE, then every bundle row's texts."""
+    """Return the compiled license list: NOTICE, then every bundle row's texts."""
     parts = [_notice()]
     for row in rows:
         if row.scope != "bundle":
@@ -890,33 +889,18 @@ def compile_text(rows: Iterable[Row], policy: Policy, store: Path = STORE) -> st
     return "".join(parts)
 
 
-def compile_markdown(rows: Iterable[Row], policy: Policy, store: Path = STORE) -> str:
-    """Return the in-app license page: NOTICE, then every bundle row with its texts."""
-    parts = ["# Third-Party Licenses\n\n", _notice(), "\n---\n"]
-    for row in rows:
-        if row.scope != "bundle":
-            continue
-        parts.append(f"\n## {row.component} {row.version}\n\n**License type:** {row.license}\n")
-        for label, text in texts_of(row.component, policy, store):
-            parts.append(f"\n### {label}\n\n```\n{text.rstrip()}\n```\n")
-    return "".join(parts)
-
-
 def write_compiled(
     rows: Iterable[Row],
     policy: Policy,
     store: Path = STORE,
-    compiled: Path = COMPILED,
-    asset_md: Path = ASSET_MD,
+    asset_txt: Path = ASSET_TXT,
     asset_license: Path = ASSET_LICENSE,
     license_file: Path = LICENSE,
 ) -> None:
-    """Write the compiled outputs, and the copy of our own license the app shows."""
+    """Write the license list the app shows and every download carries, and our own license."""
     rows = list(rows)
-    compiled.parent.mkdir(parents=True, exist_ok=True)
-    compiled.write_text(compile_text(rows, policy, store), encoding="utf-8")
-    asset_md.parent.mkdir(parents=True, exist_ok=True)
-    asset_md.write_text(compile_markdown(rows, policy, store), encoding="utf-8")
+    asset_txt.parent.mkdir(parents=True, exist_ok=True)
+    asset_txt.write_text(compile_text(rows, policy, store), encoding="utf-8")
     asset_license.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(license_file, asset_license)
 
@@ -931,7 +915,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--compile",
         action="store_true",
-        help="do not touch the network: rebuild the outputs from the committed store",
+        help="do not touch the network: rebuild the list from the committed store",
     )
     parser.add_argument(
         "--check-env",
@@ -951,7 +935,7 @@ def main(argv: list[str] | None = None) -> int:
     policy = load_policy(POLICY)
     if arguments.compile:
         rows = read_inventory(INVENTORY)
-        write_compiled(rows, policy, STORE, COMPILED, ASSET_MD, ASSET_LICENSE, LICENSE)
+        write_compiled(rows, policy, STORE, ASSET_TXT, ASSET_LICENSE, LICENSE)
         write_asset(rows, ASSET_CSV)
         print(f"Compiled {len(rows)} rows")
         return 0
@@ -988,7 +972,7 @@ def main(argv: list[str] | None = None) -> int:
 
     collect_texts(rows, policy, STORE, hashes=lock_hashes(TEST_LOCK.read_text(encoding="utf-8")))
     write_inventory(rows, INVENTORY)
-    write_compiled(rows, policy, STORE, COMPILED, ASSET_MD, ASSET_LICENSE, LICENSE)
+    write_compiled(rows, policy, STORE, ASSET_TXT, ASSET_LICENSE, LICENSE)
     write_asset(rows, ASSET_CSV)
     print(f"Wrote {len(rows)} rows to {INVENTORY}")
     return 0

@@ -116,16 +116,15 @@ def test_every_curated_stamp_matches_its_rows() -> None:
 def test_the_compiled_outputs_are_what_the_store_compiles_to() -> None:
     """
     Given  the committed store
-    When   the outputs are compiled again from it
-    Then   they are byte for byte the committed ones — no hand edit, no forgotten compile
+    When   the list is compiled again from it
+    Then   it is byte for byte the committed one — no hand edit, no forgotten compile
     """
     rows = _committed()
     policy = inventory.load_policy()
     # Bytes, not text: some license files carry CRLF, and a text read would normalise them away.
     outputs = {
-        _STORE / "third_party_license.txt": inventory.compile_text(rows, policy, _STORE),
-        _ROOT / "teachers_teammate" / "assets" / "third_party_licenses.md": (
-            inventory.compile_markdown(rows, policy, _STORE)
+        _ROOT / "teachers_teammate" / "assets" / "third_party_licenses.txt": (
+            inventory.compile_text(rows, policy, _STORE)
         ),
         _ROOT / "teachers_teammate" / "assets" / "third_party_inventory.csv": inventory.render(
             rows
@@ -138,7 +137,7 @@ def test_the_compiled_outputs_are_what_the_store_compiles_to() -> None:
     ]
 
     assert stale == [], (
-        f"stale compiled outputs: {stale} — run python tools/licenses/inventory.py --compile"
+        f"stale compiled list: {stale} — run python tools/licenses/inventory.py --compile"
     )
 
 

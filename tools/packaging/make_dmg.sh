@@ -36,7 +36,7 @@ ln -s /Applications "${STAGING}/Applications"
 mkdir "${STAGING}/Licenses"
 cp "${ROOT}/LICENSE" "${STAGING}/Licenses/LICENSE.txt"
 cp "${ROOT}/NOTICE" "${STAGING}/Licenses/NOTICE.txt"
-cp "${ROOT}/third_party_licenses/third_party_license.txt" "${STAGING}/Licenses/"
+cp "${ROOT}/teachers_teammate/assets/third_party_licenses.txt" "${STAGING}/Licenses/third_party_license.txt"
 
 echo "Creating DMG: ${DMG_PATH}…"
 hdiutil create \

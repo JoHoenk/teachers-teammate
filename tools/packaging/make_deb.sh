@@ -135,7 +135,7 @@ EOF
 } > "${DOC_DIR}/copyright"
 
 cp "${ROOT}/NOTICE" "${DOC_DIR}/NOTICE"
-cp "${ROOT}/third_party_licenses/third_party_license.txt" "${DOC_DIR}/third_party_license.txt"
+cp "${ROOT}/teachers_teammate/assets/third_party_licenses.txt" "${DOC_DIR}/third_party_license.txt"
 # The libraries the bundle took from the build machine, written by check_linux_bundle.py
 # --host-libs into _internal/.
 if [[ -f "${BUILD}/_internal/third_party_host_libraries.txt" ]]; then

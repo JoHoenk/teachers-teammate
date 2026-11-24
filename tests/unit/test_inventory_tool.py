@@ -45,9 +45,8 @@ def _into(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for name, relative in (
         ("STORE", ""),
         ("INVENTORY", "inventory.csv"),
-        ("COMPILED", "third_party_license.txt"),
         ("ASSET_CSV", "third_party_inventory.csv"),
-        ("ASSET_MD", "third_party_licenses.md"),
+        ("ASSET_TXT", "third_party_licenses.txt"),
         ("ASSET_LICENSE", "LICENSE.txt"),
     ):
         monkeypatch.setattr(inventory, name, tmp_path / relative)

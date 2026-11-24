@@ -216,7 +216,7 @@ def _add_license_files() -> None:
     shutil.copyfile(ROOT / "LICENSE", destination / "LICENSE.txt")
     shutil.copyfile(ROOT / "NOTICE", destination / "NOTICE.txt")
     shutil.copyfile(
-        ROOT / "third_party_licenses" / "third_party_license.txt",
+        ROOT / "teachers_teammate" / "assets" / "third_party_licenses.txt",
         destination / "third_party_license.txt",
     )
 

@@ -61,10 +61,10 @@ def test_a_missing_file_is_named(tmp_path: Path) -> None:
     """
     tree = _tree(tmp_path)
     carried = _carried(tree)
-    del carried["teachers_teammate/assets/third_party_licenses.md"]
+    del carried["teachers_teammate/assets/third_party_licenses.txt"]
 
     assert artifacts.problems(carried, tree) == [
-        "teachers_teammate/assets/third_party_licenses.md is missing"
+        "teachers_teammate/assets/third_party_licenses.txt is missing"
     ]
 
 
@@ -91,7 +91,7 @@ def test_only_the_named_files_are_compared(tmp_path: Path) -> None:
     Then   it compares nothing, so a caller decides which of them an artifact has to carry
     """
     tree = _tree(tmp_path)
-    carried = {"teachers_teammate/assets/third_party_licenses.md": b"another text"}
+    carried = {"teachers_teammate/assets/third_party_licenses.txt": b"another text"}
 
     assert artifacts.problems(carried, tree, ()) == []
 

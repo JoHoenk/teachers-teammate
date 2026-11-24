@@ -575,7 +575,7 @@ filegroup(
         "assets/teachers_teammate.png",
         "assets/teachers_teammate_icon.png",
         "assets/third_party_inventory.csv",
-        "assets/third_party_licenses.md",
+        "assets/third_party_licenses.txt",
         ":wheel_docs",
     ],
 )

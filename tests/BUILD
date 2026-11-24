@@ -1694,8 +1694,8 @@ app_test(
 
 app_test(
     "gui/test_gui_run_start.py",
-    extra_srcs = ["gui/_gui_harness.py"],
     size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + _CLI_LIB + ["//teachers_teammate:gui_layer_lib"],
 )
 

@@ -92,12 +92,13 @@ def test_system_locale_falls_back_to_environment() -> None:
 
 def test_system_language_none_when_nothing_is_set() -> None:
     """
-    Given  neither locale.getlocale() nor LANG/LC_ALL report a locale
+    Given  neither locale.getlocale(), LANG/LC_ALL nor macOS report a locale
     When   system_language() is asked
     Then   it returns None instead of guessing
     """
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr("locale.getlocale", lambda: (None, None))
+        patch.setattr("teachers_teammate.infrastructure.system_locale._macos_locale", lambda: "")
         for name in ("LC_ALL", "LC_MESSAGES", "LANG"):
             patch.delenv(name, raising=False)
 

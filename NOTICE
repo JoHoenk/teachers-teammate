@@ -83,9 +83,9 @@ download (GPL-3.0 section 6(d), as used through LGPL-3.0; LGPL-2.1 section 6(d) 
 libiconv). Teacher's Teammate itself is offered the same way: the "Source code" archive on the page
 of each release is its Corresponding Source (GPL-3.0 section 6(d)).
 
-The macOS OpenCV libraries and the Linux host libraries are covered by this offer. The Linux
-download's third_party_host_libraries.txt names the Ubuntu source package and version of every
-library the bundle took from the build machine.
+The macOS OpenCV libraries are covered by this offer. The Linux download carries no library of
+the system (X11, glib, OpenSSL, libstdc++, ...): its package depends on the distribution's own,
+which the distribution ships with their sources.
 
 Optional components
 -------------------

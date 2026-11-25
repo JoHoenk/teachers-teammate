@@ -77,6 +77,12 @@ What CI checks on a build:
   (`--_addon_smoke_test`, needs the network), the update banner against the release feed
   (`tests/e2e/update_banner.py`, needs the network), and the walkthrough ([testing.md](testing.md)
   → "The app walkthrough" and "The update banner").
+- **System libraries (Linux):** the `.deb` does not ship the build image's libraries (X11, glib,
+  OpenSSL, libstdc++, ...) but depends on the distribution's packages for them, so Ubuntu and
+  Debian patch them and carry their sources. `teachers-teammate.spec` leaves out every host library
+  a Debian package owns, `check_linux_bundle.py --depends` names the packages, and `--host-libs`
+  fails the build when one is still in the bundle. Only the interpreter's own `libpython` stays
+  (`[host_rows]` in `tools/licenses/policy.toml`).
 - **Install:** on fresh Ubuntu 24.04/26.04 and Debian 13 containers, macOS 15/26 and Windows Server
   2022/2025, including an update from the newest published release, after which the new copy walks
   through the data that release left behind.

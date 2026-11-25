@@ -7,6 +7,7 @@ prints.  Every command reads the store, which holds the model's output, the text
 Usage (``$EVALS`` is the clone of ``teachers-teammate-evals``; every command needs ``--store``)::
 
     bazel run //tools:report -- table --store $EVALS --performance
+    bazel run //tools:report -- table --store $EVALS --tiers
     bazel run //tools:report -- table --store $EVALS --by-error category
     bazel run //tools:report -- compare --store $EVALS --along temperature
     bazel run //tools:report -- compare --store $EVALS --along model \\
@@ -16,7 +17,8 @@ Usage (``$EVALS`` is the clone of ``teachers-teammate-evals``; every command nee
     bazel run //tools:report -- sheet --store $EVALS --run RUN_NAME
     bazel run //tools:report -- page --store $EVALS --report-out ~/gec-testset/reports/x
 
-``table`` prints the results table; ``--performance`` adds the speed and memory table,
+``table`` prints the results table; ``--performance`` adds the speed and memory table, ``--tiers``
+the fit and page time per tier (the first two criteria of ``evaluations/README.md``),
 ``--catalog-lines`` the ``answer_length=`` lines the catalog wants, ``--by-error`` how many errors of
 each kind every model found, and ``--false-alarms`` what kind of change each change the reference
 does not make is.  ``--count-marks`` counts the Markdown marks a model added as changes, and
@@ -44,14 +46,16 @@ import sys
 
 from tools.evaluation.core.axes import AXIS_NAMES
 from tools.evaluation.core.formats import FormatError
+from tools.evaluation.core.machines import known_machines
 from tools.evaluation.core.modes import Exchange, Step, exchange_of, steps_of
 from tools.evaluation.core.paths import store_argument, workspace_path
+from tools.evaluation.core.sizes import SIZES_PATH, FitRecord, FitStore
 from tools.evaluation.report import compare as compare_module
 from tools.evaluation.report import gates, groups, load, select, spot_check
 from tools.evaluation.report.load import Loaded, LoadedRun
 from tools.evaluation.report.score import ScoreOptions
 from tools.evaluation.report.summary import summarise
-from tools.evaluation.report.tables import by_error, false_alarms, models, passes, performance
+from tools.evaluation.report.tables import by_error, false_alarms, fit, models, passes, performance
 from tools.evaluation.report.viewer import model as viewer_model
 from tools.evaluation.report.viewer import page as viewer_page
 from tools.evaluation.run.defaults import temperature_for
@@ -78,12 +82,21 @@ def _table(args) -> int:
     print(models.band_table(summaries))
     print()
     print(models.loss_lines(items))
+    timings = (
+        performance.summarise_performance(items)
+        if args.performance or args.tiers or args.catalog_lines
+        else []
+    )
     if args.performance:
         print()
-        print(performance.performance_table(performance.summarise_performance(items)))
+        print(performance.performance_table(timings))
+    if args.tiers:
+        print()
+        machines = known_machines(args.store)
+        print(fit.tier_table(fit.summarise_tiers(_sizes(args), timings, machines)))
     if args.catalog_lines:
         print()
-        print(performance.catalog_lines(performance.summarise_performance(items)))
+        print(performance.catalog_lines(timings))
     if args.by_error:
         print()
         print(by_error.error_table(items, by=args.by_error))
@@ -104,6 +117,11 @@ def _items_of(args) -> tuple[tuple, tuple]:
         progress=_say_scoring,
     )
     return loaded.items, loaded.skipped
+
+
+def _sizes(args) -> tuple[FitRecord, ...]:
+    """Return the model-fit records of the store, and none when the store has no such file."""
+    return FitStore(args.store / SIZES_PATH).records()
 
 
 def _cache_of(args) -> Path:
@@ -163,7 +181,7 @@ def _gate(args) -> int:
 def _temperature_of(args) -> float:
     """Return the temperature a gate reads: the one given, or the model's own recommendation.
 
-    A model is run at the temperature its maker recommends, which differs between models, so a gate
+    A model is run at the temperature the app sends it, which differs between models, so a gate
     that assumed one value would miss every model run at its own.  The recommendation is the app's
     knowledge and lives in :mod:`tools.evaluation.run.defaults`, which this layer may not import, so
     the command line resolves it and passes the value in.
@@ -489,6 +507,11 @@ def _table_command(sub) -> None:
         "--performance", action="store_true", help="print the speed and memory table as well"
     )
     reporter.add_argument(
+        "--tiers",
+        action="store_true",
+        help="print fit and page time per tier, from the measured sizes and the runs",
+    )
+    reporter.add_argument(
         "--catalog-lines",
         action="store_true",
         help="print the answer_length= lines the catalog wants, one per model, ready to paste",
@@ -546,7 +569,7 @@ def _gate_command(sub) -> None:
         gate,
         model_required=True,
         temperature_help="the temperature of the runs "
-        "(default: the one the model's maker recommends, as the app sends it)",
+        "(default: the step-① temperature the app sends the model)",
     )
     gate.set_defaults(handler=_gate)
 

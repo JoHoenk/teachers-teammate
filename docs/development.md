@@ -1163,6 +1163,14 @@ Three command lines, one job each.  They parse arguments and print; the work is 
 `prepare_gec_testset.py` builds a test set into the store and is not one of the three: it reads the
 corpora and writes `testsets/<id>/`.
 
+**Two criteria come before quality.**  Whether a model fits a computer and how long it takes for a
+page are written in `evaluations/README.md` (*Fit and speed*, *The pick*); the thresholds are
+constants in `domain/model_catalog.py` and nowhere else.  `report table --tiers` prints both per
+tier from the records (`report/tables/fit.py`): the memory a model held on a card of that tier
+against the share of the card the app gives it, a processor-only computer by the model's size in the
+catalog, and a page of `TYPICAL_PAGE_WORDS` words in the app's speed bands — measured by a full-exchange run where
+one exists, else computed from the measured writing rate.
+
 **The store is a repository of its own.**  Every evaluation record — the runs, the test sets with
 their texts, the marks, the machines, the model sizes, the gate records — lives in the private
 repository `teachers-teammate-evals`, cloned to `~/git/teachers-teammate-evals`, which is what
@@ -1531,6 +1539,7 @@ convert -> store, input, core, metrics
 | `core/languages` | The language codes of the test set and the names the corrector is asked in. |
 | `core/performance` | What one text cost: requests, tokens, seconds, memory. |
 | `core/protocol_table` | The version file of the request side, and which version a fingerprint belongs to. |
+| `core/sizes` | The size record: what a model needs and how fast it writes on one machine and device, and the store it is read from. |
 | `metrics/item_scores` | Every number of one text, from counts. |
 | `metrics/gleu` | The GLEU counts of the model and of the source. |
 | `metrics/text_loss` | How much of a text an answer keeps, and how much it adds. |
@@ -1561,7 +1570,7 @@ convert -> store, input, core, metrics
 | `report/gates` | Gate 2: the floors of one model, the comparison of two, the paired bootstrap. |
 | `report/spot_check` | The explanation check: the sample of a run, the sheet, the marks. |
 | `report/select` | Which committed runs a gate-2 command reads: the newest series of a model, and what it refuses as ambiguous. |
-| `report/tables/` | The tables: `models`, `by_error`, `performance`, `sweep`, `passes`, `false_alarms`. |
+| `report/tables/` | The tables: `models`, `by_error`, `performance`, `fit`, `sweep`, `passes`, `false_alarms`. |
 | `report/viewer/` | The static report page. |
 | `checks/` | The checks that run a model rather than read a run: `structured_check`, `model_fit`, `smoke`, `gate_one`, `check_rule`, `download_sizes`. |
 

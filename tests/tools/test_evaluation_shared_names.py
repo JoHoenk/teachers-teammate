@@ -46,7 +46,6 @@ ALLOWED_WORDS: dict[tuple[str, str], str] = {
     ("tools/evaluation/run/measure.py", "correct"): "the name of a step, not a text's kind",
     ("tools/evaluation/run/protocol.py", "correct"): "the name of a step, not a text's kind",
     ("tools/evaluation/run/one_request/correction.py", "correct"): "the name of a step",
-    ("tools/evaluation/checks/model_fit.py", "ollama"): "a key of the size record's JSON",
 }
 """``(path, word)`` of a literal that is a name and not the value, with the reason."""
 

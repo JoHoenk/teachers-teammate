@@ -1276,6 +1276,16 @@ app_test(
     ],
 )
 
+# The fit and page time table: the verdict of every tier from the size records and the full-exchange
+# runs, and the markdown a report prints.
+app_test(
+    "tools/test_evaluation_fit_table.py",
+    deps = [
+        "//tools/evaluation:core",
+        "//tools/evaluation:report",
+    ],
+)
+
 # The marks workflow end to end: a sheet printed from a stored run, filled in, read back as marks,
 # checked, and then counted by the gate or turned into the key's accepted alternatives.  The old
 # blind sheet's key is imported the same way.  The store is built in the test.
@@ -1372,6 +1382,15 @@ app_test(
         "//tools/evaluation:core",
         "//tools/evaluation:run",
         "//tools/evaluation:store",
+    ],
+)
+
+# The commit a run records: read from the checkout, from the workspace Bazel names, and out of the
+# repository's own files when git refuses.
+app_test(
+    "tools/test_evaluation_revision.py",
+    deps = [
+        "//tools/evaluation:core",
     ],
 )
 

@@ -100,18 +100,14 @@ from tools.evaluation.checks.check_rule import CheckRule, CheckRun, Decision
 from tools.evaluation.checks.download_sizes import check_size, report_real_size
 from tools.evaluation.checks.model_fit import (
     DEFAULT_LIMITS,
-    SIZES_PATH,
     FitLimit,
     FitMeasureError,
-    FitRecord,
-    FitStore,
     catalog_lines,
     compare_lines,
     fit_failure,
     fit_line,
     measure_tag,
     record_line,
-    size_for_decision,
     within,
 )
 from tools.evaluation.checks.model_fit import report_lines as fit_report_lines
@@ -135,6 +131,7 @@ from tools.evaluation.core.formats import FormatError
 from tools.evaluation.core.machines import require_machine
 from tools.evaluation.core.paths import store_argument, workspace_path
 from tools.evaluation.core.revision import tool_revision
+from tools.evaluation.core.sizes import SIZES_PATH, FitRecord, FitStore, size_for_decision
 from tools.evaluation.run import defaults, protocol
 from tools.evaluation.run.agent_client import AgentClient, AgentError
 from tools.evaluation.run.measure import ServerBusyError, ServerProbe
@@ -1181,8 +1178,8 @@ def _add_structured(sub, shared) -> None:
         type=float,
         default=None,
         metavar="X",
-        help="Check at temperature X (default: each model's request profile, which is the "
-        "temperature its vendor recommends, else the app's 0.2).",
+        help="Check at temperature X (default: the app's step-① temperature, "
+        "STEP_ONE_TEMPERATURES else STEP_ONE_DEFAULT_TEMPERATURE).",
     )
     structured.add_argument(
         "--compact-json",
@@ -1275,8 +1272,8 @@ def _add_smoke(sub, shared) -> None:
         type=float,
         default=None,
         metavar="X",
-        help="Screen at temperature X (default: each model's request profile, which is the "
-        "temperature its vendor recommends, else the app's 0.2).",
+        help="Screen at temperature X (default: the app's step-① temperature, "
+        "STEP_ONE_TEMPERATURES else STEP_ONE_DEFAULT_TEMPERATURE).",
     )
     smoke.add_argument(
         "--compact-json",
@@ -1349,8 +1346,8 @@ def _add_fit(sub, shared) -> None:
         type=float,
         default=None,
         metavar="X",
-        help="Measure at temperature X (default: each model's request profile, which is the "
-        "temperature its vendor recommends, else the app's 0.2).",
+        help="Measure at temperature X (default: the app's step-① temperature, "
+        "STEP_ONE_TEMPERATURES else STEP_ONE_DEFAULT_TEMPERATURE).",
     )
     fit.add_argument(
         "--machine",

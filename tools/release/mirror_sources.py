@@ -114,9 +114,11 @@ MODULE_ARCHIVE: dict[str, str] = {
     "XcbQpa": "qtbase",
     "Svg": "qtsvg",
     "SvgWidgets": "qtsvg",
-    "WaylandClient": "qtwayland",
+    # The Wayland client platform plugin is part of qtbase; the compositor is qtwayland's.
+    "WaylandClient": "qtbase",
+    "WlShellIntegration": "qtbase",
     "WaylandCompositor": "qtwayland",
-    "WaylandEglClientHwIntegration": "qtwayland",
+    "WaylandEglCompositorHwIntegration": "qtwayland",
 }
 
 

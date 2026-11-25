@@ -412,11 +412,14 @@ def test_missing_sources_release_names_the_release_and_the_tool(tmp_path: Path) 
     Then   the message names the release and the command that creates it, so a red validate job
            says what to do
     """
-    with patch.object(release_tag.mirror_sources, "release_assets", return_value=None):
-        problem = release_tag.missing_sources_release("owner/name", _inventory(tmp_path))
+    tree = _inventory(tmp_path)
+    mirror = release_tag.mirror_sources
+
+    with patch.object(mirror, "release_assets", return_value=None):
+        problem = release_tag.missing_sources_release("owner/name", tree)
 
     assert problem is not None
-    assert f"third-party-sources-qt{QT}-lxml-{LXML}-opencv-python-headless-{OPENCV}" in problem
+    assert mirror.sources_release_tag(mirror.tree_contents(tree)) in problem
     assert "mirror_sources.py --upload" in problem
 
 
@@ -507,7 +510,7 @@ def test_check_command_rejects_a_tag_without_a_sources_release(
         patch.object(
             release_tag,
             "missing_sources_release",
-            return_value="there is no release 'third-party-sources-qt6.12.0-lxml-6.1.3-opencv-python-headless-5.1.0.95'",
+            return_value="there is no release 'the sources'",
         ),
     ):
         code = release_tag.main(["check", "v0.5.7", "--repo", "owner/name", "--skip-main"])

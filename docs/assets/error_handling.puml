@@ -36,6 +36,7 @@ package "teachers_teammate.exceptions" {
   class ModelDownloadCancelledError
   class AddonInstallError
   class AddonUpdateError
+  class ReleaseFeedError
 }
 
 Exception <|-- PipelineError
@@ -62,6 +63,7 @@ RuntimeError <|-- ProviderNotAvailableError
 RuntimeError <|-- ModelDownloadError
 RuntimeError <|-- AddonInstallError
 RuntimeError <|-- AddonUpdateError
+RuntimeError <|-- ReleaseFeedError
 ModelDownloadError <|-- ModelDownloadCancelledError
 
 note right of StageError

@@ -337,6 +337,16 @@ def test_uncovered_names_a_module_no_submodule_is_known_for() -> None:
     assert problems == ["QtCharts is in no submodule we know; add it where it lives"]
 
 
+def test_uncovered_places_the_wayland_client_modules_in_qtbase() -> None:
+    """
+    Given  a bundle with the Wayland client and its wl-shell integration, which Qt 6.12 builds
+           from qtbase, and a set that holds qtbase but not qtwayland
+    When   uncovered() is called
+    Then   nothing is missing, so the check does not ask for an archive the libraries are not in
+    """
+    assert mirror_sources.uncovered(("WaylandClient", "WlShellIntegration"), ("qtbase",)) == []
+
+
 def test_uncovered_asks_for_qttools_when_the_bundle_carries_uitools() -> None:
     """
     Given  a bundle with QtUiTools, which comes from qttools and not from qtbase

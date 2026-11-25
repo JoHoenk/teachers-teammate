@@ -11,6 +11,7 @@ QtGui, QtWidgets) and their plugins. ``collect_all("PySide6")`` would add about
 and Pdf — and with them the build machine's GTK3, cairo and pango libraries.
 """
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -299,7 +300,8 @@ a.datas = [entry for entry in a.datas if _keep(entry)]
 # OpenSSL, libstdc++, ...) instead of shipping them: the distribution patches them and carries
 # their sources.  `check_linux_bundle.py --depends` names the packages, and `--host-libs` fails
 # the build when one is still in the bundle.
-if sys.platform.startswith("linux"):
+# Without dpkg (not a Debian-based machine) nothing is left out, and `--host-libs` fails on it.
+if sys.platform.startswith("linux") and shutil.which("dpkg-query"):
     from tools.build import check_linux_bundle  # noqa: E402
 
     _deny, _rows = check_linux_bundle.host_policy()

@@ -17,10 +17,11 @@ still drags its dependencies in.
 
 ``--host-libs`` checks the libraries the bundle took from the build machine rather than from a
 wheel.  The .deb does not ship those: ``teachers-teammate.spec`` leaves out every one a Debian
-package owns (:func:`system_libraries`), and ``--depends`` names the packages instead, so the
-distribution keeps them current and carries their sources.  What may stay at the top of the
-bundle is a ``[host_rows]`` library (the interpreter's own).  A library the policy's
-``[host_deny]`` names, or one no Debian package owns, fails the build.
+package owns and some bundled file links against (:func:`system_libraries`), and ``--depends``
+names the packages instead, so the distribution keeps them current and carries their sources.
+What may stay at the top of the bundle is a ``[host_rows]`` library (the interpreter's own).  A
+library the policy's ``[host_deny]`` names, one no Debian package owns, or one nothing links
+against fails the build.
 
 ``--strip-debug`` and ``--debug-info`` are about size.  The Python that ``actions/setup-python``
 installs ships ``libpython3.x.so`` and its extension modules with their debug information
@@ -311,21 +312,37 @@ def _row_of(name: str, rows: dict[str, str]) -> str | None:
     return next((component for prefix, component in rows.items() if name.startswith(prefix)), None)
 
 
+def _host_kind(name: str, source: Path, deny: tuple[str, ...], rows: dict[str, str]) -> str:
+    """Return how the policy treats the host library *name*.
+
+    ``denied``: ``[host_deny]`` names it.  ``row``: a ``[host_rows]`` library (the interpreter's
+    own), whose inventory row carries the license text.  ``system``: a Debian package owns it, so
+    the .deb depends on that package.  ``unowned``: no package does, so ``Depends:`` cannot name it.
+    """
+    if any(pattern in name for pattern in deny):
+        return "denied"
+    if _row_of(name, rows) is not None:
+        return "row"
+    return "system" if _debian_owners(source) else "unowned"
+
+
 def system_libraries(
     files: list[tuple[str, Path]], deny: tuple[str, ...], rows: dict[str, str]
 ) -> set[str]:
     """Return the destinations of the host libraries the .deb depends on instead of shipping.
 
-    Those are the host libraries a Debian package owns.  A ``[host_rows]`` library (the
-    interpreter's own) stays, and so does a denied one, so that :func:`host_library_problems`
-    fails on it instead of the dependency hiding it.
+    Those are the ``system`` host libraries that some bundled file links against.  One nothing
+    links against stays, so that :func:`unused_libraries` and :func:`host_library_problems` name
+    it: a library that is only opened at run time would otherwise leave the bundle without ever
+    reaching ``Depends:``.
     """
+    needed: set[str] = set()
+    for _, source in files:
+        needed |= needed_sonames(source)
     return {
         name
         for name, source in host_libraries(files)
-        if _row_of(name, rows) is None
-        and not any(pattern in name for pattern in deny)
-        and _debian_owners(source)
+        if name in needed and _host_kind(name, source, deny, rows) == "system"
     }
 
 
@@ -334,25 +351,25 @@ def host_library_problems(
 ) -> list[str]:
     """Return what keeps the bundle's host libraries from being accounted for.
 
-    A library ``[host_deny]`` names is one we must not distribute.  Every other one a Debian
-    package owns is meant to be left out (:func:`system_libraries`), and one no package owns cannot
-    be named in ``Depends:``.  Only a ``[host_rows]`` match (``libpython3.14`` is the interpreter)
-    may stay: the inventory row carries its license text.
+    Only a ``row`` library may stay (:func:`_host_kind`).  A ``denied`` one must not be shipped; a
+    ``system`` one left in the bundle was not left out by the spec, because nothing links
+    against it; an ``unowned`` one cannot be named in ``Depends:``.
     """
     problems: list[str] = []
     for name, source in host_libraries(files):
-        denied = [pattern for pattern in deny if pattern in name]
-        if denied:
-            problems.append(f"{name} is a host library we must not ship ({denied[0]})")
-        elif _row_of(name, rows) is None:
-            owners = _debian_owners(source)
-            if owners:
-                problems.append(
-                    f"{name} ({', '.join(owners)}) is in the bundle; the .deb depends on it "
-                    "instead (teachers-teammate.spec leaves it out)"
-                )
-            else:
-                problems.append(f"no Debian package owns {source} (bundled as {name})")
+        kind = _host_kind(name, source, deny, rows)
+        if kind == "denied":
+            pattern = next(pattern for pattern in deny if pattern in name)
+            problems.append(f"{name} is a host library we must not ship ({pattern})")
+        elif kind == "system":
+            owners = ", ".join(_debian_owners(source))
+            problems.append(
+                f"{name} ({owners}) is in the bundle; the .deb depends on its package instead. "
+                "teachers-teammate.spec leaves it out when a bundled file links against it; if "
+                "none does, drop it there or find what opens it"
+            )
+        elif kind == "unowned":
+            problems.append(f"no Debian package owns {source} (bundled as {name})")
     return problems
 
 

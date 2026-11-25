@@ -282,7 +282,6 @@ def test_notice_names_the_locked_versions_in_its_source_section() -> None:
     """
     versions = {row.component: row.version for row in _committed()}
     qt = versions["pyside6-essentials"]
-    opencv = versions["opencv-python-headless"]
     lxml = versions["lxml"]
 
     section = notice.section(_notice(), notice.SOURCE_CODE)
@@ -291,9 +290,8 @@ def test_notice_names_the_locked_versions_in_its_source_section() -> None:
     assert f"PySide6 {qt}" in section, _BUMP_STEPS
     assert f"/archive/qt/{'.'.join(qt.split('.')[:2])}/{qt}/submodules/" in section, _BUMP_STEPS
     assert f"PySide6-{qt}-src" in section, _BUMP_STEPS
-    assert f"third-party-sources-qt{qt}-lxml-{lxml}-opencv-python-headless-{opencv}" in section, (
-        _BUMP_STEPS
-    )
+    tag = mirror_sources.sources_release_tag(mirror_sources.tree_contents(_ROOT))
+    assert tag in section, _BUMP_STEPS
     assert f"inside lxml {lxml}" in section, _BUMP_STEPS
 
 

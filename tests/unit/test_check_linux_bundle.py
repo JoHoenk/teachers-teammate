@@ -128,6 +128,11 @@ def _fake_owners(monkeypatch, owners: dict[str, str | list[str]]) -> None:
     monkeypatch.setattr(check_linux_bundle, "_debian_owners", owners_of)
 
 
+def _fake_linked(monkeypatch, sonames: set[str]) -> None:
+    """Make every bundled file link against *sonames*, instead of reading them with objdump."""
+    monkeypatch.setattr(check_linux_bundle, "needed_sonames", lambda path: set(sonames))
+
+
 _GCC = ("libgcc_s.so.1", Path("/usr/lib/x86_64-linux-gnu/libgcc_s.so.1"))
 _PYTHON = ("libpython3.14.so.1.0", Path("/opt/hostedtoolcache/Python/lib/libpython3.14.so.1.0"))
 _READLINE = ("libreadline.so.8", Path("/usr/lib/x86_64-linux-gnu/libreadline.so.8"))
@@ -135,11 +140,13 @@ _READLINE = ("libreadline.so.8", Path("/usr/lib/x86_64-linux-gnu/libreadline.so.
 
 def test_system_libraries_takes_what_a_debian_package_owns(monkeypatch) -> None:
     """
-    Given  a bundle with a library a Debian package owns, a wheel's library and the interpreter
+    Given  a bundle with a library a Debian package owns, a wheel's library and the interpreter,
+           all linked against by some bundled file
     When   the libraries the .deb depends on are worked out
     Then   only the owned host library is named, so the interpreter and the wheel's file stay
     """
     _fake_owners(monkeypatch, {str(_GCC[1]): "libgcc-s1"})
+    _fake_linked(monkeypatch, {_GCC[0], _PYTHON[0], "libpng16-c770ec27.so.16"})
     files = [
         _GCC,
         _PYTHON,
@@ -151,13 +158,27 @@ def test_system_libraries_takes_what_a_debian_package_owns(monkeypatch) -> None:
     assert result == {"libgcc_s.so.1"}
 
 
+def test_system_libraries_keeps_a_library_nothing_links_against(monkeypatch) -> None:
+    """
+    Given  a library a Debian package owns that no bundled file links against
+    When   the libraries the .deb depends on are worked out
+    Then   it is not among them: Depends: would never name it, so only a run-time open could
+           reach it, and the check must see it in the bundle
+    """
+    _fake_owners(monkeypatch, {str(_GCC[1]): "libgcc-s1"})
+    _fake_linked(monkeypatch, set())
+
+    assert check_linux_bundle.system_libraries([_GCC], (), {}) == set()
+
+
 def test_system_libraries_keeps_a_denied_library_so_the_check_fails_on_it(monkeypatch) -> None:
     """
     Given  a bundle that carries libreadline, which the policy denies, and a Debian package owns
     When   the libraries the .deb depends on are worked out
-    Then   it is not among them: depending on it would hide a library we must not ship
+    Then   it is not among them: it must not be needed at all, so the check has to fail on it
     """
     _fake_owners(monkeypatch, {str(_READLINE[1]): "libreadline8t64"})
+    _fake_linked(monkeypatch, {_READLINE[0]})
 
     assert check_linux_bundle.system_libraries([_READLINE], ("libreadline",), {}) == set()
 
@@ -169,6 +190,7 @@ def test_system_libraries_leaves_a_library_no_package_owns(monkeypatch) -> None:
     Then   it is not among them, because Depends: cannot name it
     """
     _fake_owners(monkeypatch, {})
+    _fake_linked(monkeypatch, {"libmystery.so.1"})
     files = [("libmystery.so.1", Path("/opt/vendor/libmystery.so.1"))]
 
     assert check_linux_bundle.system_libraries(files, (), {}) == set()
@@ -187,11 +209,14 @@ def test_host_library_problems_accepts_the_interpreter_alone(monkeypatch) -> Non
     )
 
 
-def test_host_library_problems_fails_on_a_library_the_deb_should_depend_on(monkeypatch) -> None:
+def test_host_library_problems_fails_on_an_owned_library_nothing_links_against(
+    monkeypatch,
+) -> None:
     """
-    Given  a bundle that still carries a library a Debian package owns
+    Given  a bundle that still carries a library a Debian package owns, because nothing links
+           against it and the spec left it in
     When   the host libraries are checked
-    Then   the build fails and names the library and the package the .deb depends on instead
+    Then   the build fails and names the library and its package
     """
     _fake_owners(monkeypatch, {str(_GCC[1]): "libgcc-s1"})
 
@@ -199,6 +224,7 @@ def test_host_library_problems_fails_on_a_library_the_deb_should_depend_on(monke
 
     assert len(problems) == 1
     assert "libgcc_s.so.1 (libgcc-s1) is in the bundle" in problems[0]
+    assert "if none does, drop it there" in problems[0]
 
 
 def test_host_library_problems_fails_on_a_denied_library(monkeypatch) -> None:

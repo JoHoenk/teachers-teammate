@@ -201,8 +201,10 @@ language), run:
 python tools/licenses/inventory.py
 ```
 
-and commit the result; the diff shows any license change. A license that
-`tools/licenses/policy.toml` denies makes the tool fail.
+and commit the result; the diff shows any license change. A license the allow list in
+`tools/licenses/policy.toml` does not hold makes the tool fail, as does a copyleft family in a
+wheel's texts that `[vendored]` does not account for, and a Windows or macOS wheel whose license
+files differ from the Linux one without a `[variants]` entry.
 
 | Path | Written by | Content |
 |---|---|---|
@@ -210,7 +212,7 @@ and commit the result; the diff shows any license change. A license that
 | `third_party_licenses/texts/` | tool | the license texts from the locked wheels |
 | `third_party_licenses/curated/` | hand | texts no wheel carries (Qt, CPython, the PaddleOCR models); a Qt or Python minor bump leaves a test red until it is refreshed |
 | `teachers_teammate/assets/LICENSE.txt` | tool | a copy of `LICENSE`: what the first tab of **Help → Licenses** shows, and every download carries as `LICENSE.txt` |
-| `teachers_teammate/assets/third_party_licenses.md` | tool | what the third-party tab of **Help → Licenses** shows |
+| `teachers_teammate/assets/third_party_licenses.txt` | tool | the license list: what the third-party tab of **Help → Licenses** shows, and what every download carries as `third_party_license.txt` |
 | `NOTICE` | hand | attributions and source pointers; a test checks its versions |
 
 Our own source needs no mirror: each release page carries the tag's "Source code" archive, which
@@ -238,7 +240,9 @@ Which files are held to a published digest, and which are not:
 | the Qt submodule archives | `md5sums.txt` next to the tarballs; a folder that publishes none fails the run |
 | the PySide6 source | its folder's digest list; Qt for Python publishes none today, so this stops the run until it does |
 | the `opencv-python-headless` source | the sha256 PyPI publishes |
+| the `lxml` source | the sha256 PyPI publishes |
 | the FFmpeg tarball | nothing: FFmpeg publishes a signature and no digest. Its `.asc` travels in the set, unverified |
+| the libiconv tarball | nothing: GNU publishes a signature and no digest. Its `.sig` travels in the set, unverified |
 
 Without `--keep` the set goes to a temporary folder; `--keep` needs a folder that is empty, so an
 upload cannot publish an earlier run's tarballs. `--bundle` names a **Linux** folder build the set
@@ -257,11 +261,11 @@ one run that passes `--skip-sources`.
 A sources release is never deleted while a download that carries its version exists; that download
 promises it.
 
-A bumped `pyside6-essentials`, `shiboken6` or `opencv-python-headless` is therefore three steps:
-re-run the mirror, name the new versions in the Qt/PySide6 and FFmpeg entries of `NOTICE`, then
-`python tools/licenses/inventory.py --compile`. Dependabot groups the three, so they never hold up
-the weekly minor updates. `certifi` needs none of this: its entry names no version, because every
-certifi release on PyPI carries its own source.
+A bumped `pyside6-essentials`, `shiboken6`, `opencv-python-headless` or `lxml` is therefore three
+steps: re-run the mirror, name the new versions in the Qt/PySide6, FFmpeg and libiconv entries of
+`NOTICE`, then `python tools/licenses/inventory.py --compile`. Dependabot groups them, so they
+never hold up the weekly minor updates. `certifi` needs none of this: its entry names no version,
+because every certifi release on PyPI carries its own source.
 
 ---
 

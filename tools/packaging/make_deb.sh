@@ -118,24 +118,27 @@ Source: https://github.com/JoHoenk/teachers-teammate
 Files: *
 Copyright: 2026 Teacher's Teammate contributors
 License: GPL-3+
-
-EOF
-    # DEP-5 wants the license text indented by one space, blank lines as " .".
-    sed -e 's/^$/./' -e 's/^/ /' "${ROOT}/LICENSE"
-    cat <<EOF
-
- The bundled third-party components and their license texts are listed in
+ This program is free software: you can redistribute it and/or modify it under the terms of
+ the GNU General Public License as published by the Free Software Foundation, either version 3
+ of the License, or (at your option) any later version.
+ .
+ This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ See the GNU General Public License for more details.
+ .
+ On Debian systems, the complete text of the GNU General Public License version 3 can be found
+ in /usr/share/common-licenses/GPL-3.
+Comment: The bundled third-party components and their license texts are listed in
  third_party_license.txt next to this file, and in the "Third-Party Licenses" tab of
- Help > Licenses in the application. third_party_host_libraries.txt names the
- libraries that came from the build machine, with their Debian copyright
- files. The Qt libraries are separate files in
- /opt/${PKG_NAME}/_internal/PySide6/Qt/lib and can be replaced with a
- compatible build.
+ Help > Licenses in the application. third_party_host_libraries.txt names the libraries that
+ came from the build machine, with their Debian copyright files. The Qt libraries are separate
+ files in /opt/${PKG_NAME}/_internal/PySide6/Qt/lib and can be replaced with a compatible
+ build.
 EOF
 } > "${DOC_DIR}/copyright"
 
 cp "${ROOT}/NOTICE" "${DOC_DIR}/NOTICE"
-cp "${ROOT}/third_party_licenses/third_party_license.txt" "${DOC_DIR}/third_party_license.txt"
+cp "${ROOT}/teachers_teammate/assets/third_party_licenses.txt" "${DOC_DIR}/third_party_license.txt"
 # The libraries the bundle took from the build machine, written by check_linux_bundle.py
 # --host-libs into _internal/.
 if [[ -f "${BUILD}/_internal/third_party_host_libraries.txt" ]]; then

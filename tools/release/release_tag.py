@@ -233,28 +233,28 @@ def missing_sources_release(repo: str, tree: Path = ROOT) -> str | None:
 
     The downloads offer the LGPL sources in a release of their own, so a tag whose sources were
     never mirrored would ship a dead pointer.  The release keeps its name while the Qt version
-    stays the same, so a bump of OpenCV (which brings another FFmpeg) leaves the name right and
-    the contents wrong: what is inside it is what counts, not that it exists.  The versions come
-    from the inventory and NOTICE of the tagged commit, which is the checkout this runs in.
+    stays the same, so a bump of OpenCV (which brings another FFmpeg) or of lxml (which brings
+    another libiconv) leaves the name right and the contents wrong: what is inside it is what
+    counts, not that it exists.  The versions come from the inventory and NOTICE of the tagged
+    commit, which is the checkout this runs in.
 
     Raises:
         SystemExit: GitHub answered with anything but the release or a "not found", or the tree
             names no versions to look for.
     """
     try:
-        versions = mirror_sources.tree_versions(tree)
-        modules = mirror_sources.qt_module_archives(tree)
+        contents = mirror_sources.tree_contents(tree)
     except (OSError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
-    name = mirror_sources.sources_release_tag(versions[0])
+    name = mirror_sources.sources_release_tag(contents.qt)
     assets = mirror_sources.release_assets(name, repo)
     if assets is None:
         return (
             f"there is no release '{name}', so the downloads would point at nothing for the "
-            f"source of Qt {versions[0]}.\nCreate it before the tag is pushed: "
+            f"source of Qt {contents.qt}.\nCreate it before the tag is pushed: "
             f"python tools/release/mirror_sources.py --upload --repo {repo}"
         )
-    missing = mirror_sources.missing_assets(assets, versions, modules)
+    missing = mirror_sources.missing_assets(assets, contents)
     if missing:
         held = ", ".join(sorted(assets)) or "no files"
         return (

@@ -1,12 +1,14 @@
 # The policy of the license inventory.
 #
 # Read by tools/licenses/inventory.py and by nothing else.  Every table here is a fact a person
-# has to state: what we refuse, which spellings mean one license, and the few components whose
-# license PyPI cannot tell us.  Versions never appear here — they come from the locks.
+# has to state: what we accept and what we refuse, which spellings mean one license, which parts a
+# wheel carries, and the few components whose license PyPI cannot tell us.  Versions never appear
+# here — they come from the locks.
 
-# Licenses we must not ship or install.  Applied to every row of every scope: a package inside
-# our download, a package the teacher downloads on our click, and a build tool alike.  An `OR`
-# expression passes as soon as one alternative does; an `AND` only if every part does.
+# The licenses we must not ship or install.  The allow list below already refuses every one of
+# them; a rule here is what gives the refusal a reason.  Applied to every row of every scope: a
+# package inside our download, a package the teacher downloads on our click, and a build tool
+# alike.
 #
 # The test is the app's own license: a component that cannot join a GPL-3.0 program would make the
 # whole download undistributable, in whatever scope it sits.
@@ -27,6 +29,11 @@ reason = "GPL with no version: read the license, then list it in [names] or [acc
 [[deny]]
 pattern = '\bEPL-1\.0\b|Eclipse Public License[,\s]*(?:v(?:ersion)?\s*)?1\b'
 reason = "EPL-1.0: incompatible with GPL-3.0 (EPL-2.0 is, through its secondary license)"
+
+[[deny]]
+# EPL-2.0 is compatible through a named Secondary License, which SPDX writes as an `OR`.
+pattern = '\bEPL-2\.0\b|Eclipse Public License[,\s]*(?:v(?:ersion)?\s*)?2\b'
+reason = "EPL-2.0 alone: compatible with GPL-3.0 only through a named Secondary License, which SPDX writes as EPL-2.0 OR GPL-2.0-or-later"
 
 [[deny]]
 pattern = '\bCDDL\b'
@@ -64,6 +71,39 @@ reason = "Apache-1.1: its advertising clause is incompatible with GPL-3.0"
 pattern = 'non[- ]commercial|CC[- ]BY[- ]NC'
 reason = "non-commercial: a teacher may be paid for tutoring"
 
+# The licenses we accept, and the exceptions we accept after `WITH`.  An expression is read as
+# SPDX writes one: `OR` passes when one alternative does, `AND` when every part does, `WITH` when
+# the license and its exception are both listed.  Everything else is refused — a spelling neither
+# this list nor [names] folds, an id no one has read, `unknown`, a whole sentence PyPI calls a
+# license — until a person has read it and added it here or accepted the component below.
+[allow]
+licenses = [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "CC-BY-4.0",
+    "CC-BY-SA-4.0",
+    "CNRI-Python",
+    "GPL-2.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-only",
+    "MIT",
+    "MIT-0",
+    "MIT-CMU",
+    "MPL-2.0",
+    "PSF-2.0",
+    "Zlib",
+]
+exceptions = [
+    "Bootloader-exception",
+    "GCC-exception-3.1",
+]
+
 # Spellings that mean one license.  PyPI's `License ::` classifiers are not SPDX ids, and the
 # column is read by people and by the deny patterns above, so the ones that would otherwise read
 # as two different licenses are folded here.
@@ -72,6 +112,14 @@ reason = "non-commercial: a teacher may be paid for tutoring"
 "Apache Software License" = "Apache-2.0"
 "ISC License (ISCL)" = "ISC"
 "Mozilla Public License 2.0 (MPL 2.0)" = "MPL-2.0"
+"CC BY-SA 4.0" = "CC-BY-SA-4.0"
+# PyPI's classifiers and free-text field, whose words carry the version: "v3" is that version
+# alone, and the trailing "+" is the "or later" form.
+"GPLv3+" = "GPL-3.0-or-later"
+"GNU General Public License v3 (GPLv3)" = "GPL-3.0-only"
+"GNU General Public License v2 or later (GPLv2+)" = "GPL-2.0-or-later"
+"GNU Lesser General Public License v3 (LGPLv3)" = "LGPL-3.0-only"
+"GNU Library or Lesser General Public License (LGPL)" = "LGPL-2.1-or-later"
 
 # A component's license where PyPI's answer is ambiguous or absent, with the reason.  `BSD
 # License` is the classifier for both BSD-2-Clause and BSD-3-Clause, so it says nothing.
@@ -91,10 +139,15 @@ nvidia-ml-py = "BSD-3-Clause"
 # The classifier says only "GNU General Public License v2 (GPLv2)"; PyInstaller's own metadata is
 # `GPL-2.0-or-later WITH Bootloader-exception`, and the exception is what lets the bootloader ship.
 pyinstaller = "GPL-2.0-or-later WITH Bootloader-exception"
+# PyPI's free text names no id: `LICENSES/` in the wheel holds these three texts, and the macOS
+# wheel adds the libraries of its own build, which [vendored] and NOTICE name.
+pypdfium2 = "BSD-3-Clause AND Apache-2.0 AND CC-BY-4.0"
 
-# A row the deny rules or an `unknown` license refuse, with the reason a person accepted it.
-# Empty on purpose: the gate is closed exactly where it has no information.
+# A row the allow list or an `unknown` license refuses, with the reason a person accepted it.
 [accepted]
+# spaCy publishes the model with `LGPL-LR` and no text of its own: the model carries the
+# annotations of the corpus it was trained on, and LGPL-LR is the license of that data.
+fr_core_news_sm = "spaCy's model license for a corpus, which the app downloads on the teacher's click"
 
 # A license text for a bundle row whose wheel carries none.  The two components without a wheel
 # of their own (Qt, the interpreter) are covered by a folder under `curated/` instead, because
@@ -130,9 +183,41 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 """
 
+# The parts a bundle package's wheel carries that its own license does not name — a library linked
+# into the binary, or a license text for something the wheel does not ship.  Each with an SPDX
+# license, which passes the same rules as a row's, and — where the part needs no line of its own
+# under NOTICE's "Source code" — the reason.  A wheel's texts that name a copyleft family nothing
+# here accounts for turn the license test red, so this table is what says "we looked".
+[vendored]
+lxml = [{ part = "libiconv", license = "LGPL-2.1-or-later" }]
+opencv-python-headless = [
+    { part = "FFmpeg", license = "LGPL-2.1-or-later" },
+    { part = "libsrt", license = "MPL-2.0", no_source = "the macOS OpenCV paragraph of NOTICE's written offer covers the libraries only the macOS wheel links" },
+]
+numpy = [
+    { part = "libgfortran", license = "GPL-3.0-or-later WITH GCC-exception-3.1", no_source = "the runtime library exception" },
+]
+pillow = [
+    { part = "xz's command-line tools", license = "LGPL-2.1-or-later", no_source = "the wheel carries liblzma, which is public domain; the LGPL getopt_long code is in the xz tools, which it does not" },
+    { part = "FreeType's GPL option", license = "GPL-2.0-or-later", no_source = "FreeType is used under the FreeType License, the first of the two licenses it offers" },
+]
+pip = [
+    { part = "certifi", license = "MPL-2.0", no_source = "pip carries an unmodified copy; its source is certifi's release" },
+]
+pypdfium2 = [
+    { part = "ICU's autoconf helpers", license = "GPL-2.0-or-later", no_source = "the GPL texts in deps/ cover ICU4C's configure helpers, which are not in the wheel; the LLVM exception that mentions GPLv2 licenses nothing" },
+]
+pyside6-essentials = [
+    { part = "Qt's GPL option", license = "GPL-3.0-or-later", no_source = "we take Qt under the LGPL-3.0; the GPL texts are the other license Qt offers" },
+]
+shiboken6 = [
+    { part = "Qt's GPL option", license = "GPL-3.0-or-later", no_source = "we take Qt under the LGPL-3.0; the GPL texts are the other license Qt offers" },
+]
+
 # Packages whose other platform wheels carry notices the Linux one does not.  The extra files are
 # stored beside the Linux ones and compiled as one union with a "Windows only" / "macOS only"
-# heading.
+# heading.  The refresh reads all three wheels, so a wheel whose license files differ from the
+# Linux one without an entry here fails it.
 [variants]
 # numpy's Windows and macOS wheels carry different vendored texts than the Linux one.
 numpy = ["win_amd64", "macosx_arm64"]

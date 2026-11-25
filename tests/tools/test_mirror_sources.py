@@ -11,19 +11,44 @@ from unittest.mock import patch
 
 import pytest
 
+from tools.licenses import notice
 from tools.release import mirror_sources
 
-QT, OPENCV, FFMPEG = "6.12.0", "5.1.0.95", "9.0.2"
+QT, OPENCV, FFMPEG, LIBICONV, LXML = "6.12.0", "5.1.0.95", "9.0.2", "1.18", "6.1.3"
 MODULES = ("qtbase", "qtsvg", "qtimageformats", "qtwayland")
 
 SUBMODULES = f"{mirror_sources.QT_ARCHIVE}/6.12/{QT}/submodules"
 PYSIDE_DIR = f"{mirror_sources.PYSIDE6_SOURCES}/PySide6-{QT}-src"
 FFMPEG_DIR = mirror_sources.FFMPEG_RELEASES
+LIBICONV_DIR = mirror_sources.LIBICONV_RELEASES
 SDIST = f"opencv_python_headless-{OPENCV}.tar.gz"
+LXML_SDIST = f"lxml-{LXML}.tar.gz"
 
 PYSIDE = f"pyside-setup-everywhere-src-{QT}.tar.xz"
 FFMPEG_ARCHIVE = f"ffmpeg-{FFMPEG}.tar.xz"
 FFMPEG_SIGNATURE = f"{FFMPEG_ARCHIVE}.asc"
+LIBICONV_ARCHIVE = f"libiconv-{LIBICONV}.tar.gz"
+LIBICONV_SIGNATURE = f"{LIBICONV_ARCHIVE}.sig"
+
+
+def _contents(
+    *,
+    qt: str = QT,
+    opencv: str = OPENCV,
+    ffmpeg: str = FFMPEG,
+    vendored: tuple[notice.Vendored, ...] | None = None,
+) -> mirror_sources.Contents:
+    """Return what a sources release of the fixture versions holds."""
+    return mirror_sources.Contents(
+        qt,
+        MODULES,
+        vendored
+        if vendored is not None
+        else (
+            notice.Vendored("FFmpeg", ffmpeg, "opencv-python-headless", opencv, "Linux and macOS"),
+            notice.Vendored("libiconv", LIBICONV, "lxml", LXML, "Linux and macOS"),
+        ),
+    )
 
 
 def _md5(data: bytes) -> str:
@@ -47,6 +72,9 @@ def _files() -> dict[str, bytes]:
         FFMPEG_ARCHIVE: b"ffmpeg source",
         FFMPEG_SIGNATURE: b"a signature",
         SDIST: b"opencv source",
+        LIBICONV_ARCHIVE: b"libiconv source",
+        LIBICONV_SIGNATURE: b"a signature",
+        LXML_SDIST: b"lxml source",
     }
 
 
@@ -58,6 +86,9 @@ def _set_files() -> tuple[str, ...]:
         FFMPEG_ARCHIVE,
         FFMPEG_SIGNATURE,
         SDIST,
+        LIBICONV_ARCHIVE,
+        LIBICONV_SIGNATURE,
+        LXML_SDIST,
         mirror_sources.CHECKSUMS_NAME,
         mirror_sources.README_NAME,
     )
@@ -84,21 +115,32 @@ def _answers(**overrides: str) -> dict[str, str]:
         f"{PYSIDE_DIR}/": _listing(PYSIDE, "sha256sums.txt"),
         f"{PYSIDE_DIR}/sha256sums.txt": f"{_sha256(files[PYSIDE])}  {PYSIDE}\n",
         f"{FFMPEG_DIR}/": _listing(FFMPEG_ARCHIVE, FFMPEG_SIGNATURE, "ffmpeg-9.0.1.tar.xz"),
-        f"{mirror_sources.PYPI}/opencv-python-headless/{OPENCV}/json": json.dumps(
+        f"{LIBICONV_DIR}/": _listing(LIBICONV_ARCHIVE, LIBICONV_SIGNATURE, "libiconv-1.17.tar.gz"),
+        **_sdist_answers("opencv-python-headless", OPENCV, SDIST, files),
+        **_sdist_answers("lxml", LXML, LXML_SDIST, files),
+    }
+    answers.update(overrides)
+    return answers
+
+
+def _sdist_answers(
+    package: str, version: str, name: str, files: dict[str, bytes]
+) -> dict[str, str]:
+    """Return PyPI's answer for one release: its source distribution and the sdist's sha256."""
+    return {
+        f"{mirror_sources.PYPI}/{package}/{version}/json": json.dumps(
             {
                 "urls": [
                     {
                         "packagetype": "sdist",
-                        "filename": SDIST,
-                        "url": f"https://files.pythonhosted.org/packages/{SDIST}",
-                        "digests": {"sha256": _sha256(files[SDIST])},
+                        "filename": name,
+                        "url": f"https://files.pythonhosted.org/packages/{name}",
+                        "digests": {"sha256": _sha256(files[name])},
                     }
                 ]
             }
-        ),
+        )
     }
-    answers.update(overrides)
-    return answers
 
 
 def _read(answers: dict[str, str]) -> Callable[[str], str]:
@@ -320,7 +362,8 @@ def _tree(tmp_path: Path, *, opencv: str = OPENCV) -> Path:
     (tmp_path / "third_party_licenses" / "inventory.csv").write_text(
         "Component,Version,License,Scope,Kind\n"
         f"pyside6-essentials,{QT},LGPL-3.0-only,bundle,package\n"
-        f"opencv-python-headless,{opencv},Apache-2.0,bundle,package\n",
+        f"opencv-python-headless,{opencv},Apache-2.0,bundle,package\n"
+        f"lxml,{LXML},BSD-3-Clause,bundle,package\n",
         encoding="utf-8",
     )
     (tmp_path / "NOTICE").write_text(
@@ -333,25 +376,35 @@ def _tree(tmp_path: Path, *, opencv: str = OPENCV) -> Path:
         "  https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/\n"
         "\n"
         f"FFmpeg {FFMPEG}, inside opencv-python-headless {OPENCV} (Linux and macOS):\n"
-        f"  https://ffmpeg.org/releases/ffmpeg-{FFMPEG}.tar.gz\n",
+        f"  https://ffmpeg.org/releases/ffmpeg-{FFMPEG}.tar.gz\n"
+        "\n"
+        f"libiconv {LIBICONV}, inside lxml {LXML} (Linux, Windows and macOS):\n"
+        f"  https://ftp.gnu.org/pub/gnu/libiconv/libiconv-{LIBICONV}.tar.gz\n",
         encoding="utf-8",
     )
     return tmp_path
 
 
-def test_tree_versions_come_from_the_inventory_and_notice(tmp_path: Path) -> None:
+def test_tree_contents_come_from_the_inventory_and_notice(tmp_path: Path) -> None:
     """
     Given  an inventory and a NOTICE that agree
-    When   tree_versions() is called
-    Then   the Qt, OpenCV and FFmpeg versions of the downloads come back
+    When   tree_contents() is called
+    Then   the Qt version, its modules and every part NOTICE says rides inside a package come back
     """
-    assert mirror_sources.tree_versions(_tree(tmp_path)) == (QT, OPENCV, FFMPEG)
+    contents = mirror_sources.tree_contents(_tree(tmp_path))
+
+    assert contents.qt == QT
+    assert contents.modules == MODULES
+    assert [(entry.part, entry.version, entry.package) for entry in contents.vendored] == [
+        ("FFmpeg", FFMPEG, "opencv-python-headless"),
+        ("libiconv", LIBICONV, "lxml"),
+    ]
 
 
-def test_tree_versions_refuse_a_notice_that_names_another_opencv(tmp_path: Path) -> None:
+def test_tree_contents_refuse_a_notice_that_names_another_opencv(tmp_path: Path) -> None:
     """
     Given  an inventory whose OpenCV is newer than the NOTICE that names its sources
-    When   tree_versions() is called
+    When   tree_contents() is called
     Then   a ValueError says which side says what, so the set is never built from a stale notice
     """
     tree = _tree(tmp_path, opencv="5.2.0.10")
@@ -359,16 +412,79 @@ def test_tree_versions_refuse_a_notice_that_names_another_opencv(tmp_path: Path)
     with pytest.raises(
         ValueError, match=f"NOTICE names opencv-python-headless {OPENCV}, the inventory 5.2.0.10"
     ):
-        mirror_sources.tree_versions(tree)
+        mirror_sources.tree_contents(tree)
 
 
-def test_qt_module_archives_are_the_ones_notice_names(tmp_path: Path) -> None:
+def test_tree_contents_refuse_a_package_the_inventory_does_not_list(tmp_path: Path) -> None:
     """
-    Given  a NOTICE that names the Qt submodules of the shipped libraries
-    When   qt_module_archives() is called
-    Then   the four archives come back in the order NOTICE writes them
+    Given  a NOTICE that names a part inside a package no row lists
+    When   tree_contents() is called
+    Then   a ValueError names the package, so a renamed dependency cannot pass unnoticed
     """
-    assert mirror_sources.qt_module_archives(_tree(tmp_path)) == MODULES
+    tree = _tree(tmp_path)
+    (tree / "NOTICE").write_text(
+        (tree / "NOTICE").read_text(encoding="utf-8").replace("inside lxml", "inside lxm1"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="the inventory lacks a row for lxm1"):
+        mirror_sources.tree_contents(tree)
+
+
+def test_tree_contents_refuse_a_notice_that_leaves_out_a_part(tmp_path: Path) -> None:
+    """
+    Given  a NOTICE whose FFmpeg line no longer has the form of a part line
+    When   tree_contents() is called
+    Then   a ValueError names FFmpeg, so the set cannot lose its tarball unnoticed
+    """
+    tree = _tree(tmp_path)
+    (tree / "NOTICE").write_text(
+        (tree / "NOTICE")
+        .read_text(encoding="utf-8")
+        .replace("(Linux and macOS):", "(Linux and macOS)."),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="no line for FFmpeg"):
+        mirror_sources.tree_contents(tree)
+
+
+def test_tree_contents_refuse_a_part_whose_source_is_unknown(tmp_path: Path) -> None:
+    """
+    Given  a NOTICE with a part this tool has no place for
+    When   tree_contents() is called
+    Then   a ValueError names the part, where the release gate can turn it into an error line
+    """
+    tree = _tree(tmp_path)
+    (tree / "NOTICE").write_text(
+        (tree / "NOTICE").read_text(encoding="utf-8")
+        + f"\nzlib 1.3, inside lxml {LXML} (Linux):\n  https://zlib.net/\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="NOTICE names zlib"):
+        mirror_sources.tree_contents(tree)
+
+
+def test_collect_takes_the_sdist_of_a_package_once(tmp_path: Path) -> None:
+    """
+    Given  two parts NOTICE says ride inside the same package
+    When   collect() runs
+    Then   the package's source distribution is in the set, and listed, once
+    """
+    contents = _contents(
+        vendored=(
+            notice.Vendored("FFmpeg", FFMPEG, "opencv-python-headless", OPENCV),
+            notice.Vendored("libiconv", LIBICONV, "opencv-python-headless", OPENCV),
+        )
+    )
+
+    found = mirror_sources.collect(
+        tmp_path, contents, fetch=_fetch(_files()), read=_read(_answers())
+    )
+
+    assert found.files.count(SDIST) == 1
+    assert [source.name for source in found.sources].count(SDIST) == 1
 
 
 def test_collect_fetches_the_set_and_writes_its_digests(tmp_path: Path) -> None:
@@ -382,8 +498,7 @@ def test_collect_fetches_the_set_and_writes_its_digests(tmp_path: Path) -> None:
 
     found = mirror_sources.collect(
         tmp_path,
-        (QT, OPENCV, FFMPEG),
-        modules=MODULES,
+        _contents(),
         fetch=_fetch(_files()),
         read=_read(answers),
     )
@@ -392,6 +507,7 @@ def test_collect_fetches_the_set_and_writes_its_digests(tmp_path: Path) -> None:
     assert set(found.files) == set(_set_files())
     assert {source.name for source in found.sources} == set(_set_files()) - {
         FFMPEG_SIGNATURE,
+        LIBICONV_SIGNATURE,
         mirror_sources.README_NAME,
         mirror_sources.CHECKSUMS_NAME,
     }
@@ -416,8 +532,7 @@ def test_collect_refuses_a_digest_that_does_not_match(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="does not match its published md5"):
         mirror_sources.collect(
             tmp_path,
-            (QT, OPENCV, FFMPEG),
-            modules=MODULES,
+            _contents(),
             fetch=_fetch(_files()),
             read=_read(answers),
         )
@@ -442,11 +557,67 @@ def test_collect_refuses_a_module_the_listing_does_not_carry(tmp_path: Path) -> 
     with pytest.raises(ValueError, match="qtimageformats-everywhere-src"):
         mirror_sources.collect(
             tmp_path,
-            (QT, OPENCV, FFMPEG),
-            modules=MODULES,
+            _contents(),
             fetch=_fetch(_files()),
             read=_read(answers),
         )
+
+
+def test_collect_refuses_a_libiconv_tarball_without_its_signature(tmp_path: Path) -> None:
+    """
+    Given  a libiconv folder that publishes the tarball and no signature
+    When   collect() runs
+    Then   a ValueError names the missing signature, the only evidence of that tarball's origin
+    """
+    answers = _answers(**{f"{LIBICONV_DIR}/": _listing(LIBICONV_ARCHIVE)})
+
+    with pytest.raises(ValueError, match=f"publishes no signature for {LIBICONV_ARCHIVE}"):
+        mirror_sources.collect(
+            tmp_path,
+            _contents(),
+            fetch=_fetch(_files()),
+            read=_read(answers),
+        )
+
+
+def test_collect_refuses_a_part_whose_source_is_not_known(tmp_path: Path) -> None:
+    """
+    Given  a NOTICE that names a part this tool has never fetched
+    When   collect() runs
+    Then   a ValueError says where to record the part's source, so no file is guessed
+    """
+    contents = _contents(vendored=(notice.Vendored("zlib", "1.3", "lxml", LXML, ""),))
+
+    with pytest.raises(ValueError, match="NOTICE names zlib, whose source this tool does not know"):
+        mirror_sources.collect(tmp_path, contents, fetch=_fetch(_files()), read=_read(_answers()))
+
+
+def test_collect_refuses_a_package_whose_source_owes_no_known_rule(tmp_path: Path) -> None:
+    """
+    Given  a NOTICE that names a part inside a package whose source distribution nothing explains
+    When   collect() runs
+    Then   a ValueError asks for the reason before the set takes a file it cannot justify
+    """
+    contents = _contents(vendored=(notice.Vendored("FFmpeg", FFMPEG, "openssl", "3.0.0", ""),))
+
+    with pytest.raises(ValueError, match="nothing says why the source of openssl is owed"):
+        mirror_sources.collect(tmp_path, contents, fetch=_fetch(_files()), read=_read(_answers()))
+
+
+def test_pypi_sdist_refuses_a_release_without_one() -> None:
+    """
+    Given  a PyPI answer that lists wheels and no source distribution
+    When   pypi_sdist() is called
+    Then   a ValueError names the package and version instead of taking a wheel
+    """
+    answers = {
+        f"{mirror_sources.PYPI}/lxml/{LXML}/json": json.dumps(
+            {"urls": [{"packagetype": "bdist_wheel", "filename": "lxml.whl"}]}
+        )
+    }
+
+    with pytest.raises(ValueError, match=f"lists no source distribution of lxml {LXML}"):
+        mirror_sources.pypi_sdist("lxml", LXML, _read(answers))
 
 
 def test_collect_refuses_a_pyside_folder_that_publishes_no_digest(tmp_path: Path) -> None:
@@ -460,8 +631,7 @@ def test_collect_refuses_a_pyside_folder_that_publishes_no_digest(tmp_path: Path
     with pytest.raises(ValueError, match=r"publishes no sha256sums\.txt or md5sums\.txt"):
         mirror_sources.collect(
             tmp_path,
-            (QT, OPENCV, FFMPEG),
-            modules=MODULES,
+            _contents(),
             fetch=_fetch(_files()),
             read=_read(answers),
         )
@@ -487,8 +657,7 @@ def test_collect_refuses_a_qt_archive_its_digest_list_leaves_out(tmp_path: Path)
     with pytest.raises(ValueError, match=f"publishes no digest for qtsvg-everywhere-src-{QT}"):
         mirror_sources.collect(
             tmp_path,
-            (QT, OPENCV, FFMPEG),
-            modules=MODULES,
+            _contents(),
             fetch=_fetch(_files()),
             read=_read(answers),
         )
@@ -505,8 +674,7 @@ def test_collect_refuses_an_ffmpeg_tarball_without_its_signature(tmp_path: Path)
     with pytest.raises(ValueError, match=f"publishes no signature for {FFMPEG_ARCHIVE}"):
         mirror_sources.collect(
             tmp_path,
-            (QT, OPENCV, FFMPEG),
-            modules=MODULES,
+            _contents(),
             fetch=_fetch(_files()),
             read=_read(answers),
         )
@@ -521,11 +689,11 @@ def test_readme_names_every_file_with_its_rule() -> None:
     """
     sources = (mirror_sources.Source("qtbase.tar.xz", "https://example", QT, "the Qt rule"),)
 
-    text = mirror_sources.readme((QT, OPENCV, FFMPEG), sources)
+    text = mirror_sources.readme(sources)
 
     assert "| qtbase.tar.xz | 6.12.0 | the Qt rule |" in text
-    assert "FFmpeg publishes a" in text
-    assert "signature-only" in text or "unverified" in text
+    assert "FFmpeg and libiconv publish a signature" in text
+    assert "unverified" in text
     assert "Do not delete this release" in text
 
 
@@ -535,7 +703,7 @@ def test_missing_assets_accept_the_whole_set() -> None:
     When   missing_assets() is asked what it lacks
     Then   nothing is missing
     """
-    assert mirror_sources.missing_assets(_set_files(), (QT, OPENCV, FFMPEG), MODULES) == []
+    assert mirror_sources.missing_assets(_set_files(), _contents()) == []
 
 
 def test_missing_assets_find_the_sources_of_another_ffmpeg() -> None:
@@ -547,7 +715,7 @@ def test_missing_assets_find_the_sources_of_another_ffmpeg() -> None:
     """
     held = tuple(name for name in _set_files() if not name.startswith("ffmpeg-"))
 
-    missing = mirror_sources.missing_assets(held, (QT, OPENCV, "9.0.3"), MODULES)
+    missing = mirror_sources.missing_assets(held, _contents(ffmpeg="9.0.3"))
 
     assert missing == [
         "it holds no FFmpeg 9.0.3 source",
@@ -566,7 +734,7 @@ def test_missing_assets_refuse_a_pyside_of_another_series() -> None:
         "pyside-setup-everywhere-src-6.11.0.tar.xz",
     )
 
-    missing = mirror_sources.missing_assets(held, (QT, OPENCV, FFMPEG), MODULES)
+    missing = mirror_sources.missing_assets(held, _contents())
 
     assert missing == [f"it holds no PySide6 {QT} source"]
 
@@ -579,7 +747,7 @@ def test_missing_assets_tell_a_signature_from_its_archive() -> None:
     """
     held = tuple(name for name in _set_files() if name != FFMPEG_ARCHIVE)
 
-    missing = mirror_sources.missing_assets(held, (QT, OPENCV, FFMPEG), MODULES)
+    missing = mirror_sources.missing_assets(held, _contents())
 
     assert missing == [f"it holds no FFmpeg {FFMPEG} source"]
 

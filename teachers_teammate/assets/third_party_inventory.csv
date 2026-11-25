@@ -62,7 +62,7 @@ markupsafe,3.0.4,BSD-3-Clause,addon,package
 mdurl,0.1.2,MIT,bundle,package
 more-itertools,11.2.1,MIT,bundle,package
 murmurhash,1.0.16,MIT,addon,package
-nl_core_news_sm,3.8.0,CC BY-SA 4.0,addon,model
+nl_core_news_sm,3.8.0,CC-BY-SA-4.0,addon,model
 numpy,2.5.5,BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0,bundle,package
 nvidia-ml-py,13.615.71,BSD-3-Clause,bundle,package
 ollama,0.6.3,MIT,bundle,package
@@ -79,7 +79,7 @@ ppocr-small-det,28fe5895,Apache-2.0,bundle,model
 ppocr-small-rec,b8f84f0b,Apache-2.0,bundle,model
 preshed,3.0.15,MIT,addon,package
 psutil,7.2.2,BSD-3-Clause,bundle,package
-pt_core_news_sm,3.8.0,CC BY-SA 4.0,addon,model
+pt_core_news_sm,3.8.0,CC-BY-SA-4.0,addon,model
 pyasn1,0.6.5,BSD-2-Clause,addon,package
 pyasn1-modules,0.4.2,BSD-2-Clause,addon,package
 pycparser,3.12,BSD-3-Clause,bundle,package
@@ -88,7 +88,7 @@ pydantic-core,2.50.5,MIT,bundle,package
 pygments,2.21.0,BSD-2-Clause,addon,package
 pyinstaller,6.22.3,GPL-2.0-or-later WITH Bootloader-exception,bundle,package
 pyinstaller-hooks-contrib,2026.10,Apache-2.0,build,package
-pypdfium2,5.15.2,"BSD-3-Clause, Apache-2.0, dependency licenses",bundle,package
+pypdfium2,5.15.2,BSD-3-Clause AND Apache-2.0 AND CC-BY-4.0,bundle,package
 pyside6-essentials,6.12.0,LGPL-3.0-only,bundle,package
 python,3.14.10,PSF-2.0,bundle,interpreter
 python-docx,1.2.0,MIT,bundle,package

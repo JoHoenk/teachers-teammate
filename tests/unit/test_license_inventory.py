@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from pathlib import Path
+import tomllib
 from unittest.mock import patch
 
+from teachers_teammate.texts import app as app_text
+from tools.build.make_version_resource import LEGAL_COPYRIGHT
 from tools.licenses import inventory, notice
 from tools.release import mirror_sources
+
+#: The license id in the DEP-5 spelling the Debian copyright uses, which is its own vocabulary.
+_DEP5 = {"GPL-3.0-or-later": "GPL-3+"}
 
 #: The checkout as Bazel's runfiles see it, or the source tree when the test runs directly.
 _ROOT = (
@@ -61,13 +68,65 @@ def test_a_package_the_add_on_lock_and_the_platform_pins_share_is_one_row() -> N
     assert [row.version for row in rows if row.component == locked.component] == [locked.version]
 
 
-def test_every_row_passes_the_deny_rules_or_is_accepted() -> None:
+def test_every_row_is_allowed_or_accepted() -> None:
     """
     Given  the committed inventory
-    When   every row is held against the deny rules
+    When   every row is held against the allow list
     Then   nothing we must not ship or install is listed
     """
     assert inventory.problems(_committed(), inventory.load_policy()) == []
+
+
+def test_no_text_names_a_copyleft_license_the_vendored_table_does_not() -> None:
+    """
+    Given  the committed inventory and the license texts of every bundle row
+    When   each text is searched for the copyleft families
+    Then   every family a text names is accounted for by the row's license or by a [vendored]
+           entry — which is how a library linked into a wheel is found
+    """
+    policy = inventory.load_policy()
+
+    assert inventory.copyleft_findings(_committed(), policy, _STORE) == [], (
+        "a text names a copyleft license that nothing accounts for: name the part in the "
+        "[vendored] table of tools/licenses/policy.toml, or say there why no source is owed"
+    )
+
+
+def test_the_scan_finds_the_libiconv_inside_lxml() -> None:
+    """
+    Given  the committed policy without lxml's entry
+    When   the texts are searched
+    Then   lxml's LGPL is named, so the check cannot pass by seeing nothing
+    """
+    policy = inventory.load_policy()
+    without = replace(
+        policy, vendored={name: parts for name, parts in policy.vendored.items() if name != "lxml"}
+    )
+
+    found = inventory.copyleft_findings(_committed(), without, _STORE)
+
+    assert [line for line in found if line.startswith("lxml carries")] == [
+        "lxml carries a text that names the LGPL (LICENSES.txt): name the part in [vendored]"
+    ]
+
+
+def test_every_part_that_owes_a_source_is_named_in_notice() -> None:
+    """
+    Given  the [vendored] table and NOTICE
+    When   each part without a reason it needs no source is looked for in the source section
+    Then   NOTICE names it inside its package, so the sources release fetches it
+    """
+    policy = inventory.load_policy()
+    named = {(entry.part, entry.package) for entry in notice.vendored_entries(_notice())}
+
+    missing = [
+        f"{package} carries {part.part} ({part.license}): name it in NOTICE's Source code section"
+        for package, parts in policy.vendored.items()
+        for part in parts
+        if not part.no_source and (part.part, package) not in named
+    ]
+
+    assert missing == []
 
 
 def test_every_bundle_row_has_a_text() -> None:
@@ -116,16 +175,15 @@ def test_every_curated_stamp_matches_its_rows() -> None:
 def test_the_compiled_outputs_are_what_the_store_compiles_to() -> None:
     """
     Given  the committed store
-    When   the outputs are compiled again from it
-    Then   they are byte for byte the committed ones — no hand edit, no forgotten compile
+    When   the list is compiled again from it
+    Then   it is byte for byte the committed one — no hand edit, no forgotten compile
     """
     rows = _committed()
     policy = inventory.load_policy()
     # Bytes, not text: some license files carry CRLF, and a text read would normalise them away.
     outputs = {
-        _STORE / "third_party_license.txt": inventory.compile_text(rows, policy, _STORE),
-        _ROOT / "teachers_teammate" / "assets" / "third_party_licenses.md": (
-            inventory.compile_markdown(rows, policy, _STORE)
+        _ROOT / "teachers_teammate" / "assets" / "third_party_licenses.txt": (
+            inventory.compile_text(rows, policy, _STORE)
         ),
         _ROOT / "teachers_teammate" / "assets" / "third_party_inventory.csv": inventory.render(
             rows
@@ -138,7 +196,7 @@ def test_the_compiled_outputs_are_what_the_store_compiles_to() -> None:
     ]
 
     assert stale == [], (
-        f"stale compiled outputs: {stale} — run python tools/licenses/inventory.py --compile"
+        f"stale compiled list: {stale} — run python tools/licenses/inventory.py --compile"
     )
 
 
@@ -156,14 +214,43 @@ def test_the_package_carries_the_license_we_ship_under() -> None:
     )
 
 
+def _file(env: str, default: str) -> Path:
+    """Return the checkout's *default* file, as Bazel's runfiles hand it over when it is data."""
+    if os.environ.get("TEST_SRCDIR") and os.environ.get(env):
+        return Path(os.environ["TEST_SRCDIR"]) / os.environ[env]
+    return _ROOT / default
+
+
+def test_the_license_id_is_the_one_every_file_states() -> None:
+    """
+    Given  the license id the About window and --version print
+    When   every file that writes the license out by hand is compared with it
+    Then   none disagrees, and LICENSE is the text of the version that id names
+    """
+    license_id = app_text.LICENSE_ID
+    pyproject = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    wheel_bzl = _file("LICENSE_WHEEL_BZL", "teachers_teammate/wheel.bzl").read_text(
+        encoding="utf-8"
+    )
+    nsis = _file("LICENSE_NSI", "tools/packaging/windows.nsi").read_text(encoding="utf-8")
+    deb = _file("LICENSE_DEB", "tools/packaging/make_deb.sh").read_text(encoding="utf-8")
+
+    assert pyproject["project"]["license"] == license_id
+    assert f'license = "{license_id}"' in wheel_bzl
+    assert LEGAL_COPYRIGHT.endswith(license_id)
+    assert f"${{U+00B7}} {license_id}" in nsis
+    assert f"License: {_DEP5[license_id]}" in deb
+    assert (_ROOT / "LICENSE").read_text(encoding="utf-8").splitlines()[1].strip() == (
+        "Version 3, 29 June 2007"
+    )
+
+
 def test_the_license_the_app_names_is_the_one_in_license() -> None:
     """
     Given  the license name the About window and --version print
     When   it is compared with the first line of the repository's LICENSE
     Then   the name contains that line, so a relicense that forgets the texts is red
     """
-    from teachers_teammate.texts import app as app_text  # noqa: PLC0415
-
     text = (_ROOT / "LICENSE").read_text(encoding="utf-8")
     heading = next(line.strip() for line in text.splitlines() if line.strip())
 
@@ -195,7 +282,7 @@ def test_notice_names_the_locked_versions_in_its_source_section() -> None:
     """
     versions = {row.component: row.version for row in _committed()}
     qt = versions["pyside6-essentials"]
-    opencv = versions["opencv-python-headless"]
+    lxml = versions["lxml"]
 
     section = notice.section(_notice(), notice.SOURCE_CODE)
 
@@ -204,26 +291,47 @@ def test_notice_names_the_locked_versions_in_its_source_section() -> None:
     assert f"/archive/qt/{'.'.join(qt.split('.')[:2])}/{qt}/submodules/" in section, _BUMP_STEPS
     assert f"PySide6-{qt}-src" in section, _BUMP_STEPS
     assert f"third-party-sources-qt{qt}" in section, _BUMP_STEPS
-    assert f"opencv-python-headless {opencv}" in section, _BUMP_STEPS
+    assert f"inside lxml {lxml}" in section, _BUMP_STEPS
 
 
 def test_notice_names_the_sources_the_mirror_publishes() -> None:
     """
     Given  NOTICE and the table that says which Qt submodule carries which module
     When   the archives a sources release is built from are held against the notice
-    Then   NOTICE names no archive the table cannot place, and the FFmpeg source set is the
-           notice's version.  The table knows archives the set does not hold (qttools); the gate
-           asks for one the moment a bundle carries its module.
+    Then   NOTICE names no archive the table cannot place, and every part it names has a source
+           URL this tool knows how to fetch.  The table knows archives the set does not hold
+           (qttools); the gate asks for one the moment a bundle carries its module.
     """
     text = _notice()
     section = notice.section(text, notice.SOURCE_CODE)
-    ffmpeg, _ = notice.ffmpeg_versions(text)
+    entries = notice.vendored_entries(text)
 
     assert set(notice.qt_modules(text)) - _PLUGIN_ONLY <= set(
         mirror_sources.MODULE_ARCHIVE.values()
     )
-    assert f"ffmpeg-{ffmpeg}.tar" in section
-    assert "the opencv-python-headless source" in section
+    assert entries, "NOTICE names no part inside a package"
+    for entry in entries:
+        assert mirror_sources.part_source(entry.part).folder in section, _BUMP_STEPS
+        assert f"{entry.part.lower()}-{entry.version}.tar" in section, _BUMP_STEPS
+
+
+def test_notice_holds_every_part_to_the_version_the_inventory_lists() -> None:
+    """
+    Given  the parts NOTICE says ride inside a package, and the committed inventory
+    When   each entry's package version is held against its row
+    Then   they are the same version, so an lxml or OpenCV bump stays red until a person has
+           read the version of the part inside it
+    """
+    versions = {row.component: row.version for row in _committed()}
+
+    stale = [
+        f"NOTICE names {entry.part} {entry.version} inside {entry.package} "
+        f"{entry.package_version}, the inventory {versions.get(entry.package)}"
+        for entry in notice.vendored_entries(_notice())
+        if versions.get(entry.package) != entry.package_version
+    ]
+
+    assert stale == [], _BUMP_STEPS
 
 
 def test_notice_carries_the_written_offer() -> None:

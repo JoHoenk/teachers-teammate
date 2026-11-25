@@ -36,7 +36,7 @@ _DOCS = next(
 _IMG_PATH = _ROOT / "teachers_teammate" / "assets" / "teachers_teammate.png"
 #: Our own license, written by ``tools/licenses/inventory.py`` from the repository's ``LICENSE``.
 _LICENSE_PATH = _ROOT / "teachers_teammate" / "assets" / "LICENSE.txt"
-_LICENSES_PATH = _ROOT / "teachers_teammate" / "assets" / "third_party_licenses.md"
+_LICENSES_PATH = _ROOT / "teachers_teammate" / "assets" / "third_party_licenses.txt"
 #: The Linux build's host libraries, written into ``_internal/`` by the build.  No other platform
 #: has one: Windows and macOS take every library from a wheel.
 _HOST_LIBRARIES_PATH = _ROOT / "third_party_host_libraries.txt"
@@ -153,11 +153,11 @@ class LicensesDialog(QDialog):
 
         tabs = QTabWidget()
         tabs.addTab(
-            self._tab(self._own_license_text, app_text.LICENSE_MISSING, markdown=False),
+            self._tab(self._own_license_text, app_text.LICENSE_MISSING),
             app_text.LICENSE_TAB,
         )
         tabs.addTab(
-            self._tab(self._third_party_text, app_text.THIRD_PARTY_MISSING, markdown=True),
+            self._tab(self._third_party_text, app_text.THIRD_PARTY_MISSING),
             app_text.THIRD_PARTY_TAB,
         )
         layout.addWidget(tabs)
@@ -166,7 +166,7 @@ class LicensesDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def _tab(self, read: Callable[[], str | None], missing: str, *, markdown: bool) -> QWidget:
+    def _tab(self, read: Callable[[], str | None], missing: str) -> QWidget:
         """Return one tab: the text *read* returns, or *missing* when it did not ship."""
         page = QWidget()
         page_layout = QVBoxLayout(page)
@@ -174,12 +174,7 @@ class LicensesDialog(QDialog):
         browser = QTextBrowser()
         browser.setOpenExternalLinks(True)
         text = read()
-        if text is None:
-            browser.setPlainText(missing)
-        elif markdown:
-            browser.setMarkdown(text)
-        else:
-            browser.setPlainText(text)
+        browser.setPlainText(missing if text is None else text)
         page_layout.addWidget(browser)
         return page
 

@@ -271,9 +271,12 @@ texts, the runs, the marks — go to the private repository `teachers-teammate-e
 `third_party_licenses/inventory.csv` is written by `tools/licenses/inventory.py`. The tool reads
 the app's own lists (`[project] dependencies`, `addon_manager.addon_package_names()`, the
 `LocalModel`s, `SPACY_MODEL_PINS`) and the two locks, so a new dependency, add-on, model or spaCy
-language is a red test until the tool runs. `tools/licenses/policy.toml` holds the denied
-licenses — what cannot join a GPL-3.0 program, AGPL included — the display names and the accepted
-exceptions. `NOTICE` is hand-written; a test keeps its versions on the locked ones. See
+language is a red test until the tool runs. `tools/licenses/policy.toml` holds the allow list —
+the ids and `WITH` exceptions a component may state — the deny rules that explain a refusal, and
+the components a person accepted. A component that states none of them goes in `[accepted]`; a
+copyleft part inside a wheel that its own license does not name goes in `[vendored]`; a package
+whose Windows or macOS wheel carries other texts than the Linux one goes in `[variants]`.
+`NOTICE` is hand-written; a test keeps its versions on the locked ones. See
 {doc}`deployment` → "Third-party licenses"
 
 ## Also in `development.md`

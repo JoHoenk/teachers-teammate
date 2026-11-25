@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import zipfile
@@ -45,9 +46,8 @@ def _into(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for name, relative in (
         ("STORE", ""),
         ("INVENTORY", "inventory.csv"),
-        ("COMPILED", "third_party_license.txt"),
         ("ASSET_CSV", "third_party_inventory.csv"),
-        ("ASSET_MD", "third_party_licenses.md"),
+        ("ASSET_TXT", "third_party_licenses.txt"),
         ("ASSET_LICENSE", "LICENSE.txt"),
     ):
         monkeypatch.setattr(inventory, name, tmp_path / relative)
@@ -101,34 +101,107 @@ def test_a_package_in_both_closures_is_one_bundle_row(tmp_path: Path) -> None:
     ]
 
 
+def _as_a_row(spelling: str) -> str:
+    """Return the License column *spelling* leaves after the policy applied its ``[names]``."""
+    policy = inventory.load_policy()
+    return inventory.apply_policy([inventory.Row("pkg", "1.0", spelling, "addon")], policy)[
+        0
+    ].license
+
+
 def test_an_or_expression_is_allowed_when_one_alternative_is() -> None:
     """
-    Given  license expressions with alternatives, and one with a single license
-    When   each is held against the deny list
-    Then   only the ones with no usable alternative are refused
+    Given  license expressions with alternatives, and one whose alternatives are all refused
+    When   each is held against the policy
+    Then   one alternative on the allow list is enough
     """
-    deny = inventory.load_policy().deny
+    policy = inventory.load_policy()
 
-    assert inventory.denied_reason("LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only", deny) is None
-    assert inventory.denied_reason("GPL-3.0-only OR MIT", deny) is None
-    assert inventory.denied_reason("GPL-2.0-only OR MIT", deny) is None
-    assert inventory.denied_reason("MIT", deny) is None
-    assert inventory.denied_reason("AGPL-3.0 OR SSPL-1.0", deny) is not None
+    assert inventory.refused_reason("LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only", policy) is None
+    assert inventory.refused_reason("GPL-3.0-only OR MIT", policy) is None
+    assert inventory.refused_reason("GPL-2.0-only OR MIT", policy) is None
+    assert inventory.refused_reason("MIT", policy) is None
+    assert inventory.refused_reason("AGPL-3.0 OR SSPL-1.0", policy) is not None
 
 
-def test_a_free_text_or_later_is_no_alternative() -> None:
+def test_parentheses_group_the_alternatives_they_hold() -> None:
     """
-    Given  PyPI's free-text names, whose "or later" is part of one license
-    When   each is held against the deny list
-    Then   the words after "or" are not read as a second, acceptable alternative
+    Given  an expression whose refused alternative sits inside parentheses
+    When   it is held against the policy
+    Then   the parentheses are read as grouping, and the `OR` inside them decides alone
     """
-    deny = inventory.load_policy().deny
+    policy = inventory.load_policy()
 
+    assert inventory.refused_reason("MPL-2.0 AND (Apache-2.0 OR MIT)", policy) is None
+    assert inventory.refused_reason("MIT AND (CDDL-1.0 OR AGPL-3.0)", policy) is not None
+
+
+def test_a_refused_part_does_not_hide_what_follows_it() -> None:
+    """
+    Given  expressions whose first `AND` part is refused
+    When   they are held against the policy
+    Then   the rest is still read: an `OR` alternative that passes decides, and a deny rule keeps
+           its own reason
+    """
+    policy = inventory.load_policy()
+
+    assert inventory.refused_reason("(LicenseRef-x AND MIT) OR Apache-2.0", policy) is None
+    reason = inventory.refused_reason("GPL-2.0-only AND MIT", policy)
+    assert reason is not None
+    assert "one license expression" not in reason
+
+
+def test_an_unbalanced_parenthesis_is_not_one_expression() -> None:
+    """
+    Given  expressions with a missing and with a stray closing parenthesis
+    When   they are held against the policy
+    Then   both are refused as not being one license expression
+    """
+    policy = inventory.load_policy()
+
+    for text in ("MIT AND (Apache-2.0", "MIT AND Apache-2.0)"):
+        reason = inventory.refused_reason(text, policy)
+        assert reason is not None
+        assert "one license expression" in reason
+
+
+def test_an_exception_is_read_with_the_license_it_amends() -> None:
+    """
+    Given  a license with an exception, one listed in ``[allow]`` and one that is not
+    When   each is held against the policy
+    Then   the exception decides, and the license alone is no way out
+    """
+    policy = inventory.load_policy()
+
+    assert inventory.refused_reason("GPL-2.0-or-later WITH Bootloader-exception", policy) is None
+    assert inventory.refused_reason("GPL-3.0-or-later WITH GCC-exception-3.1", policy) is None
     assert (
-        inventory.denied_reason("GNU Affero General Public License v3 or later (AGPLv3+)", deny)
+        inventory.refused_reason("GPL-2.0-or-later WITH Classpath-exception-2.0", policy)
         is not None
     )
-    assert inventory.denied_reason("GNU General Public License v2 or later (GPLv2+)", deny) is None
+    assert inventory.refused_reason("AGPL-3.0 WITH Bootloader-exception", policy) is not None
+
+
+def test_a_free_text_is_refused_until_a_name_folds_it() -> None:
+    """
+    Given  a License column holding a whole sentence, a spelling ``[names]`` folds, and where
+           the fold lands
+    When   each is held against the policy
+    Then   the sentence is refused and the folded spelling passes
+    """
+    policy = inventory.load_policy()
+
+    assert (
+        inventory.refused_reason("BSD-3-Clause, Apache-2.0, dependency licenses", policy)
+        is not None
+    )
+    assert inventory.refused_reason("GNU Library General Public License", policy) is not None
+
+    applied = inventory.apply_policy(
+        [inventory.Row("nl_core_news_sm", "3.8.0", "CC BY-SA 4.0", "addon", "model")], policy
+    )
+    assert applied[0].license == "CC-BY-SA-4.0"
+    assert inventory.refused_reason(applied[0].license, policy) is None
 
 
 @pytest.mark.parametrize(
@@ -142,8 +215,8 @@ def test_a_free_text_or_later_is_no_alternative() -> None:
         "LGPL-3.0-only",
         "MPL-2.0",
         "Apache-2.0",
-        "EPL-2.0",
-        "Eclipse Public License 2.0",
+        "EPL-2.0 OR GPL-2.0-or-later",
+        "MIT AND Apache-2.0",
         "Mozilla Public License 2.0 (MPL 2.0)",
         "GNU General Public License v3 (GPLv3)",
         "GNU General Public License v2 or later (GPLv2+)",
@@ -151,11 +224,11 @@ def test_a_free_text_or_later_is_no_alternative() -> None:
 )
 def test_a_license_gpl3_takes_along_is_allowed(spelling: str) -> None:
     """
-    Given  the licenses of components a GPL-3.0 program may carry
-    When   each is held against the deny list
+    Given  the licenses of components a GPL-3.0 program may carry, as PyPI spells them
+    When   each is folded by the policy and held against it
     Then   none is refused
     """
-    assert inventory.denied_reason(spelling, inventory.load_policy().deny) is None
+    assert inventory.refused_reason(_as_a_row(spelling), inventory.load_policy()) is None
 
 
 @pytest.mark.parametrize(
@@ -165,9 +238,15 @@ def test_a_license_gpl3_takes_along_is_allowed(spelling: str) -> None:
         "GPL",
         "AGPL-3.0",
         "EPL-1.0",
+        "EPL-2.0",
+        "Eclipse Public License 2.0",
         "CDDL-1.0",
         "BSD-4-Clause",
         "CC-BY-NC-4.0",
+        "CC-BY-ND-4.0",
+        "MPL-2.0-no-copyleft-exception",
+        "OpenSSL",
+        "Other/Proprietary License",
         "GNU Affero General Public License v3",
         "GNU Affero General Public License v3 or later (AGPLv3+)",
         "GNU General Public License v2 (GPLv2)",
@@ -178,11 +257,11 @@ def test_a_license_gpl3_takes_along_is_allowed(spelling: str) -> None:
 )
 def test_a_license_gpl3_cannot_take_along_is_refused(spelling: str) -> None:
     """
-    Given  the licenses that cannot join a GPL-3.0 program
-    When   each is held against the deny list
+    Given  the licenses that cannot join a GPL-3.0 program, and the ids no one has read
+    When   each is folded by the policy and held against it
     Then   it is refused
     """
-    assert inventory.denied_reason(spelling, inventory.load_policy().deny) is not None
+    assert inventory.refused_reason(_as_a_row(spelling), inventory.load_policy()) is not None
 
 
 @pytest.mark.parametrize(
@@ -192,28 +271,39 @@ def test_a_license_gpl3_cannot_take_along_is_refused(spelling: str) -> None:
         "LGPL-2.1-or-later",
         "GNU Lesser General Public License v3 (LGPLv3)",
         "GNU Library or Lesser General Public License (LGPL)",
-        "GNU Library General Public License",
     ],
 )
 def test_the_lgpl_is_not_taken_for_the_gpl(spelling: str) -> None:
     """
     Given  LGPL licenses, which a GPL-3.0 program may link
-    When   each is held against the deny list
-    Then   none is refused
+    When   each is folded by the policy and held against it
+    Then   none is refused — no GPL rule reads the Lesser or Library spelling
     """
-    assert inventory.denied_reason(spelling, inventory.load_policy().deny) is None
+    assert inventory.refused_reason(_as_a_row(spelling), inventory.load_policy()) is None
+
+
+def test_a_package_that_states_no_license_is_refused_whatever_the_policy() -> None:
+    """
+    Given  PyPI's word for a package whose metadata names no license
+    When   it is held against the policy
+    Then   it is refused, and the reason says who has to read it
+    """
+    reason = inventory.refused_reason(inventory.UNKNOWN, inventory.load_policy())
+
+    assert reason is not None
+    assert "[accepted]" in reason
 
 
 def test_an_and_expression_is_refused_when_any_part_is() -> None:
     """
     Given  a license expression whose parts all apply
-    When   it is held against the deny list
-    Then   one denied part is enough, since the package cannot be used without it
+    When   it is held against the policy
+    Then   one refused part is enough, since the package cannot be used without it
     """
-    deny = inventory.load_policy().deny
+    policy = inventory.load_policy()
 
-    assert inventory.denied_reason("MIT AND GPL-2.0-only", deny) is not None
-    assert inventory.denied_reason("CC-BY-NC-4.0", deny) is not None
+    assert inventory.refused_reason("MIT AND GPL-2.0-only", policy) is not None
+    assert inventory.refused_reason("CC-BY-NC-4.0", policy) is not None
 
 
 def test_license_of_prefers_the_expression_then_the_classifier_then_the_text() -> None:
@@ -476,7 +566,7 @@ def test_main_refuses_a_denied_license_and_writes_nothing(
 def test_an_unknown_license_is_refused_until_it_is_listed() -> None:
     """
     Given  a package whose PyPI metadata names no license
-    When   the rows are held against the deny list
+    When   the rows are held against the policy
     Then   it is refused, unless a person listed it in ``[accepted]`` with a reason
     """
     policy = inventory.load_policy()
@@ -672,3 +762,100 @@ def test_a_failed_download_leaves_the_old_texts_in_place(tmp_path: Path) -> None
         )
 
     assert (folder / "LICENSE").read_text(encoding="utf-8") == "old\n"
+
+
+def test_a_refused_refresh_leaves_the_store_as_it_was(tmp_path: Path) -> None:
+    """
+    Given  fetched texts of a package that name the LGPL, and a store with an old text folder
+    When   the staged checks run
+    Then   the copyleft finding is returned and the store's ``texts/`` is untouched
+    """
+    folder = tmp_path / "texts" / "pkg"
+    folder.mkdir(parents=True)
+    (folder / "LICENSE").write_text("old\n", encoding="utf-8")
+    lgpl = b"GNU Lesser General Public License, version 2.1\n"
+
+    heading, found = inventory.staged_problems(
+        [inventory.Row("pkg", "1", "MIT", "bundle")],
+        inventory.load_policy(),
+        {"pkg": {"vendor/COPYING": lgpl}},
+        {},
+        tmp_path,
+    )
+
+    assert "copyleft" in heading
+    assert found
+    assert (folder / "LICENSE").read_text(encoding="utf-8") == "old\n"
+    assert not (folder / "vendor").exists()
+
+
+def test_a_wheel_the_lock_does_not_pin_is_refused_on_every_platform(tmp_path: Path) -> None:
+    """
+    Given  a platform wheel whose digest the lock does not list
+    When   the platform contents are read with the lock's hashes
+    Then   the run stops, as it does for the Linux wheel
+    """
+    wheel = _wheel(tmp_path, {"pkg-1.dist-info/licenses/LICENSE": "x"})
+    data = wheel.read_bytes()
+    entry = {
+        "filename": "pkg-1-py3-none-win_amd64.whl",
+        "url": wheel.as_uri(),
+        "digests": {"sha256": hashlib.sha256(data).hexdigest()},
+    }
+    store = tmp_path / "store"
+    (store / "texts" / "pkg").mkdir(parents=True)
+
+    with pytest.raises(SystemExit, match="lock pins"):
+        inventory.wheel_contents(
+            [inventory.Row("pkg", "1", "MIT", "bundle")],
+            store,
+            fetch_files=lambda _name, _version: [entry],
+            hashes={"pkg": {"sha256:" + "0" * 64}},
+        )
+
+
+def test_a_platform_wheel_with_other_license_files_must_be_declared() -> None:
+    """
+    Given  three bundle packages — one whose Windows wheel carries an extra text, one declared in
+    ``[variants]``, and one whose macOS wheel is the Linux one — and a build row
+    When   the platform contents are held against the policy
+    Then   only the undeclared one is named, with the file that differs and the platform
+    """
+    policy = inventory.load_policy()
+    rows = [
+        inventory.Row("pkg", "1.0", "MIT", "bundle"),
+        inventory.Row("numpy", "2.5.5", "BSD-3-Clause", "bundle"),
+        inventory.Row("pure", "1.0", "MIT", "bundle"),
+        inventory.Row("setuptools", "80.0", "MIT", "build"),
+    ]
+    contents = {
+        ("pkg", "manylinux"): frozenset({"LICENSE"}),
+        ("pkg", "win_amd64"): frozenset({"LICENSE", "LICENSE.rst"}),
+        ("numpy", "manylinux"): frozenset({"LICENSE.txt"}),
+        ("numpy", "win_amd64"): frozenset({"LICENSE.txt", "LICENSE_1_0.txt"}),
+        ("pure", "manylinux"): frozenset({"LICENSE"}),
+        ("pure", "macosx_arm64"): frozenset({"LICENSE"}),
+        ("setuptools", "manylinux"): frozenset({"LICENSE"}),
+        ("setuptools", "win_amd64"): frozenset({"LICENSE", "other"}),
+    }
+
+    assert inventory.variant_problems(rows, policy, contents) == [
+        "pkg 1.0 carries other license files in its win_amd64 wheel (LICENSE.rst): "
+        "list win_amd64 in [variants]"
+    ]
+
+
+def test_a_platform_pypi_has_no_wheel_for_says_nothing() -> None:
+    """
+    Given  a bundle package whose wheel exists for Linux alone
+    When   the platform contents are held against the policy
+    Then   the platforms without a wheel are silent, since there is nothing to compare
+    """
+    contents = {("pkg", "manylinux"): frozenset({"LICENSE"})}
+
+    assert (
+        inventory.variant_problems(
+            [inventory.Row("pkg", "1.0", "MIT", "bundle")], inventory.load_policy(), contents
+        )
+        == []
+    )

@@ -21,7 +21,7 @@ INVENTORY = "third_party_licenses/inventory.csv"
 
 PACKAGE_FILES = (
     "teachers_teammate/assets/LICENSE.txt",
-    "teachers_teammate/assets/third_party_licenses.md",
+    "teachers_teammate/assets/third_party_licenses.txt",
     "teachers_teammate/assets/third_party_inventory.csv",
 )
 """What the installed package carries, for **Help → Licenses**, by repository path."""

@@ -31,7 +31,7 @@ _DATA_FILES = (
     "teachers_teammate/assets/teachers_teammate.png",
     "teachers_teammate/assets/teachers_teammate_icon.png",
     "teachers_teammate/assets/third_party_inventory.csv",
-    "teachers_teammate/assets/third_party_licenses.md",
+    "teachers_teammate/assets/third_party_licenses.txt",
     "teachers_teammate/_docs/index.md",
     "teachers_teammate/_docs/using_the_app.md",
     "teachers_teammate/_docs/advanced_user_guide.md",

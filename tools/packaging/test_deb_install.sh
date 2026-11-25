@@ -111,9 +111,11 @@ TOML
     fi
     cat /smoke/e2e-upgrade.json
 
-    # Our own license (it sits in the DEP-5 copyright), the notice and the third-party texts.
-    title="$(grep -m1 "[^[:space:]]" /LICENSE | sed "s/^[[:space:]]*//")"
-    grep -qF "$title" /usr/share/doc/teachers-teammate/copyright
+    # Our own license (the DEP-5 grant), the notice and the third-party texts.
+    grep -qxF "License: GPL-3+" /usr/share/doc/teachers-teammate/copyright
+    grep -qF "(at your option) any later version" \
+        /usr/share/doc/teachers-teammate/copyright
+    grep -qF "/usr/share/common-licenses/GPL-3" /usr/share/doc/teachers-teammate/copyright
     test -s /usr/share/doc/teachers-teammate/NOTICE
     test -s /usr/share/doc/teachers-teammate/third_party_license.txt
 

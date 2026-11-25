@@ -13,16 +13,16 @@ them.
 
 How a part reaches the teacher decides what we owe, not what kind of part it is.  Inside our
 download: the full texts, in every download and in the in-app dialog.  Downloaded from its
-author on the teacher's click: a known license that passes the deny rules, shown as a tooltip.
+author on the teacher's click: a license the allow list holds, shown as a tooltip.
 Same list, same rules.
 
-Generated and hand-written files are kept apart: ``texts/`` and the compiled outputs belong to
+Generated and hand-written files are kept apart: ``texts/`` and the compiled output belong to
 this tool, ``curated/`` belongs to a person and is never touched, so no run is destructive.
 
 Usage (from the repo root):
 
     python tools/licenses/inventory.py            # refresh the inventory and the texts
-    python tools/licenses/inventory.py --compile  # rebuild the outputs from the committed store
+    python tools/licenses/inventory.py --compile  # rebuild the list from the committed store
 
 The first form needs the network (PyPI); ``--compile`` and the checks in
 ``tests/unit/test_license_inventory.py`` do not.
@@ -53,10 +53,9 @@ STORE = ROOT / "third_party_licenses"
 INVENTORY = STORE / "inventory.csv"
 TEXTS = STORE / "texts"
 CURATED = STORE / "curated"
-COMPILED = STORE / "third_party_license.txt"
 NOTICE = ROOT / "NOTICE"
 LICENSE = ROOT / "LICENSE"
-ASSET_MD = ROOT / "teachers_teammate" / "assets" / "third_party_licenses.md"
+ASSET_TXT = ROOT / "teachers_teammate" / "assets" / "third_party_licenses.txt"
 ASSET_CSV = ROOT / "teachers_teammate" / "assets" / "third_party_inventory.csv"
 ASSET_LICENSE = ROOT / "teachers_teammate" / "assets" / "LICENSE.txt"
 POLICY = Path(__file__).resolve().parent / "policy.toml"
@@ -151,15 +150,27 @@ class Row:
 
 
 @dataclass(frozen=True)
+class Part:
+    """A license a bundle package's texts name that the package's own License column does not."""
+
+    part: str
+    license: str
+    no_source: str = ""
+
+
+@dataclass(frozen=True)
 class Policy:
-    """What ``policy.toml`` says: the deny rules and the facts a person has to state."""
+    """What ``policy.toml`` says: the rules and the facts a person has to state."""
 
     deny: tuple[tuple[re.Pattern[str], str], ...]
+    allow: frozenset[str]
+    exceptions: frozenset[str]
     names: dict[str, str]
     licenses: dict[str, str]
     accepted: dict[str, str]
     texts: dict[str, str]
     variants: dict[str, tuple[str, ...]]
+    vendored: dict[str, tuple[Part, ...]]
     build_only: tuple[str, ...]
     host_deny: tuple[str, ...]
     host_rows: dict[str, str]
@@ -182,11 +193,28 @@ def load_policy(path: Path = POLICY) -> Policy:
             (re.compile(entry["pattern"], re.IGNORECASE), entry["reason"])
             for entry in data.get("deny", [])
         ),
+        allow=frozenset(
+            str(entry).casefold() for entry in data.get("allow", {}).get("licenses", [])
+        ),
+        exceptions=frozenset(
+            str(entry).casefold() for entry in data.get("allow", {}).get("exceptions", [])
+        ),
         names=dict(data.get("names", {})),
         licenses=dict(data.get("license", {})),
         accepted=dict(data.get("accepted", {})),
         texts=dict(data.get("text", {})),
         variants={name: tuple(tags) for name, tags in data.get("variants", {}).items()},
+        vendored={
+            package: tuple(
+                Part(
+                    str(entry["part"]),
+                    str(entry["license"]),
+                    str(entry.get("no_source", "")),
+                )
+                for entry in entries
+            )
+            for package, entries in data.get("vendored", {}).items()
+        },
         build_only=tuple(data.get("build_only", {}).get("packages", [])),
         host_deny=tuple(data.get("host_deny", {}).get("patterns", [])),
         host_rows=dict(data.get("host_rows", {})),
@@ -489,39 +517,225 @@ def apply_policy(rows: Iterable[Row], policy: Policy) -> list[Row]:
     return _sorted(applied)
 
 
-def denied_reason(license_text: str, deny: Iterable[tuple[re.Pattern[str], str]]) -> str | None:
-    """Return why *license_text* is refused, or ``None`` when it is acceptable.
+#: What an id the allow list does not hold says; only a person can add it there.
+_NOT_ALLOWED = (
+    "not on the allow list: read it, then add it to [allow] or the component to [accepted]"
+)
 
-    An ``OR`` expression is acceptable as soon as one alternative is: the package can be used
-    under that one (``LGPL-3.0-only OR GPL-3.0-only`` is fine, ``GPL-3.0-only OR AGPL-3.0`` is
-    not).  ``AND`` is not split — every part then applies.  Only the upper-case SPDX operator
-    splits: a free-text "or later" is part of one license's name.
+_OPERATOR = re.compile(r"\(|\)|\bAND\b|\bOR\b|\bWITH\b")
+"""The operators of an SPDX expression and its parentheses; only the upper-case ones count."""
+
+
+def license_tokens(text: str) -> list[str]:
+    """Return the ids, parentheses and operators of a license expression, in order."""
+    tokens: list[str] = []
+    position = 0
+    for match in _OPERATOR.finditer(text):
+        atom = text[position : match.start()].strip()
+        if atom:
+            tokens.append(atom)
+        tokens.append(match.group())
+        position = match.end()
+    atom = text[position:].strip()
+    if atom:
+        tokens.append(atom)
+    return tokens
+
+
+def _refused_atom(atom: str, policy: Policy) -> str | None:
+    """Return why one license id is refused, or ``None`` when the allow list holds it."""
+    for pattern, reason in policy.deny:
+        if pattern.search(atom):
+            return reason
+    return None if atom.casefold() in policy.allow else f"{atom} is {_NOT_ALLOWED}"
+
+
+def _refused_factor(tokens: list[str], at: list[int], policy: Policy) -> str | None:
+    """Return why the factor at *at* is refused, and step *at* past it."""
+    if at[0] < len(tokens) and tokens[at[0]] == "(":
+        at[0] += 1
+        reason = _refused_or(tokens, at, policy)
+        if at[0] < len(tokens) and tokens[at[0]] == ")":
+            at[0] += 1
+        return reason
+    if at[0] >= len(tokens):
+        return f"the expression ends where an id belongs: {_NOT_ALLOWED}"
+    atom = tokens[at[0]]
+    at[0] += 1
+    reason = _refused_atom(atom, policy)
+    if at[0] < len(tokens) and tokens[at[0]] == "WITH":
+        at[0] += 1
+        exception = tokens[at[0]] if at[0] < len(tokens) else ""
+        at[0] += 1
+        if exception.casefold() not in policy.exceptions:
+            reason = reason or f"{atom} WITH {exception} is {_NOT_ALLOWED}"
+    return reason
+
+
+def _refused_and(tokens: list[str], at: list[int], policy: Policy) -> str | None:
+    """Return why the ``AND`` expression at *at* is refused, and step *at* past it."""
+    reason = _refused_factor(tokens, at, policy)
+    while at[0] < len(tokens) and tokens[at[0]] == "AND":
+        at[0] += 1
+        other = _refused_factor(tokens, at, policy)
+        reason = reason or other
+    return reason
+
+
+def _refused_or(tokens: list[str], at: list[int], policy: Policy) -> str | None:
+    """Return why the ``OR`` expression at *at* is refused, and step *at* past it."""
+    reason = _refused_and(tokens, at, policy)
+    while at[0] < len(tokens) and tokens[at[0]] == "OR":
+        at[0] += 1
+        other = _refused_and(tokens, at, policy)
+        if reason is not None and other is None:
+            reason = None
+    return reason
+
+
+def refused_reason(license_text: str, policy: Policy) -> str | None:
+    """Return why *license_text* is refused, or ``None`` when the allow list covers all of it.
+
+    The expression is read the way SPDX writes one: ``OR`` passes when one alternative does,
+    ``AND`` when every part does, ``WITH`` when the license and its exception are both allowed.
+    ``unknown`` is refused in any case — the state of PyPI's metadata is all we know about a
+    package.  A deny rule that matches an id keeps its own reason, which says more than the allow
+    list can.
     """
-    deny = tuple(deny)
-    alternatives = [part.strip() for part in re.split(r"\s+OR\s+", license_text)]
-    reasons: list[str] = []
-    for alternative in alternatives:
-        matched = [reason for pattern, reason in deny if pattern.search(alternative)]
-        if not matched:
-            return None
-        reasons.extend(matched)
-    return reasons[0] if reasons else None
+    if license_text == UNKNOWN:
+        return (
+            "PyPI states no license: read it, then list the component in [accepted] with the "
+            "reason it is acceptable"
+        )
+    tokens = license_tokens(license_text)
+    if not tokens:
+        return f"{license_text!r} names no license: {_NOT_ALLOWED}"
+    at = [0]
+    reason = _refused_or(tokens, at, policy)
+    if at[0] != len(tokens) or tokens.count("(") != tokens.count(")"):
+        return f"{license_text} is not one license expression: {_NOT_ALLOWED}"
+    return reason
 
 
 def problems(rows: Iterable[Row], policy: Policy) -> list[str]:
-    """Return one sentence per row whose license we must not ship or install."""
+    """Return one sentence per row and per vendored part whose license we must not ship."""
     found: list[str] = []
     for row in rows:
         if row.component in policy.accepted:
             continue
-        reason = denied_reason(row.license, policy.deny)
-        if reason is None and row.license == UNKNOWN:
-            reason = (
-                "PyPI states no license: read it, then list the component in [accepted] "
-                "with the reason it is acceptable"
-            )
+        reason = refused_reason(row.license, policy)
         if reason is not None:
             found.append(f"{row.component} {row.version} is {row.license} — {reason}")
+    for package, parts in policy.vendored.items():
+        for part in parts:
+            reason = refused_reason(part.license, policy)
+            if reason is not None:
+                found.append(f"{package} carries {part.part}, which is {part.license} — {reason}")
+    return found
+
+
+#: The copyleft families a license text can name, and the two shapes a text names one in: the id
+#: with a version (``LGPL-2.1``, ``GPLv2``) and the full name with a version after it (``GNU LESSER
+#: GENERAL PUBLIC LICENSE Version 3``).  Prose that mentions a family without a version —
+#: "GPL-compatible", "use the Lesser General Public License instead" — names no part.
+_FAMILY_PATTERNS: dict[str, tuple[str, ...]] = {
+    "LGPL": (
+        r"\bLGPL\s*[- ]?\s*v?\d",
+        r"Lesser General Public Licen[cs]e\s*,?\s*v(?:ersion)?\.?\s*\d",
+    ),
+    "GPL": (
+        r"(?<!Lesser )(?<!Library )\bGPL\s*[- ]?\s*v?\d",
+        r"(?<!Lesser )(?<!Library )General Public Licen[cs]e\s*,?\s*v(?:ersion)?\.?\s*\d",
+    ),
+    "MPL": (
+        r"\bMPL\s*[- ]?\s*v?\d",
+        r"Mozilla Public Licen[cs]e\s*,?\s*v(?:ersion)?\.?\s*\d",
+    ),
+    "EPL": (
+        r"\bEPL\s*[- ]?\s*v?\d",
+        r"Eclipse Public Licen[cs]e\s*,?\s*v(?:ersion)?\.?\s*\d",
+    ),
+    "CDDL": (
+        r"\bCDDL\s*[- ]?\s*v?\d",
+        r"Common Development and Distribution Licen[cs]e\s*,?\s*v(?:ersion)?\.?\s*\d",
+    ),
+}
+
+FAMILIES: dict[str, tuple[re.Pattern[str], ...]] = {
+    family: tuple(re.compile(pattern, re.IGNORECASE) for pattern in patterns)
+    for family, patterns in _FAMILY_PATTERNS.items()
+}
+"""The patterns above, ready to search a license text with."""
+
+
+def names_family(text: str, family: str) -> bool:
+    """Return whether *text* names the copyleft *family* the way a license text names one."""
+    return any(pattern.search(text) for pattern in FAMILIES[family])
+
+
+def copyleft_findings(rows: Iterable[Row], policy: Policy, store: Path = STORE) -> list[str]:
+    """Return one sentence per bundle row whose texts name a family nothing accounts for.
+
+    A family is accounted for by the row's own License column or by an entry of ``[vendored]``:
+    either the row says it carries a part under that license, or a person has read the text and
+    said what it belongs to.  This is the check that finds a library linked into a wheel whose own
+    metadata names only the permissive license around it.
+
+    An LGPL text quotes the GPL — clause 3 lets a user switch — so in a text whose LGPL is
+    accounted for, a GPL mention is the quote and not a part.
+    """
+    found: list[str] = []
+    for row in rows:
+        if row.scope != "bundle":
+            continue
+        named = [row.license, *(part.license for part in policy.vendored.get(row.component, ()))]
+        accounted = {family for family in FAMILIES if any(names_family(t, family) for t in named)}
+        unaccounted: dict[str, list[str]] = {}
+        for label, text in texts_of(row.component, policy, store):
+            families = {family for family in FAMILIES if names_family(text, family)}
+            if "LGPL" in families and "LGPL" in accounted:
+                families.discard("GPL")
+            for family in families - accounted:
+                unaccounted.setdefault(family, []).append(label)
+        for family, labels in sorted(unaccounted.items()):
+            found.append(
+                f"{row.component} carries a text that names the {family} "
+                f"({', '.join(labels[:3])}): name the part in [vendored]"
+            )
+    return found
+
+
+#: The other two platforms the releases carry.  A bundle package's wheel there can carry license
+#: files the Linux one does not, and that is a fact someone has to state in ``[variants]``.
+OTHER_PLATFORMS = ("win_amd64", "macosx_arm64")
+
+
+def variant_problems(
+    rows: Iterable[Row], policy: Policy, contents: dict[tuple[str, str], frozenset[str]]
+) -> list[str]:
+    """Return one sentence per bundle package whose platform wheels are not declared.
+
+    *contents* maps ``(component, platform)`` to the names of the license files that platform's
+    wheel carries.  A Windows or macOS wheel that carries a file the Linux one does not, or misses
+    one it has, needs a ``[variants]`` entry — the statement a person read it.  A platform PyPI has
+    no wheel for is not in *contents* and says nothing.
+    """
+    found: list[str] = []
+    for row in rows:
+        if row.scope != "bundle" or row.kind != "package":
+            continue
+        linux = contents.get((row.component, DEFAULT_PLATFORM))
+        if linux is None:
+            continue
+        declared = policy.variants.get(row.component, ())
+        for platform in OTHER_PLATFORMS:
+            names = contents.get((row.component, platform))
+            if names is None or names == linux or platform in declared:
+                continue
+            found.append(
+                f"{row.component} {row.version} carries other license files in its {platform} "
+                f"wheel ({', '.join(sorted(names ^ linux))}): list {platform} in [variants]"
+            )
     return found
 
 
@@ -775,21 +989,15 @@ def _text_folder(component: str, platform: str) -> str:
     return component if platform == DEFAULT_PLATFORM else f"{component}@{platform}"
 
 
-def collect_texts(
+def fetch_texts(
     rows: Iterable[Row],
     policy: Policy,
-    store: Path = STORE,
     fetch_files: FetchFiles | None = None,
     hashes: dict[str, set[str]] | None = None,
-) -> None:
-    """Rewrite ``texts/`` from the locked wheels, and drop the folders of rows that are gone.
-
-    Every wheel is read before anything on disk changes, so a network error leaves the old
-    store as it was.
-    """
+) -> dict[str, dict[str, bytes]]:
+    """Return the license files of every locked wheel by text folder, writing nothing."""
     fetch_files = fetch_files or _pypi_files
     hashes = hashes or {}
-    texts = store / "texts"
     collected: dict[str, dict[str, bytes]] = {}
     for row in rows:
         if row.scope != "bundle" or row.kind != "package":
@@ -798,7 +1006,12 @@ def collect_texts(
         for platform in (DEFAULT_PLATFORM, *policy.variants.get(row.component, ())):
             entry = wheel_url(files, platform)
             collected[_text_folder(row.component, platform)] = _wheel_texts(row, entry, hashes)
+    return collected
 
+
+def write_texts(collected: dict[str, dict[str, bytes]], store: Path = STORE) -> None:
+    """Rewrite ``texts/`` from *collected*, and drop the folders of rows that are gone."""
+    texts = store / "texts"
     if texts.is_dir():
         for folder in texts.iterdir():
             if folder.is_dir() and folder.name not in collected:
@@ -813,6 +1026,53 @@ def collect_texts(
             target = folder / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
+
+
+def collect_texts(
+    rows: Iterable[Row],
+    policy: Policy,
+    store: Path = STORE,
+    fetch_files: FetchFiles | None = None,
+    hashes: dict[str, set[str]] | None = None,
+) -> None:
+    """Rewrite ``texts/`` from the locked wheels, and drop the folders of rows that are gone.
+
+    Every wheel is read before anything on disk changes, so a network error leaves the old
+    store as it was.
+    """
+    write_texts(fetch_texts(rows, policy, fetch_files, hashes), store)
+
+
+def wheel_contents(
+    rows: Iterable[Row],
+    store: Path = STORE,
+    fetch_files: FetchFiles | None = None,
+    hashes: dict[str, set[str]] | None = None,
+) -> dict[tuple[str, str], frozenset[str]]:
+    """Return the names of the license files every bundle package's platform wheels carry.
+
+    The Linux names are the ones :func:`write_texts` wrote to *store*, so this reads the other
+    two wheels for their names alone — that is what :func:`variant_problems` holds them against.
+    """
+    fetch_files = fetch_files or _pypi_files
+    hashes = hashes or {}
+    contents: dict[tuple[str, str], frozenset[str]] = {}
+    for row in rows:
+        if row.scope != "bundle" or row.kind != "package":
+            continue
+        folder = store / "texts" / _text_folder(row.component, DEFAULT_PLATFORM)
+        contents[(row.component, DEFAULT_PLATFORM)] = frozenset(
+            str(path.relative_to(folder)) for path in folder.rglob("*") if path.is_file()
+        )
+        files = fetch_files(row.component, row.version)
+        for platform in OTHER_PLATFORMS:
+            try:
+                entry = wheel_url(files, platform)
+            except SystemExit:
+                # PyPI has no wheel for that platform, so there is nothing to compare.
+                continue
+            contents[(row.component, platform)] = frozenset(_wheel_texts(row, entry, hashes))
+    return contents
 
 
 def _wheel_texts(row: Row, entry: dict, hashes: dict[str, set[str]]) -> dict[str, bytes]:
@@ -876,7 +1136,7 @@ def _notice() -> str:
 
 
 def compile_text(rows: Iterable[Row], policy: Policy, store: Path = STORE) -> str:
-    """Return the compiled ``third_party_license.txt``: NOTICE, then every bundle row's texts."""
+    """Return the compiled license list: NOTICE, then every bundle row's texts."""
     parts = [_notice()]
     for row in rows:
         if row.scope != "bundle":
@@ -890,48 +1150,62 @@ def compile_text(rows: Iterable[Row], policy: Policy, store: Path = STORE) -> st
     return "".join(parts)
 
 
-def compile_markdown(rows: Iterable[Row], policy: Policy, store: Path = STORE) -> str:
-    """Return the in-app license page: NOTICE, then every bundle row with its texts."""
-    parts = ["# Third-Party Licenses\n\n", _notice(), "\n---\n"]
-    for row in rows:
-        if row.scope != "bundle":
-            continue
-        parts.append(f"\n## {row.component} {row.version}\n\n**License type:** {row.license}\n")
-        for label, text in texts_of(row.component, policy, store):
-            parts.append(f"\n### {label}\n\n```\n{text.rstrip()}\n```\n")
-    return "".join(parts)
-
-
 def write_compiled(
     rows: Iterable[Row],
     policy: Policy,
     store: Path = STORE,
-    compiled: Path = COMPILED,
-    asset_md: Path = ASSET_MD,
+    asset_txt: Path = ASSET_TXT,
     asset_license: Path = ASSET_LICENSE,
     license_file: Path = LICENSE,
 ) -> None:
-    """Write the compiled outputs, and the copy of our own license the app shows."""
+    """Write the license list the app shows and every download carries, and our own license."""
     rows = list(rows)
-    compiled.parent.mkdir(parents=True, exist_ok=True)
-    compiled.write_text(compile_text(rows, policy, store), encoding="utf-8")
-    asset_md.parent.mkdir(parents=True, exist_ok=True)
-    asset_md.write_text(compile_markdown(rows, policy, store), encoding="utf-8")
+    asset_txt.parent.mkdir(parents=True, exist_ok=True)
+    asset_txt.write_text(compile_text(rows, policy, store), encoding="utf-8")
     asset_license.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(license_file, asset_license)
+
+
+def staged_problems(
+    rows: list[Row],
+    policy: Policy,
+    collected: dict[str, dict[str, bytes]],
+    hashes: dict[str, set[str]],
+    store: Path = STORE,
+) -> tuple[str, list[str]]:
+    """Return the heading and the problems the fetched texts bring, touching nothing in *store*.
+
+    The texts are checked in a temporary copy of the store, so a refused refresh leaves
+    ``texts/`` as it was.
+    """
+    with tempfile.TemporaryDirectory(prefix="license-stage-") as temporary:
+        staged = Path(temporary)
+        write_texts(collected, staged)
+        if (store / "curated").is_dir():
+            shutil.copytree(store / "curated", staged / "curated")
+        found = copyleft_findings(rows, policy, staged)
+        if found:
+            return "A text names a copyleft license that [vendored] does not:", found
+        contents = wheel_contents(rows, staged, hashes=hashes)
+        return (
+            "A platform wheel carries what [variants] does not declare:",
+            variant_problems(rows, policy, contents),
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
     """Refresh the inventory and the texts, or run one of the offline checks.
 
-    Returns 1 when a license is denied, when the build environment holds a distribution the
-    inventory does not list, or when a resolved install is outside it.
+    Returns 1 when a license is denied, when a bundle row's texts name a copyleft part nothing
+    accounts for, when a platform wheel carries license files ``[variants]`` does not declare,
+    when the build environment holds a distribution the inventory does not list, or when a
+    resolved install is outside it.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--compile",
         action="store_true",
-        help="do not touch the network: rebuild the outputs from the committed store",
+        help="do not touch the network: rebuild the list from the committed store",
     )
     parser.add_argument(
         "--check-env",
@@ -951,7 +1225,7 @@ def main(argv: list[str] | None = None) -> int:
     policy = load_policy(POLICY)
     if arguments.compile:
         rows = read_inventory(INVENTORY)
-        write_compiled(rows, policy, STORE, COMPILED, ASSET_MD, ASSET_LICENSE, LICENSE)
+        write_compiled(rows, policy, STORE, ASSET_TXT, ASSET_LICENSE, LICENSE)
         write_asset(rows, ASSET_CSV)
         print(f"Compiled {len(rows)} rows")
         return 0
@@ -986,9 +1260,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {problem}", file=sys.stderr)
         return 1
 
-    collect_texts(rows, policy, STORE, hashes=lock_hashes(TEST_LOCK.read_text(encoding="utf-8")))
+    hashes = lock_hashes(TEST_LOCK.read_text(encoding="utf-8"))
+    collected = fetch_texts(rows, policy, hashes=hashes)
+    heading, found = staged_problems(rows, policy, collected, hashes)
+    if found:
+        print(heading, file=sys.stderr)
+        for problem in found:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
+
+    write_texts(collected, STORE)
     write_inventory(rows, INVENTORY)
-    write_compiled(rows, policy, STORE, COMPILED, ASSET_MD, ASSET_LICENSE, LICENSE)
+    write_compiled(rows, policy, STORE, ASSET_TXT, ASSET_LICENSE, LICENSE)
     write_asset(rows, ASSET_CSV)
     print(f"Wrote {len(rows)} rows to {INVENTORY}")
     return 0

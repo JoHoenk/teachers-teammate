@@ -353,7 +353,7 @@ def test_draft_command_creates_the_draft_when_none_exists() -> None:
     assert "--draft" in created
 
 
-QT, OPENCV, FFMPEG = "6.12.0", "5.1.0.95", "9.0.2"
+QT, OPENCV, FFMPEG, LIBICONV, LXML = "6.12.0", "5.1.0.95", "9.0.2", "1.18", "6.1.3"
 MODULES = ("qtbase", "qtsvg", "qtimageformats", "qtwayland")
 
 
@@ -366,7 +366,8 @@ def _inventory(
     (tmp_path / "third_party_licenses" / "inventory.csv").write_text(
         "Component,Version,License,Scope,Kind\n"
         f"pyside6-essentials,{qt},LGPL-3.0-only,bundle,package\n"
-        f"opencv-python-headless,{opencv},Apache-2.0,bundle,package\n",
+        f"opencv-python-headless,{opencv},Apache-2.0,bundle,package\n"
+        f"lxml,{LXML},BSD-3-Clause,bundle,package\n",
         encoding="utf-8",
     )
     (tmp_path / "NOTICE").write_text(
@@ -379,7 +380,10 @@ def _inventory(
         f"  https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-{qt}-src/\n"
         "\n"
         f"FFmpeg {FFMPEG}, inside opencv-python-headless {notice_opencv} (Linux and macOS):\n"
-        f"  https://ffmpeg.org/releases/ffmpeg-{FFMPEG}.tar.gz\n",
+        f"  https://ffmpeg.org/releases/ffmpeg-{FFMPEG}.tar.gz\n"
+        "\n"
+        f"libiconv {LIBICONV}, inside lxml {LXML} (Linux, Windows and macOS):\n"
+        f"  https://ftp.gnu.org/pub/gnu/libiconv/libiconv-{LIBICONV}.tar.gz\n",
         encoding="utf-8",
     )
     return tmp_path
@@ -393,6 +397,9 @@ def _set(qt: str = QT, opencv: str = OPENCV, ffmpeg: str = FFMPEG) -> tuple[str,
         f"ffmpeg-{ffmpeg}.tar.xz",
         f"ffmpeg-{ffmpeg}.tar.xz.asc",
         f"opencv_python_headless-{opencv}.tar.gz",
+        f"libiconv-{LIBICONV}.tar.gz",
+        f"libiconv-{LIBICONV}.tar.gz.sig",
+        f"lxml-{LXML}.tar.gz",
         "SHA256SUMS",
         "README.txt",
     )
@@ -468,6 +475,23 @@ def test_missing_sources_release_exits_on_a_notice_the_inventory_contradicts(
         release_tag.missing_sources_release(
             "owner/name", _inventory(tmp_path, opencv="5.2.0.10", notice_opencv=OPENCV)
         )
+
+
+def test_missing_sources_release_exits_on_a_part_it_cannot_place(tmp_path: Path) -> None:
+    """
+    Given  a NOTICE with a part inside a package that PART_SOURCES does not know
+    When   missing_sources_release() is called
+    Then   it exits with the reason, not with a traceback
+    """
+    tree = _inventory(tmp_path)
+    (tree / "NOTICE").write_text(
+        (tree / "NOTICE").read_text(encoding="utf-8")
+        + f"\nzlib 1.3, inside lxml {LXML} (Linux):\n  https://zlib.net/\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="NOTICE names zlib"):
+        release_tag.missing_sources_release("owner/name", tree)
 
 
 def test_check_command_rejects_a_tag_without_a_sources_release(

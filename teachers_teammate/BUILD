@@ -4,7 +4,17 @@ load(":wheel.bzl", "app_wheel")
 
 # Exposed so the //:requirements* targets can stage it next to pyproject.toml when
 # pip-compile expands the dynamic version (attr = teachers_teammate.__version__).
-exports_files(["__init__.py"])
+# wheel.bzl for the test that holds the wheel's license field to the app's license id.
+exports_files(
+    [
+        "__init__.py",
+        "wheel.bzl",
+    ],
+    visibility = [
+        "//:__pkg__",
+        "//tests:__pkg__",
+    ],
+)
 
 # The package root and the exception types: what every layer below imports.
 _PKG_SRCS = [
@@ -575,7 +585,7 @@ filegroup(
         "assets/teachers_teammate.png",
         "assets/teachers_teammate_icon.png",
         "assets/third_party_inventory.csv",
-        "assets/third_party_licenses.md",
+        "assets/third_party_licenses.txt",
         ":wheel_docs",
     ],
 )

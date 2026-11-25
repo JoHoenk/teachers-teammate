@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from ...core.axes import environment_key, host_of
 from ...core.hashing import sha256_json
-from ...core.modes import Exchange, asks_review
+from ...core.modes import Exchange, Step, asks_review
 from ...core.performance import Spread, per_100_words, step_one_share
 from ...metrics import text_loss
 from ..load import LoadedItem
@@ -32,6 +32,8 @@ class PerformanceSummary:
     mode: str
     exchange: Exchange
     """How the text travelled, which decides whether the answer length is a figure per model."""
+    steps: tuple[Step, ...]
+    """The steps the exchange ran: a page time is only the whole exchange's when all three ran."""
     machine: str
     """The machine the run measured: two machines measured the same quality and other speeds."""
     isolated: bool
@@ -103,6 +105,7 @@ def summarise_performance(items: Sequence[LoadedItem]) -> list[PerformanceSummar
                 temperature=header.protocol.temperature,
                 mode=mode_label(header.protocol),
                 exchange=header.protocol.exchange,
+                steps=header.protocol.steps,
                 machine=host_of(header),
                 isolated=header.environment.isolated,
                 texts=len(measured),

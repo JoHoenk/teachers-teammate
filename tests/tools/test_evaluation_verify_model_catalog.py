@@ -22,7 +22,7 @@ from teachers_teammate.exceptions import OCRError
 from teachers_teammate.infrastructure.ollama_utils import ChatStats
 from tools import verify_model_catalog
 from tools.evaluation.checks import gate1_answers, gate_one
-from tools.evaluation.checks.model_fit import (
+from tools.evaluation.core.sizes import (
     SIZES_PATH,
     CardReading,
     FitRecord,

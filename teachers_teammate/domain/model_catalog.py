@@ -95,10 +95,10 @@ CPU_COMFORT_GB = 5.0
 SYSTEM_RESERVE_MIN_GB = 8.0
 SYSTEM_RESERVE_SHARE = 0.20
 
-#: Share of a model that sits on the graphics card, from which on it runs at full speed, and
-#: below which it is "very slow" (measured on an 8 GB card: a share of 0.97 gave 43 tokens per
-#: second, 0.73 gave 13, 0.66 gave 6.6; a page takes under a minute at the top and about seven
-#: minutes at the bottom).  Between the two it is "slower".
+#: Share of a model that sits on the graphics card, from which on it still runs well: a third
+#: slower at most, and below :data:`SLOWER_SHARE` "very slow" (measured on an 8 GB card: a share
+#: of 0.97 gave 43 tokens per second, 0.73 gave 13, 0.66 gave 6.6; a page takes under a minute at
+#: the top and about seven minutes at the bottom).  Between the two it is "slower".
 FULL_SPEED_SHARE = 0.9
 SLOWER_SHARE = 0.7
 
@@ -658,6 +658,25 @@ RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
         HardwareProfile.CARD_16GB: ("gemma4:12b", "qwen3.5:9b"),
     },
 }
+
+
+class ModelRole(StrEnum):
+    """What a recommended model is recommended as, per tier (``evaluations/README.md``, "The pick")."""
+
+    QUALITY = "quality"
+    """The eligible model with the best F0.5 whose page time is at most *ok*."""
+    SPEED = "speed"
+    """The eligible model with the shortest page time that is still good enough, when one is."""
+
+
+#: How much worse a speed model may be than its tier's quality model, in F0.5: a tenth of a point.
+#: A model further behind trades more accuracy for its speed than a teacher can be asked to accept
+#: to save a minute a page.
+SPEED_ROLE_MAX_F05_GAP = 0.10
+
+#: How much faster than the quality model a speed model has to be, as a share of the quality model's
+#: page time: a quarter.  A smaller gain is no second role — the tier has one model then.
+SPEED_ROLE_FASTER_SHARE = 0.25
 
 
 class Suitability(StrEnum):

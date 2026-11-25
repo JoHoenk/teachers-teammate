@@ -395,9 +395,9 @@ cloudpathlib==0.26.0 \
     --hash=sha256:6ea02248f2db7cb10729caf1edbdec92587dfdbbd3df8c71a32aedd4ae55715a \
     --hash=sha256:abcd7f54bcbb2fbb79c0e96b79241f08866760aee6276586882b3558672d571b
     # via weasel
-cohere==5.21.1 \
-    --hash=sha256:e5ade4423b928b01ff2038980e1b62b2a5bb412c8ab83e30882753b810a5509f \
-    --hash=sha256:f15592ec60d8cf12f01563db94ec28c388c61269d9617f23c2d6d910e505344e
+cohere==7.3.1 \
+    --hash=sha256:549a4beb10ff09d183a0d55bf91e47761e3fe680781f8717c630838895ba5f08 \
+    --hash=sha256:89fff06d20c0e70c96678948599c0fb9e7d5e4241c2592a16fdd111a84e11d5a
     # via langchain-cohere
 confection==1.3.4 \
     --hash=sha256:560aebbeabaaeee369c54e21afc97953165b2166909ea81e14e341838f4b260d \

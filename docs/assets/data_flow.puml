@@ -1,0 +1,39 @@
+@startuml Teacher's Teammate — What runs where, and what leaves the computer
+left to right direction
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam arrowColor #333333
+skinparam noteBackgroundColor #FFFFDD
+
+node "This computer" #E8F5E9 {
+  component "Teacher's Teammate" as APP
+  component "Built-in reader\n(PP-OCR)" as READER
+  component "Ollama\n(this computer)" as OLLAMA
+  folder "Input folder" as IN
+  folder "Results: Word and text files,\nstored results, the teacher's work" as OUT
+}
+
+node "Another computer in your own network" #FFF3E0 {
+  component "Ollama server" as LAN
+}
+
+cloud "Online service\n(EU or outside the EU)" #E3F2FD {
+  component "LLM provider" as CLOUD
+}
+
+IN --> APP
+APP --> OUT
+APP --> READER : pages
+APP --> OLLAMA : pages, text
+APP --> LAN : pages, text
+APP --> CLOUD : text only, after a confirmed run:\nproofreading and content review,\nnames replaced when "Remove personal info" is on
+APP -[#C62828,dashed]-> CLOUD : **never pages**
+
+note bottom of CLOUD
+  Text recognition runs only on computers you control:
+  the built-in reader, Ollama here, or Ollama in your own
+  network. An Ollama address outside the own network
+  counts as an online service and is refused for reading.
+  Rules: ""domain/data_location.py""; wording: ""texts/privacy.py"".
+end note
+@enduml

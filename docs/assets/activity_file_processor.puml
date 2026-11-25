@@ -1,0 +1,64 @@
+@startuml Teacher's Teammate — One file in a run
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam noteBackgroundColor #FFFFDD
+skinparam ActivityBackgroundColor #F5F5F5
+skinparam ActivityBorderColor #888888
+
+title FileProcessor.process(file)
+
+start
+:Prepare the cache
+hash the file, load its stored state,
+compare with the settings and the teacher's work,
+reset what is stale;
+
+if (reading stored and fresh?) then (yes)
+  :Use the stored reading;
+else (no)
+  :Prepare the pages (PreprocessService);
+  if (text file, or PDF with a usable text layer?) then (yes)
+    :The text is the reading;
+  elseif (text recognition switched off?) then (yes)
+    #FFE0B2:Result: **skipped**;
+    stop
+  else (scans)
+    :Read the pages (OCRStageService);
+    :Normalise the notation
+    (OcrOutputPostprocessor);
+  endif
+  :Store the reading;
+endif
+
+:Take the texts the document has now
+the teacher's text where it applies;
+
+if (proofreading on, result not fresh?) then (yes)
+  :Hide personal info (optional, once per text);
+  :Proofread (Corrector)
+  in pieces when the text is long;
+  :Put names back, check the review fits;
+  :Store the proofreading;
+endif
+
+if (content review on, result not fresh?) then (yes)
+  :Review the content (Evaluator);
+  :Store the review;
+endif
+
+:Write the outputs
+Word file, text files;
+#C8E6C9:Result: **done**
+(with warnings when a step fell back);
+stop
+
+note right
+  At any step:
+  * StageError → **failed**: this file ends,
+    the next file runs
+  * Stop requested → **stopped**: neither
+    success nor failure
+  Both keep everything the earlier
+  steps already stored.
+end note
+@enduml

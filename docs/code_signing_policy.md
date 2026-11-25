@@ -1,9 +1,9 @@
 # Code signing policy
 
-Teacher's Teammate is a free, open-source program for teachers. Its Windows files are to be
-signed with a certificate that a non-profit signing service issues to open-source projects, so
-that Windows can tell a genuine download from a tampered one. This page says what is signed,
-where the files come from, who may ask for a signature, and what the app does with your data.
+The Windows files are to be signed with a certificate that a non-profit signing service issues
+to open-source projects, so Windows can tell a genuine download from a tampered one. This page
+says what is signed, where the files come from, who may request a signature, and what the app
+does with your data.
 
 ## What is signed
 
@@ -15,29 +15,25 @@ where the files come from, who may ask for a signature, and what the app does wi
 | `teachers-teammate-<version>-macos.dmg` | macOS | no — not signed or notarized |
 | `teachers-teammate_<version>_amd64.deb` | Linux | no — see below |
 
-**Windows — not signed yet.** The certificate for open-source projects has not been applied for;
-until it is granted, Windows shows the "Windows protected your PC"
-message and you click **More info → Run anyway**. The three files above are the only ones that
-will carry a signature. Nothing inside the app folder (`_internal/`) is signed: those are
-libraries from other projects (Python, Qt, OpenCV), each published by its own authors.
+**Windows — not signed yet.** Until the certificate is in place, Windows shows "Windows protected
+your PC": click **More info → Run anyway**. Only the three files above will be signed; the
+libraries inside the app folder (`_internal/`: Python, Qt, OpenCV, …) are published by their own
+authors.
 
-**macOS** builds are not signed with an Apple Developer certificate and not notarized, so macOS
-asks you to allow the app under **System Settings → Privacy & Security → Open Anyway**.
+**macOS** builds are not signed or notarized: allow the app under **System Settings → Privacy &
+Security → Open Anyway**.
 
-**Linux** packages are not signed. Every release ships a `SHA256SUMS` file next to the
-downloads, and every installer carries a build-provenance attestation that GitHub issues for the
-workflow run that produced it — see *Checksums and provenance* in the
-[deployment guide](deployment.md).
+**All platforms:** every release has a `SHA256SUMS` file, and every installer a GitHub
+build-provenance attestation for the workflow run that built it — see *Checksums and provenance*
+in the [deployment guide](deployment.md).
 
 ## Where the files come from
 
-GitHub Releases is the only place the files come from. A download from anywhere else is not ours.
-
-Only CI builds of tagged commits are submitted for signing: the `release.yml` workflow builds
-them on GitHub-hosted runners, from the source of the tag, and nothing else is ever sent to the
-signing service. No self-hosted runner takes part in a Windows build, so the machine that
-produces the file is GitHub's, not a maintainer's. The workflow files are reviewed like source
-code before they are merged.
+- GitHub Releases is the only source. A download from anywhere else is not ours.
+- Only CI builds of tagged commits are submitted for signing: `release.yml` builds them on
+  GitHub-hosted runners from the tag's source. No self-hosted runner or maintainer machine takes
+  part.
+- Workflow files are reviewed like source code before they are merged.
 
 ## Who may request a signature
 
@@ -47,35 +43,30 @@ code before they are merged.
 | Reviewer | the maintainer | reads the workflow and the installer script before they are merged |
 | Approver | the maintainer | approves each signing request by hand in the signing service's web page |
 
-One person holds all three roles, as in other small open-source projects. Every account involved
-— on GitHub and at the signing service — is protected by two-factor authentication, and every
-release needs a manual approval, so a signature cannot be produced by pushing a tag alone.
+One person holds all three roles. Every account involved (GitHub, signing service) uses
+two-factor authentication, and every release needs a manual approval, so pushing a tag alone
+cannot produce a signature.
 
 ## Privacy statement
 
-This is what the app does with your data. It is written for this app; it is not a general
-statement of the signing service.
+What this app does with your data (not a statement of the signing service):
 
-- **No telemetry.** The app has no analytics, no crash reporting, and no usage statistics. It
-  does not create a profile of you or of your documents.
-- **The update check.** Once per start the app asks GitHub (`api.github.com`) whether a newer
-  release exists, and shows a note if one does. The request carries nothing about you or your
-  documents beyond the request itself. You can turn it off under **Settings → General**; the
-  change takes effect at the next start. A new installation says so on the installer's second
-  page before anything is installed, with a check box that turns it off and a link to this page;
-  an update keeps the choice made then. A silent install turns it off with `/NOUPDATECHECK`.
-- **Online AI services** are contacted only after you have set one up in the app and confirmed
-  the run that sends text to it. Which provider, which model and which text is sent is shown
-  before you confirm.
-- **Ollama** (the local AI program) is contacted only at the address you chose — by default the
-  one on your own computer.
-- **Models and add-ons** are downloaded only when you ask for them, from the address the app
-  names next to the download.
-- **Your documents, settings and results** stay on your computer. Nothing is uploaded unless you
-  turn on an online service and confirm a run.
+- **No telemetry:** no analytics, crash reporting or usage statistics, no profile of you or your
+  documents.
+- **Update check:** once per start the app asks GitHub (`api.github.com`) for a newer release.
+  The request carries nothing about you or your documents. Turn it off under **Settings →
+  General** (from the next start), on the installer's second page, or with `/NOUPDATECHECK` for a
+  silent install; an update keeps the choice.
+- **Online AI services** are contacted only after you set one up and confirm a run; the provider,
+  model and text are shown before you confirm.
+- **Ollama** is contacted only at the address you chose (by default this computer).
+- **Models and add-ons** are downloaded only when you ask, from the address shown next to the
+  download.
+- **Documents, settings and results** stay on your computer unless you confirm a run with an
+  online service.
 
 ## Reporting a problem
 
-If a download does not carry a valid signature, or you find a file that claims to be Teacher's
-Teammate but is not from the releases page, please open an issue:
+A download without a valid signature, or a file claiming to be Teacher's Teammate from outside
+the releases page: please open an issue at
 <https://github.com/JoHoenk/teachers-teammate/issues>.

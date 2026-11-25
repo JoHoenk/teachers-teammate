@@ -1,191 +1,152 @@
 # The evaluation store
 
-The layout of the store the evaluation tools read and write, and the rules that keep its records
-checkable. The fields of every file are documented where they are defined, in the typed records of
-`tools/evaluation/` (`core/records.py`, `core/manifest.py`, `core/machines.py`,
-`checks/model_fit.py`); a reader refuses a file whose `format` it does not know rather than guessing.
-How the records are used is in `README.md`.
+Layout and rules of the store the evaluation tools read and write. The fields of every file are
+documented in the typed records of `tools/evaluation/` (`core/records.py`, `core/manifest.py`,
+`core/machines.py`, `checks/model_fit.py`). A reader refuses a file whose `format` it does not know.
 
-Everything is plain JSON with sorted keys, so `git diff` shows what changed and a run is one file.
+Everything is JSON with sorted keys, so `git diff` shows what changed. Commands such as
+`store validate` are the tools of [TOOLS.md](TOOLS.md).
 
-## What a record has to allow
+## Requirements
 
-| Requirement | How the store meets it |
+| A record must allow | How |
 | --- | --- |
-| A committed run can be **checked** later: same texts, same request, same weights, same machine | the question hash, the key hash, the protocol fingerprint, the instructions hash, the model digest, the seed and the machine are in the header |
-| A run can be **re-scored** with a metric that did not exist when it ran | a run file holds the model's output and the app's own review as returned, and no score |
-| A run can be **read without the corpora** | the store holds the texts beside the runs |
-| The record lives in a **private repository** | the texts come from corpora that may not be passed to a third party; this repository holds the code and the formats, never a record |
-| Runs are **evidence** | a run file is written once and never merged; git is the history |
+| **Checking** a run later: same texts, request, weights, machine | the header holds the question hash, key hash, protocol fingerprint, instructions hash, model digest, seed and machine |
+| **Re-scoring** with a new metric | a run file holds the model's output and the app's review as returned, no score |
+| **Reading without the corpora** | the store holds the texts beside the runs |
+| **Privacy** | the store is the private repository `teachers-teammate-evals`; the tools refuse a store inside this repository |
+| **Evidence** | a run file is written once and never merged; git is the history |
 
-Reading a run is possible at two levels. **Level 1** needs the file and the store's texts: the answer
-is scored from what the file holds. **Level 2** needs the corpora: the texts are rebuilt from the
-pointers and the stored edits are applied, so the scoring can be recomputed from the source.
+Level 1 reading needs the run file and the store's texts. Level 2 needs the corpora: the texts are
+rebuilt from the pointers, so every score can be recomputed from the source.
 
 ## Layout
 
 ```
-<store>/testsets/<id>/<language>.jsonl            one record per text, per language
-<store>/testsets/<id>/manifest.json               what pins the set without holding its text
-<store>/testsets/<id>/accepted.jsonl              the accepted alternatives of the key (optional)
-<store>/runs/[<folder>/]<name>.run.jsonl          one run file: header, sessions, one answer per text
+<store>/testsets/<id>/<language>.jsonl            one record per text
+<store>/testsets/<id>/manifest.json               pins the set without holding its text
+<store>/testsets/<id>/accepted.jsonl              accepted alternatives of the key (optional)
+<store>/runs/[<folder>/]<name>.run.jsonl          header, sessions, one answer per text
 <store>/marks/<marker>__<question_sha256>.jsonl   one marker's verdicts on one set
-<store>/machines/<id>.json                        one machine, named by its id
+<store>/machines/<id>.json                        one machine
 <store>/model-fit/sizes.jsonl                     one size record per model, machine, device, window
 <store>/gates/<record>.md                         a gate's verdict and the runs it rests on
-<store>/cache/                                    the score cache, disposable and git-ignored
+<store>/cache/                                    score cache, disposable, git-ignored
 ```
 
-The store is the private repository `teachers-teammate-evals`. The tools refuse a store inside this
-repository's working tree. `<folder>` is provenance only (where a converted run came from); nothing
-reads it back.
+`<folder>` records where a converted run came from; nothing reads it.
 
-## Four versions, four keys
-
-Only one of these versions groups runs:
+## Versions
 
 | Name | Says | Where | Changed by |
 | --- | --- | --- | --- |
-| `format` | The layout of a JSON file | every file | whoever changes the format |
-| `eval_version` | Which requests a run measured: prompts, answer format, window | `core/protocol.json`, looked up from the header's `protocol.fingerprint` | by hand; `evaluate run` refuses to start when the fingerprint is not in the table |
-| `scorer_version` | How the numbers were computed | `SCORER_VERSION` in `report/score.py`, recorded in the score cache | by hand when a number changes; the golden numbers of the tests fail until it is |
-| `tool_revision` | The commit the tools were at | every session line | git. Information only: nothing checks, groups by or refuses because of it |
+| `format` | the layout of a JSON file | every file | whoever changes the format |
+| `eval_version` | which requests a run measured: prompts, answer format, window | `core/protocol.json`, looked up by the header's `protocol.fingerprint` | by hand; `evaluate run` refuses an unknown fingerprint |
+| `scorer_version` | how the numbers are computed | `SCORER_VERSION` in `report/score.py` | by hand; the golden-number tests fail until it is raised |
+| `tool_revision` | the tools' commit | every session line | git; information only |
 
-Four keys are built from a header (`core/axes.py`), each with one job:
+`core/protocol.json` lists each protocol version with its date, accepted fingerprints and reason.
+Entries are never edited or removed. A change that only adds a request (a setup, a profile variant)
+keeps every earlier request hash; a change of scoring raises `scorer_version`, not the protocol.
 
-| Key | Adds to the compare key | Its job |
+## Keys
+
+Built from a header by `core/axes.py`; every axis is declared once in `core/axis_table.py`.
+
+| Key | Contents | Job |
 | --- | --- | --- |
-| **compare key** | the task, the test set, and every axis of the protocol except the fingerprint | Pooling: runs of one configuration are compared and reported together. Seed, repeat, timeout, model facts and environment are not in it, so repeats and machines pool. |
-| **series key** | `machine`, `isolated` | A gate group: the repeats of one setup on one machine. The server version is not in it, so an upgrade between repeats stays one series. |
-| **run key** | `machine`, `isolated`, `repeat` | One file: a resume looks for it, the score cache and a spot-check sample are named by it. |
-| **environment key** | `machine`, `ollama_version`, `isolated` | Speed: one model on two machines measured the same quality and different speeds. |
+| **compare** | task, test set, every protocol axis except the fingerprint; axes at their default are left out | pooling: runs of one configuration are compared together; seeds, repeats and machines pool |
+| **series** | compare + `machine`, `isolated` | one gate group: the repeats of one setup on one machine |
+| **run** | series + `repeat` | one file; names the score cache and the spot-check sample |
+| **environment** | compare + `machine`, `ollama_version`, `isolated` | speed |
 
-Runs are grouped and compared by the compare key, never by commit and never by `eval_version`.
-Every axis of a run is declared once in `core/axis_table.py`; an axis a newer writer added and this
-reader does not know is kept and part of the key, so two runs that differ in it never pool.
-`core/protocol.json` records each protocol version with its date, the fingerprints it accepts and a
-line saying why it was raised; old entries are never edited or removed.
+Runs are grouped by the compare key, never by commit or `eval_version`. An axis this reader does not
+know is kept (`unknown.<name>`) and is part of the key, so runs that differ in it never pool.
 
 ## Test sets
 
-A test set is three things with separate meanings:
+- **Question** (`id`, `language`, `source`): what is sent. `question_sha256` hashes the texts'
+  hashes in order; a run records it.
+- **Key** (`kind`, `reference`, `sentences`, `labels`, `sentence_spans`, `unchanged_sentences`,
+  `accepted`): read only when scoring, so a better key re-scores the same runs. Raise `key_version`
+  by hand when it changes; the same version with another `key_sha256` is refused.
+- **Provenance** (`origin`, `band`, `corpus`, `pointer`).
 
-- the **question** (`id`, `language`, `source` of every text): what is sent. Another question is
-  another set. `question_sha256` hashes the texts' hashes in order, and a run records it.
-- the **key** (`kind`, `reference`, `sentences`, `labels`, `sentence_spans`, `unchanged_sentences`,
-  `accepted`): read only when scoring. A better key scores the same runs again. `key_version` is
-  raised by hand when it changes, and a manifest of a higher version replaces one of a lower
-  version; the same version with another `key_sha256` is refused.
-- the **provenance** (`origin`, `band`, `corpus`, `pointer`).
+Rules:
 
-**A manifest is immutable.** Another selection is another `testset` id: committed runs pin the
-manifest by hash, so an edited manifest would make them uncheckable. It holds no corpus text.
-
-**Pointers** are the builder's choice in the corpus's own terms, which is what makes a rebuild
-possible. A pointer carries `split` only when it is not the corpus's default; a manifest pins every
-file of each split its items use. The shapes per corpus are in `input/corpora/`.
-
-**Reference replacements are hashes only.** The replacement of a reference edit is the annotator's
-word, which is corpus text. Position, label code, word count and hash are enough to check a rebuild
-and to score; the words come back from the corpus at level 2.
-
-**Accepted alternatives** (`accepted.jsonl`) are written by
-`bazel run //tools:store -- accept-marks --testset <id> --marker <name>`. Only the named marker's
-`valid` edits are accepted, and only those no other marker called `wrong`; a disagreement is listed,
-never resolved. The file is merged, not rewritten: a second marker's run replaces that marker's
-contribution and keeps the others. It is part of the key, so adding to it moves `key_sha256` and no
-run.
+- **A manifest is immutable.** Runs pin it by hash; another selection is another test-set id. It
+  holds no corpus text.
+- **Pointers** are in the corpus's own terms (`input/corpora/`); `split` only when not the default.
+- **Reference replacements are stored as hashes** (position, label, word count, hash): the words
+  are corpus text and come back from the corpus at level 2.
+- **`accepted.jsonl`** comes from `store accept-marks`: the named marker's `valid` edits that no
+  other marker called `wrong`. Disagreements are listed, never resolved. The file is merged per
+  marker. It is part of the key: adding to it moves `key_sha256`, not a run.
 
 ## Runs
 
-One JSON object per line: the header, then one line per session (a start or a resume), then one
-answer per text. A resume compares the stored header with the new one field by field, except the
-fingerprint: two fingerprints of one `eval_version` are one protocol, so an additive change of the
-request does not block a long run in progress.
+One JSON object per line: the header, one line per session (start or resume), one line per answer.
+A resume compares the stored header field by field, except the fingerprint: fingerprints of one
+`eval_version` are one protocol.
 
-**The file name** is a label derived from the axes and is never read back (a reader that parses a
-name is a bug: a name cannot carry a new axis):
+**File name**, a label derived from the axes and never parsed:
 
 ```
 <date>_<host>_<model-slug>_<digest8>__<tag>__…__<key8>.run.jsonl
 ```
 
-`host` is the machine id, or the provider's name for a provider that ran on no machine of ours;
-`model-slug` is the tag in lower case with `hf.co/` removed and `/` and `:` replaced by `-`; each
-`tag` names one axis that differs from its default, then `temperature-<t>` and `repeat-<n>`, which
-always appear; `key8` is the compare key's hash. `store convert` refuses a name that already exists;
-`--label` tells two runs of one configuration apart.
+`host` is the machine id or the provider name; `model-slug` is the tag in lower case without
+`hf.co/`, with `/` and `:` as `-`; each `tag` is an axis away from its default, then always
+`temperature-<t>` and `repeat-<n>`; `key8` is the compare-key hash. `store convert` refuses an
+existing name; `--label` separates two runs of one configuration.
 
-**`steps`** is what the exchange's one answer holds, and the one rule that says whether a run
-explains: `one-request-review` holds all three steps, `one-request-text` holds `correct` alone,
-`text-first` holds all three unless the run switched the unclear check off. A review is absent
-exactly when `steps` has no `explain`.
+**`steps`** is what the exchange's answer holds: `one-request-review` all three, `one-request-text`
+only `correct`, `text-first` all three unless the unclear check was off. No `explain` means no
+review.
 
-**`instructions`** is the SHA-256 of the policy and answer format of each language. It hashes what
-went into the request, so a run whose prompt has since changed is recognisable.
+**`instructions`** is the SHA-256 of each language's policy and answer format as sent, so a run with
+a since-changed prompt is recognisable.
 
 ## Marks
 
-A teacher's marks of a run's explanations, written by
-`bazel run //tools:store -- marks SHEET.md --marker <name>`. The file holds no text: the sheet does,
-and it is not committed. One file per marker and set, named by the marker and the set's question
-hash, so a mark of another set is refused. The file is merged, not replaced, and written sorted by
-identity, so two writers of the same marks produce the same bytes.
+Written by `store marks SHEET.md --marker <name>`. The file holds no text (the sheet does, and is not
+committed). One file per marker and set; a mark for another set is refused. Merged, sorted by
+identity, so two writers produce the same bytes.
 
-A mark's identity is `(kind, text, span, replacement, explanation_sha256)`. The span is in
-characters, so a mark survives a tokenizer change; only a moved hunk boundary can invalidate it,
-which the reader lists, never drops. The explanation's hash is part of the identity because a verdict
-on an explanation is about one model's text: two models that wrote the same explanation share the
-verdict, and two that wrote different ones do not. An `edit` mark keeps the three-part identity,
-because an edit is the same edit whoever explained it.
-
-The kind makes `wrong` unambiguous: on an `edit` it refuses the edit, on an `explanation` it says
-the sentence does not explain it. `correct` (true, and fits the change) and `vague` (true but too
-general to help a student) are the spot check's verdicts, and only `correct` counts. `valid` is a
-correction the annotators did not make but a person judged right; only an `edit` mark can say it,
-and `accept-marks` turns it into key data.
-
-The sheet's sample is the run's, not a cache's: from the run of repeat 1, per deciding language, the
-notes of `page`-band texts that explain an edit, at most two per text, drawn with a seed made from
-the run key. Every machine draws the same one, and a renamed file draws the same sample.
+- **Identity:** `(kind, text, span, replacement, explanation_sha256)`; an `edit` mark omits the
+  explanation hash. Spans are in characters, so a mark survives a tokenizer change; a moved hunk
+  boundary is listed, never dropped.
+- **Verdicts:** `wrong` (on an `edit`: refuses the edit; on an `explanation`: does not explain it),
+  `correct`, `vague` (true but too general), `valid` (an `edit` the annotators missed but a person
+  accepts; `accept-marks` turns it into key data). Only `correct` counts for the explanation floor.
+- **Sample:** from the repeat-1 run, per deciding language, explanations of edits in `page`-band
+  texts, at most two per text, seeded by the run key, so every machine and a renamed file draw the
+  same sample.
 
 ## Machines and sizes
 
-A run and a size record name a machine by its id from `machines/`, so a typo is refused instead of
-becoming a second machine nobody can compare with the first. A machine is not a device: one machine
-is measured on its card and on its processor (`device`), and a size record keeps the two apart.
-`model-fit/sizes.jsonl` is append-only and holds numbers only; nothing derived is stored.
+A run or size record names a machine by its id in `machines/`; an unknown id is refused. A machine
+is measured per `device` (card or processor). `model-fit/sizes.jsonl` is append-only and holds raw
+numbers only.
 
 ## Gate records
 
-`gates/<record>.md` holds a gate's verdict (which models passed, which were dropped, and why), the
-run files it rests on, by name, and the `bazel run //tools:report -- …` line that prints the figures
-again. **No figure**: the numbers are in the runs, and a record that copied them would go stale the
-first time a scorer changed. A record is written once the runs it reads are in the store, so it
-never names a run that is not there.
+`gates/<record>.md`: the verdict (passed, dropped and why), the run files it rests on, and the
+`bazel run //tools:report -- …` line that prints the figures. No figure. Written only once its runs
+are in the store.
 
 ## Validation
 
-`bazel run //tools:store -- validate --store <store>` checks the store's files; `validate <run file>`
-checks single files. The rules are in `tools/evaluation/store/validate.py`: a test set's ids are
-unique and its spans lie inside the text on token boundaries; every label is still an edit of the
-reference (a label whose edit moved is **listed**, never dropped); a manifest and its records name
-each other both ways with matching hashes; a run's question hash is the set's, an Ollama run names
-its machine, the fingerprint is in the table and no text is answered twice; a mark's text exists and
-its span lies on token boundaries. **Strict mode** (with the corpora named, `--corpus NAME=PATH` or
-`--corpora FILE`) adds the corpus file hashes and a full rebuild of every item.
+`store validate --store <store>` checks the store; `validate <run file>` single files. Rules:
+`tools/evaluation/store/validate.py`. With the corpora named (`--corpus NAME=PATH` or
+`--corpora FILE`) it also checks the corpus file hashes and rebuilds every item. Nothing repairs a
+file; problems are listed and the command decides whether to refuse.
 
-Nothing repairs a file. A problem is a string a person reads, and the command decides whether to
-refuse.
+## Reading back and the score cache
 
-## Reading a run back and the score cache
+`read_run_file()` (`core/records.py`) returns header, sessions and answers as stored. `load()`
+(`report/load.py`) pairs each answer with its record and scores it; an unusable file or answer is
+skipped with a reason, so a report says "23 / 31 texts".
 
-`read_run_file(lines)` in `core/records.py` returns the header, the sessions and the answers as they
-are. `load(root)` in `report/load.py` pairs every answer with the record it names and scores it; a
-file or an answer that cannot be used is skipped with a reason, so a report can say "23 / 31 texts"
-instead of pretending a run is complete.
-
-`report --cache <dir>` keeps the numbers it computed in `<dir>/<run key hash>.scores.jsonl`, one line
-per answer. A line is used only when its `answer_sha256`, its `key_part_sha256` and its
-`scorer_version` are the current ones; anything else is scored again, so a stale cache costs time and
-never a wrong number.
+`report --cache <dir>` keeps scores in `<dir>/<run key hash>.scores.jsonl`. A line is reused only
+when its `answer_sha256`, `key_part_sha256` and `scorer_version` are current.

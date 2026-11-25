@@ -29,6 +29,13 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# The diagram sources, for tests/tools/test_diagrams.py. Not built or shipped by itself.
+filegroup(
+    name = "diagrams",
+    srcs = glob(["assets/*.puml"]),
+    visibility = ["//visibility:public"],
+)
+
 sphinx_build_binary(
     name = "sphinx-build",
     data = [

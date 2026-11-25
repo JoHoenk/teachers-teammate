@@ -660,7 +660,7 @@ class RunService:
         the check behaves as it would after Ollama unloaded everything — which is the case it has
         to warn about anyway, since Ollama unloads idle models to make room.  If a measurement
         ever shows the memory is taken out of "available", the fix is to count the RAM part of
-        other loaded models as free; see docs/development.md.
+        other loaded models as free; see docs/development.md, *Rating a model against the computer's memory*.
         """
         if not uses_ollama(config):
             return None

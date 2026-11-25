@@ -97,9 +97,7 @@ A document without a proofreading has only **What was read**, with a strip above
 **Stop**.
 
 **The scan** opens with a whole page in view; **Fit page**, **Fit width**, **+** and **−** (or Ctrl +
-mouse wheel) change the zoom. Zooming in shows the pixels that were scanned, up to twice their own
-size (a small image goes on to four times the fitted page), so a detail is read and not
-guessed from a blurred enlargement. **Prepared · Original**
+mouse wheel) change the zoom, and zooming in shows the scanned pixels. **Prepared · Original**
 switches between the pages as fixed for reading and as scanned (shown only when the preparation
 changed something).
 
@@ -113,11 +111,8 @@ continues where you stopped.
 change with its count (**Grammar 4**). **Next ›** stays inside the filter, while the counts above
 the list keep covering the whole document.
 
-The card above the list explains the chosen item: what it changes on the left, why on the right
-once the panel is wide enough for both, one above the other below that. Drag the handle under the
-card to give a long explanation more room, and the handle beside the list to widen the panel; both
-are remembered. The card keeps the height you gave it — a longer explanation scrolls inside it — so
-its buttons stay where your pointer is:
+The card above the list explains the chosen item. Drag the handle under it to give a long
+explanation more room, and the handle beside the list to widen the panel; both are remembered.
 
 - A **correction** shows what was replaced (`have → has`), the sentence it stands in with the
   student's words highlighted, its kind as a coloured chip, and one sentence saying why.
@@ -162,12 +157,8 @@ it could not make sense of.
 on your computer and needs no account. An online service needs an access key from the service:
 choose it, and paste the key in the row that appears below it.
 
-| Service | Model | Notes |
-|---|---|---|
-| Ollama | `gemma4:e4b` | Default. Fast; fits an 8 GB graphics card |
-| Ollama | `gemma4:12b` | Best on a 16 GB graphics card |
-| Ollama | `qwen3.5:9b` | Another model family; also reads scans |
-| Mistral (EU) | `mistral-small-latest` | Online; processes data in the EU |
+The recommended models for your computer are listed in the *Advanced User Guide*; the default is
+fast and fits an 8 GB graphics card.
 
 Models the app has tested for explanations show `explanations ✓` in the model list.
 
@@ -189,12 +180,9 @@ review. A correction that needs to see across two parts cannot be made.
 If a model cannot give the explanations or the unclear list, the corrected text is kept and a
 banner says what is missing.
 
-**How the models are chosen.** Before a writing model is recommended, it is tested on German,
-English and French texts: it must explain its changes in the app's format and must not lose any
-text, and the models that pass are compared on texts written by language learners. Research on
-learner essays shows that small models running on your own computer proofread German and English
-usefully, but miss more errors and change more correct sentences than the largest online services
-— which is why the app shows every change, so you decide what stays.
+Models on your own computer proofread German and English usefully but miss more errors and change
+more correct sentences than the largest online services, so the app shows every change and you
+decide what stays.
 
 ---
 
@@ -280,23 +268,20 @@ A name the proofreading spelled differently (*Meier* → *Maier*) is not hidden 
 
 ### What the app writes down
 
-When something goes wrong, the app writes it into a log file on your computer, in the app's data
-folder under `logs`. **Help → Open Log Folder** opens that folder, so you can send the file to
-whoever helps you. It holds file names, the names of the steps and error messages — never the
-text of a document, and never an access key. Nothing is sent anywhere.
+Problems are written to a log file in the app's data folder (**Help → Open Log Folder**), so you
+can send it to whoever helps you. It holds file names, step names and error messages — never a
+document's text or an access key. Nothing is sent anywhere.
 
 ### What the app keeps for earlier runs
 
-So that a document is read only once, the app keeps what it recognized and proofread for it,
-inside its own folder. That is not the same as the Word and text files a run writes: those stay
-when you delete the stored results, and so do the documents.
+So that a document is read only once, the app keeps what it recognized and proofread, inside its
+own folder. Deleting these stored results leaves your documents and the files a run wrote alone.
 
 **Settings → Privacy → Stored results** says how much is kept. **Delete stored results…** empties
-it, and the next run reads and proofreads the pages again (an online service is paid for again). The box **Also delete my corrections, marks and
-edited texts** takes your own work as well — it cannot be brought back. **Delete stored results
-older than** a number of days drops what was last processed more than that many days ago, at
-the next start;
-left off, nothing expires by itself.
+it, and the next run reads and proofreads the pages again (an online service is paid for again).
+The box **Also delete my corrections, marks and edited texts** takes your own work as well — it
+cannot be brought back. **Delete stored results older than** a number of days drops what was last
+processed more than that many days ago, at the next start; left off, nothing expires by itself.
 
 ---
 
@@ -336,22 +321,14 @@ before it replaces an existing file.
 
 The app needs a **reading model** (scans → text) and a **writing model** (proofreading and content
 review). It detects your computer (**My computer** under **Settings → This computer**) and suggests
-models that fit:
-
-| Your computer | Best reading model | Best writing model |
-|---|---|---|
-| Basic computer or small graphics card (under 8 GB) | `glm-ocr:q8_0` | `gemma4:e4b` |
-| Graphics card with about 8 GB memory | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `gemma4:e4b` |
-| Graphics card with 16 GB memory or more | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `gemma4:12b` |
+models that fit; the table is in the *Advanced User Guide*. To install them, open **Settings →
+Add-ons…**, click **Select the best models for my computer**, then **Install / Download Selected**.
+Models marked **Slower** or **Very slow** run partly on the processor; greyed-out models (**Won't
+fit**) would make the computer unusable, and the app asks before downloading one. If too little
+memory is free before a run, the app warns you; closing other programs first is the safe choice.
 
 > **For schools:** the reading model `chandra-ocr-2` is free for personal use. A school that uses
 > it as an institution should check its [license](https://github.com/datalab-to/chandra#commercial-usage).
-
-To install them, open **Settings → Add-ons…**, click **Select the best models for my computer**,
-then **Install / Download Selected**. Models marked **Slower** or **Very slow** run partly on the
-processor; greyed-out models (**Won't fit**) would make the computer unusable, and the app asks
-before downloading one. If too little memory is free before a run, the app warns you; closing
-other programs first is the safe choice.
 
 ### Switching text recognition off
 
@@ -378,7 +355,7 @@ corrects a tilt. Clean scans pass unchanged. **Original page** sends pages as th
 | **Online services** | All access keys in one list. Keys are kept in your system's keychain where there is one |
 | **Scan quality** | **Automatic** or **Original page**, with **Preview…**; under **Expert settings** the PDF resolution and how a PDF's own text is used |
 | **Privacy** | The "don't ask again" answers, how personal information is found and shown, and what the app keeps for earlier runs |
-| **Add-ons** | Downloads: AI models for this computer, online AI services, name detection, the built-in reader and page models |
+| **Add-ons** | Everything optional: AI models for Ollama, support for online AI services, name detection (spaCy, needed to remove personal information), the built-in reader and page models (both come with the app). A download starts only when you ask |
 
 **OK** saves, **Cancel** discards — except downloads on **Add-ons**, which start at once.
 **Restore defaults…** resets the page or all settings; downloaded models and keys are kept.
@@ -396,12 +373,3 @@ a note if one does. Nothing about you or your documents is sent. Turn it off und
   present) the graphics card.
 - **Benchmark…** — try one document with different text-recognition settings and compare the
   results side by side (see the *Advanced User Guide*).
-
----
-
-## Installing extra features
-
-Everything optional is installed from **Settings → Add-ons…**: AI models for Ollama, support for
-an online AI service, spaCy and the name detection models (needed to remove personal
-information), and the built-in reader and the page models (both come with the installed app).
-A download starts only when you ask for it.

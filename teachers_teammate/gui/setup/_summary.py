@@ -20,9 +20,10 @@ from ...domain.data_location import (
     OCR_ENGINE_NAMES,
     STAGE_ANONYMIZATION,
 )
-from ...domain.model_catalog import licence_note
+from ...domain.model_catalog import licence_note, short_model_name
 from ...domain.stages import Stage
 from ...texts import setup as words
+from ...texts.setup import name_model_label
 
 _MB_BELOW_GB = 0.1
 
@@ -52,6 +53,32 @@ def size_text(download: PlannedDownload) -> str:
     if download.size_gb is None:
         return words.SIZE_SMALL
     return words.size_gb(download.size_gb)
+
+
+def download_words(download: PlannedDownload, language: str) -> tuple[str, str]:
+    """Return what a download is for and what it is called, in words a teacher knows."""
+    kind = download.kind
+    if kind is DownloadKind.READER_MODEL:
+        return words.DONE_PURPOSE_READER, words.DONE_NAME_READER
+    if kind is DownloadKind.PAGE_MODELS:
+        return words.DONE_PURPOSE_PAGE_MODELS, words.DONE_NAME_PAGE_MODELS
+    if kind is DownloadKind.SPACY_MODEL:
+        if download.extra:
+            return words.DONE_PURPOSE_NAMES, name_model_label(download.name)
+        return words.DONE_PURPOSE_NAMES, language or download.name
+    if kind is DownloadKind.OLLAMA_MODEL:
+        purpose = (
+            words.DONE_PURPOSE_READING
+            if download.stage == Stage.OCR
+            else words.DONE_PURPOSE_PROOFREADING
+        )
+        return purpose, short_model_name(download.name)
+    purpose = (
+        words.DONE_PURPOSE_NAMES
+        if download.stage == STAGE_ANONYMIZATION
+        else words.DONE_PURPOSE_ADDON
+    )
+    return purpose, download.name
 
 
 def summary_rows(
@@ -187,12 +214,15 @@ class SummaryRows(QWidget):
         self._downloads: dict[str, PlannedDownload] = {}
         self._texts: list[str] = []
 
-    def set_rows(self, rows: Sequence[SummaryRow]) -> None:
-        """Replace the lines with *rows*, every download ticked."""
+    def set_rows(self, rows: Sequence[SummaryRow], language: str = "") -> None:
+        """Replace the lines with *rows*, every download ticked.
+
+        *language* is the document language, which names the name-detection model.
+        """
         self._clear()
         line = 0
         for row in rows:
-            line = self._add_row(line, row)
+            line = self._add_row(line, row, language)
 
     def downloads(self) -> list[PlannedDownload]:
         """Return the downloads the teacher left ticked."""
@@ -204,8 +234,8 @@ class SummaryRows(QWidget):
         """Return the lines as the page shows them, one string per line."""
         return list(self._texts)
 
-    def _add_row(self, line: int, row: SummaryRow) -> int:
-        """Draw *row* at *line* and return the next free line."""
+    def _add_row(self, line: int, row: SummaryRow, language: str) -> int:
+        """Draw *row* at *line*, its downloads on the lines below, and return the next free line."""
         name = QLabel(row.name)
         name.setMinimumWidth(_NAME_WIDTH)
         name.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -219,15 +249,17 @@ class SummaryRows(QWidget):
                 self._grid.addWidget(_hint(row.note), line, 2)
                 self._texts[-1] = f"{self._texts[-1]} — {row.note}"
             return line + 1
-        for offset, download in enumerate(row.downloads):
-            box = QCheckBox(size_text(download))
+        for offset, download in enumerate(row.downloads, start=1):
+            _purpose, what = download_words(download, language)
+            label = f"{what} · {size_text(download)}"
+            box = QCheckBox(label)
             box.setChecked(True)
             box.setToolTip(_download_tooltip(download))
             self._boxes[download.name] = box
             self._downloads[download.name] = download
-            self._grid.addWidget(box, line + offset, 2)
-            self._texts.append(f"{download.name}: {size_text(download)}")
-        return line + len(row.downloads)
+            self._grid.addWidget(box, line + offset, 1, 1, 2)
+            self._texts.append(label)
+        return line + 1 + len(row.downloads)
 
     def _clear(self) -> None:
         """Drop every line, so a new plan starts from an empty grid."""

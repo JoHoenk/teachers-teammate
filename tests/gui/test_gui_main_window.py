@@ -52,6 +52,7 @@ from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._run_start import RunStartController
 from teachers_teammate.gui._readiness_controller import ReadinessController
 from teachers_teammate.gui._results_table import ResultsTable
+from teachers_teammate.gui._settings_file import SettingsFile
 from teachers_teammate.gui._setup_launcher import SetupLauncher
 from teachers_teammate.gui._types import FileDoneEvent
 from teachers_teammate.gui.settings import SettingsPage, SettingsResult
@@ -1963,6 +1964,62 @@ def test_main_window_load_toml_if_present_loads_values(qtbot, monkeypatch, tmp_p
     win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
     assert win._settings_file.config_path == config_path
+
+
+_REAL_REMEMBER_VERSION = SettingsFile._remember_version  # the autouse fixture replaces it
+
+
+@pytest.mark.gui
+def test_the_setup_assistant_is_offered_once_after_an_update(qtbot, monkeypatch, tmp_path) -> None:
+    """
+    Given  a saved setup and a store that has not seen this app version
+    When   the main window starts twice
+    Then   the Setup Assistant is offered at the first start only, and again for a newer version,
+           but not for an older one
+    """
+    config_path = tmp_path / "ocr.toml"
+    config_path.write_text('language = "German"\n', encoding="utf-8")
+    opened: list[bool] = []
+    kept: dict[str, object] = {}
+
+    class MemoryStore:
+        def value(self, key: str, default: object = None) -> object:
+            return kept.get(key, default)
+
+        def setValue(self, key: str, value: object) -> None:
+            kept[key] = value
+
+    monkeypatch.setattr(SettingsFile, "_remember_version", _REAL_REMEMBER_VERSION)
+    monkeypatch.setattr(MainWindow, "_settings_store", lambda self: MemoryStore())
+    no_update_check(monkeypatch)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
+    monkeypatch.setattr(
+        SetupLauncher, "open", lambda self, *, first_start=False: opened.append(True)
+    )
+    monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, _: config_path)
+    monkeypatch.setattr(
+        "teachers_teammate.gui._settings_file.load_config_file",
+        lambda _path: LoadedSettings({"language": "German"}),
+    )
+
+    first = MainWindow(app_service=real_service())
+    qtbot.addWidget(first)
+    qtbot.waitUntil(lambda: len(opened) == 1)
+    second = MainWindow(app_service=real_service())
+    qtbot.addWidget(second)
+    qtbot.wait(50)
+    assert len(opened) == 1
+
+    monkeypatch.setattr("teachers_teammate.gui._settings_file.__version__", "999.0")
+    third = MainWindow(app_service=real_service())
+    qtbot.addWidget(third)
+    qtbot.waitUntil(lambda: len(opened) == 2)
+
+    monkeypatch.setattr("teachers_teammate.gui._settings_file.__version__", "1.0")
+    fourth = MainWindow(app_service=real_service())
+    qtbot.addWidget(fourth)
+    qtbot.wait(50)
+    assert len(opened) == 2
 
 
 @pytest.mark.gui

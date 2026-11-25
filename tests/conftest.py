@@ -392,6 +392,19 @@ def _never_block_system_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_setup_offer_after_update(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A window that reads a saved setup does not offer the Setup Assistant for a new version.
+
+    The offer opens a modal dialog; a test that wants it patches ``_remember_version`` back.
+    """
+    try:
+        from teachers_teammate.gui import _settings_file  # noqa: PLC0415
+    except ImportError:  # pure-unit targets without PySide6
+        return
+    monkeypatch.setattr(_settings_file.SettingsFile, "_remember_version", lambda self: False)
+
+
+@pytest.fixture(autouse=True)
 def credential_file(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """Keep API keys off the real machine: no system keychain, an in-memory settings file.
 

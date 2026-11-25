@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import INSTALLER_SETTING_KEYS, load_config_file
+from ..domain.anonymization import SECONDARY_MODEL_AUTO
 from ..domain.data_location import (
     ENGINE_PPOCR,
     PROVIDER_OLLAMA,
@@ -161,6 +162,8 @@ class SetupFacts:
     missing_package: str
     #: The spaCy models that are downloaded (for the extra language's model).
     installed_spacy_models: frozenset[str] = frozenset()
+    #: The spaCy model of this computer's language, or ``""`` when it is not known.
+    system_spacy_model: str = ""
     #: The built-in reader's model files are downloaded.
     reader_installed: bool = False
     #: The page models (turn and flatten) of the automatic image preparation are downloaded.
@@ -459,14 +462,16 @@ def _review_plan(
 
 
 def _names_plan(
-    answers: SetupAnswers, facts: SetupFacts
+    answers: SetupAnswers, facts: SetupFacts, current: Mapping[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any], list[PlannedStep], bool]:
     """Return the settings, the panel keys, the names rows and whether name detection is wanted.
 
     Name detection is wanted for the removal before text is sent online, and for hiding the
     names in this app's texts; only the removal changes what a run sends.  An extra language
     becomes the extra detection model (its download is listed with the others); without one the
-    saved choice is left alone.
+    saved choice is left alone.  This computer's language stays the automatic extra while the
+    saved choice is the automatic one, so a model that is not downloaded skips the extra pass
+    instead of blocking the run.
     """
     case = answers.privacy_case(ollama_here=facts.ollama_here)
     removal = case is not PrivacyCase.THIS_COMPUTER and answers.remove_names
@@ -481,8 +486,12 @@ def _names_plan(
         view_only=not removal,
     )
     extra = extra_names_model(answers, facts)
-    settings = {"anonymizer_secondary_model": extra} if extra else {}
-    return settings, panel, [row], True
+    if not extra:
+        return {}, panel, [row], True
+    saved = str(current.get("anonymizer_secondary_model") or SECONDARY_MODEL_AUTO)
+    automatic = extra == facts.system_spacy_model and saved == SECONDARY_MODEL_AUTO
+    chosen = SECONDARY_MODEL_AUTO if automatic else extra
+    return {"anonymizer_secondary_model": chosen}, panel, [row], True
 
 
 def extra_names_model(answers: SetupAnswers, facts: SetupFacts) -> str:
@@ -617,7 +626,7 @@ def build_setup_plan(
     settings.update(review_settings)
     steps += review_rows
 
-    names_settings, names_panel, names_rows, names_wanted = _names_plan(answers, facts)
+    names_settings, names_panel, names_rows, names_wanted = _names_plan(answers, facts, current)
     settings.update(names_settings)
     panel.update(names_panel)
     steps += names_rows
@@ -625,7 +634,7 @@ def build_setup_plan(
     downloads = _downloads_plan(
         facts,
         names_wanted=names_wanted,
-        extra_models=[names_settings["anonymizer_secondary_model"]] if names_settings else [],
+        extra_models=[extra_names_model(answers, facts)] if names_settings else [],
         reading_tag=reading_tag,
         reader_needed=(
             answers.hand_in is HandIn.HANDWRITTEN and _reading_engine(current) == ENGINE_PPOCR
@@ -717,6 +726,7 @@ class SetupService:
             spacy_installed=self._addons.is_module_importable("spacy"),
             spacy_model=self._anonymization.spacy_model_for_language(answers.language),
             installed_spacy_models=frozenset(self._anonymization.list_installed_spacy_models()),
+            system_spacy_model=self._anonymization.system_spacy_model() or "",
             reader_installed=self._reader.reader_installed(),
             page_models_installed=self._reader.page_models_installed(),
             missing_package=(

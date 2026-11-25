@@ -258,6 +258,7 @@ class MainWindow(QMainWindow):
             settings_store=self._settings_store,
             hooks=SettingsFileHooks(
                 ask_first_start=lambda: self._setup_launcher.open(first_start=True),
+                ask_after_update=self._setup_launcher.open,
                 queue_loaded=self._refresh_queue_from_inputs,
             ),
         )

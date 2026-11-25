@@ -112,6 +112,19 @@ def _old_version() -> None:
     teachers_teammate.__version__ = OLD_VERSION  # ty: ignore[invalid-assignment]
 
 
+def _seen_setup() -> None:
+    """Store the app version as seen, so the Setup Assistant is not offered over the window.
+
+    An update offers it once, as a modal window nothing here would close.
+    """
+    from teachers_teammate.gui import _settings_file  # noqa: PLC0415
+    from teachers_teammate.gui._qsettings import app_settings  # noqa: PLC0415
+
+    store = app_settings()
+    store.setValue(_settings_file.APP_VERSION_KEY, _settings_file.__version__)
+    store.sync()
+
+
 def _services() -> Any:
     """Return the app's services, built the way the app builds them at start."""
     from teachers_teammate.application.composition import build_app_services  # noqa: PLC0415
@@ -247,6 +260,7 @@ def _check(result: dict[str, Any], calls: list[str], ci_tag: str) -> None:
     _old_version()
     with isolated() as root:
         _write_settings(root, check_for_updates=True)
+        _seen_setup()
         services = _services()
         window = _show(services)
         banner = _banner(window)

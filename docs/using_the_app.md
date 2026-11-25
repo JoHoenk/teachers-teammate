@@ -45,7 +45,8 @@ It then lists what it will set and download, with a box per download you can unt
 space needed. Nothing starts until you press **Set up**; the downloads then run in the background.
 
 Run the assistant again at any time from **Tools → Setup Assistant…**. It starts from your saved
-answers and keeps a model that already works. **Cancel** changes nothing.
+answers and keeps a model that already works. **Cancel** changes nothing. After an app update it
+opens once by itself, so you can check the setup against what is new.
 
 ---
 

@@ -14,9 +14,11 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QSettings, QTimer
 from PySide6.QtWidgets import QMainWindow, QSplitter
 
+from .. import __version__
 from ..application.composition import AppServices
 from ..application.stored_results import RunInProgressError
 from ..config import broken_settings_copy, load_config_file, save_settings_file
+from ..domain.releases import version_tuple
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..settings_schema import DEFAULTS
 from ..texts import dialogs as dlg
@@ -27,6 +29,9 @@ from ._config_panel import ConfigPanel
 from ._log_widget import LogWidget
 from ._window_geometry import maximize_without_saved_geometry, restore_geometry
 
+#: The GUI-store key holding the app version that last started with this setup.
+APP_VERSION_KEY = "gui/app_version"
+
 
 @dataclass(frozen=True)
 class SettingsFileHooks:
@@ -36,6 +41,9 @@ class SettingsFileHooks:
     ask_first_start: Callable[[], None]
     #: A settings file was read: show what is cached for the folder it names.
     queue_loaded: Callable[[], None]
+    #: The app is another version than the one that last ran with this setup: offer the
+    #: assistant again (it changes nothing unless the teacher presses Set up).
+    ask_after_update: Callable[[], None]
 
 
 class SettingsFile(QObject):
@@ -104,6 +112,7 @@ class SettingsFile(QObject):
             if installer_choices and config_path is not None:
                 self._config_path = config_path
                 self._panel.load_from_dict(installer_choices)
+            self._remember_version()
             QTimer.singleShot(0, self._hooks.ask_first_start)
             return
         self._config_path = config_path
@@ -127,8 +136,19 @@ class SettingsFile(QObject):
             self._log.append_text(win.log_settings_loaded(config_path))
             for notice in loaded.notices:
                 self.show_notice(notice)
+            if self._remember_version():
+                QTimer.singleShot(0, self._hooks.ask_after_update)
         except Exception as exc:  # noqa: BLE001  # a file that does not load is kept, not written over
             self._keep_unreadable_file(config_path, exc)
+
+    def _remember_version(self) -> bool:
+        """Store the running app version; return whether it is newer than the one stored before."""
+        store = self._settings_store()
+        stored = store.value(APP_VERSION_KEY)
+        if stored == __version__:
+            return False
+        store.setValue(APP_VERSION_KEY, __version__)
+        return stored is None or version_tuple(__version__) > version_tuple(str(stored))
 
     def _expire_stored_results(self) -> None:
         """Drop the stored results older than ``results_keep_days``; once, at start.

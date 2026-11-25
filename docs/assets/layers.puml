@@ -1,0 +1,49 @@
+@startuml Teacher's Teammate — Layers
+top to bottom direction
+
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam arrowColor #333333
+skinparam rectangle {
+  BackgroundColor #F5F5F5
+  BorderColor #888888
+}
+skinparam rectangle<<adapter>> {
+  BackgroundColor #E3F2FD
+  BorderColor #1565C0
+}
+skinparam rectangle<<inner>> {
+  BackgroundColor #E8F5E9
+  BorderColor #388E3C
+}
+
+rectangle "**gui/**  ·  **cli.py**\nadapters: no discovery, no availability logic" as ADAPT <<adapter>>
+rectangle "**application/**\nthe services; the only entry for the adapters" as APP
+rectangle "**infrastructure/**\nOCR engines, LLM providers, stores, DOCX, workflow" as INFRA
+rectangle "**texts/**\nevery sentence a teacher reads" as TEXTS
+rectangle "**core**\nconfig · interfaces · cache_keys · run_rules · settings_schema" as CORE
+rectangle "**domain/**\npure rules, no I/O" as DOMAIN <<inner>>
+rectangle "**pkg**\nexceptions · messages" as PKG <<inner>>
+
+ADAPT --> APP
+ADAPT --> CORE
+ADAPT --> TEXTS
+APP --> INFRA
+APP --> CORE
+INFRA --> CORE
+INFRA --> TEXTS
+CORE --> DOMAIN
+TEXTS --> DOMAIN
+DOMAIN --> PKG
+
+rectangle "composition modules\ngui/composition.py · gui/__main__.py · gui/benchmark/composition.py ·\ngui/benchmark/__main__.py · cli_composition.py · __main__.py ·\nfrozen_entry.py · frozen_modes.py" as COMP #FFF3E0
+COMP .down.> INFRA : the only adapter modules\nthat import infrastructure
+
+legend right
+  An arrow reads "may import".
+  Not drawn: every layer may also import ""domain"" and ""pkg"".
+  ""application"" does not import ""texts""; ""domain"" imports only ""pkg"".
+  Guarded by ""tests/unit/test_layer_imports.py"".
+endlegend
+
+@enduml

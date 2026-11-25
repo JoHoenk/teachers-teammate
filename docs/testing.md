@@ -1,77 +1,68 @@
 # Testing Guide
 
-## Audience and scope
-
-This guide covers how to run the test suite, understand test conventions, and generate coverage reports.
-For linting, type checking, and formatting commands, see {doc}`Development <development>`.
-End-user runtime usage is documented in {doc}`overview <index>` and {doc}`advanced_user_guide <advanced_user_guide>`.
+How to run the tests, write them and measure coverage. Lint and format commands are in
+{doc}`Development <development>`.
 
 ## Test stack
 
 | Package | Role |
 |---|---|
-| `pytest` | Test runner |
-| `pytest-mock` | `mocker` fixture — convenient wrapper around `unittest.mock` |
-| `pytest-cov` | Coverage reporting |
+| `pytest` | runner |
+| `pytest-mock` | `mocker` fixture |
+| `pytest-cov` | coverage |
 | `pytest-qt` | `qtbot` fixture for widgets, signals and threads |
-| `Pillow` | Generate synthetic test images in-memory (no numpy required) |
+| `Pillow` | synthetic test images in memory |
 
 ---
 
 ## Running the tests
 
-Bazel is the standard test runner and brings its own toolchain; it needs no virtualenv. A venv (`source .venv/bin/activate`) is only for direct pytest runs.
+Bazel brings its own toolchain and isolates every test; use it in CI and for coverage. A venv is
+only for ad-hoc `pytest` runs.
 
 ```bash
-# Core/unit-oriented suite
-bazel test //tests:unit_tests --test_output=errors
-
-# GUI-oriented suite (pytest-qt in headless/offscreen mode under Bazel)
-bazel test //tests:gui_tests --test_output=errors
-
-# Combined suite used for broad regression checks
-bazel test //tests:coverage_tests --test_output=errors
-
-# Single test file
-bazel test //tests:test_config --test_output=errors
+bazel test //tests:unit_tests --test_output=errors       # core and unit tests
+bazel test //tests:gui_tests --test_output=errors        # pytest-qt, offscreen
+bazel test //tests:coverage_tests --test_output=errors   # unit + GUI + tools
+bazel test //tests:test_config --test_output=errors      # one test file
+pytest tests/ -m "not needs_ollama"                      # ad hoc, without Bazel
 ```
 
-The built-in reader's model tests (`//tests:test_ppocr_models`, the multi-page PDF scenario) run the real, pinned model files. Bazel fetches them once (31 MB, `http_file` in `MODULE.bazel`) and caches them; under plain pytest, where the files are not provided, those tests skip. Every other test fakes the reader (patch `teachers_teammate.infrastructure.stage_builder.PpOcrProcessor`) and points the model store at an empty temporary folder, so no test downloads anything. The page models of the automatic image preparation work the same way (`//tests:test_page_models`, marker `needs_page_models`, 39 MB; `conftest.page_models_store()` links the fetched files, `fake_page_models_store()` makes empty files of the pinned sizes).
+**Targets.** `app_test()` (`tests/defs.bzl`) makes one target per test file and tags it with its
+folder; `unit_tests`, `gui_tests`, `integration_tests` and `tools_tests` are one `test_suite` per
+tag. `tests/unit/test_test_targets.py` keeps targets and files in step.
 
-You can also invoke pytest directly (without Bazel) for quick ad-hoc runs, but Bazel is preferred in CI and for coverage because it applies the correct sandbox and dependency isolation.
+**Real model files.** The built-in reader's tests (`//tests:test_ppocr_models`, the multi-page PDF
+scenario) and the page models' tests (`//tests:test_page_models`) run the real, pinned files, which
+Bazel fetches once (`http_file` in `MODULE.bazel`). Under plain pytest they skip. Every other test
+fakes them: patch `teachers_teammate.infrastructure.stage_builder.PpOcrProcessor`;
+`fake_page_models_store()` makes empty files of the pinned sizes; `conftest.py` points the model
+store at an empty temporary folder, so nothing downloads.
 
-The suites take their tests from a tag rather than a list: `unit_tests`/`gui_tests`/
-`integration_tests`/`tools_tests` are one `test_suite` per tag, and `app_test()` (`tests/defs.bzl`)
-gives every test the tag of the folder its file lives in. A target is one call that names the test
-file; the macro derives the rest (name, tag, entry point). `tests/unit/test_test_targets.py` holds
-the targets to the test files.
+**Leaks between files.** Bazel runs each file in its own process, which hides a test that leaves
+`sys.modules`, `sys.path` or the environment changed. A single `pytest tests` run shows such leaks.
+A test that replaces modules restores them (`with patch.dict(sys.modules):`).
 
-`platform_tests.yml` runs the tests marked `platform` in a plain venv on Windows and macOS: the
-build venv's own recipe with the `[test]` extra, so the versions are the ones the bundle ships
-there. They cover the code that differs per system (paths, processes, Ollama, locale); the list
-is `PLATFORM_TEST_FILES` in `tests/conftest.py`. A test in it uses `Path`, `tmp_path` and
-`os.sep`, never a literal POSIX path or a POSIX-only call. It blocks no merge.
-
-Bazel gives every test file its own process, which hides a test that changes global state (`sys.modules`, `sys.path`, environment) and leaves it changed. A single `pytest tests` run puts all files in one process and is how such a leak between files shows up. A test that evicts or replaces modules must restore them (`with patch.dict(sys.modules):`).
+**Platform tests.** `platform_tests.yml` runs the tests marked `platform` (`PLATFORM_TEST_FILES` in
+`tests/conftest.py`) in a plain venv on Windows and macOS, with the versions the bundle ships. They
+cover paths, processes, Ollama and locale. Use `Path`, `tmp_path` and `os.sep`, never a POSIX-only
+path or call. They block no merge.
 
 ### Test groups in CI
 
-`tests.yml` runs `//tests/...` on one machine per group, each with its own disk cache
-(`tests-<group>`). A test is in the first group that claims it:
+`tests.yml` runs `//tests/...` on one machine per group, each with its own disk cache. A test is in
+the first group that claims it:
 
 | Group | Tests that |
 |---|---|
-| `walkthrough` | carry the tag `walkthrough` (`//tests:walkthrough_tests`): the whole app, end to end |
+| `walkthrough` | carry the tag `walkthrough`: the whole app, end to end |
 | `gui` | depend on `gui_layer_lib` |
-| `application` | depend on `application_lib` and not on the GUI |
-| `rest` | are not claimed above |
+| `application` | depend on `application_lib`, not on the GUI |
+| `rest` | everything else |
 
-`tools/ci/target_groups.py` makes the split with `bazel query`; `CLAIMS` in it is the one place
-that names the groups, and the workflow takes its matrix from `--matrix`. Only `walkthrough` and
-`gui` import Qt, so only their machines install its system library (`libegl1`). `rest` is the
-complement of the others, so a new test cannot be left out. The script stops if a group is
-empty (a lost tag, a layer library no test depends on). A test that plays the whole app gets
-`tags = ["walkthrough"]` in `tests/BUILD`. List or run one group:
+`tools/ci/target_groups.py` makes the split with `bazel query`; `CLAIMS` names the groups and
+`--matrix` feeds the workflow. Only `walkthrough` and `gui` install Qt's system library. The script
+fails on an empty group.
 
 ```bash
 python tools/ci/target_groups.py gui
@@ -79,15 +70,12 @@ bazel test --target_pattern_file=<(python tools/ci/target_groups.py application)
 bazel test //tests:walkthrough_tests --test_output=errors
 ```
 
-### Coverage report
+### Coverage
 
 ```bash
-# Bazel coverage across the unit, GUI and tools suites (preferred)
 bazel coverage //tests:coverage_tests \
     --instrumentation_filter="//teachers_teammate" \
     --combined_report=lcov
-
-# Optional HTML report (requires lcov/genhtml)
 genhtml --ignore-errors unmapped bazel-out/_coverage/_coverage_report.dat -o coverage_html/
 ```
 
@@ -95,43 +83,36 @@ genhtml --ignore-errors unmapped bazel-out/_coverage/_coverage_report.dat -o cov
 
 ## Writing a test
 
-- **Docstring:** every test has a `Given … / When … / Then …` docstring (see below).
-- **Config:** build one with `make_config(tmp_path, **overrides)` from `tests/conftest.py` (a plain
-  function, not a fixture). Fixtures for input files: `sample_png`, `sample_pdf`.
-- **Patch at the import site**, not at the origin — for example
-  `teachers_teammate.infrastructure.stage_builder.PpOcrProcessor`, which the stage builder
-  constructs. `make_config` defaults to the built-in reader, and `conftest.py` points the model store
-  at an empty temporary folder, so nothing downloads.
-- **Ollama:** a test of `OllamaClient`'s own handling of the library patches it with
-  `patch.dict(sys.modules, {"ollama": mock_ollama})`. A test that needs a *server* (real client,
-  threads, pull stream) uses `tests/fakes/fake_ollama.py:FakeOllama`, the one Ollama stand-in; teach
-  it a new switch rather than writing a second fake. `tests/unit/test_fake_ollama.py` pins its
-  answers to Ollama's own source.
-- **Optional packages:** under Bazel only `langchain-core` is installed. A test never relies on a
-  provider package: mock the import (`patch.dict(sys.modules, {...})`), and simulate a missing one
-  with `{"langchain_anthropic": None}` — `create()` then raises `RuntimeError` ("is not installed").
-- **GUI:** use pytest-qt (`qtbot`) for widgets, signals and threads.
+- **Docstring:** `Given … / When … / Then …` (see the end of this page).
+- **Config:** `make_config(tmp_path, **overrides)` from `tests/conftest.py` (a plain function).
+  Input fixtures: `sample_png`, `sample_pdf`.
+- **Patch at the import site**, e.g. `teachers_teammate.infrastructure.stage_builder.PpOcrProcessor`.
+  `make_config` defaults to the built-in reader.
+- **Ollama:** a test that needs a server (real client, threads, pull stream) uses
+  `tests/fakes/fake_ollama.py:FakeOllama`; teach it a new switch rather than writing a second fake.
+  `tests/unit/test_fake_ollama.py` pins its answers to Ollama's source. Only a test of
+  `OllamaClient`'s own library handling patches `sys.modules["ollama"]`.
+- **Optional packages:** under Bazel only `langchain-core` is installed. Mock provider imports with
+  `patch.dict(sys.modules, {...})`; `{"langchain_anthropic": None}` simulates a missing one and
+  `create()` raises `RuntimeError` ("is not installed").
+- **GUI:** pytest-qt (`qtbot`).
 
 ## Test dependencies and Bazel's cache
 
-`//teachers_teammate` is one Bazel library per layer (`pkg_lib`, `domain_lib`, `core_lib`,
-`texts_lib`, `infrastructure_lib`, `application_lib`, `cli_lib`, `gui_layer_lib`), each with the
-layers it imports as `deps`. A test lists the **highest layer it imports** and nothing more
-(`_DOMAIN_LIB`, `_INFRASTRUCTURE_LIB`, … in `tests/BUILD`; the lower layers come with it), so
-Bazel reruns it only when that layer or one below it changes. Editing a `gui/` file reruns the
-GUI tests; editing `domain/` reruns nearly everything, which is correct.
+`//teachers_teammate` has one library per layer (`pkg_lib`, `domain_lib`, `core_lib`, `texts_lib`,
+`infrastructure_lib`, `application_lib`, `cli_lib`, `gui_layer_lib`), each depending on the layers
+it imports. A test lists only the **highest layer it imports** (`_DOMAIN_LIB`,
+`_INFRASTRUCTURE_LIB`, … in `tests/BUILD`), so it reruns only when that layer or a lower one
+changes.
 
-`infrastructure_lib` depends on `texts_lib`, because infrastructure words the failures and
-warnings it reports. So a change to any `texts/` module reruns the infrastructure, application and
-GUI tests as well as the CLI's; wording changes rarely enough that one `texts_lib` stays simpler
-than a second library for the modules infrastructure imports.
-
-- Never give a test `//teachers_teammate:ocr_lib` or `:gui_lib`: they hold the whole package and
-  every test would rerun on every edit. They are for the wheel, the docs and the lint targets.
-- Count lazy imports and `patch("teachers_teammate.…")` strings too: the test imports that module.
-- `tests/unit/test_layer_imports.py` fails on an import that points up a layer (domain →
-  infrastructure, application → gui, …). A new module goes into the matching `_*_SRCS` list of
-  `teachers_teammate/BUILD`; a new layer needs a library there and a row in that test.
+- Never use `//teachers_teammate:ocr_lib` or `:gui_lib` in a test: they hold the whole package and
+  are for the wheel, the docs and lint.
+- Lazy imports and `patch("teachers_teammate.…")` strings count as imports.
+- `infrastructure_lib` depends on `texts_lib` (it words its failures), so a `texts/` change reruns
+  the infrastructure, application, GUI and CLI tests.
+- `tests/unit/test_layer_imports.py` fails on an import up a layer. A new module goes into its
+  layer's `_*_SRCS` list in `teachers_teammate/BUILD`; a new layer needs a library there and a row
+  in that test.
 
 ---
 
@@ -139,60 +120,44 @@ than a second library for the modules infrastructure imports.
 
 | Marker | Meaning |
 |---|---|
-| `needs_reader_models` | Runs the built-in reader's real model files (Bazel fetches them; skipped without) |
-| `needs_page_models` | Runs the page models' real model files (Bazel fetches them; skipped without) |
-| `needs_ollama` | Requires a running Ollama instance |
-| `gui` | Exercises PySide6 widgets and the event loop |
-| `platform` | Covers code that differs per operating system; runs on Linux, Windows and macOS |
-| `needs_bazel` | Reads Bazel's runfiles (the built wheel, the model files); skipped unless `TEST_SRCDIR` is set |
-| `use_case` | Links the test to a use case in `use_cases.trlc` (see below) |
+| `needs_reader_models` | runs the built-in reader's real model files (skipped without them) |
+| `needs_page_models` | runs the page models' real files (skipped without them) |
+| `needs_ollama` | needs a running Ollama |
+| `gui` | uses PySide6 widgets and the event loop |
+| `platform` | code that differs per operating system; runs on Linux, Windows and macOS |
+| `needs_bazel` | reads Bazel's runfiles; skipped unless `TEST_SRCDIR` is set |
+| `use_case` | links the test to a use case in `use_cases.trlc` |
 
-Two test files also read the private evaluation repository (the machine registry and the converter's
-acceptance tests). They are skipped unless the repository is named, so by default nothing runs them:
+Two tests read the private evaluation repository and skip unless it is named:
 
 ```bash
 bazel test //tests:test_evaluation_machines //tests:test_evaluation_convert_v1 --test_output=errors \
   --test_env=GEC_EVALS=$HOME/git/teachers-teammate-evals --test_env=GEC_RESULTS=$HOME/gec-testset
 ```
 
-Run only tests that do not require Ollama (direct pytest, ad-hoc use only):
-
-```bash
-pytest tests/ -m "not needs_ollama" -v
-```
-
 ---
 
 ## The app walkthrough
 
-`tests/e2e/walkthrough.py` plays teacher in the real main window: it writes an `ocr.toml` and
-three input files into one temporary folder, builds the window the app builds, and then clicks,
-types and answers exactly what a teacher does. It covers the settings file, choosing the input
-folder, a run over a PNG, a scanned PDF and a TXT file, opening a document in the Check tab,
-correcting it, exporting one DOCX, a second run that hits the cache, both clicks of the Stop
-button, closing and reopening the window, every other window behind the settings, and closing
-down. Each step checks what a teacher would see — the rows of the queue, the stored texts, the
-Word files on disk, the summary of every run — and the first failure ends the walk with a message
-that names the step and what it waited for.
+`tests/e2e/walkthrough.py` plays a teacher in the real main window. It writes an `ocr.toml` and
+three input files (PNG, scanned PDF, TXT), builds the window the app builds, and clicks through:
+choosing the folder, a run, the Check tab, a correction, a DOCX export, a cached second run, both
+Stop clicks, closing and reopening, every settings window, and shutdown. Each step checks what a
+teacher would see (queue rows, stored texts, Word files, run summaries); the first failure ends the
+walk, naming the step and what it waited for.
 
-Guards replace the teacher's eyes: an unexpected dialog is declined and recorded, a window a
-step did not open is closed and recorded with its title and its own sentences (a bundle that
-lost a model file says so in the result), an exception in a slot is recorded and fails its step,
-and warnings and Qt's own messages are collected. A wait that runs out names what the guards
-caught, so a broken bundle says why it broke, and a watchdog ends a hung walk with a result
-instead of running into the CI job's limit: the result then carries every thread's stack and what
-the app was running (`hang`).
-Every guard lives in the script, so a bundle run reports the same way a test run does.
+**Guards.** An unexpected dialog is declined and recorded; an unexpected window is closed and
+recorded with its title and text; an exception in a slot fails its step; warnings and Qt messages
+are collected. A watchdog ends a hung walk with a result holding every thread's stack (`hang`)
+before the CI job's limit. All guards live in the script, so a bundle reports like a test run.
 
-A run is over only when the summary has arrived and the window has taken it in (Run enabled, no
-worker running); a stop is clicked at a fixed point of the worker, not on a timer. The words
-the reader made of the drawn pages are compared with a slack of a character in eight, because the
-reader's runtime picks its kernels by CPU; what the walk types and the text file hold are compared
-exactly, and `readings` in the result shows what the reader made of the pages.
+**Waiting.** A run is over when the summary has arrived and the window has taken it in; Stop is
+clicked at a fixed point of the worker, not on a timer. Text read from the drawn pages is compared
+with a slack of one character in eight (the reader picks CPU kernels per machine); typed text and
+the text file are compared exactly.
 
-The walk writes one JSON file (steps, dialogs, modals, exceptions, warnings, Qt messages, readings,
-screenshots, platform and versions) and exits 0 only when every step passed. It writes that file
-on failure too, because a windowed build has no console.
+**Result.** One JSON file (steps, dialogs, exceptions, warnings, Qt messages, readings, screenshots,
+platform, versions), written on failure too. Exit 0 only when every step passed.
 
 ### From source
 
@@ -200,116 +165,74 @@ on failure too, because a windowed build has no console.
 bazel test //tests:test_gui_main_walkthrough --test_output=errors
 ```
 
-The test links the real reader and page models into one root via `models_store(tmp_path)` and
-runs `walkthrough.main`, the same entry point the bundle runner calls, on the three documents.
-Every walk is a process of its own (`tests/e2e/walk_checked.py`): a walk leaves windows and
-queued signals behind, and a hung walk ends only its own process. One thing is broken per test and
-the report is checked: a reader that raises, an unexpected dialog, an unexpected window, a raising
-slot, a reader that never returns (the watchdog) and a saved config; the plain walk also checks
-that no thread is left running. The target is `large` (about a minute).
+Links the real models via `models_store(tmp_path)` and calls `walkthrough.main`, the bundle
+runner's entry point. Each walk runs in its own process (`tests/e2e/walk_checked.py`). Further
+tests break one thing each and check the report: a raising reader, an unexpected dialog or window,
+a raising slot, a reader that never returns, a saved config; the plain walk also checks that no
+thread is left running. The target is `large`.
 
-One walk is the app with proofreading on (`walkthrough.main(..., proofreading=...)`): the settings
-file turns it on and names a model on `127.0.0.1`, and `FakeOllama` answers the exchange's three
-steps (`ProofreadingAnswers`, which replaces the last word of every text). The walk then reads the items
-the model left in the Check tab, ticks them as checked, finds the model's word in the Word file a
-run writes, and spoils a stored review so that the app has to drop it. That last step is what
-`application/merged_view.py` does for any stored document: a review that no longer quotes the
-words it points at is dropped with a logged warning, and the walk requires that warning and the
-changes without explanations.
-
-The bundle walk never has proofreading on: the stand-in is test code, and the import list below
-keeps it out of the script.
+One walk runs with proofreading on: the settings name a model on `127.0.0.1` and `FakeOllama`
+answers the exchange (`ProofreadingAnswers`). The walk reads and ticks the items in the Check tab,
+finds the model's word in the Word file, and spoils a stored review, which the app must drop with a
+logged warning (`application/merged_view.py`). The bundle walk never has proofreading on.
 
 ### Against a bundle
 
-The app runs the script itself: `--_run_script` takes the file, so a downloaded bundle runs the
-script from the same commit as the bundle.
+`--_run_script` runs the script inside the app, so a bundle runs the script from its own commit:
 
 ```bash
 gh run download <run-id> -n teachers-teammate-linux    # then unpack
 ./teachers-teammate --_run_script tests/e2e/walkthrough.py e2e.json --screenshots shots
 ```
 
-An older bundle that lacks a handle a newer script uses fails the first step, naming the handle.
-A bundle is a working one only if the walk exits 0: a missing Qt platform plugin aborts the
-process before the script's first line, so there is no `e2e.json` to read.
+A bundle works only if the walk exits 0; a missing Qt platform plugin aborts before the script
+starts, leaving no `e2e.json`. On a Wayland desktop Qt follows `WAYLAND_DISPLAY`, even under
+`xvfb-run`; `QT_QPA_PLATFORM=xcb` uses `DISPLAY` instead and needs the `libxcb-*` packages that
+`build_package.yml` installs.
 
-On a Wayland desktop the window opens on the `wayland` platform, even under `xvfb-run`:
-`WAYLAND_DISPLAY` is what Qt follows. `QT_QPA_PLATFORM=xcb` puts it on the display `DISPLAY`
-names instead; the Qt xcb plugin needs `libxcb-cursor0` and the other `libxcb-*` packages that
-`.github/workflows/build_package.yml` installs; the `.deb` depends on them and a bare checkout
-does not have them.
+### Platform steps
 
-### On each system
+`PLATFORM_STEPS` adds steps for one system's behaviour, each after a given step:
 
-Three steps are about one system's behaviour: `PLATFORM_STEPS` names the systems each one runs on
-and the step it follows, and `walk_steps(proofreading=…, platform=…)` inserts them.
-
-- `export-held-open` (Windows, after `export`): a Word file is held open with no sharing at all,
-  which is stricter than the read sharing Word allows, while the queue is exported over it — one
-  notice naming the source, the other two Word files written, the held file untouched.
-- `long-output-path` (Windows and Linux, after `run`): a results folder whose path is over 260
-  characters, and the run's Word file still lands in it. Linux has no such limit, so the folder is
-  only long there: the same work, on the walk the Linux tests run. On Windows the step records
-  `LongPathsEnabled` under `readings` and fails when that switch is off, because the app adds no
-  long-path prefix of its own and the machine would be what makes the run work.
-- `case-spelling` (macOS and Windows, after `restart`): the same three documents reached through
-  the folder's name in capitals — one cache entry per document (`state_path_for_input`), the texts
-  the store already holds, and a second run that recognizes nothing. `document_stem` keys a
-  document by the spelling the volume stores, which is what `Path.resolve` gives on Windows and
-  what `F_GETPATH` gives on macOS.
-
-Only a file system that ignores case makes the last one worth walking. The Windows and macOS steps
-run on a bundle of that system, in the builds CI makes.
+- `export-held-open` (Windows): a Word file held open without sharing while the queue is exported
+  over it — one notice, the other files written, the held file untouched.
+- `long-output-path` (Windows, Linux): a results folder path over 260 characters. On Windows the
+  step records `LongPathsEnabled` and fails when it is off, since the app adds no long-path prefix.
+- `case-spelling` (macOS, Windows): the documents reached through the folder name in capitals —
+  one cache entry per document and a second run that recognizes nothing (`document_stem` keys by
+  the spelling the volume stores).
 
 ### In CI
 
-Every bundle build runs the walkthrough on the build machine — on `xvfb-run` on Linux, in the
-app's own window on Windows and macOS — and every install job runs it on the installed copy:
-the `.deb` in the ubuntu:24.04, ubuntu:26.04 and debian:13 containers, the `.app` on macOS 15 and
-26, the setup on Windows Server 2022 and 2025. This is the only place a platform's own plugin,
-fonts and window server meet the app.
+Every bundle build runs the walk on the build machine (`xvfb-run` on Linux), and every install job
+on the installed copy: the `.deb` in ubuntu:24.04, ubuntu:26.04 and debian:13, the `.app` on macOS
+15 and 26, the setup on Windows Server 2022 and 2025. Containers walk a second time under
+`weston --backend=headless` and require `platform: wayland` in the result.
 
-Each container walks twice when the bundle carries the Wayland platform plugin: once on
-`xvfb`'s X server and once under `weston --backend=headless`, and the second result must say
-`platform: wayland`, because Qt falls back to another plugin without a word. A bundle without
-that plugin logs that the Wayland walk is skipped.
-
-Each job uploads `e2e.json` and the screenshots even when the step failed
-(`<prefix>-<platform>-e2e` for a build machine, `<prefix>-<platform>-installed-e2e-<image or os>`
-for an install, where a container uploads its Wayland walk as `e2e-wayland.json` beside the xcb
-one and the compositor's `weston.log` beside both): the file says which step broke and what the
-guards caught. Every one of those steps has a time limit, and the script's own watchdog — armed
-before the app services are built — ends a hung app with a result before that limit is reached.
-
-The build job walks after it has uploaded the packages: a failed walk never costs a platform its
-installers, and nothing the app writes while it runs can land in one of them.
+Each job uploads `e2e.json` and screenshots even on failure (`<prefix>-<platform>-e2e`, or
+`…-installed-e2e-<image or os>`; plus `e2e-wayland.json` and `weston.log` in containers). The build
+job walks after uploading the packages, so a failed walk never costs a platform its installers.
 
 ### Adding a step
 
-One method on `Walk`, one row in `STEPS` (`tests/e2e/walkthrough.py`) — or in `PROOFREADING_STEPS`
-with the step it follows, for one that needs a model behind it: those run only when the walk is
-given a `ProofreadingSetup`; or in `PLATFORM_STEPS` with the step it follows and the systems it
-belongs to. The step clicks what a teacher clicks through `_handles`, and declares the dialogs it
-expects with `self._answers.expect` before it triggers them — any other dialog fails the step. A
-menu or a window the step opens itself goes through `_in_modal`. Waits are conditions
-with a deadline (`_settle`), never sleeps; a run is waited for with `_wait_run`. New settings go
-into `write_settings`; new input files into `write_inputs`.
+One method on `Walk` and one row in `STEPS` (`tests/e2e/walkthrough.py`), or in `PROOFREADING_STEPS`
+(needs a model behind it) or `PLATFORM_STEPS`, each with the step it follows.
 
-### What the script may import
+- Click through `_handles`; declare expected dialogs with `self._answers.expect` before triggering
+  them — any other dialog fails the step.
+- Open menus and windows through `_in_modal`.
+- Wait with `_settle` (a condition with a deadline) or `_wait_run`, never sleep.
+- New settings go into `write_settings`, new input files into `write_inputs`.
 
-`tests/unit/test_walkthrough_imports.py` holds the list: the standard library, Qt, Pillow,
-python-docx and `teachers_teammate`, and nothing from `tests`. The bundle carries no test
-framework, so a test-only helper in the script breaks the bundle run; teach the script instead.
+**Imports.** The bundle has no test framework: the script may import only the standard library,
+Qt, Pillow, python-docx and `teachers_teammate` (`tests/unit/test_walkthrough_imports.py`).
 
 ---
 
+## Given-When-Then
 
-## Test case specification — Given-When-Then
-
-Every test function documents its preconditions, action, and expected outcome as a
-**Given / When / Then** docstring following the
-[Gherkin convention](https://en.wikipedia.org/wiki/Given-When-Then):
+Every test documents its preconditions, action and expected outcome
+([Gherkin convention](https://en.wikipedia.org/wiki/Given-When-Then)):
 
 ```
 Given  <the preconditions and starting state>
@@ -317,9 +240,5 @@ When   <the action or call under test>
 Then   <the expected outcome>
 ```
 
-This keeps test intent readable as plain prose and makes each test self-describing
-without requiring knowledge of the implementation.
-
-Tests that cover a formal use case are tagged with `@pytest.mark.use_case("UC_NAME")`.
-A generated catalogue linking each use case to its tagged test scenarios is available in
-{doc}`Test Specifications by Use Case <test_specs>`.
+A test that covers a formal use case is tagged `@pytest.mark.use_case("UC_NAME")`; the catalogue
+is {doc}`Test Specifications by Use Case <test_specs>`.

@@ -64,17 +64,17 @@ gh run watch
 gh run download <run-id> -n teachers-teammate-linux   # or -windows, -macos
 ```
 
-The wheel is installed the way a teacher would, into a clean venv, and every console script has to
-start. Every bundle build runs the app's smoke test (`--_smoke_test`), installs and uses every
-add-on in it (`--_addon_smoke_test`, needs the network), and walks a teacher's work through the
-app's own window (`tests/e2e/walkthrough.py`, see [testing.md](testing.md) → "The app
-walkthrough"). It then installs the result on fresh systems (Ubuntu 24.04/26.04 and Debian 13
-containers, macOS 15/26, Windows Server 2022/2025), including an update from the newest published
-release. In the containers the walk runs twice when the bundle carries the Wayland platform
-plugin: on `xvfb` and under a headless `weston`, and the second result has to name Wayland as the
-platform. Not covered by CI, so checked by hand on a VM before a release: the installer's
-interactive pages, the UAC prompt, a real desktop (fonts, icons, a window manager), Gatekeeper,
-Windows 10 1809 and macOS 15.0.
+What CI checks on a build:
+
+- **Wheel:** installed into a clean venv; every console script must start.
+- **Bundle:** the smoke test (`--_smoke_test`), every add-on installed and used
+  (`--_addon_smoke_test`, needs the network), and the walkthrough ([testing.md](testing.md) → "The
+  app walkthrough").
+- **Install:** on fresh Ubuntu 24.04/26.04 and Debian 13 containers, macOS 15/26 and Windows Server
+  2022/2025, including an update from the newest published release.
+
+**By hand on a VM before a release:** the installer's interactive pages, the UAC prompt, a real
+desktop (fonts, icons, window manager), Gatekeeper, Windows 10 1809 and macOS 15.0.
 
 ### Checksums and provenance
 
@@ -82,17 +82,8 @@ Every release carries a `SHA256SUMS` file and a build-provenance attestation per
 proves which workflow and commit produced the file:
 
 ```bash
-# Linux, in the folder that holds the download and SHA256SUMS
-sha256sum -c SHA256SUMS --ignore-missing
-```
-
-```bash
-# macOS
-shasum -a 256 -c SHA256SUMS --ignore-missing
-```
-
-```bash
-# Any system, with the GitHub CLI
+sha256sum -c SHA256SUMS --ignore-missing            # Linux, next to the download
+shasum -a 256 -c SHA256SUMS --ignore-missing        # macOS
 gh attestation verify teachers-teammate-<version>-w64-setup.exe --repo JoHoenk/teachers-teammate
 ```
 
@@ -106,10 +97,9 @@ gh attestation verify teachers-teammate-<version>-w64-setup.exe --repo JoHoenk/t
 | **Set by** | Qt 6.12 | the OpenCV wheel | the build image (`ubuntu-24.04`) |
 | **Guarded by** | the installer (exit code 15) | `tools/build/check_macos_bundle.py` | `tools/build/check_linux_bundle.py --max-glibc 2.39` |
 
-**When the floor moves.** A PySide6 bump that raises the macOS floor, or a newer Linux build
-image, fails the checks above. Windows has no such check: Qt 6.12 is the last Qt that supports
-Windows 10, so read the Qt release notes at every PySide6 minor bump. Users on Ubuntu 22.04, Mint 21
-or Debian 12 stay on v0.5.x.
+A PySide6 bump that raises the macOS floor, or a newer Linux build image, fails the checks above.
+Windows has no such check: Qt 6.12 is the last Qt for Windows 10, so read the Qt release notes at
+every PySide6 minor bump. Ubuntu 22.04, Mint 21 and Debian 12 are served by v0.5.x.
 
 ---
 
@@ -126,9 +116,9 @@ install the pinned versions and run the PyInstaller build, like CI:
 bash tools/build/build.sh
 ```
 
-The output is a folder (`dist/teachers-teammate/`) or, on macOS, `dist/teachers-teammate.app/`.
-Every version comes from `requirements_lock.txt` plus `tools/build/requirements_platform.txt`,
-so two builds of one commit give the same bundle. Check that it starts:
+Output: `dist/teachers-teammate/` (macOS: `dist/teachers-teammate.app/`). Versions come from
+`requirements_lock.txt` and `tools/build/requirements_platform.txt`, so one commit always gives the
+same bundle. Check that it starts:
 
 ```bash
 QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_smoke_test smoke.json
@@ -141,8 +131,8 @@ QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_addon_sm
 bazel build //teachers_teammate:teachers_teammate_wheel   # the development version
 ```
 
-A release build stamps the version into the wheel's metadata and file name; the file is in the
-`.dist` folder, because the name is fixed before the label is substituted:
+A release build stamps the version into the metadata and file name; the file lands in the `.dist`
+folder:
 
 ```bash
 bazel build --stamp --embed_label=1.2.3 //teachers_teammate:teachers_teammate_release_wheel.dist
@@ -154,15 +144,12 @@ Run these after the standalone build. Each takes the version as its argument.
 
 ```bash
 bash tools/packaging/make_deb.sh 1.2.3       # dist/teachers-teammate_1.2.3_amd64.deb
-```
-
-```bash
 bash tools/packaging/make_dmg.sh 1.2.3       # dist/teachers-teammate-1.2.3-macos.dmg
 ```
 
-The Windows installer needs [NSIS](https://nsis.sourceforge.io/). The script runs the two
-`makensis` passes (the uninstaller first, because it is a file of its own that is signed before the
-setup packs it); `-WinVersion` is the version without a pre-release suffix:
+The Windows installer needs [NSIS](https://nsis.sourceforge.io/). The script runs two `makensis`
+passes: the uninstaller first, so it can be signed before the setup packs it. `-WinVersion` is the
+version without a pre-release suffix:
 
 ```powershell
 pwsh tools/packaging/make_windows_installer.ps1 -Version 1.2.3 -WinVersion 1.2.3   # dist/teachers-teammate-1.2.3-w64-setup.exe
@@ -179,28 +166,18 @@ pwsh -File tools/packaging/test_windows_installer.ps1 -Setup dist\teachers-teamm
 (`python.toolchain`). Change both together, then relock:
 
 ```bash
-bazel run //:requirements.update
-```
-
-```bash
-bazel run //:requirements_dev.update
+bazel run //:requirements.update && bazel run //:requirements_dev.update
 ```
 
 ---
 
 ## Third-party licenses
 
-`third_party_licenses/inventory.csv` lists every third-party part the app ships or installs.
-`tools/licenses/inventory.py` writes it from the app's own lists and the locks — never edit it by
-hand. When the inventory test is red (a new or bumped dependency, add-on, model or spaCy
-language), run:
-
-```bash
-python tools/licenses/inventory.py
-```
-
-and commit the result; the diff shows any license change. A license that
-`tools/licenses/policy.toml` denies makes the tool fail.
+`third_party_licenses/inventory.csv` lists every third-party part the app ships or installs. It
+is written by `tools/licenses/inventory.py` from the app's lists and the locks, never by hand. When
+the inventory test is red (a new or bumped dependency, add-on, model or spaCy language), run
+`python tools/licenses/inventory.py` and commit the result; the diff shows any license change. A
+license denied by `tools/licenses/policy.toml` fails the tool.
 
 | Path | Written by | Content |
 |---|---|---|
@@ -215,12 +192,11 @@ Our own source needs no mirror: each release page carries the tag's "Source code
 is the Corresponding Source of that release (`NOTICE` → "Written offer").
 
 The bundle carries Qt under the LGPL v3 as separate, replaceable files
-(`_internal/PySide6/Qt/lib`). The LGPL requires passing on the Qt, PySide6 and FFmpeg sources:
-every version we ship gets a release of its own, `third-party-sources-qt<version>`, and
-`tools/release/mirror_sources.py` builds and publishes it. The versions come from the inventory and
-`NOTICE`, never from an argument, and the file names from the authors' own directory listings, so a
-renamed archive fails here instead of on a teacher's download page. The set carries `SHA256SUMS`
-(a digest of every other file of it) and a `README.txt`:
+(`_internal/PySide6/Qt/lib`). The LGPL requires passing on the Qt, PySide6 and FFmpeg sources, so
+every shipped version gets its own release, `third-party-sources-qt<version>`, built and published
+by `tools/release/mirror_sources.py`. Versions come from the inventory and `NOTICE`; file names
+from the authors' directory listings, so a renamed archive fails here, not on a download page. The
+set carries `SHA256SUMS` and a `README.txt`:
 
 ```bash
 python tools/release/mirror_sources.py                                # fetch and check, discard
@@ -234,32 +210,25 @@ Which files are held to a published digest, and which are not:
 | File | Held to |
 |---|---|
 | the Qt submodule archives | `md5sums.txt` next to the tarballs; a folder that publishes none fails the run |
-| the PySide6 source | its folder's digest list; Qt for Python publishes none today, so this stops the run until it does |
+| the PySide6 source | its folder's digest list; a folder that publishes none stops the run |
 | the `opencv-python-headless` source | the sha256 PyPI publishes |
 | the FFmpeg tarball | nothing: FFmpeg publishes a signature and no digest. Its `.asc` travels in the set, unverified |
 
-Without `--keep` the set goes to a temporary folder; `--keep` needs a folder that is empty, so an
-upload cannot publish an earlier run's tarballs. `--bundle` names a **Linux** folder build the set
-must cover: every `libQt6*.so*` module in it needs its submodule archive, and a folder without any
-of them is refused rather than read as covered. `--upload` needs `gh` and `GH_TOKEN`, never marks
-the release *Latest* — so the app's update check cannot see it — and makes an existing release hold
-this set and nothing else: the assets of an earlier run are deleted and the title and notes are
-rewritten.
+- `--keep` needs an empty folder (without it, a temporary one), so an upload never publishes an
+  earlier run's files.
+- `--bundle` names a **Linux** folder build: every `libQt6*.so*` in it needs its submodule archive;
+  a folder without any is refused.
+- `--upload` needs `gh` and `GH_TOKEN`, never marks the release *Latest* (the update check must not
+  see it), and replaces an existing release's assets, title and notes.
+- **Publish the sources before the tag.** `release.yml`'s `validate` job fails when the sources
+  release does not hold the current versions (e.g. a bumped OpenCV, and with it FFmpeg, without a
+  re-run of the mirror). Only `release_dry_run.yml` passes `--skip-sources`.
+- Never delete a sources release while a download of its version exists.
 
-Publish the sources **before** the tag: the `validate` job of the release workflow fails a download
-whose sources release does not hold the current sources — a release of the right name that still
-carries an older FFmpeg or OpenCV fails as well, which is what a bumped OpenCV (and with it a new
-FFmpeg) without a re-run of the mirror looks like. The rehearsal in `release_dry_run.yml` is the
-one run that passes `--skip-sources`.
-
-A sources release is never deleted while a download that carries its version exists; that download
-promises it.
-
-A bumped `pyside6-essentials`, `shiboken6` or `opencv-python-headless` is therefore three steps:
-re-run the mirror, name the new versions in the Qt/PySide6 and FFmpeg entries of `NOTICE`, then
-`python tools/licenses/inventory.py --compile`. Dependabot groups the three, so they never hold up
-the weekly minor updates. `certifi` needs none of this: its entry names no version, because every
-certifi release on PyPI carries its own source.
+**Bumping `pyside6-essentials`, `shiboken6` or `opencv-python-headless`:** re-run the mirror, name
+the new versions in the Qt/PySide6 and FFmpeg entries of `NOTICE`, then run
+`python tools/licenses/inventory.py --compile`. Dependabot groups the three. `certifi` needs none of
+this: every certifi release on PyPI carries its own source.
 
 ---
 
@@ -272,8 +241,8 @@ For IT departments installing silently.
 | Only for me (default) | `%LOCALAPPDATA%\Programs\TeachersTeammate` | nothing |
 | All users | `%ProgramFiles%\TeachersTeammate` | administrator rights |
 
-Settings, models and add-ons are kept per Windows account in `%LOCALAPPDATA%\teachers_teammate`,
-whichever scope the program was installed in. An update keeps all of them.
+Settings, models and add-ons live per account in `%LOCALAPPDATA%\teachers_teammate`, in either
+scope, and survive an update.
 
 | Argument | Meaning |
 |---|---|

@@ -1,8 +1,7 @@
 # Extension points
 
-Where to make a change, and the rules that come with it. One section per task: read the one for
-the area you are about to touch. The rules every change must keep are in `AGENTS.md` at the
-repository root and are not repeated here; the longer explanations are in {doc}`development` and
+Where to make a change and the rules that come with it, one section per task. The rules every
+change keeps are in `CONTRIBUTING.md`; the explanations in {doc}`development` and
 {doc}`deployment`.
 
 ## New pipeline stage
@@ -17,7 +16,7 @@ reads for it goes into `texts/app.py:STAGE_TITLES`; the layers pass the stage ke
 ## New LLM provider
 
 A new file `<name>.py` in `infrastructure/providers/` and its two default models in
-`_model_defaults.py` (`config.py` reads them without importing a provider module);
+`teachers_teammate/_model_defaults.py` (`config.py` reads them without importing a provider module);
 `tests/unit/test_providers.py` checks both. `llm_factory.py` finds the file, and Bazel and the
 bundle spec take the folder as it is. The module exposes `create(model, **kwargs) -> BaseChatModel`
 and `PROVIDER = ProviderInfo(...)` (`domain/providers.py`) — the one place its facts live; the
@@ -58,7 +57,7 @@ and advice sentences come from `texts/privacy.py`.
 `RecognitionSwitchedOffError` → `ProcessingResult.skipped` → `RunSummary.skipped` →
 `FileDoneEvent.skipped`. Gate anything that needs the OCR model/engine on it.
 `RunService` (`application/run.py`) works out what a run can use; it opens PDFs,
-so background thread only. See {doc}`development` → "Text recognition switch"
+so background thread only. See {doc}`development` → "Text recognition switch".
 
 ## Ollama server: finding, installing, starting
 
@@ -85,7 +84,7 @@ only, the event is the truth. Wording in `gui/_run_status.py`. See {doc}`develop
 Id in `OCR_ENGINE_NAMES` (`domain/data_location.py`); a `build_<engine>_ocr` field and branch in
 `PipelineComponentFactory` / `StageBuilder.build_ocr` (`infrastructure/stage_builder.py`); its
 cache identity in `ocr_key` (`cache_keys.py`); a check in
-`_check_engine` / `_ocr_engine_issues`, an `IssueKind` and its row in
+`_ocr_engine_issues`, an `IssueKind` and its row in
 `gui/_fix_targets.py:fix_for`; its label in `texts/addons.py:OCR_ENGINE_LABELS`. The built-in
 reader is `ppocr` (`infrastructure/ppocr/`), its version `READER_VERSION` in
 `domain/local_models.py`. See {doc}`development` → "Text recognition engines"
@@ -139,22 +138,22 @@ Rules in `application/setup_plan.py` (`build_setup_plan`, a pure function of `Se
 No new `Config` key, no migration. Downloads need *Set up*; the network search, *Start Ollama*
 and *Test speed* each need their own click. **Start with the walkthrough**
 `tests/gui/test_gui_setup_walkthrough.py` (real wizard, service, threads and `MainWindow`
-against a fake Ollama). See {doc}`development` → "Setup Assistant"
+against a fake Ollama). See {doc}`gui` → "Setup Assistant"
 
 ## A service needs something from infrastructure
 
 1. Add the method to a `Protocol` in `application/ports.py` — narrow: only what the caller asks
    (`OllamaServer` carries a server's answers, `HardwareProbe` this computer's cards and memory,
    `AddonState` the packages folder, `NameModels` the spaCy models).
-2. Give the service the protocol as a required constructor argument and call it; nothing in the
-   method body imports the module any more.
+2. Give the service the protocol as a required constructor argument and call it; the method body
+   imports nothing.
 3. Build the implementation in `application/composition.py`. An adapter class whose methods call
    the module's functions by name keeps those functions patchable in a test, and no second
    construction is needed (see `SystemHardwareProbe`, `AddonPackages`, `SpacyModels`).
 4. Lower `BUDGET` in `tests/unit/test_lazy_import_budget.py` if the change removed a
    `# noqa: PLC0415`, and the count of that module in `PINNED` of
-   `tests/unit/test_application_infrastructure_budget.py` if the module imports `infrastructure`
-   no more; both tests fail when a number no longer matches.
+   `tests/unit/test_application_infrastructure_budget.py` if the module stops importing
+   `infrastructure`; both tests fail on a mismatch.
 
 What stays a lazy import: installs with progress and their own errors, the facts of the process
 (`inject_packages_dir()`, `can_install_addons()`), and pure helpers on strings and names.
@@ -177,7 +176,7 @@ Per-batch choices (documents, language, which steps run, Results) belong in `Con
 anything set once belongs on a page of the Settings window (`gui/settings/`). Add the widget to
 the owning page and its key to that page's `load` / `values` / `owned_keys`. Say where to change
 it with the `WHERE_*` constants in `texts/settings.py`, not a hard-coded menu path. See
-{doc}`development` → "Settings window"
+{doc}`gui` → "Settings window"
 
 ## New user-facing text
 
@@ -197,13 +196,13 @@ checks `raised.value.args[0].key`, not the wording.
 
 ## The window's tabs
 
-`MainWindow._tabs`: 0 *Documents* (`_main_splitter`), 1 *Check* (`gui/check/_page.py:CheckPage`;
+Tab 0 *Documents*, tab 1 *Check* (`gui/check/_page.py:CheckPage`, driven by `CheckController`;
 views in `_text_views.py`, list and card in `_side_panel.py`, scan in `_scan_view.py`). Only the
-teacher or a run start switches tabs (`_open_check()`); a finished file reloads the open document
-and never changes the tab. Edits go to the open document (`_current_preview_source_id`), never to
-the selected row, and land in `_store_edit()`. Marks are overlays (`ExtraSelection`), never
+teacher or a run start switches tabs; a finished file reloads the open document
+and never changes the tab. Edits go to the open document, never to
+the selected row, and land in `DocumentCommands` through `CheckController`. Marks are overlays (`ExtraSelection`), never
 document formatting. A document the run will redo is read-only from the run's start
-(`CheckPage.set_lock()`). See {doc}`development` → "The window tabs and the Check page"
+(`CheckPage.set_lock()`). See {doc}`gui` → "The window tabs and the Check page"
 
 ## Benchmark app changes
 
@@ -214,8 +213,8 @@ orchestration in `application/benchmark_service.py`; GUI in `gui/benchmark/` (re
 
 ## Model temperatures
 
-Teachers set none. `domain/model_catalog.py` holds `STEP_ONE_TEMPERATURES` (measured per model;
-`STEP_ONE_DEFAULT_TEMPERATURE` 0.4 otherwise) for step ①, and `MAKER_TEMPERATURES` (the model
+Teachers set none. `domain/model_catalog.py` holds `STEP_ONE_TEMPERATURES` (measured per model,
+else `STEP_ONE_DEFAULT_TEMPERATURE`) for step ①, and `MAKER_TEMPERATURES` (the model
 card) for steps ② and ③ and the content review. A `RequestProfile` carries one `StepProfile`
 (temperature, `think`, `options`) per step; `options` are sampling values besides the
 temperature (`SAMPLING_OPTIONS`), empty = the model's own tag decides. The cache key and the
@@ -256,15 +255,10 @@ review"
 
 ## New evaluation corpus
 
-Add `<name>.py` to `tools/evaluation/input/corpora/` (an `ADAPTER` class); a new test set is a
-module in `tools/evaluation/input/recipes/` that sets `RECIPE`. Nothing lists either: both packages find their
-modules. An adapter reads only the files it pins. Recipes of whole texts in bands share
-`input/recipes/_bands.py` (`select_texts`: slots, seed, splits); `gec-2026-12-heldout` is the set for
-confirming a tuning choice on splits the first never reads; each recipe holds its own `Rules`
-and never imports another recipe's numbers. How the tools measure and compare models is in
-`docs/development.md` (*Ollama model catalog*). The records the tools write — the test set with its
-texts, the runs, the marks — go to the private repository `teachers-teammate-evals`, which is what
-`--store` names; nothing of them is committed here.
+Add `<name>.py` with an `ADAPTER` to `tools/evaluation/input/corpora/`; a new test set is a module
+in `tools/evaluation/input/recipes/` that sets `RECIPE`. Both packages find their modules. Recipes
+of whole texts in bands share `input/recipes/_bands.py` (`select_texts`); each recipe holds its own
+`Rules` and never imports another's numbers. Details: `evaluations/TOOLS.md` → "Extending".
 
 ## Third-party licenses
 

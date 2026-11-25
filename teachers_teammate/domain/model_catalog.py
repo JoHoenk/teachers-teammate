@@ -436,7 +436,7 @@ class OllamaModelSpec:
     category: ModelCategory
     #: Memory (GB) the model needs in total while running at the app's proofreading window of
     #: 8192 tokens: weights, context and working buffers, on the card and in main memory
-    #: together.  Measured where a model was run (see ``docs/development.md``, *Model sizes*),
+    #: together.  Measured where a model was run (see ``evaluations/TOOLS.md``, *Model sizes and the memory agent*),
     #: otherwise estimated.
     memory_gb: float
     #: Approximate download size (GB), shown before the model is pulled.
@@ -451,8 +451,8 @@ class OllamaModelSpec:
     #: ``explanations ✓`` badge; it never switches the proofreading mode.
     structured_output: bool = False
     #: Extra memory (GB) per additional 8192 tokens of context window, measured with
-    #: ``verify_model_catalog fit`` at 8192, 16384 and 32768 tokens (see ``docs/development.md``,
-    #: *Model sizes*).
+    #: ``verify_model_catalog fit`` at 8192, 16384 and 32768 tokens (see ``evaluations/TOOLS.md``,
+    #: *Model sizes and the memory agent*).
     #: ``None`` — not measured, or a model the user added — means the window stays at 8192
     #: tokens.  It cannot be derived from ``memory_gb``: how fast a context cache grows depends
     #: on the model's attention design (sliding-window or linear-attention layers grow much

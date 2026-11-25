@@ -1,9 +1,7 @@
 # Advanced User Guide
 
-This guide goes deeper than *Using the App*: how text recognition works, which AI models suit
-your computer, what the image preparation and the anonymization do, and how to get better
-proofreading. Everything here is set in the app's window; the settings file and the command line
-are at the end.
+Text recognition, AI models, image preparation, anonymization and better proofreading, in more
+depth than *Using the App*. The settings file and the command line are at the end.
 
 ## Text recognition
 
@@ -26,9 +24,9 @@ range (`192.168.…`, `10.…`, `172.16.…`–`172.31.…`, Tailscale's `100.64
 `.local`, `.lan`, `.fritz.box`, `.intern`, `.internal`, `.home` or `.corp`, or a name without a
 dot. Any other address counts as an online service, and the app refuses to read pages there and
 asks before it sends text. The app does not look names up, so a name under your school's own
-domain (`ollama.myschool.de`) counts as online: enter the server's address instead. It shows the
-server's name in the tooltip of the place. Plain `http://` to another computer or server is not
-encrypted; the app says so next to the engine or service you pick, not as an error.
+domain (`ollama.myschool.de`) counts as online: enter the server's address instead.
+Plain `http://` to another computer or server is not encrypted; the app says so next to the engine
+or service you pick, not as an error.
 
 **Find…** on that page looks for a server:
 
@@ -50,9 +48,9 @@ encrypted; the app says so next to the engine or service you pick, not as an err
 ### The built-in reader (PP-OCR)
 
 Two small models from the [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) project
-(Apache-2.0) that run inside the app, on the processor, without a server or a graphics card. They
-read about fifty languages and read print better than handwriting. Choose **Built-in reader
-(PP-OCR)** under **Settings → AI models…**. The files (31 MB) come with the app.
+(Apache-2.0) that come with the app and run on the processor, without a server or a graphics
+card. They read about fifty languages, print better than handwriting. Choose **Built-in reader
+(PP-OCR)** under **Settings → AI models…**.
 
 ---
 
@@ -129,15 +127,14 @@ Set under **Settings → Scan quality…**:
   | Size | the page is larger than A4 at 300 DPI | scales it down |
   | Light | the paper is unevenly lit | evens out shadows |
   | Tilt | the writing is tilted by 0.3° to 10° | straightens it |
-  | Gray | the page is read by Ollama | sends a gray page (the built-in reader gets colour) |
 
 - **Original page** sends the pages as they are, to check what the preparation changes.
 
 **Preview…** shows a page before and after, and says what was done, for example "Fixed for
 reading: page turned, shadows evened out" (or "As scanned — no fixes needed").
 
-**Page models.** *Turn* and *Flatten* need two small models (39 MB, PaddlePaddle, Apache-2.0),
-which come with the app. Without them *Automatic* skips those two steps.
+**Page models.** *Turn* and *Flatten* use two small models (PaddlePaddle, Apache-2.0) that come
+with the app. Without them *Automatic* skips those two steps.
 
 **PDFs** (under **Expert settings**). **PDF DPI** is the resolution a PDF page is turned into an
 image at: 300 (the default) is right for reading; 150 is faster for a draft. **PDF text layer**
@@ -234,40 +231,24 @@ but they share the graphics card.
 
 ---
 
+## Where the app keeps its files
+
+| System | Settings (`ocr.toml`) | Data, logs and stored results |
+|---|---|---|
+| Windows | `%LOCALAPPDATA%\teachers_teammate` | `%LOCALAPPDATA%\teachers_teammate` |
+| macOS | `~/Library/Application Support/teachers_teammate` | `~/Library/Application Support/teachers_teammate` |
+| Linux | `~/.config/teachers_teammate` | `~/.local/share/teachers_teammate` |
+
 ## If the app starts slowly or stops answering
 
-Start the app once with diagnostics switched on. On Windows, copy the shortcut and add this after
-the target; on macOS and Linux, add it to the command:
-
-```text
---diagnose
-```
-
-Do what was slow, close the app, and send the file `logs/diagnostics.log` to the developers. It is
-in the app's data folder:
-
-| System | Folder |
-|---|---|
-| Windows | `%LOCALAPPDATA%\teachers_teammate` |
-| macOS | `~/Library/Application Support/teachers_teammate` |
-| Linux | `~/.local/share/teachers_teammate` |
-
-It records how long each part of the start took and what the program was busy with while the
-window did not answer. It contains no documents, file names or settings.
-
----
+Start the app once with `--diagnose` (Windows: copy the shortcut and add it after the target).
+Do what was slow, close the app, and send `logs/diagnostics.log` from the data folder to the
+developers. It records how long each part of the start took and what the app was busy with while
+it did not answer — no documents, file names or settings.
 
 ## The settings file
 
-The window saves its settings in `ocr.toml`:
-
-| System | Folder |
-|---|---|
-| Windows | `%LOCALAPPDATA%\teachers_teammate` |
-| macOS | `~/Library/Application Support/teachers_teammate` |
-| Linux | `~/.config/teachers_teammate` |
-
-Each setting is one line, for example:
+The window saves its settings in `ocr.toml`, one setting per line:
 
 ```toml
 ocr_model = "glm-ocr:q8_0"
@@ -275,54 +256,39 @@ correction_provider = "mistral_eu"
 anonymization_enabled = true
 ```
 
-A value the app does not know falls back to the default, with a warning in the log.
+An unknown value falls back to the default, with a warning in the log. A file the app cannot read
+is copied to `ocr.toml.broken` and the app starts with default settings; your settings stay in that
+copy.
 
-A file the app cannot read — damaged, or saved by an old editor in a different encoding — is kept
-as it is: the app copies it to `ocr.toml.broken` in the same folder and starts with default
-settings. Your saved settings stay in that copy.
+---
 
 ## The command line
 
-The command line runs the same processing as the window and reads the same `ocr.toml`; its
-options override the file. To see every option:
-
-```bash
-teachers-teammate --help
-```
-
-`teachers-teammate --version` prints the version, the copyright line and the license the app is
-under, and needs no folders. It works where the command line is installed (with pip); in a
-download, the same text is in **Help → About** and **Help → Licenses**.
-
-An access key works the same in both: save it under **Settings → Online services** and the
-command line uses it too. A key in the environment wins over the saved one. The keychain is
-asked only when a run needs an online service, so a batch without one starts without a prompt;
-when the key is only in the keychain, macOS may ask once for permission the first time.
-
-A typical run:
+The command line runs the same processing as the window, reads the same `ocr.toml`, and its options
+override the file. `teachers-teammate --help` lists every option; `--version` prints the version
+and license.
 
 ```bash
 teachers-teammate -i ./scans -o ./results --docx
 ```
 
-It exits with `0` when no file failed and `1` when a file failed or the run could not start. A
-scan skipped because recognition is off does not change the exit code.
+**Access keys** saved under **Settings → Online services** work here too; a key in the environment
+wins. The keychain is asked only when a run needs an online service (macOS may ask for permission
+once).
 
-Before the first file, the command line asks the same question the window asks above Run: can
-this run start? When something is missing it says what, together with the way to fix it, and
-exits with `1` without touching a file:
+**Exit code:** `0` when no file failed, `1` when a file failed or the run could not start. A scan
+skipped because recognition is off does not count.
 
-- the built-in reader's model files are not downloaded: the command that downloads them;
-- a model is not downloaded in Ollama: `ollama pull <model>`;
-- no API key for an online service: the environment variable to set, or the key in Settings;
-- Ollama is not running, not installed, or does not answer at `--ollama-url`: start it, where to
-  download it, or the address to check;
-- an add-on is missing or out of date: install it on the Add-ons page; one that waits for a
-  restart: run the command again;
-- text files would be saved in the input folder: `-o` with another folder;
-- text recognition is off and no queued file has text to use without it: run again with
-  `--recognition`, or queue text files.
+**Before the first file** it runs the same check as the window's line above **Run Selected**. When
+something is missing it says what and how to fix it, and exits with `1` without touching a file:
 
-Free memory is checked as well, but there it only warns: the run goes ahead with
-`--ignore-memory-check`. When Ollama is busy with another model, a line says the first file
-waits.
+- the built-in reader's model files are missing: the command that downloads them;
+- a model is missing in Ollama: `ollama pull <model>`;
+- no key for an online service: the environment variable to set, or the key in Settings;
+- Ollama is not running, not installed or not answering at `--ollama-url`;
+- an add-on is missing, out of date, or waits for a restart;
+- text files would be written into the input folder: use `-o` with another folder;
+- recognition is off and no queued file has text: add `--recognition` or queue text files.
+
+Too little free memory only warns; `--ignore-memory-check` skips the check. When Ollama is busy with
+another model, the first file waits and a line says so.

@@ -735,12 +735,21 @@ app_test(
 )
 
 app_test(
+    "unit/test_walkthrough_upgrade.py",
+    extra_srcs = [
+        "e2e/__init__.py",
+        "e2e/walkthrough.py",
+    ],
+    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+app_test(
     "unit/test_update_banner_script.py",
     extra_srcs = [
         "e2e/__init__.py",
         "e2e/update_banner.py",
     ],
-    deps = _GUI_DEPS + _INFRASTRUCTURE_LIB,
+    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 app_test(
@@ -2149,6 +2158,24 @@ app_test(
         "//teachers_teammate:gui_layer_lib",
         # The proofreading walk talks to the real ``ollama`` client.
         "@ocr_test_dependencies//ollama:pkg",
+    ],
+)
+
+# The walk over the data an earlier version left: the same window, the same reader, and a
+# settings file written by hand where a bundle walk would find the old version's.
+app_test(
+    "gui/test_gui_upgrade_walk.py",
+    size = "large",
+    data = _READER_MODEL_DATA + _PAGE_MODEL_DATA,
+    env = _MODEL_ENV,
+    extra_srcs = [
+        "e2e/__init__.py",
+        "e2e/walkthrough.py",
+    ],
+    tags = ["walkthrough"],
+    deps = _GUI_DEPS + _PIPELINE_DEPS + [
+        "//teachers_teammate:gui_layer_lib",
+        "//teachers_teammate:infrastructure_lib",
     ],
 )
 

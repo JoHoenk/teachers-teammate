@@ -87,6 +87,83 @@ def test_the_macos_install_walks_through_the_replaced_bundle() -> None:
     assert '--screenshots "${E2E_SHOTS}"' in script[walk:]
 
 
+def test_the_deb_container_opens_the_old_versions_data() -> None:
+    """
+    Given  the .deb install test, which installs the newest published release over its own files
+    When   the old version's data and the walk over it are read
+    Then   the old version leaves settings and an add-on folder its own pip filled before the
+           update, and the new app is walked through that folder after it, with its own result
+    """
+    script = _script("DEB_INSTALL_SCRIPT", "test_deb_install.sh")
+
+    fixture = script.index("/tmp/old-data/ocr.toml")
+    addon = script.index("--_pip_install_mode install")
+    update = script.index("--allow-downgrades")
+    walk = script.index("--after-upgrade /tmp/old-data --screenshots /smoke/e2e-upgrade-shots")
+    assert fixture < addon < update < walk
+    # The add-on goes where the app looks for it, not into the old folder.
+    assert '/teachers_teammate/packages" --prefer-binary spacy' in script[addon:]
+    # A failed install of the old add-on stops the script (`set -e`): no warning, no skipped walk.
+    assert "set -euo pipefail" in script[script.index("bash -c") : fixture]
+    assert "installed no add-on" not in script
+
+
+def test_the_macos_install_opens_the_old_versions_data() -> None:
+    """
+    Given  the dmg install test, which replaces an installed release with the built bundle
+    When   the old version's data and the walk over it are read
+    Then   the old bundle leaves settings and an add-on folder its own pip filled before the
+           replacement, and the new bundle is walked through that folder after its own walk
+    """
+    script = _script("MACOS_INSTALL_SCRIPT", "test_macos_install.sh")
+
+    old_app = script.index('cp -R "${old_app}" "${APP}"')
+    fixture = script.index('"${OLD_DATA}/ocr.toml"')
+    addon = script.index("--_pip_install_mode install")
+    walk = script.index('--after-upgrade "${OLD_DATA}" --screenshots "${E2E_UPGRADE_SHOTS}"')
+    assert old_app < fixture < addon < walk
+    assert '--target "${HOME}/Library/Application Support/teachers_teammate/packages"' in script
+    assert "set -euo pipefail" in script[:fixture]
+    assert "installed no add-on" not in script
+    # After the ordinary walk, so a failure in either names its own result.
+    assert script.index('"${E2E_OUT}" --screenshots "${E2E_SHOTS}"') < walk
+
+
+def test_the_windows_installer_opens_the_old_versions_data() -> None:
+    """
+    Given  the installer test, which updates over v0.5.6 and over the newest published release
+    When   both update steps and the upgrade walk are read
+    Then   each step lets the version it replaces leave settings and an add-on folder, the new
+           copy is walked through that folder before the uninstaller, and the settings file is
+           written as ASCII, which keeps the byte order mark away
+    """
+    script = _script("WINDOWS_INSTALLER_SCRIPT", "test_windows_installer.ps1")
+
+    # The definition and one call per update step.
+    assert script.count("Assert-UpgradeWalkthroughPasses") == 3
+    body = script[script.index("function Assert-UpgradeWalkthroughPasses") :]
+    body = body[: body.index("\n}\n")]
+    assert "'--after-upgrade'" in body
+    assert "'--_run_script'" in body
+
+    assert script.count("Write-OldVersionData $OldData") == 2
+    assert script.count("Install-OldVersionAddon $AllUsersDir") == 2
+    assert "'--_pip_install_mode', 'install', '--target'" in script
+    assert "'--prefer-binary', 'spacy'" in script
+    assert "'the old version installs the name-detection add-on'" in script
+    assert "installed no add-on" not in script
+    assert (
+        "Set-Content -LiteralPath (Join-Path $Root 'ocr.toml') -Value $lines -Encoding ascii"
+        in (script)
+    )
+    # Each call comes before the uninstaller that follows it, which removes the data.
+    call = "Assert-UpgradeWalkthroughPasses $AllUsersDir $OldData"
+    start = 0
+    while (found := script.find(call, start)) != -1:
+        assert script.index("Invoke-Uninstaller", found) > found
+        start = found + len(call)
+
+
 def test_the_windows_installer_walks_through_the_installed_copy() -> None:
     """
     Given  the installer test, which installs, updates and uninstalls the setup

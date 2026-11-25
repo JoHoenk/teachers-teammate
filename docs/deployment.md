@@ -71,7 +71,8 @@ the banner it should show (`tests/e2e/update_banner.py`, needs the network), and
 work through the app's own window (`tests/e2e/walkthrough.py`; see [testing.md](testing.md) → "The
 app walkthrough" and "The update banner"). It then installs the result on fresh systems
 (Ubuntu 24.04/26.04 and Debian 13 containers, macOS 15/26, Windows Server 2022/2025), including an
-update from the newest published release. In the containers the walk runs twice when the bundle
+update from the newest published release, after which the new copy walks through the data that
+release left behind. In the containers the walk runs twice when the bundle
 carries the Wayland platform plugin: on `xvfb` and under a headless `weston`, and the second result
 has to name Wayland as the platform. Not covered by CI, so checked by hand on a VM before a
 release: the installer's interactive pages, the UAC prompt, a real desktop (fonts, icons, a window

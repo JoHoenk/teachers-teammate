@@ -48,6 +48,13 @@ OPEN_LOG_FOLDER = "openLogFolderAction"
 LICENSES = "licensesAction"
 ABOUT = "aboutAction"
 
+# ── the Settings window ──────────────────────────────────────────────────────
+
+ADDONS_UPDATE_BANNER = "addonsUpdateBanner"
+"""The line that asks for the add-ons to be installed again; hidden while they are current."""
+ADDONS_UPDATE_BUTTON = "addonsUpdateButton"
+"""The button on that line; it waits while the round that installs them runs."""
+
 # ── the windows of their own ─────────────────────────────────────────────────
 
 BENCHMARK_WINDOW = "benchmarkWindow"

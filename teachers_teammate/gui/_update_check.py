@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QObject
 
-from ..application.releases import ReleaseOffer
+from ..domain.releases import ReleaseOffer
 from ._background import run_in_background
 
 

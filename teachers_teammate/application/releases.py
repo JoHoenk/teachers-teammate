@@ -36,6 +36,7 @@ class ReleaseService:
             tag, url = self._feed.latest()
         except ReleaseFeedError as exc:
             status = f" {exc.status}" if exc.status else ""
-            _logger.info("The update check failed: %s%s", type(exc).__name__, status)
+            limited = " (rate limited)" if exc.rate_limited else ""
+            _logger.info("The update check failed: %s%s%s", type(exc).__name__, status, limited)
             return None
         return newer_release(tag, url, self._installed_version)

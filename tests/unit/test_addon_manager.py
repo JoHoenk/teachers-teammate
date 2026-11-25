@@ -1323,6 +1323,72 @@ def test_a_failed_update_removes_the_add_on_it_could_not_reinstall(
     assert addon_manager.addons_outdated() is False
 
 
+def test_an_update_that_failed_for_a_reason_that_can_pass_keeps_the_old_copy(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a folder with an outdated numpy (the bundle pins another one) and spaCy, whose
+           reinstall fails because the computer is offline
+    When   the add-ons are updated
+    Then   spaCy and the outdated numpy it needs stay, nothing is reported as gone, and the
+           folder is still outdated so the update can be repeated
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "numpy", "2.4.0", files=("numpy/core/a.py",))
+    _dist_info(pkg_dir, "spacy", "3.8.0", files=("spacy/pipeline.py",))
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    monkeypatch.setattr(addon_manager, "inject_packages_dir", lambda: None)
+    monkeypatch.setattr(addon_manager, "addon_constraints_path", lambda: frozen_bundle)
+
+    def _install(_packages: list[str], _target: Path, _cb: object, **_kw: object) -> None:
+        raise AddonInstallError(InstallFailure.OFFLINE)
+
+    monkeypatch.setattr(addon_manager, "install_packages_subprocess", _install)
+
+    with pytest.raises(addon_manager.AddonUpdateError) as raised:
+        addon_manager.update_installed_addons(lambda _line: None)
+
+    assert raised.value.gone == []
+    assert (pkg_dir / "spacy-3.8.0.dist-info").is_dir()
+    assert (pkg_dir / "numpy-2.4.0.dist-info").is_dir()
+    assert addon_manager.addons_outdated() is True
+
+
+def test_a_failed_update_does_not_remove_a_copy_another_requirement_of_the_name_installed(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  two add-on requirements for spaCy, where the first reinstall succeeds and the second
+           fails for good
+    When   the add-ons are updated
+    Then   spaCy stays in the folder: the copy the first install wrote is not removed by the
+           clean-up of the second
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0", files=("spacy/pipeline.py",))
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    monkeypatch.setattr(addon_manager, "inject_packages_dir", lambda: None)
+    monkeypatch.setattr(addon_manager, "addon_constraints_path", lambda: frozen_bundle)
+    monkeypatch.setattr(
+        addon_manager,
+        "installed_addon_requirements",
+        lambda _pkg_dir=None: ["spacy>=3.7", "spacy>=3.7,<4"],
+    )
+
+    def _install(packages: list[str], _target: Path, _cb: object, **_kw: object) -> None:
+        if packages[0] != "spacy>=3.7":
+            raise RuntimeError("no matching distribution")
+
+    monkeypatch.setattr(addon_manager, "install_packages_subprocess", _install)
+
+    with pytest.raises(addon_manager.AddonUpdateError) as raised:
+        addon_manager.update_installed_addons(lambda _line: None)
+
+    assert raised.value.gone == []
+    assert (pkg_dir / "spacy-3.8.0.dist-info").is_dir()
+    assert (pkg_dir / "spacy" / "pipeline.py").is_file()
+
+
 def test_a_failed_update_keeps_the_fresh_copy_another_add_on_brought(
     tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

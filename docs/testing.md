@@ -246,6 +246,22 @@ names instead; the Qt xcb plugin needs `libxcb-cursor0` and the other `libxcb-*`
 `.github/workflows/build_package.yml` installs; the `.deb` depends on them and a bare checkout
 does not have them.
 
+### Over the data an earlier version left
+
+`--after-upgrade <root>` checks the folder an earlier version left instead of playing teacher: it
+reads the settings file that version wrote and fails on a notice this version gives about it,
+builds the real window on the folder and fails if the app copies the file aside as broken, queues
+the documents the old run listed, and runs them. It fails when a stored text or a teacher's
+correction is gone, when the log holds an `ERROR` line or a traceback, or when the settings file
+lost a value it held. A stored result comes back unless `READER_VERSION` or `AUTO_VERSION` asks
+for a new reading; a review that no longer fits is dropped with a warning, as everywhere else.
+
+The add-on folder is the one the old version filled: a folder the update made outdated shows
+`ADDONS_OUTDATED` in readiness, and the walk clicks *Update add-ons* on the Settings window's
+Add-ons page and requires the banner to go. That click installs from the network, so this walk
+needs one. `--root` is refused beside `--after-upgrade`: the folder is the old one's, and the
+walk never removes one that was there before.
+
 ### On each system
 
 Three steps are about one system's behaviour: `PLATFORM_STEPS` names the systems each one runs on
@@ -281,10 +297,17 @@ Each container walks twice when the bundle carries the Wayland platform plugin: 
 `platform: wayland`, because Qt falls back to another plugin without a word. A bundle without
 that plugin logs that the Wayland walk is skipped.
 
+The three install jobs walk once more, over the data the release they updated from left: the old
+version's settings file, and an add-on folder that version's own pip filled, so the update finds it
+outdated. The install tests write both before they install the new package — the settings keys of
+that release, no `check_for_updates` among them — and walk it after the update, through the
+installed copy and before the uninstaller removes the data.
+
 Each job uploads `e2e.json` and the screenshots even when the step failed
 (`<prefix>-<platform>-e2e` for a build machine, `<prefix>-<platform>-installed-e2e-<image or os>`
 for an install, where a container uploads its Wayland walk as `e2e-wayland.json` beside the xcb
-one and the compositor's `weston.log` beside both): the file says which step broke and what the
+one and the compositor's `weston.log` beside both, and every install keeps its walk over the old
+data as `e2e-upgrade.json` with `e2e-upgrade-shots/`): the file says which step broke and what the
 guards caught. Every one of those steps has a time limit, and the script's own watchdog — armed
 before the app services are built — ends a hung app with a result before that limit is reached.
 
@@ -296,7 +319,7 @@ installers, and nothing the app writes while it runs can land in one of them.
 One method on `Walk`, one row in `STEPS` (`tests/e2e/walkthrough.py`) — or in `PROOFREADING_STEPS`
 with the step it follows, for one that needs a model behind it: those run only when the walk is
 given a `ProofreadingSetup`; or in `PLATFORM_STEPS` with the step it follows and the systems it
-belongs to. The step clicks what a teacher clicks through `_handles`, and declares the dialogs it
+belongs to; or in `UPGRADE_STEPS`, whose steps make up the walk over an earlier version's data. The step clicks what a teacher clicks through `_handles`, and declares the dialogs it
 expects with `self._answers.expect` before it triggers them — any other dialog fails the step. A
 menu or a window the step opens itself goes through `_in_modal`. Waits are conditions
 with a deadline (`_settle`), never sleeps; a run is waited for with `_wait_run`. New settings go

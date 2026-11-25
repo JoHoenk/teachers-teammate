@@ -4924,6 +4924,32 @@ def test_no_update_check_runs_when_the_switch_is_off(qtbot, monkeypatch) -> None
 
 
 @pytest.mark.gui
+@pytest.mark.parametrize(("line", "asks"), [("check_for_updates = false", False), ("", True)])
+def test_the_update_switch_in_the_settings_file_decides_the_check(
+    qtbot, monkeypatch, tmp_path, line: str, asks: bool
+) -> None:
+    """
+    Given  a saved settings file that switches the update check off, or leaves it at its default
+    When   the main window is built and reads that file
+    Then   the check is asked for only when the file leaves it on, because the switch is read
+           after the file is loaded
+    """
+    config_path = tmp_path / "ocr.toml"
+    config_path.write_text(f'language = "German"\n{line}\n', encoding="utf-8")
+    asked = record_update_checks(monkeypatch)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
+    monkeypatch.setattr(
+        "teachers_teammate.application.setup_plan.SetupService.resolve_config_path",
+        lambda self, _: config_path,
+    )
+
+    win = MainWindow(app_service=real_service(), worker_factory=DummyWorker)
+    qtbot.addWidget(win)
+
+    assert asked == ([win._show_update_banner] if asks else [])
+
+
+@pytest.mark.gui
 def test_the_update_banner_escapes_what_the_release_feed_sent(qtbot, monkeypatch) -> None:
     """
     Given  a release whose version and address carry markup and a quote

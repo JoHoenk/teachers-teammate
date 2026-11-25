@@ -1,9 +1,9 @@
 """Which published release is newer than this build, and whether it may be offered.
 
-Pure: the answer of the release feed goes in, the offer or nothing comes out.  The rules are the
-ones the app has always used — a development build is never offered a release, an installed
-version that cannot be read neither, a pre-release sorts below the release it belongs to, and
-only a page of this project's own releases is opened.
+Pure: the answer of the release feed goes in, the offer or nothing comes out.  A development
+build is never offered a release, an installed version that cannot be read neither, a
+pre-release sorts below the release it belongs to, and only a page of this project's own
+releases is opened.
 """
 
 from __future__ import annotations

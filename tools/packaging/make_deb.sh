@@ -49,6 +49,9 @@ if [[ -z "${DEPENDS}" ]]; then
     echo "ERROR: could not measure the Depends: line." >&2
     exit 1
 fi
+# The bundle links no CA store: every HTTPS request (update check, model download, provider) reads
+# the system's, which a minimal install does not have. The smoke test checks it.
+DEPENDS="${DEPENDS}, ca-certificates"
 echo "Depends: ${DEPENDS}"
 
 # ── Clean and create package directory structure ─────────────────────────────

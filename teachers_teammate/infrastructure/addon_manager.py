@@ -897,6 +897,17 @@ def addon_waits_for_restart(distribution: str) -> bool:
     return _normalise(distribution) in pending_addon_packages()
 
 
+#: Failures that say nothing about the installed copy: the same update can work later.
+_RETRYABLE = frozenset(
+    {InstallFailure.OFFLINE, InstallFailure.DISK_FULL, InstallFailure.FILE_IN_USE}
+)
+
+
+def _is_retryable(error: RuntimeError) -> bool:
+    """Return whether *error* is one a later try can get past, so the old copy stays."""
+    return isinstance(error, AddonInstallError) and error.reason in _RETRYABLE
+
+
 def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
     """Bring the add-on folder in line with the app after an app update.
 
@@ -906,10 +917,12 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
     ``py3-none-any`` model runs on any Python.
 
     Each add-on is installed on its own: one without a wheel for this Python (or a failed
-    download) does not keep the others from updating.  An add-on whose install failed is removed
-    from the folder, so the folder holds neither its old copy nor a new one: readiness then says
-    the add-on is missing, which is true, instead of offering an add-on that would run against
-    the bundle's packages it was not built for.
+    download) does not keep the others from updating.  An add-on whose install failed for a reason
+    that stays (no version fits, a conflict with the bundle) is removed from the folder, so the
+    folder holds neither its old copy nor a new one: readiness then says the add-on is missing,
+    which is true, instead of offering an add-on that would run against the bundle's packages it
+    was not built for.  A failure a later try can get past (offline, disk full, a file in use)
+    keeps the old copy, and the folder stays outdated so the update can be repeated.
 
     Raises:
         OSError: if the folder cannot be written.
@@ -921,6 +934,7 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
         raise RuntimeError(addons_update_needs_install())
     pkg_dir = get_packages_dir()
     failures: list[tuple[str, RuntimeError]] = []
+    installed_names: set[str] = set()
     before = frozenset(folder for _name, _version, folder in _distributions(pkg_dir))
     for requirement in installed_addon_requirements(pkg_dir):
         try:
@@ -928,12 +942,23 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
         except RuntimeError as exc:
             _logger.warning("Could not update %s: %s", requirement, exc)
             failures.append((requirement, exc))
+        else:
+            installed_names.add(_requirement_name(requirement))
+    # A copy is dropped only when retrying cannot help.  A name another requirement just
+    # installed is not touched: the fresh copy lives under the same folder name.
+    unusable = [
+        requirement
+        for requirement, error in failures
+        if _requirement_name(requirement) not in installed_names and not _is_retryable(error)
+    ]
     gone = [
         requirement
-        for requirement, _error in failures
+        for requirement in unusable
         if drop_addon_distribution(pkg_dir, requirement, before)
     ]
-    drop_outdated_shared_packages(pkg_dir, addon_constraints_path())
+    # An old copy that stays still needs the shared packages it was installed with.
+    if len(unusable) == len(failures):
+        drop_outdated_shared_packages(pkg_dir, addon_constraints_path())
     drop_foreign_packages(pkg_dir)
     inject_packages_dir()
     for addon in _ADDON_CHECK_MODULE:

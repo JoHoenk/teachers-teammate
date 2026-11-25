@@ -37,6 +37,7 @@ STDLIB = frozenset(
         "tempfile",
         "threading",
         "time",
+        "tomllib",
         "traceback",
         "typing",
         "winreg",

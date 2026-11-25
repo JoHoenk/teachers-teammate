@@ -21,6 +21,12 @@ test code (:class:`~tests.fakes.fake_ollama.ProofreadingAnswers`) and stays outs
 A few steps belong to one system and run only there (``PLATFORM_STEPS``); docs/testing.md →
 "On each system" says which ones and what they check.
 
+With ``--after-upgrade <root>`` the same file walks the folder an earlier version left instead
+of playing teacher: it checks that the app opens those settings without replacing a value, lists
+the old documents, hands back their stored texts and reviews, updates the add-ons and writes the
+settings back unchanged.  That is what an update actually has to survive, and the installer tests
+run it right after the update (``docs/testing.md`` → "In CI").
+
 The result is one JSON file, written when a step fails too, because a windowed build on Windows
 has no console.  The exit code is 0 only when every step passed.
 
@@ -45,6 +51,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import traceback
 from typing import Any
 
@@ -82,13 +89,15 @@ from PySide6.QtWidgets import (
 )
 
 from teachers_teammate import __version__
+from teachers_teammate.application.check_document import CheckDocument
 from teachers_teammate.application.check_items import ItemKind
 from teachers_teammate.application.composition import AppServices, build_app_services
 from teachers_teammate.application.queue import StageState
 from teachers_teammate.application.run import state_store_for
-from teachers_teammate.config import Config, load_config_file
+from teachers_teammate.config import Config, load_config_file, save_settings_file
 from teachers_teammate.domain.output_files import DOCX_SUFFIX, output_path
 from teachers_teammate.domain.proofreading.review import CorrectionReview
+from teachers_teammate.domain.requirements import IssueKind
 from teachers_teammate.domain.run_summary import FileStatus, RunStatus, RunSummary
 from teachers_teammate.domain.stages import ProgressStage
 from teachers_teammate.gui import _handles
@@ -103,6 +112,7 @@ from teachers_teammate.gui.composition import build_main_window
 from teachers_teammate.gui.settings import SettingsPage, SettingsWindow
 from teachers_teammate.infrastructure.proofreading.schemas import Category
 from teachers_teammate.infrastructure.state_repository import StateRepository
+from teachers_teammate.settings_schema import SETTINGS
 from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts import main_window as win
 from teachers_teammate.texts._types import Answer, StandardButton
@@ -115,6 +125,12 @@ RUN_S = 180.0
 #: The whole walk; the watchdog ends the process at this point, so a deadlock cannot run into
 #: the CI job's own limit.  Well under the Bazel target's timeout, so the result is written first.
 WALK_S = 600.0
+#: The upgrade walk: it starts on the data of an earlier version, runs it through the reader once
+#: more, and installs the add-ons again from the network when the folder is outdated.
+UPGRADE_WALK_S = 900.0
+#: The add-on update inside the upgrade walk: pip downloads and unpacks spaCy and its language
+#: model, which is minutes on a cold runner.
+ADDON_UPDATE_S = 600.0
 #: How long the walk waits for the app's background tasks after a window closed.  A hardware probe
 #: is a subprocess with a 5 s limit of its own, and a cold machine is slower than that.
 BACKGROUND_MS = 30_000
@@ -220,6 +236,19 @@ def walk_steps(*, proofreading: bool, platform: str = sys.platform) -> tuple[tup
     return tuple(steps)
 
 
+#: The steps of the walk over the data an earlier version left (``--after-upgrade``): ``(name,
+#: method)``.  The walk plays nobody; it checks that the app opens what is already there.
+UPGRADE_STEPS: tuple[tuple[str, str], ...] = (
+    ("old-data", "_upgrade_data"),
+    ("window", "_upgrade_start"),
+    ("documents", "_upgrade_queue"),
+    ("results", "_upgrade_run"),
+    ("add-ons", "_upgrade_addons"),
+    ("settings", "_upgrade_settings"),
+    ("log", "_upgrade_log"),
+)
+
+
 @dataclasses.dataclass(frozen=True)
 class ProofreadingSetup:
     """A proofreading server and the model the walk asks: the stand-in's address, tag and words.
@@ -293,6 +322,18 @@ def saved_config(root: Path) -> Config:
         output_dir=Path(output_text) if output_text else input_dir,
         recursive=True,
     )
+
+
+#: The settings keys that hold a folder: the app writes them back in the form it uses, so a file
+#: written by other means may differ in its separators alone.
+PATH_SETTINGS = ("input", "output")
+
+
+def _same_setting(key: str, before: Any, after: Any) -> bool:
+    """Whether the app wrote *before* back as *after*; a folder compares as a path."""
+    if key in PATH_SETTINGS:
+        return Path(str(before)) == Path(str(after))
+    return before == after
 
 
 def write_inputs(folder: Path) -> None:
@@ -690,18 +731,26 @@ class Modals:
 
 
 class Warnings(logging.Handler):
-    """Collects what the app logs at WARNING and above; a warning is reported, not a failure."""
+    """Collects what the app logs at WARNING and above, with its level, as a diagnostic.
+
+    A warning is reported, not a failure; an error line is a failure in the upgrade walk, which
+    has no log file: a script run starts no logging (``frozen_modes.run_script`` dispatches before
+    ``start_logging``), so what the app logs reaches the result through this handler only.
+    """
 
     def __init__(self, into: list[str]) -> None:
         super().__init__(level=logging.WARNING)
         self._into = into
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Add *record* to the result's ``warnings``."""
+        """Add *record* to the result's ``warnings``: its level, its logger and its message."""
         try:
-            self._into.append(f"{record.name}: {record.getMessage()}")
+            line = f"{record.levelname} {record.name}: {record.getMessage()}"
+            if record.exc_info:
+                line = f"{line}\n{self.format(record)}"
+            self._into.append(line)
         except Exception:  # noqa: BLE001  # a logging handler never breaks the walk
-            self._into.append(f"{record.name}: <unprintable record>")
+            self._into.append(f"{record.levelname} {record.name}: <unprintable record>")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -803,11 +852,11 @@ class Watchdog:
     deadlock must end with a file and an exit code, never with the CI job's own limit.
     """
 
-    def __init__(self, out: Path | None) -> None:
+    def __init__(self, out: Path | None, seconds: float = WALK_S) -> None:
         self._out = out
         self._walk: Walk | None = None
         self._started = False
-        self._timer = threading.Timer(WALK_S, self._fire)
+        self._timer = threading.Timer(seconds, self._fire)
         self._timer.daemon = True
 
     def start(self) -> None:
@@ -872,7 +921,8 @@ class Walk:
     ``screenshots`` a folder for one picture per window state (left empty under Bazel);
     ``out`` where the watchdog writes the result if the walk hangs (``None``: it only exits);
     ``watchdog`` the one ``main`` armed before the app services, or ``None`` for one of its own;
-    ``proofreading`` the server the run proofreads with, or ``None`` for a walk without one.
+    ``proofreading`` the server the run proofreads with, or ``None`` for a walk without one;
+    ``after_upgrade`` walks over the data an earlier version left instead of playing teacher.
     """
 
     def __init__(
@@ -884,12 +934,18 @@ class Walk:
         out: Path | None = None,
         watchdog: Watchdog | None = None,
         proofreading: ProofreadingSetup | None = None,
+        after_upgrade: bool = False,
     ) -> None:
         self._root = root
         self._service = service
         self._screenshots = screenshots
         self._proofreading = proofreading
-        self._watchdog = watchdog if watchdog is not None else Watchdog(out)
+        self._after_upgrade = after_upgrade
+        self._watchdog = (
+            watchdog
+            if watchdog is not None
+            else Watchdog(out, UPGRADE_WALK_S if after_upgrade else WALK_S)
+        )
         self._current = "before the first step"
         self._app: QApplication | None = None
         self._window: MainWindow | None = None
@@ -908,6 +964,13 @@ class Walk:
         self._pictures: list[str] = []
         self._failed: list[str] = []
         self._steps: list[dict[str, Any]] = []
+        #: The upgrade walk: the settings the earlier version left, the keys of them it changes
+        #: itself, and what the store held for each document before the run.
+        self._old_settings: dict[str, Any] = {}
+        self._changed_settings: set[str] = set()
+        self._stored_before: dict[str, CheckDocument] = {}
+        #: Which documents had a stored review when the walk found them.
+        self._had_review: dict[str, bool] = {}
         self.platform = ""
         self.screen = ""
         self.versions: dict[str, str] = {}
@@ -950,7 +1013,7 @@ class Walk:
             return self.result()
         with self._guards():
             try:
-                for name, method in walk_steps(proofreading=self._proofreading is not None):
+                for name, method in self._steps_to_run():
                     if not self._run_step(name, getattr(self, method)):
                         break
             finally:
@@ -959,6 +1022,12 @@ class Walk:
                 except Exception as exc:  # noqa: BLE001 - the result is written all the same
                     self._failed.append(f"shut down: {type(exc).__name__}: {exc}")
         return self.result()
+
+    def _steps_to_run(self) -> tuple[tuple[str, str], ...]:
+        """Return the steps this walk runs: the upgrade ones, or the teacher's."""
+        if self._after_upgrade:
+            return UPGRADE_STEPS
+        return walk_steps(proofreading=self._proofreading is not None)
 
     def result(self) -> dict[str, Any]:
         """Return what the walk found, in the shape the CI job uploads."""
@@ -2065,6 +2134,291 @@ class Walk:
             raise _Failed("a worker is still running after the window closed")
         self._check_guards()
 
+    # ── the steps over the data an earlier version left ────────────────────
+
+    def _upgrade_data(self) -> None:
+        """Read what the earlier version left, before anything of this app touches it.
+
+        A settings file this version would have to replace is what an upgrade must never do
+        quietly: a refused value is a teacher's setting reset, and an unreadable file is copied
+        aside.  The update check is switched off in the file the walk opens — the banner has a
+        check of its own (``update_banner.py``), and this walk asks GitHub nothing.
+        """
+        path = self._root / "ocr.toml"
+        if not path.is_file():
+            raise _Failed(f"the old folder holds no {path.name}, so there is no setup to keep")
+        self._old_settings = dict(tomllib.loads(path.read_text(encoding="utf-8")))
+        notices = load_config_file(path).notices
+        if notices:
+            raise _Failed(
+                f"this version refuses {len(notices)} of the old settings: {[repr(n) for n in notices]}"
+            )
+        if self._old_settings.get("check_for_updates") is not False:
+            save_settings_file(path, {**self._old_settings, "check_for_updates": False})
+            self._changed_settings.add("check_for_updates")
+            self._readings["update_check"] = "switched off by the walk"
+        self._readings["old_settings"] = f"{len(self._old_settings)} values"
+
+    def _upgrade_start(self) -> None:
+        """Build the real window on the old folder: it opens without a word and keeps the data."""
+        self._window = build_main_window(
+            app_service=self._service, worker_factory=self._recorder.build
+        )
+        self._window.show()
+        self._settle(lambda: self._window.isVisible(), "the window to be shown", UI_S)
+        broken = sorted(path.name for path in self._root.glob("ocr.toml.broken*"))
+        if broken:
+            raise _Failed(f"the app could not read the old settings and copied {broken} aside")
+        screen = QApplication.primaryScreen()
+        self.platform = QApplication.platformName()
+        self.screen = "" if screen is None else f"{screen.size().width()}x{screen.size().height()}"
+        self.versions = {"app": __version__, "qt": qVersion()}
+        self._screenshot("upgraded-window")
+
+    def _upgrade_queue(self) -> None:
+        """The old run's documents are in the queue, and the store still holds what it had."""
+        old_input = str(self._old_settings.get("input", "") or "")
+        expected = self._documents_under(Path(old_input)) if old_input else []
+        if expected:
+            self._expect_queue(Path(old_input), expected, "the documents of the old run")
+        else:
+            write_inputs(self._inputs())
+            if old_input != str(self._inputs()):
+                self._changed_settings.add("input")
+            self._choose_folder(
+                _handles.INPUT_FOLDER_BUTTON,
+                _handles.INPUT_PATH,
+                self._inputs(),
+                title=dlg.select_input_folder().title,
+            )
+            self._expect_queue(
+                self._inputs(),
+                self._documents_under(self._inputs()),
+                "the documents the walk wrote",
+            )
+        config = self._config()
+        store = state_store_for(config, repository=StateRepository)
+        queued = self._table().queued_source_ids()
+        for source_id in queued:
+            name = Path(source_id).name
+            state = store.load(Path(source_id))
+            self._had_review[source_id] = bool(state is not None and state.correction_review)
+            document = self._service.documents.check_document(config, Path(source_id))
+            if document is None:
+                # The earlier version never ran this document: there is nothing to keep of it.
+                continue
+            self._stored_before[source_id] = document
+            if self._had_review[source_id] and document.review is None and not self._dropped(name):
+                raise _Failed(f"the stored review of {name} is gone and the app did not say so")
+        reviewed = [Path(source).name for source, had in self._had_review.items() if had]
+        self._readings["stored"] = (
+            f"{len(self._stored_before)} of {len(queued)} documents had a stored result, "
+            f"reviews on {reviewed or 'none'}"
+        )
+
+    def _upgrade_run(self) -> None:
+        """Run the queue: the old results come back, and a document is re-read only by the rules.
+
+        ``READER_VERSION`` and ``AUTO_VERSION`` decide that, not the walk: what it checks is that
+        nothing fails, that no document loses its text, and that what was not read again is the
+        same text, the same review and the same teacher's work as before.
+        """
+        table = self._table()
+        queued = table.queued_source_ids()
+        if not queued:
+            raise _Failed("the queue holds no document to run")
+        table.selectAll()
+        self._recorder.begin()
+        self._click_run()
+        summary = self._wait_run("the run over the old documents")
+        if summary.status is not RunStatus.DONE:
+            raise _Failed(
+                f"the run ended {summary.status}: {summary.error or list(summary.failed)}"
+            )
+        if summary.failed or summary.stopped:
+            raise _Failed(f"failed {list(summary.failed)}, stopped {list(summary.stopped)}")
+        if summary.skipped:
+            self._readings["skipped"] = ", ".join(self._names(summary.skipped))
+        self._readings["results"] = self._compare_stored(queued)
+        self._screenshot("upgraded-results")
+
+    def _compare_stored(self, queued: Sequence[str]) -> str:
+        """Compare every document with what the store held before the run, and say what changed."""
+        config = self._config()
+        kept = 0
+        read_again: list[str] = []
+        for source_id, before in self._stored_before.items():
+            name = Path(source_id).name
+            now = self._service.documents.check_document(config, Path(source_id))
+            if now is None or not now.raw_text.strip():
+                raise _Failed(f"the upgrade left no text for {name}")
+            if now.raw_text != before.raw_text:
+                # The version rules asked for a new reading: the teacher's work on the old text
+                # cannot be compared with a new one.
+                read_again.append(name)
+                continue
+            if now.corrected_text != before.corrected_text:
+                raise _Failed(f"the proofreading of {name} changed although nothing was read again")
+            if now.review != before.review:
+                raise _Failed(f"the review of {name} changed although nothing was read again")
+            if now.work != before.work:
+                raise _Failed(f"the teacher's work on {name} changed: {before.work} → {now.work}")
+            kept += 1
+        fresh = len(queued) - len(self._stored_before)
+        return (
+            f"{kept} kept their stored text, {fresh} had none, "
+            f"read again: {sorted(read_again) or 'none'}"
+        )
+
+    def _upgrade_addons(self) -> None:
+        """What readiness says about the add-ons, and the update a teacher clicks when it says so."""
+        outdated = self._service.addons.addons_outdated()
+        kinds = self._requirement_kinds()
+        if not outdated:
+            if IssueKind.ADDONS_OUTDATED in kinds:
+                raise _Failed("readiness asks for an add-on update the folder does not need")
+            self._readings["add-ons"] = "current"
+        else:
+            if IssueKind.ADDONS_OUTDATED not in kinds:
+                raise _Failed("the add-on folder is outdated and readiness does not say so")
+            self._update_addons()
+            if self._service.addons.addons_outdated():
+                raise _Failed("the folder is still outdated after Update add-ons")
+            kinds = self._requirement_kinds()
+            if IssueKind.ADDONS_OUTDATED in kinds:
+                raise _Failed(f"readiness still asks for the update: {sorted(kinds)}")
+            self._readings["add-ons"] = "outdated, updated by the walk"
+        self._assert_name_detection(kinds)
+
+    def _update_addons(self) -> None:
+        """Click *Update add-ons* on the Settings window's Add-ons page, as a teacher does."""
+
+        def in_addons(modal: QDialog) -> None:
+            if not isinstance(modal, SettingsWindow):
+                raise _Failed(f"All settings opened a {type(modal).__name__}")
+            modal.show_page(SettingsPage.ADDONS)
+            page = modal.page(SettingsPage.ADDONS)
+            banner = (
+                None if page is None else page.findChild(QWidget, _handles.ADDONS_UPDATE_BANNER)
+            )
+            if banner is None:
+                raise _Failed(f"the Add-ons page has no {_handles.ADDONS_UPDATE_BANNER}")
+            if not banner.isVisible():
+                raise _Failed("the Add-ons page hides the update banner")
+            button = banner.findChild(QAbstractButton, _handles.ADDONS_UPDATE_BUTTON)
+            if button is None:
+                raise _Failed(f"the banner has no {_handles.ADDONS_UPDATE_BUTTON}")
+            self._save_picture(modal.grab(), "addons-outdated")
+            button.click()
+            self._settle(lambda: not button.isEnabled(), "the update round to start", UI_S)
+            self._settle(
+                lambda: button.isEnabled(), "the add-ons to be installed again", ADDON_UPDATE_S
+            )
+            self._settle(lambda: not banner.isVisible(), "the banner to go away", UI_S)
+
+        self._in_modal(self._action(_handles.ALL_SETTINGS).trigger, in_addons)
+
+    def _requirement_kinds(self) -> set[IssueKind]:
+        """Return what readiness says name detection still needs, as kinds."""
+        issues = self._service.run.check_stage_requirements(self._config(), "anonymizer")
+        return {issue.kind for issue in issues}
+
+    def _assert_name_detection(self, kinds: set[IssueKind]) -> None:
+        """Name detection works after the update, or readiness names the add-on that is missing."""
+        if self._service.addons.is_module_importable("spacy"):
+            if IssueKind.PRIVACY_ADDON_MISSING in kinds:
+                raise _Failed(f"spaCy imports and readiness says it is missing: {sorted(kinds)}")
+            models = "the language model is there"
+            if IssueKind.NAME_DETECTION_MISSING in kinds:
+                models = "the language model is missing, as readiness says"
+            self._readings["name detection"] = f"spaCy imports, {models}"
+            return
+        named = {
+            IssueKind.PRIVACY_ADDON_MISSING,
+            IssueKind.NAME_DETECTION_MISSING,
+            IssueKind.ADDON_RESTART_NEEDED,
+        }
+        if not named & kinds:
+            raise _Failed(f"spaCy is missing and readiness does not name it: {sorted(kinds)}")
+        self._readings["name detection"] = f"spaCy is missing: readiness names {sorted(kinds)}"
+
+    def _upgrade_settings(self) -> None:
+        """Close the window and read the settings file the app wrote again."""
+        self._window.close()
+        self._settle(lambda: not self._window.isVisible(), "the window to close", UI_S)
+        if not wait_for_background_tasks(BACKGROUND_MS):
+            raise _Failed("a background task is still running after the window closed")
+        path = self._root / "ocr.toml"
+        if not path.is_file():
+            raise _Failed(f"the window left no {path.name}")
+        now = tomllib.loads(path.read_text(encoding="utf-8"))
+        known = {setting.key for setting in SETTINGS}
+        lost: list[str] = []
+        for key, before in self._old_settings.items():
+            if key in self._changed_settings or key not in known:
+                continue
+            if key not in now:
+                lost.append(f"{key} is gone")
+            elif not _same_setting(key, before, now[key]):
+                lost.append(f"{key} is {now[key]!r}, was {before!r}")
+        if lost:
+            raise _Failed("; ".join(lost))
+        dropped = sorted(set(self._old_settings) - known)
+        kept = len(
+            [
+                key
+                for key in self._old_settings
+                if key in known and key not in self._changed_settings
+            ]
+        )
+        self._readings["settings"] = f"{kept} values kept" + (
+            f", {len(dropped)} key(s) this version does not know: {dropped}" if dropped else ""
+        )
+
+    def _upgrade_log(self) -> None:
+        """The app logged no error and no traceback while it took the old data in.
+
+        A script run has no log file (``frozen_modes.run_script`` dispatches before logging is
+        started), so the walk reads what the app logged through its handler instead.
+        """
+        bad = [
+            line
+            for line in self._warnings
+            if line.startswith(("ERROR ", "CRITICAL "))
+            or "Traceback (most recent call last)" in line
+        ]
+        if bad:
+            raise _Failed("the app logged " + "; ".join(bad[:3]))
+        self._readings["log"] = f"{len(self._warnings)} lines at WARNING or above, no error"
+
+    # ── what the upgrade steps read off the app ────────────────────────────
+
+    def _documents_under(self, folder: Path) -> list[Path]:
+        """Return the documents the app lists for *folder*, asked of the app's own reader."""
+        if not folder.is_dir():
+            return []
+        return list(self._service.run.collect_input_files_from_dir(folder, recursive=True))
+
+    def _expect_queue(self, folder: Path, expected: Sequence[Path], what: str) -> None:
+        """Wait for the queue to hold exactly *expected*, and fail naming what it holds."""
+        if not expected:
+            raise _Failed(f"{folder} holds no document the app reads")
+        wanted = sorted(str(path) for path in expected)
+        table = self._table()
+        self._settle(
+            lambda: len(table.queued_source_ids()) == len(wanted), f"{what} in the queue", UI_S * 3
+        )
+        listed = sorted(table.queued_source_ids())
+        if listed != wanted:
+            raise _Failed(
+                f"the queue lists {self._names(listed)}, the folder holds {self._names(wanted)}"
+            )
+        self._readings["queue"] = f"{len(wanted)} documents from {folder}"
+
+    def _dropped(self, name: str) -> bool:
+        """Whether the app said it dropped the stored review of *name*."""
+        return any("Dropped the review" in line and name in line for line in self._warnings)
+
 
 # ── the entry point ──────────────────────────────────────────────────────────
 
@@ -2097,11 +2451,13 @@ def walk_main_window(
     out: Path | None = None,
     watchdog: Watchdog | None = None,
     proofreading: ProofreadingSetup | None = None,
+    after_upgrade: bool = False,
 ) -> dict[str, Any]:
     """Play teacher in a real main window on *root* and return the result.
 
     With *proofreading* the run proofreads against that server, and the walk reads the items it
-    left, ticks one as checked, and spoils a stored review to see it dropped.
+    left, ticks one as checked, and spoils a stored review to see it dropped.  With
+    *after_upgrade* the walk checks the data an earlier version left instead of playing teacher.
     """
     return Walk(
         root=root,
@@ -2110,6 +2466,7 @@ def walk_main_window(
         out=out,
         watchdog=watchdog,
         proofreading=proofreading,
+        after_upgrade=after_upgrade,
     ).run()
 
 
@@ -2132,17 +2489,33 @@ def main(argv: list[str], *, proofreading: ProofreadingSetup | None = None) -> i
         "--root", default="", help="the folder to run in, instead of a temporary one"
     )
     parser.add_argument("--keep", action="store_true", help="leave the folder as the walk left it")
+    parser.add_argument(
+        "--after-upgrade",
+        default="",
+        metavar="ROOT",
+        help="check the data root an earlier version left, instead of playing teacher",
+    )
     options = parser.parse_args(argv)
     out = Path(options.out).expanduser().resolve()
     screenshots = Path(options.screenshots).expanduser().resolve() if options.screenshots else None
     root_given = Path(options.root).expanduser().resolve() if options.root else None
+    upgrade_root = (
+        Path(options.after_upgrade).expanduser().resolve() if options.after_upgrade else None
+    )
+    if upgrade_root is not None and root_given is not None:
+        return _give_up(out, "--after-upgrade names its own folder, so --root is not for it")
+    if upgrade_root is not None and not upgrade_root.is_dir():
+        return _give_up(out, f"the data root {upgrade_root} of the earlier version is not there")
     # The pictures are written while the walk runs, so their folder must not be the one the
     # walk's isolation removes at the end.
-    with isolated(root_given, keep=options.keep) as root:
-        write_settings(root, proofreading=proofreading)
+    with isolated(
+        upgrade_root if upgrade_root is not None else root_given, keep=options.keep
+    ) as root:
+        if upgrade_root is None:
+            write_settings(root, proofreading=proofreading)
         # Armed before the services are built: a hang there leaves a file to read instead of a
         # job that runs to its limit.
-        watchdog = Watchdog(out)
+        watchdog = Watchdog(out, UPGRADE_WALK_S if upgrade_root is not None else WALK_S)
         watchdog.start()
         try:
             result = walk_main_window(
@@ -2152,11 +2525,24 @@ def main(argv: list[str], *, proofreading: ProofreadingSetup | None = None) -> i
                 out=out,
                 watchdog=watchdog,
                 proofreading=proofreading,
+                after_upgrade=upgrade_root is not None,
             )
         finally:
             watchdog.stop()
     write_result(out, result)
     return 0 if result["ok"] else 1
+
+
+def _give_up(out: Path, why: str) -> int:
+    """Write a result that says *why* nothing was walked, and return 1.
+
+    A windowed build has no console, so the reason has to reach the file too.
+    """
+    result = empty_result()
+    result["platform"] = sys.platform
+    result["failed"] = [why]
+    write_result(out, result)
+    return 1
 
 
 if __name__ == "__main__":

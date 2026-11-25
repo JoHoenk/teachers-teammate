@@ -1,7 +1,8 @@
 # How the model recommendations are made
 
 The app recommends writing models per computer type: without a graphics card, with about 8 GB, with
-16 GB or more. Two models are recommended per type, **Best quality** and **Fastest**. This page
+16 GB or more. Up to two models are recommended per type: **Best quality**, and **Fastest** where one is
+clearly faster. This page
 describes how a model gets there. The rules and their numbers are in the code; this page says what
 they are for and how they fit together.
 
@@ -58,11 +59,13 @@ counts as fitting — it runs somewhat slower then; the share is `FULL_SPEED_SHA
 first share does not fit; it is not compared on quality, because a teacher cannot use it. Without a
 card the model has to be small enough for the processor (`CPU_COMFORT_GB`).
 
-**Speed.** A page is 300 words of student text through the whole exchange (correct, explain,
-unclear), at the temperatures the app sends, measured on the tier's reference machine. The app's
-bands (`SpeedBand` in `domain/performance_estimate.py`) word the result: *fast*, *ok*, *slow*, *very
-slow*. Only a model that reaches at most *ok* can be a tier's quality model; the speed role is the
-faster one. A model that no full exchange has been run on gets the page time that its measured
+**Speed.** A page is `TYPICAL_PAGE_WORDS` words of student text through the whole exchange
+(correct, explain, unclear), asked as the app asks it — its temperatures, prompt, sampling and
+window, the card to the run alone — and measured on the tier's reference machine. The app's bands
+(`SpeedBand` in `domain/performance_estimate.py`) word the result: *fast*, *ok*, *slow*, *very
+slow*. On a card, only a model that reaches at most *ok* can be a tier's quality model. Without a
+card the processor sets the pace: the limit is `CPU_COMFORT_GB`, a page in under five minutes, which
+is *slow* at most. The speed role is the faster one. A model that no full exchange has been run on gets the page time that its measured
 writing rate gives, and the table marks it as computed until a run replaces it
 (`report table --tiers`).
 
@@ -121,7 +124,8 @@ Two roles per computer type: **Best quality** and **Fastest**. Both are held by 
 eligible — it passes gate 1, the floors and the fit, and a teacher has marked its explanations.
 
 - **Best quality** is the eligible model with the highest F0.5 among those whose page time on the
-  tier's reference machine is at most *ok*. A tie goes to the smaller model, then the faster one.
+  tier's reference machine is within the limit of *Fit and speed* above. A tie goes to the smaller
+  model, then the faster one.
 - **Fastest** is the eligible model with the shortest page time, of those no more than a tenth of an
   F0.5 point behind the quality model, and it has to be at least a quarter faster than that model.
   Otherwise the tier has none: a second name for the same wait helps nobody. The two limits are
@@ -130,8 +134,8 @@ eligible — it passes gate 1, the floors and the fit, and a teacher has marked 
 A holder keeps its place unless a challenger is better beyond the noise. A place whose holder is no
 longer eligible goes to the next one by the rule above. A floor that every model fails, or that the
 current holder fails, is reconsidered before it is used, and its value, reason and new threshold are
-recorded. The roles the evidence gives and the ones the catalog recommends are printed side by side
-when they differ, which is when this work is due.
+recorded. The roles are read by hand from `report table --tiers` and the model tables; no tool
+chooses them.
 
 ## How a model is run once it is recommended
 

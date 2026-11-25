@@ -23,7 +23,8 @@ Run (answers are appended, so an interrupted run resumes):::
         --testset gec-2026-12 --model qwen3.5:9b --model gemma4:e4b
     bazel run //tools:report -- table --store $EVALS
 
-Each model starts at the temperature its maker recommends (``--temperature`` overrides it).
+Each model is asked as the app asks it: step ① at its measured temperature, steps ② and ③ at the
+maker's (``--temperature`` moves step ① only).
 ``--exchange`` says how the text travels and ``--steps`` which steps of it run: the default is the
 app's ``text-first`` exchange with all three steps, ``--exchange one-request-review`` asks for
 corrections with explanations in one JSON answer, ``--exchange one-request-text`` for the corrected
@@ -603,8 +604,9 @@ def _run_command(sub) -> None:
         type=float,
         action="append",
         default=None,
-        help="Run at temperature X (repeatable; default: each model's request profile, which is "
-        "the temperature its vendor recommends, else the app's 0.2).",
+        help="Run step ① at temperature X (repeatable).  Without it a model is asked as the app "
+        "asks it: step ① at its measured temperature (STEP_ONE_TEMPERATURES, else "
+        "STEP_ONE_DEFAULT_TEMPERATURE), steps ② and ③ at the maker's.  X moves step ① only.",
     )
     run.add_argument(
         "--option",

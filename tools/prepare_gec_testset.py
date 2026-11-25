@@ -246,9 +246,9 @@ def _check(root: Path, testset: str, manifest: Manifest, corpora: Corpora, revis
     )
     for problem in corpus + rebuilt:
         print(f"  {problem}")
-    if revision.endswith("+dirty"):
+    if revision.endswith(("+dirty", "+unverified")):
         print(
-            "built from a dirty tree: fine for a trial, not for a set that is committed",
+            "built from a tree that may be dirty: fine for a trial, not for a set that is committed",
             file=sys.stderr,
         )
     return 1 if corpus or rebuilt else 0

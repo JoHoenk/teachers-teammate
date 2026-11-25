@@ -181,7 +181,7 @@ def _gate(args) -> int:
 def _temperature_of(args) -> float:
     """Return the temperature a gate reads: the one given, or the model's own recommendation.
 
-    A model is run at the temperature its maker recommends, which differs between models, so a gate
+    A model is run at the temperature the app sends it, which differs between models, so a gate
     that assumed one value would miss every model run at its own.  The recommendation is the app's
     knowledge and lives in :mod:`tools.evaluation.run.defaults`, which this layer may not import, so
     the command line resolves it and passes the value in.
@@ -569,7 +569,7 @@ def _gate_command(sub) -> None:
         gate,
         model_required=True,
         temperature_help="the temperature of the runs "
-        "(default: the one the model's maker recommends, as the app sends it)",
+        "(default: the step-① temperature the app sends the model)",
     )
     gate.set_defaults(handler=_gate)
 

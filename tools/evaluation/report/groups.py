@@ -42,7 +42,7 @@ MODEL_AXES: frozenset[str] = frozenset(
 )
 """The axes a comparison may vary: each model is run with its own request, at its own temperature.
 
-Every model starts at the temperature its vendor recommends, which differs between models, and a
+Every model starts at the temperature the app sends it, which differs between models, and a
 refinement compares one model at two temperatures; the comparison prints both.  Everything else has
 to agree, or the two runs answered different questions.
 """

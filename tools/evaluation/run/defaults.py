@@ -43,10 +43,10 @@ def request_profile_for(
 ) -> RequestProfile:
     """Return the profile *model* is asked with, as the app would ask it.
 
-    The catalog's profile is the base: its compact-JSON choice and the temperature the model's
-    maker recommends (a model without one gets the app's 0.2).  ``--compact-json on``/``off``
-    overrides the rule for every model, and an explicit ``--temperature`` overrides the
-    temperature.
+    The catalog's profile is the base: its compact-JSON choice, step ① at its measured
+    temperature (``STEP_ONE_TEMPERATURES``, else ``STEP_ONE_DEFAULT_TEMPERATURE``) and steps ② and
+    ③ at the maker's.  ``--compact-json on``/``off`` overrides the rule for every model, and an
+    explicit ``--temperature`` overrides the temperature of step ① only.
 
     Args:
         model: The tag the request goes to.

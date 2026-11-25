@@ -7,12 +7,21 @@ computer by the model's size in the catalog, and marks a page time that no run m
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX
-from teachers_teammate.domain.model_catalog import CPU_COMFORT_GB, HardwareProfile, card_budget_gb
+from teachers_teammate.domain.model_catalog import (
+    CPU_COMFORT_GB,
+    HardwareProfile,
+    card_budget_gb,
+    request_profile,
+)
+from teachers_teammate.domain.performance_estimate import TYPICAL_PAGE_WORDS
 from tools.evaluation.core.machines import Machine
 from tools.evaluation.core.modes import ALL_STEPS, Exchange, Step
 from tools.evaluation.core.sizes import CardReading, FitRecord, OllamaReading
 from tools.evaluation.report.tables.fit import (
+    asked_as_the_app,
     limit_gb,
     summarise_tiers,
     tier_table,
@@ -42,14 +51,14 @@ def _machine(machine_id: str, vram_mb: int) -> Machine:
     )
 
 
-def _card(need_gb: float) -> CardReading:
+def _card(need_gb: float, total_bytes: int = CARD_BYTES) -> CardReading:
     """Return a card reading whose idle figure is 0.4 GiB and whose peak is *need_gb* above it."""
     idle = int(0.4 * 2**30)
     peak = idle + int(need_gb * 1e9)
     return CardReading(
         agent_sha256="0" * 64,
         source="nvidia-smi",
-        total_bytes=CARD_BYTES,
+        total_bytes=total_bytes,
         idle_bytes=idle,
         peak_bytes=peak,
         end_bytes=peak,
@@ -65,6 +74,7 @@ def _record(
     device: str = "gpu",
     num_ctx: int = BASE_NUM_CTX,
     measured_at: str = "2026-11-20T10:00:00+00:00",
+    in_card_gb: float | None = None,
 ) -> FitRecord:
     """Return one size measurement: the need in GB, and the tokens a second its answer ran at."""
     tokens = 200
@@ -81,7 +91,9 @@ def _record(
         ollama=OllamaReading(
             context_length=num_ctx,
             size_bytes=int(need_gb * 1e9),
-            size_vram_bytes=0 if device == "cpu" else int(need_gb * 1e9),
+            size_vram_bytes=(
+                0 if device == "cpu" else int((need_gb if in_card_gb is None else in_card_gb) * 1e9)
+            ),
         ),
         card=None if device == "cpu" else _card(need_gb),
         device=device,
@@ -94,16 +106,26 @@ def _summary(
     seconds_per_100_words: float,
     steps: tuple[Step, ...] = ALL_STEPS,
     machine: str = CARD_MACHINE,
+    temperature: float | None = None,
+    isolated: bool = True,
+    step_one_prompt: str = "standard",
+    sampling: tuple[tuple[str, float], ...] = (),
 ) -> PerformanceSummary:
-    """Return a performance summary of one model, as a run of *steps* on *machine* gives it."""
+    """Return a performance summary of one model, as a run of *steps* on *machine* gives it.
+
+    Without *temperature* the run asks as the app does.
+    """
     return PerformanceSummary(
         model=model,
-        temperature=0.05,
+        temperature=request_profile(model).temperature if temperature is None else temperature,
         mode=Exchange.TEXT_FIRST,
         exchange=Exchange.TEXT_FIRST,
         steps=steps,
+        step_one_prompt=step_one_prompt,
+        sampling=sampling,
+        num_ctx=BASE_NUM_CTX,
         machine=machine,
-        isolated=True,
+        isolated=isolated,
         texts=3,
         comparable=3,
         seconds_per_100_words=seconds_per_100_words,
@@ -203,8 +225,59 @@ def test_a_full_exchange_gives_the_page_time_and_a_partial_one_does_not() -> Non
     }
 
     assert rows["gemma4:e4b"].measured is True
-    assert rows["gemma4:e4b"].seconds_per_page == 24.0
+    assert rows["gemma4:e4b"].seconds_per_page == 8.0 * TYPICAL_PAGE_WORDS / 100
     assert rows["qwen3:4b"].measured is False
+
+
+def test_only_a_run_the_app_would_make_gives_a_page_time() -> None:
+    """Given runs of the same model at another temperature, with a prompt variant, with extra
+    sampling and one that shared the card, and one run as the app asks,
+    When the rows are summarised,
+    Then only the run as the app asks gives the page time, however slow the others were.
+    """
+    sizes = [_record("gemma4:e4b", need_gb=4.6, write_tps=40.0)]
+    runs = [
+        _summary("gemma4:e4b", seconds_per_100_words=8.0),
+        _summary("gemma4:e4b", seconds_per_100_words=90.0, temperature=1.0),
+        _summary("gemma4:e4b", seconds_per_100_words=90.0, step_one_prompt="terse"),
+        _summary("gemma4:e4b", seconds_per_100_words=90.0, sampling=(("top_k", 20.0),)),
+        _summary("gemma4:e4b", seconds_per_100_words=90.0, isolated=False),
+    ]
+    rows = summarise_tiers(sizes, runs, {CARD_MACHINE: _machine(CARD_MACHINE, CARD_MB)})
+
+    assert [asked_as_the_app(run) for run in runs] == [True, False, False, False, False]
+    assert rows[0].seconds_per_page == 8.0 * TYPICAL_PAGE_WORDS / 100
+
+
+def test_a_model_partly_in_main_memory_is_marked_as_a_lower_bound() -> None:
+    """Given a model of which Ollama kept a tenth in main memory,
+    When the table is written,
+    Then the row says its need is "at least" the figure shown.
+    """
+    sizes = [_record("tight:9b", need_gb=7.5, write_tps=30.0, in_card_gb=6.7)]
+    rows = summarise_tiers(sizes, [], {CARD_MACHINE: _machine(CARD_MACHINE, CARD_MB)})
+
+    assert rows[0].partly_in_memory is True
+    assert "yes (7.5 GB, at least of " in tier_table(rows)
+
+
+def test_a_machine_without_a_tier_is_left_out_with_a_warning(caplog) -> None:
+    """Given a machine the registry does not know and one whose card is smaller than 7 GB,
+    When the rows are summarised,
+    Then neither makes a row, and the log names each of them.
+    """
+    small = "small-card"
+    sizes = [
+        _record("gemma4:e4b", need_gb=4.6, write_tps=40.0, machine="unregistered"),
+        _record("gemma4:e4b", need_gb=4.6, write_tps=40.0, machine=small),
+    ]
+    sizes[0] = replace(sizes[0], card=None)
+
+    with caplog.at_level("WARNING"):
+        rows = summarise_tiers(sizes, [], {small: _machine(small, 6144)})
+
+    assert rows == []
+    assert "unregistered" in caplog.text and small in caplog.text
 
 
 def test_a_processor_only_computer_is_judged_by_the_catalog_size() -> None:
@@ -240,7 +313,7 @@ def test_the_table_shows_the_tier_the_verdict_and_where_the_page_time_came_from(
     assert "### about 8 GB — `card-machine` (gpu)" in table
     assert f"a model fits at {limit_gb(HardwareProfile.CARD_8GB):.1f} GB or less" in table
     assert "| `gemma4:e4b` | 4.6 GB | yes (4.6 GB of " in table
-    assert "| **no** (9.9 GB of " in table
+    assert "| **no** (9.9 GB, at least of " in table
     assert "| computed |" in table
 
 
@@ -255,7 +328,7 @@ def test_the_table_prints_a_measured_page_time_as_a_run() -> None:
         summarise_tiers(sizes, performance, {CARD_MACHINE: _machine(CARD_MACHINE, CARD_MB)})
     )
 
-    assert "| 24 s |" in table
+    assert f"| {8 * TYPICAL_PAGE_WORDS // 100} s |" in table
     assert "| run |" in table
 
 
@@ -291,7 +364,7 @@ def test_the_table_says_how_the_verdict_and_the_page_time_are_read() -> None:
     )
 
     assert f"the app takes a model of at most {CPU_COMFORT_GB:.1f} GB" in table
-    assert "300 words through the whole exchange" in table
+    assert f"{TYPICAL_PAGE_WORDS} words through the whole exchange" in table
     assert "`computed` the time the measured writing rate gives" in table
 
 

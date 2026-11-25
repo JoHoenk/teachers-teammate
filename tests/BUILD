@@ -1385,6 +1385,15 @@ app_test(
     ],
 )
 
+# The commit a run records: read from the checkout, from the workspace Bazel names, and out of the
+# repository's own files when git refuses.
+app_test(
+    "tools/test_evaluation_revision.py",
+    deps = [
+        "//tools/evaluation:core",
+    ],
+)
+
 # The sessions of one run (the header file and the resume check) and the layering of the offline
 # modules.
 app_test(

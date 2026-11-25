@@ -16,9 +16,8 @@ from typing import Any
 
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX, CONTEXT_STEPS
 from teachers_teammate.domain.model_catalog import (
-    FULL_SPEED_SHARE,
     HardwareProfile,
-    card_budget_gb,
+    comfortable_model_gb,
     request_profile,
 )
 
@@ -174,8 +173,8 @@ def growth_figures(
 # ── the limit ────────────────────────────────────────────────────────────────
 
 
-_TIER_BUDGET_GB: dict[str, float] = {
-    tier.value: card_budget_gb(tier)
+_TIER_LIMIT_GB: dict[str, float] = {
+    tier.value: comfortable_model_gb(tier)
     for tier in (HardwareProfile.CARD_8GB, HardwareProfile.CARD_16GB)
 }
 """The card sizes the app has a rule for; a limit of one of them is the app's own rule."""
@@ -199,8 +198,8 @@ class FitLimit:
         cleaned = text.strip().lower()
         if cleaned == "off":
             return cls(text=cleaned, max_size_gb=None)
-        if cleaned in _TIER_BUDGET_GB:
-            return cls(text=cleaned, max_size_gb=_TIER_BUDGET_GB[cleaned] / FULL_SPEED_SHARE)
+        if cleaned in _TIER_LIMIT_GB:
+            return cls(text=cleaned, max_size_gb=_TIER_LIMIT_GB[cleaned])
         try:
             number = float(cleaned)
         except ValueError as error:
@@ -216,7 +215,7 @@ class FitLimit:
         """Return how the limit is written in a report."""
         if self.max_size_gb is None:
             return "off"
-        if self.text in _TIER_BUDGET_GB:
+        if self.text in _TIER_LIMIT_GB:
             return self.text
         return f"{self.max_size_gb:g} GB"
 

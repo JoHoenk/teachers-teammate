@@ -34,6 +34,12 @@ class PerformanceSummary:
     """How the text travelled, which decides whether the answer length is a figure per model."""
     steps: tuple[Step, ...]
     """The steps the exchange ran: a page time is only the whole exchange's when all three ran."""
+    step_one_prompt: str
+    """The prompt variant of step ①; ``standard`` is the app's own."""
+    sampling: tuple[tuple[str, float], ...]
+    """Sampling values sent besides the temperature; none is what the app sends."""
+    num_ctx: int
+    """The window the requests asked for."""
     machine: str
     """The machine the run measured: two machines measured the same quality and other speeds."""
     isolated: bool
@@ -106,6 +112,9 @@ def summarise_performance(items: Sequence[LoadedItem]) -> list[PerformanceSummar
                 mode=mode_label(header.protocol),
                 exchange=header.protocol.exchange,
                 steps=header.protocol.steps,
+                step_one_prompt=header.protocol.step_one_prompt,
+                sampling=header.protocol.sampling,
+                num_ctx=header.protocol.num_ctx,
                 machine=host_of(header),
                 isolated=header.environment.isolated,
                 texts=len(measured),

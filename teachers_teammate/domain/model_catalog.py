@@ -660,15 +660,6 @@ RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
 }
 
 
-class ModelRole(StrEnum):
-    """What a recommended model is recommended as, per tier (``evaluations/README.md``, "The pick")."""
-
-    QUALITY = "quality"
-    """The eligible model with the best F0.5 whose page time is at most *ok*."""
-    SPEED = "speed"
-    """The eligible model with the shortest page time that is still good enough, when one is."""
-
-
 #: How much worse a speed model may be than its tier's quality model, in F0.5: a tenth of a point.
 #: A model further behind trades more accuracy for its speed than a teacher can be asked to accept
 #: to save a minute a page.
@@ -928,6 +919,17 @@ def card_budget_gb(profile: HardwareProfile) -> float:
     stand for, so it is 0 — a real card of such a computer arrives as a known ``card_gb``.
     """
     return CARD_USABLE_SHARE * NOMINAL_CARD_GB[profile]
+
+
+def comfortable_model_gb(profile: HardwareProfile) -> float:
+    """Return the largest model (GB) the app runs well on a computer of *profile*.
+
+    On a card it is the card's usable memory at which :data:`FULL_SPEED_SHARE` of the model still
+    sits on it; without a card it is :data:`CPU_COMFORT_GB`.
+    """
+    if profile is HardwareProfile.CPU:
+        return CPU_COMFORT_GB
+    return card_budget_gb(profile) / FULL_SPEED_SHARE
 
 
 def memory_for_models_gb(

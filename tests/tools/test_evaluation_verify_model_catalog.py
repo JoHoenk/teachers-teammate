@@ -19,6 +19,7 @@ import pytest
 
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX
 from teachers_teammate.exceptions import OCRError
+from teachers_teammate.domain.model_catalog import request_profile
 from teachers_teammate.infrastructure.ollama_utils import ChatStats
 from tools import verify_model_catalog
 from tools.evaluation.checks import gate1_answers, gate_one
@@ -452,6 +453,27 @@ def test_the_request_carries_the_measured_temperature() -> None:
     assert defaults.request_profile_for("gemma4:e4b", temperature=0.2).temperature == 0.2
     assert defaults.request_profile_for(CANDIDATE).temperature == 0.4
     assert defaults.temperature_for("gemma4:e4b", 0.7) == 0.7
+
+
+def test_the_full_exchange_is_asked_at_the_apps_temperatures() -> None:
+    """
+    Given  models with a maker's temperature, without one, and one the catalog does not know
+    When   a full-exchange run is built without ``--temperature``
+    Then   every step carries what the app sends: step ① its measured temperature, ② and ③ the
+           maker's, and ``--temperature`` moves step ① only
+    """
+    for model in ("gemma4:e4b", "qwen3.5:4b", "gemma4:26b-a4b-it-qat", CANDIDATE):
+        tool = defaults.request_profile_for(model)
+        app = request_profile(model)
+        assert (tool.correct.temperature, tool.explain.temperature, tool.unclear.temperature) == (
+            app.correct.temperature,
+            app.explain.temperature,
+            app.unclear.temperature,
+        )
+
+    overridden = defaults.request_profile_for("gemma4:e4b", temperature=0.7)
+    assert overridden.correct.temperature == 0.7
+    assert overridden.explain.temperature == request_profile("gemma4:e4b").explain.temperature
 
 
 # ── fit: measure once, decide later ──────────────────────────────────────────

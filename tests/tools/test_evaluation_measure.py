@@ -14,7 +14,6 @@ from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClien
 from tools.evaluation.core.modes import ALL_STEPS, Exchange, Step
 from tools.evaluation.core.performance import LoadedModel, Performance, RequestStats
 from tools.evaluation.core.records import RunFile, RunHeader, Session
-from tools.evaluation.core.revision import tool_revision
 from tools.evaluation.run import defaults, measure, protocol
 from tools.evaluation.run.agent_client import MIB, AgentClient, AgentError
 from tools.evaluation.run.measure import (
@@ -613,35 +612,6 @@ def test_finishing_stops_the_sampler_and_unloads_the_model_on_request() -> None:
 
 
 # ── the record of a run ───────────────────────────────────────────────────────
-
-
-@pytest.mark.use_case("Model_Eval_Measure")
-def test_the_revision_names_the_commit_and_marks_uncommitted_changes() -> None:
-    """
-    Given  a git that reports a commit and a dirty working tree
-    When   the revision is asked for
-    Then   it is the short commit with +dirty
-    """
-
-    def run(args, **_):
-        out = {"rev-parse": "abc1234\n", "status": " M tools/x.py\n"}[args[1]]
-        return SimpleNamespace(returncode=0, stdout=out)
-
-    assert tool_revision(run) == "abc1234+dirty"
-
-
-@pytest.mark.use_case("Model_Eval_Measure")
-def test_the_revision_is_unknown_outside_a_git_checkout() -> None:
-    """
-    Given  a git that fails (a packaged copy of the tools)
-    When   the revision is asked for
-    Then   it is "unknown" instead of an error
-    """
-
-    def run(args, **_):
-        return SimpleNamespace(returncode=128, stdout="")
-
-    assert tool_revision(run) == "unknown"
 
 
 _STAMP = protocol.Stamp(eval_version=7, fingerprint="a" * 64)

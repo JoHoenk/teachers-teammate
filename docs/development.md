@@ -1168,7 +1168,7 @@ page are written in `evaluations/README.md` (*Fit and speed*, *The pick*); the t
 constants in `domain/model_catalog.py` and nowhere else.  `report table --tiers` prints both per
 tier from the records (`report/tables/fit.py`): the memory a model held on a card of that tier
 against the share of the card the app gives it, a processor-only computer by the model's size in the
-catalog, and a page of 300 words in the app's speed bands — measured by a full-exchange run where
+catalog, and a page of `TYPICAL_PAGE_WORDS` words in the app's speed bands — measured by a full-exchange run where
 one exists, else computed from the measured writing rate.
 
 **The store is a repository of its own.**  Every evaluation record — the runs, the test sets with

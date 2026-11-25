@@ -1178,8 +1178,8 @@ def _add_structured(sub, shared) -> None:
         type=float,
         default=None,
         metavar="X",
-        help="Check at temperature X (default: each model's request profile, which is the "
-        "temperature its vendor recommends, else the app's 0.2).",
+        help="Check at temperature X (default: the app's step-① temperature, "
+        "STEP_ONE_TEMPERATURES else STEP_ONE_DEFAULT_TEMPERATURE).",
     )
     structured.add_argument(
         "--compact-json",
@@ -1272,8 +1272,8 @@ def _add_smoke(sub, shared) -> None:
         type=float,
         default=None,
         metavar="X",
-        help="Screen at temperature X (default: each model's request profile, which is the "
-        "temperature its vendor recommends, else the app's 0.2).",
+        help="Screen at temperature X (default: the app's step-① temperature, "
+        "STEP_ONE_TEMPERATURES else STEP_ONE_DEFAULT_TEMPERATURE).",
     )
     smoke.add_argument(
         "--compact-json",
@@ -1346,8 +1346,8 @@ def _add_fit(sub, shared) -> None:
         type=float,
         default=None,
         metavar="X",
-        help="Measure at temperature X (default: each model's request profile, which is the "
-        "temperature its vendor recommends, else the app's 0.2).",
+        help="Measure at temperature X (default: the app's step-① temperature, "
+        "STEP_ONE_TEMPERATURES else STEP_ONE_DEFAULT_TEMPERATURE).",
     )
     fit.add_argument(
         "--machine",

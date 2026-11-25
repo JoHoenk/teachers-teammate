@@ -80,7 +80,7 @@ class _DummyWorker:
         return True
 
 
-def _no_update_check(_on_available, *, owner=None) -> None:
+def _no_update_check(_newer_release, _on_available, *, owner=None) -> None:
     """Never ask GitHub for a newer release."""
 
 

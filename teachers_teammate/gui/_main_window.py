@@ -153,6 +153,7 @@ class MainWindow(QMainWindow):
 
         self._load_credentials_from_settings()
         self._load_toml_if_present()
+        self._start_update_check()
 
     def _init_menu_state(self) -> None:
         """Declare the menu bar and what its tools open later."""
@@ -261,11 +262,20 @@ class MainWindow(QMainWindow):
             ),
         )
 
-        # The switch is read once, at start: turning it off takes effect at the next start.
+    def _start_update_check(self) -> None:
+        """Ask for a newer release unless the teacher switched it off.
+
+        Read once, at start and after the settings file is loaded: turning it off takes effect at
+        the next start.
+        """
         if self._config_panel.get_settings_dict().get(
             "check_for_updates", DEFAULTS["check_for_updates"]
         ):
-            check_for_update(self._show_update_banner, owner=self)
+            check_for_update(
+                self._app_service.releases.newer_release,
+                self._show_update_banner,
+                owner=self,
+            )
 
     def _build_widgets(self) -> None:
         """Build what the window shows and the controllers work on."""

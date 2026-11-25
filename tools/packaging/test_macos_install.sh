@@ -23,9 +23,12 @@ OLD_DMG="${2:?usage: test_macos_install.sh <new.dmg> <old.dmg> <smoke.json> [<e2
 SMOKE_OUT="${3:?usage: test_macos_install.sh <new.dmg> <old.dmg> <smoke.json> [<e2e.json>]}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 APP="/Applications/teachers-teammate.app"
-# Where the walkthrough writes its result and its pictures; both are uploaded by CI.
+# Where the walkthrough writes its result and its pictures; both are uploaded by CI. The walk
+# over the data the old version leaves writes its own result beside them.
 E2E_OUT="${4:-$(pwd)/e2e.json}"
 E2E_SHOTS="$(dirname "${E2E_OUT}")/e2e-shots"
+E2E_UPGRADE_OUT="$(dirname "${E2E_OUT}")/e2e-upgrade.json"
+E2E_UPGRADE_SHOTS="$(dirname "${E2E_OUT}")/e2e-upgrade-shots"
 
 WORK="$(mktemp -d)"
 MOUNT=""
@@ -45,6 +48,30 @@ old_app="$(find "${OLD_MOUNT}" -maxdepth 1 -name "*.app" | head -n 1)"
 rm -rf "${APP}"
 cp -R "${old_app}" "${APP}"
 hdiutil detach "${OLD_MOUNT}"
+
+# ── What that version leaves behind, for the upgrade walk at the end ──
+# Its settings file in a root of its own, and the name-detection add-on installed the way that
+# version installed it: with its own pip and no constraints, so the packages it shares with the
+# app are the newest ones, not the ones this app was built with.
+OLD_DATA="${WORK}/old-data"
+mkdir -p "${OLD_DATA}/Ausgabe"
+cat > "${OLD_DATA}/ocr.toml" <<TOML
+ollama_url = "http://127.0.0.1:9"
+ocr_engine = "ppocr"
+language = "English"
+correction_enabled = false
+evaluation_enabled = false
+anonymization_enabled = false
+docx_enabled = true
+text_enabled = false
+text_anonymized_enabled = false
+output = "${OLD_DATA}/Ausgabe"
+TOML
+# Both versions keep their add-ons in the data folder platformdirs names, and this one must find
+# the folder the old app filled.
+"${APP}/Contents/MacOS/teachers-teammate" --_pip_install_mode install \
+    --target "${HOME}/Library/Application Support/teachers_teammate/packages" \
+    --prefer-binary spacy
 
 # ── The new dmg: its licenses, and the app replaced in /Applications ──
 MOUNT="${WORK}/dmg"
@@ -79,3 +106,11 @@ if ! "${APP}/Contents/MacOS/teachers-teammate" --_run_script "${ROOT}/tests/e2e/
     exit 1
 fi
 cat "${E2E_OUT}"
+
+# ── The new app opens what the old version left: its settings, its documents, its add-ons ──
+if ! "${APP}/Contents/MacOS/teachers-teammate" --_run_script "${ROOT}/tests/e2e/walkthrough.py" \
+    "${E2E_UPGRADE_OUT}" --after-upgrade "${OLD_DATA}" --screenshots "${E2E_UPGRADE_SHOTS}"; then
+    cat "${E2E_UPGRADE_OUT}" || true
+    exit 1
+fi
+cat "${E2E_UPGRADE_OUT}"

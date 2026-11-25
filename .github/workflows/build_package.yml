@@ -169,6 +169,53 @@ jobs:
           ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate \
             --_addon_smoke_test addon_smoke.json || { cat addon_smoke.json; exit 1; }
 
+      # The bundle asks the real release feed and shows the banner a teacher would see: the whole
+      # chain of the update check — the CA store of the frozen urllib, the request, the answer on
+      # the window's thread — which no unit test covers. GitHub's hourly limit for a shared runner
+      # address is not this check's failure: a 403 or 429 with the limit used up passes and says so
+      # in the job summary (tests/e2e/update_banner.py).
+      - name: Offer a newer release (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(python tools/packaging/latest_release.py tag)
+          xvfb-run -a ./dist/teachers-teammate/teachers-teammate \
+            --_run_script tests/e2e/update_banner.py banner.json --tag "$TAG" \
+            || { cat banner.json; exit 1; }
+
+      - name: Offer a newer release (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = python tools/packaging/latest_release.py tag
+          $process = Start-Process -FilePath dist/teachers-teammate/teachers-teammate.exe `
+            -ArgumentList '--_run_script', 'tests/e2e/update_banner.py', 'banner.json', `
+            '--tag', "$tag" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            # A windowed build has no stderr: the result file is where the check says why.
+            if (Test-Path banner.json) {
+              Get-Content banner.json
+            } else {
+              Write-Host 'the update banner check wrote no result'
+            }
+            throw "the update banner check exited with $($process.ExitCode)"
+          }
+
+      - name: Offer a newer release (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(python tools/packaging/latest_release.py tag)
+          ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate \
+            --_run_script tests/e2e/update_banner.py banner.json --tag "$TAG" \
+            || { cat banner.json; exit 1; }
+
       # PyInstaller bundles the libraries of the machine it builds on, so a newer macOS runner
       # silently raises the floor. The check reads the minimum macOS of every Mach-O file in
       # the .app, every architecture slice of a universal2 one included.
@@ -226,6 +273,15 @@ jobs:
           name: ${{ inputs.artifact_prefix }}-${{ inputs.artifact }}-addon-smoke
           retention-days: ${{ inputs.retention_days }}
           path: addon_smoke.json
+          if-no-files-found: ignore
+
+      - name: Upload the update banner result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ inputs.artifact }}-banner
+          retention-days: ${{ inputs.retention_days }}
+          path: banner.json
           if-no-files-found: ignore
 
       - name: Check the Linux bundle

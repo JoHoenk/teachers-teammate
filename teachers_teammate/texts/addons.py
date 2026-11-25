@@ -163,6 +163,14 @@ ADDONS_OUTDATED_NOTE = (
     "Everything else works meanwhile."
 )
 ADDONS_UPDATED = "The add-ons are up to date."
+#: An add-on whose update failed is out of the folder, so the teacher installs it again.
+ADDONS_GONE_ONE = "It is no longer in the add-on folder: install it again under Settings → Add-ons."
+ADDONS_GONE_MANY = (
+    "They are no longer in the add-on folder: install them again under Settings → Add-ons."
+)
+ADDONS_GONE_SOME = (
+    "Some of them are no longer in the add-on folder: install them again under Settings → Add-ons."
+)
 #: The add-ons are installed into the folder of the running program, which a source checkout
 #: does not have: updating them there is refused.
 ADDONS_UPDATE_NEEDS_INSTALL = "Add-ons are updated only in the installed app"
@@ -246,9 +254,16 @@ ADDONS_FAILURE: dict[InstallFailure, str] = {
 def addon_error_text(error: BaseException) -> str:
     """Return the sentence for a failed add-on install; any other error says what it says."""
     if isinstance(error, AddonUpdateError):
-        return "; ".join(
+        failures = "; ".join(
             f"{requirement}: {addon_error_text(failure)}" for requirement, failure in error.errors
         )
+        if not error.gone:
+            return failures
+        if len(error.gone) < len(error.errors):
+            gone = ADDONS_GONE_SOME
+        else:
+            gone = ADDONS_GONE_ONE if len(error.gone) == 1 else ADDONS_GONE_MANY
+        return f"{failures} {gone}"
     if isinstance(error, AddonInstallError):
         return ADDONS_FAILURE[error.reason]
     return str(error)

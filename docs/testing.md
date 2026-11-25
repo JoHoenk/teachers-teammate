@@ -234,11 +234,33 @@ An older bundle that lacks a handle a newer script uses fails the first step, na
 A bundle is a working one only if the walk exits 0: a missing Qt platform plugin aborts the
 process before the script's first line, so there is no `e2e.json` to read.
 
+The walk makes its own temporary folder and removes it at the end. `--root <dir>` runs it in a
+folder of the caller's instead, and `--keep` leaves that folder as the walk left it — the settings
+file, the documents, the stored results, the add-on folder and the log, which is what a failed
+walk or an upgrade is looked into with. Without `--keep` the walk removes only a folder it made
+itself; one that exists already, such as the data root an earlier version left, is never removed.
+
 On a Wayland desktop the window opens on the `wayland` platform, even under `xvfb-run`:
 `WAYLAND_DISPLAY` is what Qt follows. `QT_QPA_PLATFORM=xcb` puts it on the display `DISPLAY`
 names instead; the Qt xcb plugin needs `libxcb-cursor0` and the other `libxcb-*` packages that
 `.github/workflows/build_package.yml` installs; the `.deb` depends on them and a bare checkout
 does not have them.
+
+### Over the data an earlier version left
+
+`--after-upgrade <root>` checks the folder an earlier version left instead of playing teacher: it
+reads the settings file that version wrote and fails on a notice this version gives about it,
+builds the real window on the folder and fails if the app copies the file aside as broken, queues
+the documents the old run listed, and runs them. It fails when a stored text or a teacher's
+correction is gone, when the log holds an `ERROR` line or a traceback, or when the settings file
+lost a value it held. A stored result comes back unless `READER_VERSION` or `AUTO_VERSION` asks
+for a new reading; a review that no longer fits is dropped with a warning, as everywhere else.
+
+The add-on folder is the one the old version filled: a folder the update made outdated shows
+`ADDONS_OUTDATED` in readiness, and the walk clicks *Update add-ons* on the Settings window's
+Add-ons page and requires the banner to go. That click installs from the network, so this walk
+needs one. `--root` is refused beside `--after-upgrade`: the folder is the old one's, and the
+walk never removes one that was there before.
 
 ### On each system
 
@@ -275,10 +297,17 @@ Each container walks twice when the bundle carries the Wayland platform plugin: 
 `platform: wayland`, because Qt falls back to another plugin without a word. A bundle without
 that plugin logs that the Wayland walk is skipped.
 
+The three install jobs walk once more, over the data the release they updated from left: the old
+version's settings file, and an add-on folder that version's own pip filled, so the update finds it
+outdated. The install tests write both before they install the new package — the settings keys of
+that release, no `check_for_updates` among them — and walk it after the update, through the
+installed copy and before the uninstaller removes the data.
+
 Each job uploads `e2e.json` and the screenshots even when the step failed
 (`<prefix>-<platform>-e2e` for a build machine, `<prefix>-<platform>-installed-e2e-<image or os>`
 for an install, where a container uploads its Wayland walk as `e2e-wayland.json` beside the xcb
-one and the compositor's `weston.log` beside both): the file says which step broke and what the
+one and the compositor's `weston.log` beside both, and every install keeps its walk over the old
+data as `e2e-upgrade.json` with `e2e-upgrade-shots/`): the file says which step broke and what the
 guards caught. Every one of those steps has a time limit, and the script's own watchdog — armed
 before the app services are built — ends a hung app with a result before that limit is reached.
 
@@ -290,7 +319,7 @@ installers, and nothing the app writes while it runs can land in one of them.
 One method on `Walk`, one row in `STEPS` (`tests/e2e/walkthrough.py`) — or in `PROOFREADING_STEPS`
 with the step it follows, for one that needs a model behind it: those run only when the walk is
 given a `ProofreadingSetup`; or in `PLATFORM_STEPS` with the step it follows and the systems it
-belongs to. The step clicks what a teacher clicks through `_handles`, and declares the dialogs it
+belongs to; or in `UPGRADE_STEPS`, whose steps make up the walk over an earlier version's data. The step clicks what a teacher clicks through `_handles`, and declares the dialogs it
 expects with `self._answers.expect` before it triggers them — any other dialog fails the step. A
 menu or a window the step opens itself goes through `_in_modal`. Waits are conditions
 with a deadline (`_settle`), never sleeps; a run is waited for with `_wait_run`. New settings go
@@ -298,9 +327,43 @@ into `write_settings`; new input files into `write_inputs`.
 
 ### What the script may import
 
-`tests/unit/test_walkthrough_imports.py` holds the list: the standard library, Qt, Pillow,
-python-docx and `teachers_teammate`, and nothing from `tests`. The bundle carries no test
-framework, so a test-only helper in the script breaks the bundle run; teach the script instead.
+`tests/unit/test_walkthrough_imports.py` holds the list, for this script and for the update
+banner's: the standard library, Qt, Pillow, python-docx and `teachers_teammate`, and nothing from
+`tests`. The bundle carries no test framework, so a test-only helper in a script breaks the bundle
+run; teach the script instead.
+
+---
+
+## The update banner
+
+`tests/e2e/update_banner.py` is the one check of the update check that is not a unit test: the
+bundle's own `urllib` against the real feed, and the window that follows it. The unit tests cover
+each piece on its own (`ReleaseService`, the banner's text, the answer on the GUI thread), and a
+break between them looks exactly like "no update", so nothing a teacher reports would show it.
+
+It claims to be version `0.0.1` first, which composition reads when the services are built, so a
+published release is newer than this build. Then it writes an `ocr.toml` with the check on, builds
+the window the app builds, waits up to 20 s for `UpdateBanner`, and reads what it says: the newest
+tag at its page under the project's release prefix. It clicks the banner's close button, and a
+second window built with the check off must send no request — the feed is counted for that.
+
+Every bundle build runs it once per system, on `xvfb-run` on Linux, with the newest tag from
+`tools/packaging/latest_release.py tag` as `--tag`, so the answer the app reads is held against
+GitHub's own idea of the newest release. Run it by hand against a built bundle:
+
+```bash
+xvfb-run -a ./dist/teachers-teammate/teachers-teammate \
+  --_run_script tests/e2e/update_banner.py banner.json \
+  --tag "$(python tools/packaging/latest_release.py tag)"
+```
+
+GitHub allows 60 unauthenticated API requests per hour per address, and a hosted runner shares
+its address, so the limit is used up there at times. A `403` or `429` with
+`x-ratelimit-remaining: 0` is therefore not a failed check: it proves TLS and the request work,
+which is what the check is for, so the script passes and writes "rate limited: TLS and the request
+work, banner not checked" into its result and the job summary. To tell the two cases apart it asks
+the feed directly before it builds a window — two requests per system per build. Every other
+failure fails, and so does a `200` that shows no banner.
 
 ---
 

@@ -202,7 +202,6 @@ def test_update_check_is_asked_on_the_scope_page_not_on_the_welcome_page() -> No
 
     leave = _function(script, "ScopePageLeave")
     assert "${NSD_GetState} $ScopeUpdates $0" in leave
-    assert '/NOUPDATECHECK /SETTINGSDIR="$LOCALAPPDATA\\teachers_teammate"' in leave
 
     init = _function(script, ".onInit")
     assert '${GetOptions} $R0 "/NOUPDATECHECK" $R1' in init
@@ -213,6 +212,27 @@ def test_update_check_is_asked_on_the_scope_page_not_on_the_welcome_page() -> No
     assert 'StrCpy $R0 "on"' in install
     assert 'StrCpy $R0 "off"' in install
     assert "FileWrite" not in install
+
+
+def test_the_elevated_copy_is_told_the_settings_folder_whatever_the_box_says() -> None:
+    """
+    Given  the installer script
+    When   the relaunch of ScopePageLeave is read
+    Then   it always names the teacher's settings folder, and only a box that is off adds
+           /NOUPDATECHECK: otherwise an administrator's account writes "on" into its own folder,
+           and a kept "off" stays off although the box was ticked
+    """
+    leave = _function(_script(), "ScopePageLeave")
+
+    folder_line = next(line for line in leave.splitlines() if "/SETTINGSDIR=" in line)
+    assert "$LOCALAPPDATA" in folder_line
+    assert "/NOUPDATECHECK" not in folder_line
+    assert leave.index(folder_line) < leave.index("!insertmacro RelaunchElevated")
+
+    # "off" travels behind the folder, so the elevated copy reads both.
+    off = leave.index('${If} $CheckUpdates == "0"')
+    assert off > leave.index(folder_line)
+    assert 'StrCpy $R1 "$R1 /NOUPDATECHECK"' in leave[off:]
 
 
 def test_the_privacy_link_opens_the_privacy_statement_not_the_top_of_the_page() -> None:
@@ -228,3 +248,20 @@ def test_the_privacy_link_opens_the_privacy_statement_not_the_top_of_the_page() 
 
     headings = [line for line in _policy().splitlines() if line.startswith("#")]
     assert "## Privacy statement" in headings
+
+
+def test_the_relaunch_passes_its_arguments_as_a_register() -> None:
+    """
+    Given  the installer script
+    When   the RelaunchElevated macro and its callers are read
+    Then   the arguments reach ShellExecuteW as the register $R1 and never inside a quoted
+           System string, whose first inner quote would end it (/SETTINGSDIR="..." has two)
+    """
+    script = _script()
+    start = script.index("!macro RelaunchElevated")
+    macro = script[start : script.index("!macroend", start)]
+
+    assert "w R1," in macro
+    assert '"${ARGS}"' not in macro
+    assert "ARGS" not in macro
+    assert '!insertmacro RelaunchElevated "' not in script

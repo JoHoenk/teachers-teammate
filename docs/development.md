@@ -133,7 +133,8 @@ imports it from there.
 
 A service in `application/` does not reach into `infrastructure` from a method body. What it
 needs of a module comes in through its constructor, typed by a `Protocol` in
-`application/ports.py` (`OllamaServer`, `AddonState`, `HardwareProbe`, `NameModels`);
+`application/ports.py` (`OllamaServer`, `AddonState`, `HardwareProbe`, `NameModels`,
+`ReleaseFeed`);
 `application/composition.py` hands over the class of the running app, a test hands over a fake.
 What still needs a lazy import — an add-on package that must not be imported at start-up, a
 module that imports back — carries `# noqa: PLC0415`, and the count of those in `application/`

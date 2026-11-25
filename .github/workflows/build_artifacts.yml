@@ -117,12 +117,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 tools/packaging/latest_release.py download --pattern '*_amd64.deb' --dir old
 
-      # The limits below cover everything the step does, the walks included (xcb, and Wayland
-      # when the bundle carries that plugin): a walk that hangs is ended by the script's own
-      # watchdog after 600 s, so two walks and the installs around them fit, and neither can run
-      # into the job's six hours.
+      # The limits below cover everything the step does, the walks included (the upgrade walk,
+      # xcb, and Wayland when the bundle carries that plugin): a walk that hangs is ended by the
+      # script's own watchdog, after 900 s for the upgrade walk and 600 s for the others, so three
+      # walks, two add-on installs and the installs around them fit, and none can run into the
+      # job's six hours.
       - name: Install, upgrade, remove and purge the .deb in a clean container
-        timeout-minutes: 40
+        timeout-minutes: 55
         shell: bash
         env:
           IMAGE: ${{ matrix.image }}
@@ -145,6 +146,8 @@ jobs:
           path: |
             smoke/e2e.json
             smoke/e2e-shots/
+            smoke/e2e-upgrade.json
+            smoke/e2e-upgrade-shots/
             smoke/e2e-wayland.json
             smoke/e2e-wayland-shots/
             smoke/weston.log
@@ -158,7 +161,7 @@ jobs:
     # the download by itself.
     if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
     strategy:
@@ -187,9 +190,9 @@ jobs:
 
       # M2 (a teacher who already has the app drags the new one over it), the licenses in the
       # dmg, the replaced bundle, M1 (version, identifier, floor, icon), the installed app's
-      # smoke test and its walkthrough: all in the script.
+      # smoke test, its walkthrough and the walk over the old version's data: all in the script.
       - name: Install the newest release, replace it with the new dmg and start it
-        timeout-minutes: 20
+        timeout-minutes: 30
         shell: bash
         run: bash tools/packaging/test_macos_install.sh dist/*-macos.dmg old/*-macos.dmg smoke.json
 
@@ -210,6 +213,8 @@ jobs:
           path: |
             e2e.json
             e2e-shots/
+            e2e-upgrade.json
+            e2e-upgrade-shots/
           if-no-files-found: warn
 
   install-windows:
@@ -220,7 +225,7 @@ jobs:
     # the download by itself.
     if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:
@@ -248,7 +253,7 @@ jobs:
       # window is built on a Windows that is not the build image. Both results are kept for the
       # uploads below.
       - name: Test the installer
-        timeout-minutes: 25
+        timeout-minutes: 40
         shell: pwsh
         env:
           # Steps 9 and 10 download the shipped v0.5.6 and the newest published release with
@@ -280,4 +285,6 @@ jobs:
           path: |
             e2e.json
             e2e-shots/
+            e2e-upgrade.json
+            e2e-upgrade-shots/
           if-no-files-found: warn

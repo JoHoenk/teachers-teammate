@@ -37,6 +37,7 @@ CONSTRUCTED = {
     "OllamaServerService",
     "ProviderService",
     "ReaderService",
+    "ReleaseService",
     "RunService",
     "SampleStore",
     "SetupService",

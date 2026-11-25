@@ -238,10 +238,12 @@ FunctionEnd
   DeleteRegKey /ifempty ${HIVE} "${REG_KEY}"
 !macroend
 
-; Start this installer again with administrator rights. The result lands in $0: > 32 means the
-; elevated copy started, anything else means UAC was refused or cancelled.
-!macro RelaunchElevated ARGS
-  System::Call 'shell32::ShellExecuteW(i $HWNDPARENT, w "runas", w "$EXEPATH", w "${ARGS}", w "$EXEDIR", i 1) i.r0'
+; Start this installer again with administrator rights, with the arguments in $R1. The result
+; lands in $0: > 32 means the elevated copy started, anything else means UAC was refused or
+; cancelled. $R1 goes in as a register (w R1): the System plugin ends a quoted string at the
+; first quote inside it, and the arguments carry quotes (/SETTINGSDIR="...").
+!macro RelaunchElevated
+  System::Call 'shell32::ShellExecuteW(i $HWNDPARENT, w "runas", w "$EXEPATH", w R1, w "$EXEDIR", i 1) i.r0'
 !macroend
 
 ; ── Installer pages ──────────────────────────────────────────────────────────
@@ -606,7 +608,7 @@ FunctionEnd
 Function WelcomePageLeave
   ${If} $NeedElevation == "1"
     StrCpy $R1 "/SCOPE=all /ELEVATED"
-    !insertmacro RelaunchElevated "$R1"
+    !insertmacro RelaunchElevated
     ${If} $0 > 32
       Quit
     ${EndIf}
@@ -752,15 +754,17 @@ Function ScopePageLeave
         StrCpy $R1 "/SCOPE=all /ELEVATED /NODESKTOP"
       ${EndIf}
       ; The elevated copy may run as another account (an administrator's password typed for the
-      ; teacher), whose profile is not the teacher's: it is told where the settings belong.
+      ; teacher), whose profile is not the teacher's: it is told where the settings belong,
+      ; whatever the box says.  The box decides only whether the check is written off.
+      StrCpy $R1 '$R1 /SETTINGSDIR="$LOCALAPPDATA\teachers_teammate"'
       ${If} $CheckUpdates == "0"
-        StrCpy $R1 '$R1 /NOUPDATECHECK /SETTINGSDIR="$LOCALAPPDATA\teachers_teammate"'
+        StrCpy $R1 "$R1 /NOUPDATECHECK"
       ${EndIf}
       ; /D= must be the last argument, and it is not quoted.
       ${If} $DirGiven == "1"
         StrCpy $R1 "$R1 /D=$INSTDIR"
       ${EndIf}
-      !insertmacro RelaunchElevated "$R1"
+      !insertmacro RelaunchElevated
       ${If} $0 > 32
         Quit
       ${EndIf}

@@ -206,3 +206,11 @@ class NameModels(Protocol):
     def anonymizer(self, language: str, config: AnonymizerConfig | None = None) -> Anonymizer:
         """Return an anonymizer for *language*, loaded from the models *config* names."""
         ...
+
+
+class ReleaseFeed(Protocol):
+    """Where the newest published release of this project is read."""
+
+    def latest(self) -> tuple[str, str]:
+        """Return the ``(tag, url)`` of the newest release, or raise the failure of the ask."""
+        ...

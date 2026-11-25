@@ -1,9 +1,9 @@
-"""What the app walkthrough may import: only what the shipped bundle carries.
+"""What the scripts CI injects into a bundle may import: only what the bundle carries.
 
-``tests/e2e/walkthrough.py`` runs inside the app's own process, and in the bundle that process
-holds the app's modules, Qt, Pillow and python-docx — no test framework, no ``QtTest``, nothing
-of ``tests``.  So the script's imports are a closed list, and a new one is a conscious edit of
-this file: the first bundle run proves it is there.
+``tests/e2e/walkthrough.py`` and ``tests/e2e/update_banner.py`` run inside the app's own process,
+and in the bundle that process holds the app's modules, Qt, Pillow and python-docx — no test
+framework, no ``QtTest``, nothing of ``tests``.  So the imports of each script are a closed list,
+and a new one is a conscious edit of this file: the first bundle run proves it is there.
 """
 
 from __future__ import annotations
@@ -11,8 +11,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-#: The script under test.
-SCRIPT = Path(__file__).resolve().parents[1] / "e2e" / "walkthrough.py"
+#: The scripts under test, each run by a bundle's own ``--_run_script``.
+SCRIPTS = [
+    Path(__file__).resolve().parents[1] / "e2e" / "walkthrough.py",
+    Path(__file__).resolve().parents[1] / "e2e" / "update_banner.py",
+]
 
 #: The standard library the bundle carries.  ``collections.abc`` and
 #: ``typing`` are here for the type annotations every module of the app uses.
@@ -34,6 +37,7 @@ STDLIB = frozenset(
         "tempfile",
         "threading",
         "time",
+        "tomllib",
         "traceback",
         "typing",
         "winreg",
@@ -67,42 +71,45 @@ def _allowed(name: str) -> bool:
     return name in STDLIB
 
 
-def test_the_walkthrough_imports_only_what_the_bundle_carries() -> None:
+def test_the_scripts_import_only_what_the_bundle_carries() -> None:
     """
-    Given  the app walkthrough script
-    When   its imports are read
+    Given  the scripts CI injects into a bundle
+    When   the imports of each are read
     Then   every one of them is a module the shipped bundle holds
     """
-    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"), filename=str(SCRIPT))
+    for script in SCRIPTS:
+        tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
 
-    assert _imported(tree), "the script imports nothing?"
-    assert sorted(name for name in _imported(tree) if not _allowed(name)) == []
+        assert _imported(tree), f"{script.name} imports nothing?"
+        assert sorted(name for name in _imported(tree) if not _allowed(name)) == []
 
 
-def test_the_walkthrough_imports_nothing_from_the_tests() -> None:
+def test_the_scripts_import_nothing_from_the_tests() -> None:
     """
-    Given  the app walkthrough script
-    When   its imports are read
+    Given  the scripts CI injects into a bundle
+    When   the imports of each are read
     Then   nothing of ``tests`` is among them, since the bundle carries no test package
     """
-    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"), filename=str(SCRIPT))
+    for script in SCRIPTS:
+        tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
 
-    assert [name for name in _imported(tree) if name.split(".")[0] == "tests"] == []
+        assert [name for name in _imported(tree) if name.split(".")[0] == "tests"] == []
 
 
-def test_the_walkthrough_is_a_script_the_runner_can_execute() -> None:
+def test_the_scripts_are_scripts_the_runner_can_execute() -> None:
     """
-    Given  the app walkthrough script
-    When   its module level is read
+    Given  the scripts CI injects into a bundle
+    When   the module level of each is read
     Then   it has a ``main`` entry and runs on ``__main__``, which is what the runner expects
     """
-    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"), filename=str(SCRIPT))
+    for script in SCRIPTS:
+        tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
 
-    functions = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
-    guards = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.If) and ast.unparse(node.test) == "__name__ == '__main__'"
-    ]
-    assert "main" in functions
-    assert guards, 'the script has no `if __name__ == "__main__"` block'
+        functions = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+        guards = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.If) and ast.unparse(node.test) == "__name__ == '__main__'"
+        ]
+        assert "main" in functions, script.name
+        assert guards, f'{script.name} has no `if __name__ == "__main__"` block'

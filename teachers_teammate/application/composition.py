@@ -18,6 +18,8 @@ import functools
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import teachers_teammate
+
 from ..infrastructure import logging_setup, power
 from ..infrastructure.addon_manager import AddonPackages
 from ..infrastructure.credential_store import CredentialStore
@@ -28,6 +30,7 @@ from ..infrastructure.ollama_utils import OllamaClient
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.performance_probe import PerformanceProbe
 from ..infrastructure.pipeline import OCRPipeline
+from ..infrastructure.release_feed import GitHubReleaseFeed
 from ..infrastructure.spacy_models import SpacyModels
 from ..infrastructure.speed_store import SampleStore
 from ..infrastructure.stage_builder import LlmBuilderWithKeys, PipelineComponentFactory
@@ -45,6 +48,7 @@ from .model_recommendations import ModelRecommendationService
 from .ollama_server import OllamaServerService
 from .providers import ProviderService
 from .reader import ReaderService
+from .releases import ReleaseService
 from .run import RunParts, RunService, RunServices, state_store_for, windows_for
 from .setup_plan import SetupService
 from .speed_estimates import SpeedEstimateService
@@ -80,6 +84,8 @@ class AppServices:
     """Personal-info removal: the spaCy models, the anonymizer cache and its texts."""
     addons: AddonService
     """The optional packages: what is installed, and the installs themselves."""
+    releases: ReleaseService
+    """This project's releases: which one is newer than this build, if any."""
     data_flow: DataFlowService
     """Where each step of a run takes place, and what every step would use."""
     setup: SetupService
@@ -164,6 +170,9 @@ def build_app_services(
         speeds=speeds,
         anonymization=anonymization,
         addons=addons,
+        releases=ReleaseService(
+            feed=GitHubReleaseFeed(), installed_version=teachers_teammate.__version__
+        ),
         data_flow=data_flow,
         setup=setup,
         documents=documents,

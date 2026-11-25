@@ -33,7 +33,8 @@
 
 .PARAMETER WalkthroughResult
     Where the app walkthrough writes its JSON result (default: e2e.json in the current folder),
-    and its pictures in an e2e-shots folder beside it. Both are kept for a CI upload.
+    and its pictures in an e2e-shots folder beside it. The upgrade walk writes e2e-upgrade.json
+    and e2e-upgrade-shots next to them. All are kept for a CI upload.
 
 .PARAMETER SkipOldVersion
     Skip the update-from-v0.5.6 step (it downloads v0.5.6 from GitHub).
@@ -62,6 +63,12 @@ $WalkthroughResult = [System.IO.Path]::GetFullPath($WalkthroughResult, (Get-Loca
 # bundle runs it with its own runner, so nothing of the test lives in what a teacher gets.
 $WalkthroughScript = Join-Path $PSScriptRoot '..\..\tests\e2e\walkthrough.py'
 $WalkthroughShots = Join-Path (Split-Path -Parent $WalkthroughResult) 'e2e-shots'
+# The walk over the data an older version left, in step 10.
+$UpgradeResult = Join-Path (Split-Path -Parent $WalkthroughResult) 'e2e-upgrade.json'
+$UpgradeShots = Join-Path (Split-Path -Parent $WalkthroughResult) 'e2e-upgrade-shots'
+# The settings and the results the older version leaves, and nothing else: the walk needs a root
+# of its own, and it is removed once the step is done.
+$OldData = Join-Path $env:TEMP 'tt-old-data'
 $LatestRelease = Join-Path $PSScriptRoot 'latest_release.py'
 
 $AppName = "Teacher's Teammate"
@@ -278,6 +285,61 @@ function Assert-WalkthroughPasses([string]$Directory) {
     }
     $saysOk = $null -ne $result -and $null -ne $result.PSObject.Properties['ok'] -and $result.ok
     Assert-True $saysOk 'the walkthrough result says ok'
+}
+
+function Assert-UpgradeWalkthroughPasses([string]$Directory, [string]$OldRoot) {
+    <# The new copy opens what the older version left: its settings and its add-on folder. #>
+    $walkthrough = (Resolve-Path $WalkthroughScript).Path
+    $arguments = @(
+        '--_run_script', "`"$walkthrough`"", "`"$UpgradeResult`"",
+        '--after-upgrade', "`"$OldRoot`"", '--screenshots', "`"$UpgradeShots`"")
+    $process = Start-Process -FilePath (Join-Path $Directory 'teachers-teammate.exe') `
+        -ArgumentList $arguments -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        if (Test-Path -LiteralPath $UpgradeResult) {
+            Write-Host (Get-Content -LiteralPath $UpgradeResult -Raw)
+        } else {
+            Write-Host "the upgrade walkthrough wrote no result at $UpgradeResult"
+        }
+    }
+    Assert-Equal 0 $process.ExitCode 'the installed copy opens the data of the older version'
+    $result = if (Test-Path -LiteralPath $UpgradeResult) {
+        Get-Content -LiteralPath $UpgradeResult -Raw | ConvertFrom-Json
+    } else {
+        $null
+    }
+    $saysOk = $null -ne $result -and $null -ne $result.PSObject.Properties['ok'] -and $result.ok
+    Assert-True $saysOk 'the upgrade walkthrough result says ok'
+}
+
+function Write-OldVersionData([string]$Root) {
+    <# What the older version leaves: its settings file, its output folder and its add-on folder. #>
+    Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path (Join-Path $Root 'Ausgabe') -Force | Out-Null
+    # Keys both versions know, without check_for_updates. ASCII: a byte order mark would make the
+    # settings file unreadable for the new version.
+    $lines = @(
+        'ollama_url = "http://127.0.0.1:9"',
+        'ocr_engine = "ppocr"',
+        'language = "English"',
+        'correction_enabled = false',
+        'evaluation_enabled = false',
+        'anonymization_enabled = false',
+        'docx_enabled = true',
+        'text_enabled = false',
+        'text_anonymized_enabled = false',
+        "output = `"$($Root.Replace('\', '/'))/Ausgabe`""
+    )
+    Set-Content -LiteralPath (Join-Path $Root 'ocr.toml') -Value $lines -Encoding ascii
+}
+
+function Install-OldVersionAddon([string]$Directory) {
+    <# Install the name-detection add-on the way that version did: its own pip, no constraints. #>
+    $target = Join-Path $DataDir 'packages'
+    $process = Start-Process -FilePath (Join-Path $Directory 'teachers-teammate.exe') `
+        -ArgumentList @('--_pip_install_mode', 'install', '--target', "`"$target`"",
+            '--prefer-binary', 'spacy') -Wait -PassThru
+    Assert-Equal 0 $process.ExitCode 'the old version installs the name-detection add-on'
 }
 
 function Get-LatestReleaseSetup([string]$Directory) {
@@ -498,6 +560,11 @@ if ($SkipOldVersion) {
     $oldProcess = Start-Process -FilePath $oldSetup.FullName -ArgumentList @('/S') -Wait -PassThru
     Assert-Equal 0 $oldProcess.ExitCode 'v0.5.6 installs'
     Assert-Present (Join-Path $AllUsersDir 'teachers-teammate.exe') 'v0.5.6 landed in Program Files'
+    # What that version leaves behind, so the new copy can be asked to open it. Step 10 writes the
+    # same for its own release; this one is the only update step while the newest release is
+    # v0.5.6, which is the release step 10 would otherwise install.
+    Write-OldVersionData $OldData
+    Install-OldVersionAddon $AllUsersDir
     # A marker only the old uninstaller would remove: the new installer must not run it.
     New-Item -Path $QtKey -Force | Out-Null
     Set-ItemProperty -LiteralPath $QtKey -Name 'ci_marker' -Value 'keep me'
@@ -513,6 +580,9 @@ if ($SkipOldVersion) {
     Assert-Equal $Version (Get-UninstallValue "HKLM:\$UninstKey32" 'DisplayVersion') 'one Apps entry, with the new version'
     Assert-Equal 'keep me' (Get-UninstallValue $QtKey 'ci_marker') 'the old uninstaller was not run'
     Assert-UpdateKeptShortcuts
+    # The new copy opens the data of the version it replaced, and repairs an add-on folder that
+    # the update made outdated. Before the uninstaller, which removes the data.
+    Assert-UpgradeWalkthroughPasses $AllUsersDir $OldData
     Invoke-Uninstaller -Directory $AllUsersDir -AppsKey "HKLM:\$UninstKey32"
     Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -535,6 +605,10 @@ if ((-not $SkipOldVersion) -and $latestVersion -eq '0.5.6') {
     $latestProcess = Start-Process -FilePath $latestSetup -ArgumentList @('/S') -Wait -PassThru
     Assert-Equal 0 $latestProcess.ExitCode "the $latestVersion setup installs"
     Assert-Present (Join-Path $AllUsersDir 'teachers-teammate.exe') "$latestVersion landed in Program Files"
+    # What that version leaves behind, so the new one can be asked to open it: its settings file
+    # and the name-detection add-on installed with its own pip and no constraints.
+    Write-OldVersionData $OldData
+    Install-OldVersionAddon $AllUsersDir
     New-Item -Path $QtKey -Force | Out-Null
     Set-ItemProperty -LiteralPath $QtKey -Name 'ci_marker' -Value 'keep me'
     $update = @('/SCOPE=all')
@@ -549,9 +623,13 @@ if ((-not $SkipOldVersion) -and $latestVersion -eq '0.5.6') {
     # The shortcut rules after an update: the Start-menu entries point at the new copy, and the
     # desktop shortcut the old setup made is kept rather than recreated.
     Assert-UpdateKeptShortcuts
+    # The new copy has to open what the older version left, and repair the add-on folder an update
+    # made outdated. Before the uninstaller, which removes the data.
+    Assert-UpgradeWalkthroughPasses $AllUsersDir $OldData
     Invoke-Uninstaller -Directory $AllUsersDir -AppsKey "HKLM:\$UninstKey32"
 }
 Remove-Item -LiteralPath $latest -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $OldData -Recurse -Force -ErrorAction SilentlyContinue
 
 # -- 11. The desktop shortcut rules ------------------------------------------
 

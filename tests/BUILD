@@ -543,6 +543,24 @@ app_test(
     deps = _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
+# This project's releases: which one is newer than this build, and the page a banner may open.
+app_test(
+    "unit/test_releases_domain.py",
+    deps = _DOMAIN_LIB,
+)
+
+# The one HTTPS request the update check makes: GitHub's feed, and the failure it reports.
+app_test(
+    "unit/test_release_feed.py",
+    deps = _INFRASTRUCTURE_LIB,
+)
+
+# The update check as a service: the feed, the version rule and the one line a failure writes.
+app_test(
+    "unit/test_release_service.py",
+    deps = _APPLICATION_LIB,
+)
+
 # The engines of text recognition, their models, and the reader's model files.
 app_test(
     "unit/test_reader_service.py",
@@ -705,6 +723,33 @@ app_test(
         "MACOS_INSTALL_SCRIPT": "$(rlocationpath //tools/packaging:test_macos_install.sh)",
         "WINDOWS_INSTALLER_SCRIPT": "$(rlocationpath //tools/packaging:test_windows_installer.ps1)",
     },
+)
+
+app_test(
+    "unit/test_walkthrough_folder.py",
+    extra_srcs = [
+        "e2e/__init__.py",
+        "e2e/walkthrough.py",
+    ],
+    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+app_test(
+    "unit/test_walkthrough_upgrade.py",
+    extra_srcs = [
+        "e2e/__init__.py",
+        "e2e/walkthrough.py",
+    ],
+    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+app_test(
+    "unit/test_update_banner_script.py",
+    extra_srcs = [
+        "e2e/__init__.py",
+        "e2e/update_banner.py",
+    ],
+    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 app_test(
@@ -2116,11 +2161,30 @@ app_test(
     ],
 )
 
-# What that script may import: it also runs inside the shipped bundle, which carries no tests.
+# The walk over the data an earlier version left: the same window, the same reader, and a
+# settings file written by hand where a bundle walk would find the old version's.
+app_test(
+    "gui/test_gui_upgrade_walk.py",
+    size = "large",
+    data = _READER_MODEL_DATA + _PAGE_MODEL_DATA,
+    env = _MODEL_ENV,
+    extra_srcs = [
+        "e2e/__init__.py",
+        "e2e/walkthrough.py",
+    ],
+    tags = ["walkthrough"],
+    deps = _GUI_DEPS + _PIPELINE_DEPS + [
+        "//teachers_teammate:gui_layer_lib",
+        "//teachers_teammate:infrastructure_lib",
+    ],
+)
+
+# What those scripts may import: they also run inside the shipped bundle, which carries no tests.
 app_test(
     "unit/test_walkthrough_imports.py",
     extra_srcs = [
         "e2e/__init__.py",
+        "e2e/update_banner.py",
         "e2e/walkthrough.py",
     ],
 )

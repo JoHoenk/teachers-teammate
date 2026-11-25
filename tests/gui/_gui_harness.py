@@ -551,7 +551,7 @@ def no_update_check(monkeypatch) -> None:
     monkeypatch.setattr(
         main_window_module,
         "check_for_update",
-        lambda _on_available, *, owner=None: None,
+        lambda _newer_release, _on_available, *, owner=None: None,
     )
 
 
@@ -561,7 +561,7 @@ def record_update_checks(monkeypatch) -> list[object]:
     monkeypatch.setattr(
         main_window_module,
         "check_for_update",
-        lambda on_available, *, owner=None: asked.append(on_available),
+        lambda _newer_release, on_available, *, owner=None: asked.append(on_available),
     )
     return asked
 

@@ -106,7 +106,9 @@ from teachers_teammate.gui._background import background_activity, wait_for_back
 from teachers_teammate.gui._dialogs import Asked, answering
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow, _app_icon
+from teachers_teammate.gui._qsettings import app_settings
 from teachers_teammate.gui._results_table import ResultsTable
+from teachers_teammate.gui._settings_file import APP_VERSION_KEY
 from teachers_teammate.gui._worker import OCRWorker, detached_workers_running
 from teachers_teammate.gui.composition import build_main_window
 from teachers_teammate.gui.settings import SettingsPage, SettingsWindow
@@ -2160,12 +2162,35 @@ class Walk:
         self._readings["old_settings"] = f"{len(self._old_settings)} values"
 
     def _upgrade_start(self) -> None:
-        """Build the real window on the old folder: it opens without a word and keeps the data."""
+        """Build the real window on the old folder: it offers the Setup Assistant once, keeps the data."""
+        # An update offers the Setup Assistant once; a second walk on the same folder is no update.
+        update = app_settings().value(APP_VERSION_KEY) != __version__
         self._window = build_main_window(
             app_service=self._service, worker_factory=self._recorder.build
         )
-        self._window.show()
-        self._settle(lambda: self._window.isVisible(), "the window to be shown", UI_S)
+        offered: list[bool] = []
+
+        def show() -> None:
+            self._window.show()
+            self._settle(
+                lambda: self._window.isVisible() and (bool(offered) or not update),
+                "the window to be shown and the Setup Assistant offered",
+                UI_S,
+            )
+
+        def decline_offer(modal: Any) -> None:
+            # Counted first: a wrong window ends the wait, and the failure below is what is raised.
+            offered.append(True)
+            if type(modal).__name__ != "SetupAssistant":
+                raise _Failed(f"the window offered after the update is a {type(modal).__name__}")
+            modal.reject()
+
+        if update:
+            # Cancel changes nothing of the old setup.
+            self._in_modal(show, decline_offer)
+            self._readings["setup_offer"] = "offered once after the update"
+        else:
+            show()
         broken = sorted(path.name for path in self._root.glob("ocr.toml.broken*"))
         if broken:
             raise _Failed(f"the app could not read the old settings and copied {broken} aside")
@@ -2513,6 +2538,10 @@ def main(argv: list[str], *, proofreading: ProofreadingSetup | None = None) -> i
     ) as root:
         if upgrade_root is None:
             write_settings(root, proofreading=proofreading)
+            # A setup this version has seen: the Setup Assistant is only offered after an update.
+            store = app_settings()
+            store.setValue(APP_VERSION_KEY, __version__)
+            store.sync()
         # Armed before the services are built: a hang there leaves a file to read instead of a
         # job that runs to its limit.
         watchdog = Watchdog(out, UPGRADE_WALK_S if upgrade_root is not None else WALK_S)

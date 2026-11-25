@@ -19,6 +19,7 @@ from teachers_teammate.application.setup_plan import (
     SetupPlan,
 )
 from teachers_teammate.settings_schema import DEFAULTS
+from teachers_teammate.domain.anonymization import SECONDARY_MODEL_NONE
 from teachers_teammate.domain.data_location import DataRegion
 from teachers_teammate.domain.install_item import (
     PAGE_MODELS_ITEM,
@@ -27,6 +28,7 @@ from teachers_teammate.domain.install_item import (
     InstallKind,
 )
 from teachers_teammate.domain.model_catalog import (
+    short_model_name,
     DEFAULT_OCR_MODEL,
     DiskVerdict,
     ModelRating,
@@ -513,9 +515,9 @@ def test_the_privacy_page_says_when_name_detection_is_installed(qtbot) -> None:
 def test_the_privacy_page_offers_an_extra_language_for_the_names(qtbot) -> None:
     """
     Given  proofreading at an online service, English texts and a computer set to German
-    When   the privacy page is shown and the teacher ticks the extra language
-    Then   the list holds every model but the English one with German chosen, an installed one is
-           marked, and the answers carry the German model; unticked they carry none
+    When   the privacy page is shown
+    Then   the list holds every model but the English one with German chosen and ticked, so the
+           students' names are found whatever the text's language, and an installed one is marked
     """
     service = SetupAppService()
     service.system_model = "de_core_news_sm"
@@ -530,14 +532,53 @@ def test_the_privacy_page_offers_an_extra_language_for_the_names(qtbot) -> None:
     assert "xx_ent_wiki_sm" in models
     assert page._extra_model.currentData() == "de_core_news_sm"
     assert "installed" in page._extra_model.itemText(models.index("fr_core_news_sm"))
-    assert page.extra_names_model() == ""
-    assert not page._extra_model.isEnabled()
-
-    page._extra.setChecked(True)
-
+    assert page._extra.isChecked()
     assert page._extra_model.isEnabled()
     assert page.extra_names_model() == "de_core_news_sm"
     assert assistant.answers().extra_names_model == "de_core_news_sm"
+
+
+@pytest.mark.gui
+def test_the_privacy_page_does_not_suggest_a_language_when_none_is_saved(qtbot) -> None:
+    """
+    Given  "(none)" saved as the extra language and a computer in another language than the texts
+    When   the privacy page is shown
+    Then   the extra language is not ticked and the answers carry no extra model
+    """
+    service = SetupAppService()
+    service.system_model = "de_core_news_sm"
+    context = _context(
+        service, correction_provider="openai", anonymizer_secondary_model=SECONDARY_MODEL_NONE
+    )
+    assistant = _assistant(qtbot, context)
+    _choose_online(assistant)
+    page = _page(assistant, SetupPageId.PRIVACY)
+
+    page.initializePage()
+
+    assert not page._extra.isChecked()
+    assert page.extra_names_model() == ""
+
+
+@pytest.mark.gui
+def test_the_privacy_page_keeps_an_extra_language_the_teacher_unticked(qtbot) -> None:
+    """
+    Given  the privacy page with the computer's language ticked as the extra one
+    When   the teacher unticks it and the page is shown again
+    Then   it stays unticked and the answers carry no extra model
+    """
+    service = SetupAppService()
+    service.system_model = "de_core_news_sm"
+    assistant = _assistant(qtbot, _context(service, correction_provider="openai"))
+    _choose_online(assistant)
+    page = _page(assistant, SetupPageId.PRIVACY)
+    page.initializePage()
+
+    page._extra.click()
+    page.initializePage()
+
+    assert not page._extra.isChecked()
+    assert page.extra_names_model() == ""
 
 
 def test_the_privacy_page_offers_the_extra_language_only_while_names_are_looked_for(
@@ -864,7 +905,7 @@ def test_the_summary_puts_every_download_on_its_own_line() -> None:
     """
     Given  a plan with two downloads for one step
     When   the rows are drawn
-    Then   each download has its own ticked box, so either can be left out
+    Then   each download has its own ticked box on a line below the step, named and sized
     """
     rows = SummaryRows()
     rows.set_rows(
@@ -878,7 +919,24 @@ def test_the_summary_puts_every_download_on_its_own_line() -> None:
             )
         )
     )
-    assert [box.text() for box in rows._boxes.values()] == [SIZE_GB.format(size=8.0)] * 2
+    boxes = list(rows._boxes.values())
+    assert all(box.text().endswith(f" · {SIZE_GB.format(size=8.0)}") for box in boxes)
+    assert [box.text().split(" · ")[0] for box in boxes] == [
+        short_model_name("gemma4:12b"),
+        short_model_name("qwen3:8b"),
+    ]
+    lines = [
+        next(
+            line
+            for line in range(rows._grid.rowCount())
+            if (cell := rows._grid.itemAtPosition(line, 1)) is not None and cell.widget() is box
+        )
+        for box in boxes
+    ]
+    assert lines[1] == lines[0] + 1
+    assert all(rows._grid.itemAtPosition(line, 0) is None for line in lines), (
+        "a download shares its line with a step's name"
+    )
     assert all(box.isChecked() for box in rows._boxes.values())
     assert [item.name for item in rows.downloads()] == ["gemma4:12b", "qwen3:8b"]
 

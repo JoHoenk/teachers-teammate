@@ -115,10 +115,11 @@ PRIVACY_MULTILINGUAL = (
     "There is no name detection of its own for {language}: the multilingual one is used. "
     "It finds fewer names."
 )
-PRIVACY_EXTRA = "Also find names in texts of another language:"
+PRIVACY_EXTRA = "Also find names of this language, whatever language the text is in:"
 PRIVACY_EXTRA_NOTE = (
-    "For a class that writes in two languages. The app runs one extra language next to the "
-    "main one; its detection is added to the downloads (small)."
+    "For students whose names do not fit the text's language, such as German names in an "
+    "English text. The app runs this language next to the text's own; its detection is added "
+    "to the downloads (small)."
 )
 PRIVACY_EXTRA_INSTALLED = "installed"
 #: What each name-detection model is for, as a teacher names it.

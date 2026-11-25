@@ -402,6 +402,8 @@ class Walkthrough:
             self.downloads.download_page_models,
         )
         monkeypatch.setattr(self.services.reader, "download_reader", self.downloads.download_reader)
+        # The computer's language is not the machine's: the extra names language is the same everywhere.
+        monkeypatch.setattr(AnonymizationService, "system_spacy_model", lambda _service: None)
         # The round's spaCy thread builds a service of its own, so the stub goes on the class.
         monkeypatch.setattr(
             AnonymizationService,

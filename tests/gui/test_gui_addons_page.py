@@ -7,6 +7,7 @@ import threading
 from typing import Any, ClassVar
 from unittest.mock import MagicMock
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QScrollArea
 import pytest
 
@@ -1729,6 +1730,27 @@ def test_the_status_line_counts_the_steps_of_a_round(qtbot) -> None:
     dlg._round._phase = InstallKind.SPACY
     dlg._round.item_started.emit(GERMAN_NAMES)
     assert dlg.status._status.text() == "Installing the German model (step 2 of 2)…"
+
+
+def test_the_running_time_stays_on_the_line_when_it_is_written_again(qtbot) -> None:
+    """
+    Given  a pip step that has run for five seconds, its line showing the running time
+    When   the line is written again (as every progress or refresh does)
+    Then   the running time is still on it, so the line does not flicker between two texts, and
+           the timer is a precise one, so its first tick is not early enough to miss the first second
+    """
+    dlg = _make_dialog(qtbot)
+    assert dlg.status._elapsed_timer.timerType() is Qt.TimerType.PreciseTimer
+    _start_round(dlg, [SPACY_ITEM])
+    dlg._round._phase = InstallKind.PACKAGE
+    dlg._round.item_started.emit(SPACY_ITEM)
+    dlg.status._status_started -= 5
+
+    dlg.status._tick_elapsed()
+    assert dlg.status._status.text() == "Installing spaCy (step 1 of 1)… 0:05"
+    dlg.status.refresh()
+
+    assert dlg.status._status.text() == "Installing spaCy (step 1 of 1)… 0:05"
 
 
 def test_the_steps_of_a_round_count_pip_once_however_many_packages_it_installs(qtbot) -> None:

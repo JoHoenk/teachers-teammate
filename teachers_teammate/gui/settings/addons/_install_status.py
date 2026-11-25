@@ -15,7 +15,7 @@ from collections.abc import Callable, Sequence
 import re
 import time
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -194,6 +194,8 @@ class InstallStatusPane(QWidget):
     def _build_timers(self) -> None:
         """Build the timer that moves the elapsed time and the one that rests the copy button."""
         self._elapsed_timer = QTimer(self)
+        # A coarse timer may fire early, and the first tick would then miss the one-second mark.
+        self._elapsed_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._elapsed_timer.setInterval(_ELAPSED_TICK_MS)
         self._elapsed_timer.timeout.connect(self._tick_elapsed)
         self._copy_timer = QTimer(self)
@@ -266,17 +268,23 @@ class InstallStatusPane(QWidget):
     def _set_status(self, text: str, warning: bool = False) -> None:
         """Write the status line; *warning* colours it as something to act on."""
         self._status_line = text
-        self._status.setText(text)
+        self._show_status_line()
         self._status.setStyleSheet(_WARNING_STYLE if warning else _HINT_STYLE)
 
+    def _show_status_line(self) -> None:
+        """Draw the status line, with the running time while the step reports no percentage."""
+        elapsed = time.monotonic() - self._status_started
+        if self._elapsed_timer.isActive() and self._status_parts is not None and elapsed >= 1:
+            self._status.setText(txt.addons_status_elapsed(self._status_line, elapsed))
+        else:
+            self._status.setText(self._status_line)
+
     def _tick_elapsed(self) -> None:
-        """Add the time the current step has been running, so the screen visibly moves."""
+        """Redraw the line so the time the current step has been running moves."""
         if self._status_parts is None:
             self._elapsed_timer.stop()
             return
-        self._status.setText(
-            txt.addons_status_elapsed(self._status_line, time.monotonic() - self._status_started)
-        )
+        self._show_status_line()
 
     def _show_step(self, item: InstallItem, total: int) -> None:
         """Put *item* in the status line, with the bar and Abort that belong to it."""

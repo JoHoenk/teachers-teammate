@@ -46,6 +46,10 @@ def create_app(
         icon = icon_factory()
         if icon is not None:
             app.setWindowIcon(icon)
+    if sys.platform == "win32":
+        # The native Windows style gives every QWizard its Aero look, with a back arrow in the
+        # title bar; Fusion has only the modern one.
+        app.setStyle("Fusion")
     if apply_theme:
         app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api="pyside6"))
     return app

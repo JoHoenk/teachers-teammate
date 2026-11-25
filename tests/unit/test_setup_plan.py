@@ -18,6 +18,7 @@ from teachers_teammate.application.setup_plan import (
     build_setup_plan,
 )
 from teachers_teammate.settings_schema import DEFAULTS
+from teachers_teammate.domain.anonymization import SECONDARY_MODEL_AUTO
 from teachers_teammate.domain.local_models import (
     PAGE_MODELS_ADDON_ID,
     PAGE_MODELS_SIZE_GB,
@@ -531,6 +532,38 @@ def test_no_extra_language_leaves_the_saved_extra_model_alone() -> None:
 
     assert "anonymizer_secondary_model" not in plan.settings
     assert "anonymizer_secondary_model" not in same.settings
+
+
+def test_the_computers_language_stays_the_automatic_extra_while_that_is_the_saved_choice() -> None:
+    """
+    Given  names to remove and this computer's language as the extra one
+    When   the setup plan is built with the automatic extra saved, or with another model saved
+    Then   the automatic choice is kept, so a missing model skips the extra pass instead of
+           blocking runs; a model the teacher saved explicitly is written as it is; the model is
+           downloaded either way
+    """
+    answers = _answers(
+        proofreading=ProofreadingPlace.ONLINE, remove_names=True, extra_names_model="en_core_web_sm"
+    )
+    facts = _facts(system_spacy_model="en_core_web_sm")
+
+    automatic = _plan(answers=answers, facts=facts)
+    unset = _plan(answers=answers, facts=facts, current=_current(anonymizer_secondary_model=None))
+    explicit = _plan(
+        answers=answers,
+        facts=facts,
+        current=_current(anonymizer_secondary_model="fr_core_news_sm"),
+    )
+    other = _plan(answers=answers, facts=_facts(system_spacy_model="fr_core_news_sm"))
+
+    assert automatic.settings["anonymizer_secondary_model"] == SECONDARY_MODEL_AUTO
+    assert unset.settings["anonymizer_secondary_model"] == SECONDARY_MODEL_AUTO
+    assert explicit.settings["anonymizer_secondary_model"] == "en_core_web_sm"
+    assert other.settings["anonymizer_secondary_model"] == "en_core_web_sm"
+    assert [d.name for d in _downloads(automatic, DownloadKind.SPACY_MODEL)] == [
+        "de_core_news_sm",
+        "en_core_web_sm",
+    ]
 
 
 def test_a_provider_package_is_only_planned_for_online_proofreading() -> None:

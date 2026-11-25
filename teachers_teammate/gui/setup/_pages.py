@@ -46,9 +46,9 @@ from ...application.setup_plan import (
     SetupAnswers,
     SetupPlan,
 )
+from ...domain.anonymization import SECONDARY_MODEL_AUTO
 from ...domain.data_location import (
     PROVIDER_OLLAMA,
-    STAGE_ANONYMIZATION,
     DataLocation,
     DataRegion,
     StageLocation,
@@ -61,7 +61,6 @@ from ...domain.model_catalog import (
     HardwareProfileSetting,
     Suitability,
     profile_setting,
-    short_model_name,
 )
 from ...domain.ollama_address import normalize_ollama_url
 from ...domain.stages import Stage
@@ -81,16 +80,8 @@ from ...texts.setup import (
     CLASSES_TYPED_NOTE,
     DONE_DONE,
     DONE_DOWNLOADS_TITLE,
-    DONE_NAME_PAGE_MODELS,
-    DONE_NAME_READER,
     DONE_NOTHING,
     DONE_OLLAMA_GOES_ON,
-    DONE_PURPOSE_ADDON,
-    DONE_PURPOSE_NAMES,
-    DONE_PURPOSE_PAGE_MODELS,
-    DONE_PURPOSE_PROOFREADING,
-    DONE_PURPOSE_READER,
-    DONE_PURPOSE_READING,
     DONE_RUNNING,
     DONE_SELECT,
     DONE_SELECT_TOOLTIP,
@@ -184,7 +175,7 @@ from ..settings._server_search_dialog import ServerSearchDialog
 from ..settings._speed_panel import SpeedPanel
 from ._context import SetupContext
 from ._flow import ORDER, SetupPageId, next_page
-from ._summary import SummaryRows, size_text, summary_rows
+from ._summary import SummaryRows, download_words, size_text, summary_rows
 
 if TYPE_CHECKING:
     from ._assistant import SetupAssistant
@@ -841,6 +832,9 @@ class PrivacyPage(SetupPage):
         extra = QVBoxLayout(self._extra_holder)
         extra.setContentsMargins(0, 8, 0, 0)
         self._extra = QCheckBox(PRIVACY_EXTRA)
+        #: The teacher ticked or unticked the extra language, so the suggestion stays out of it.
+        self._extra_decided = False
+        self._extra.clicked.connect(self._on_extra_clicked)
         extra.addWidget(self._extra)
         self._extra_model = QComboBox()
         extra.addWidget(_indent(self._extra_model))
@@ -856,6 +850,9 @@ class PrivacyPage(SetupPage):
         if not (self._extra_holder.isVisibleTo(self) and self._extra.isChecked()):
             return ""
         return str(self._extra_model.currentData() or "")
+
+    def _on_extra_clicked(self, _checked: bool = False) -> None:
+        self._extra_decided = True
 
     def _sync_extra(self, _checked: bool = False) -> None:
         """Offer the extra language while names are looked for, and its list while it is ticked."""
@@ -885,7 +882,12 @@ class PrivacyPage(SetupPage):
         chosen = remembered if remembered in models else (system if system in models else "")
         self._extra_model.setCurrentIndex(max(self._extra_model.findData(chosen), 0))
         # A language that is saved as the extra one stays ticked: the assistant turns nothing off.
-        self._extra.setChecked(remembered in models)
+        # While the saved choice is the automatic one, the computer's own language is suggested,
+        # because the students' names are in it whatever the text is written in; "(none)" and
+        # a choice the teacher made on this page are kept.
+        automatic = saved in ("", SECONDARY_MODEL_AUTO)
+        suggested = automatic and not self._extra_decided and bool(chosen)
+        self._extra.setChecked(remembered in models or suggested)
 
     def remove_names(self) -> bool:
         """Return whether names should be replaced before the text is sent."""
@@ -1025,7 +1027,10 @@ class SummaryPage(SetupPage):
             return
         self._plan = plan
         self._headline.setText(SUMMARY_TITLE)
-        self._rows.set_rows(summary_rows(plan, self._place_of, key_missing=self._key_missing(plan)))
+        self._rows.set_rows(
+            summary_rows(plan, self._place_of, key_missing=self._key_missing(plan)),
+            str(plan.panel.get("language", "")),
+        )
         self._show_downloads(plan)
         self._later.setVisible(True)
         self.completeChanged.emit()
@@ -1255,7 +1260,7 @@ class _DownloadRows(QWidget):
             return
         for line, download in enumerate(downloads):
             name = download.name
-            purpose, what = _download_words(download, language)
+            purpose, what = download_words(download, language)
             self._grid.addWidget(QLabel(purpose), line, 0)
             what_label = QLabel(what)
             what_label.setToolTip(name)
@@ -1382,24 +1387,6 @@ class _DownloadRows(QWidget):
         self._labels.clear()
         self._names.clear()
         self._kinds.clear()
-
-
-def _download_words(download: PlannedDownload, language: str) -> tuple[str, str]:
-    """Return what a download is for and what it is called, in words a teacher knows."""
-    kind = download.kind
-    if kind is DownloadKind.READER_MODEL:
-        return DONE_PURPOSE_READER, DONE_NAME_READER
-    if kind is DownloadKind.PAGE_MODELS:
-        return DONE_PURPOSE_PAGE_MODELS, DONE_NAME_PAGE_MODELS
-    if kind is DownloadKind.SPACY_MODEL:
-        if download.extra:
-            return DONE_PURPOSE_NAMES, name_model_label(download.name)
-        return DONE_PURPOSE_NAMES, language or download.name
-    if kind is DownloadKind.OLLAMA_MODEL:
-        purpose = DONE_PURPOSE_READING if download.stage == Stage.OCR else DONE_PURPOSE_PROOFREADING
-        return purpose, short_model_name(download.name)
-    purpose = DONE_PURPOSE_NAMES if download.stage == STAGE_ANONYMIZATION else DONE_PURPOSE_ADDON
-    return purpose, download.name
 
 
 def _item_name(item: InstallItem) -> str:

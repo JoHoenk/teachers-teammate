@@ -430,6 +430,7 @@ class SetupAppService(DummyAppService):
             spacy_installed=self.anonymizer_ready,
             spacy_model="de_core_news_sm",
             installed_spacy_models=frozenset(self.installed_spacy),
+            system_spacy_model=self.system_model or "",
             missing_package=self.missing_provider_package(answers.online_choice[0]) or "",
         )
 

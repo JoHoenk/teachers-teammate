@@ -2588,7 +2588,8 @@ lock), `tests/unit/test_preview_image_store.py` (the page files).
 ### Setup Assistant
 
 `gui/setup/` is a `QWizard` that asks what only the teacher knows and then writes the settings
-once.  It is opened on a first start (no settings file yet) and from **Tools → Setup Assistant…**;
+once.  It is opened on a first start (no settings file yet), once after an update (`SettingsFile`
+keeps the last-run version under `gui/app_version`) and from **Tools → Setup Assistant…**;
 `MainWindow._open_setup_assistant(first_start=...)` builds the `SetupContext` (the settings as the
 panel shows them, the application service, the main window's `PullManager`, the system
 language on a first start) and connects `SetupAssistant.committed` to `_apply_setup_result`.
@@ -2606,11 +2607,14 @@ plan are all built the first time their page is shown.
 Every page sits in a scroll area (`SetupPage._content()`), because QWizard gives all pages one
 height and would squeeze a tall page's widgets; `fit_to_screen()` (`gui/_window_geometry.py`) keeps
 the wizard and Settings inside the screen.  The wizard sets `ModernStyle` again on show: Windows
-swaps in its Aero look (a back arrow in the title area).  A found Ollama server is a `ServerCard`
+swaps in its Aero look (a back arrow in the title area); on Windows the app also sets the
+Fusion style, which has no Aero look.  A found Ollama server is a `ServerCard`
 (`gui/_server_card.py`) on the Ollama page, in Settings and in the search dialog.  The proofreading
 page's model list comes from `plan_with_model_choices()` with the suggestion; an empty
 `SetupAnswers.local_model` means *use the recommended one*.  `SetupAnswers.extra_names_model`
-(the Privacy page's extra language) becomes `anonymizer_secondary_model` and joins the downloads.
+(the Privacy page's extra language, suggested as the computer's own language, because the students'
+names are in it whatever language the text has) becomes `anonymizer_secondary_model` and joins the
+downloads.
 
 **The plan is a pure function** (`application/setup_plan.py`).  `SetupAnswers` is what the pages
 collected, `SetupFacts` is what `SetupService.setup_facts()` measured (profile,

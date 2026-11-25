@@ -150,9 +150,14 @@ fi
 # The whole package tree except the control files, as dpkg counts it.
 INSTALLED_SIZE=$(du -sk --exclude=DEBIAN "${PKG_DIR}" | cut -f1)
 
+# dpkg sorts 1.2.3-rc.1 after 1.2.3 (the part after the dash is a revision); 1.2.3~rc.1 sorts
+# before it, so a pre-release upgrades to the final version.
+TILDE='~'
+DEB_VERSION="${VERSION/-/${TILDE}}"
+
 cat > "${PKG_DIR}/DEBIAN/control" <<EOF
 Package: ${PKG_NAME}
-Version: ${VERSION}
+Version: ${DEB_VERSION}
 Architecture: ${ARCH}
 Maintainer: ${MAINTAINER}
 Installed-Size: ${INSTALLED_SIZE}

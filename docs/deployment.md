@@ -30,7 +30,11 @@ validate ──► lint + test ──► create-release (draft)
 ```
 
 - **validate** fails within seconds when the tag has the wrong form, the commit is not on `main`,
-  or the version is not newer than the latest published release.
+  the version is not newer than the latest published release, or the release that holds the
+  third-party sources of the shipped Qt, OpenCV and lxml is missing or incomplete (publish it first,
+  see *Third-party licenses* below).
+- Only the newest version ships, so the 0.5.x line gets no further releases: a tag older than the
+  latest release is refused, and so is one that is not on `main`.
 - The release stays a **draft**. Open it from the job summary, check the notes and the assets, and
   click *Publish*; for a final release also tick *Set as the latest release* (the job summary says
   whether to). The app's update check only sees published releases.
@@ -41,7 +45,9 @@ validate ──► lint + test ──► create-release (draft)
   gh release delete v1.2.3 --cleanup-tag
   ```
 
-Only the maintainer may create or delete `v*` tags (tag ruleset); a tag cannot be moved.
+Anyone with write access can push, move or delete a `v*` tag, so keep write access to the
+maintainer. A tag that was pushed by mistake is deleted with `git push --delete origin <tag>`
+before its release exists.
 
 ### CI workflows
 
@@ -196,11 +202,14 @@ Our own source needs no mirror: each release page carries the tag's "Source code
 is the Corresponding Source of that release (`NOTICE` → "Written offer").
 
 The bundle carries Qt under the LGPL v3 as separate, replaceable files
-(`_internal/PySide6/Qt/lib`). The LGPL requires passing on the Qt, PySide6 and FFmpeg sources, so
-every shipped version gets its own release, `third-party-sources-qt<version>`, built and published
-by `tools/release/mirror_sources.py`. Versions come from the inventory and `NOTICE`; file names
-from the authors' directory listings, so a renamed archive fails here, not on a download page. The
-set carries `SHA256SUMS` and a `README.txt`:
+(`_internal/PySide6/Qt/lib`). The LGPL requires passing on the Qt, PySide6, FFmpeg and libiconv
+sources, so every shipped combination of Qt and of the packages that carry the rest (OpenCV with
+its FFmpeg, lxml with its libiconv) gets its own release,
+`third-party-sources-qt<qt>-<package>-<version>...`, built and published by
+`tools/release/mirror_sources.py` as an ordinary, public release of this repository (with a tag of
+the same name; it is not a `v*` tag, so no release runs). Versions come from the inventory and
+`NOTICE`; file names from the authors' directory listings, so a renamed archive fails here, not on
+a download page. The set carries `SHA256SUMS` and a `README.txt`:
 
 ```bash
 python tools/release/mirror_sources.py                                # fetch and check, discard
@@ -223,17 +232,22 @@ Which files are held to a published digest, and which are not:
 - `--keep` needs an empty folder (without it, a temporary one), so an upload never publishes an
   earlier run's files.
 - `--bundle` names a **Linux** folder build: every `libQt6*.so*` in it needs its submodule archive;
-  a folder without any is refused.
-- `--upload` needs `gh` and `GH_TOKEN`, never marks the release *Latest* (the update check must not
-  see it), and replaces an existing release's assets, title and notes.
+  a folder without any is refused. With `--no-fetch` it checks that and stops, without downloading
+  anything; `build_package.yml` runs it on every Linux build, so a Qt module that PySide6 gains
+  turns the build red.
+- `--upload` needs `gh` and `GH_TOKEN` (or a `gh auth login`), never marks the release *Latest* (the
+  update check must not see it), and refills a release of the same name (a failed run's) with this
+  set's assets, title and notes. Another version of Qt, OpenCV or lxml is another release; the older
+  one stays untouched.
 - **Publish the sources before the tag.** `release.yml`'s `validate` job fails when the sources
-  release does not hold the current versions (e.g. a bumped OpenCV, and with it FFmpeg, without a
-  re-run of the mirror). Only `release_dry_run.yml` passes `--skip-sources`.
-- Never delete a sources release while a download of its version exists.
+  release of the current versions is missing or does not hold the whole set. Only
+  `release_dry_run.yml` passes `--skip-sources`.
+- Never delete a sources release while a download of its versions exists.
 
 **Bumping `pyside6-essentials`, `shiboken6`, `opencv-python-headless` or `lxml`:** re-run the
-mirror, name the new versions in the Qt/PySide6, FFmpeg and libiconv entries of `NOTICE`, then run
-`python tools/licenses/inventory.py --compile`. Dependabot groups them. `certifi` needs none of
+mirror, name the new versions and the new release name in the Qt/PySide6, FFmpeg and libiconv
+entries of `NOTICE`, then run `python tools/licenses/inventory.py --compile`. Dependabot groups
+them. `certifi` needs none of
 this: every certifi release on PyPI carries its own source.
 
 ---

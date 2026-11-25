@@ -8,12 +8,12 @@ laptop before pushing a tag.
 Usage (from the repository root; ``gh`` and ``GH_TOKEN`` are needed for the commands that talk
 to GitHub):
 
-    python tools/release/release_tag.py check v0.5.7 --repo OWNER/NAME --sha <commit>
-    python tools/release/release_tag.py check v0.5.7-rc.1 --repo OWNER/NAME --skip-main --skip-sources
-    python tools/release/release_tag.py forms v0.5.7-rc.1 --github-output "$GITHUB_OUTPUT"
-    python tools/release/release_tag.py draft v0.5.7 --repo OWNER/NAME
+    python tools/release/release_tag.py check v1.2.3 --repo OWNER/NAME --sha <commit>
+    python tools/release/release_tag.py check v1.2.3-rc.1 --repo OWNER/NAME --skip-main --skip-sources
+    python tools/release/release_tag.py forms v1.2.3-rc.1 --github-output "$GITHUB_OUTPUT"
+    python tools/release/release_tag.py draft v1.2.3 --repo OWNER/NAME
     python tools/release/release_tag.py collect artifacts release
-    python tools/release/release_tag.py summary v0.5.7 release --repo OWNER/NAME
+    python tools/release/release_tag.py summary v1.2.3 release --repo OWNER/NAME
 """
 
 from __future__ import annotations
@@ -232,11 +232,11 @@ def missing_sources_release(repo: str, tree: Path = ROOT) -> str | None:
     """Return what is wrong when the sources release does not hold the sources we ship.
 
     The downloads offer the LGPL sources in a release of their own, so a tag whose sources were
-    never mirrored would ship a dead pointer.  The release keeps its name while the Qt version
-    stays the same, so a bump of OpenCV (which brings another FFmpeg) or of lxml (which brings
-    another libiconv) leaves the name right and the contents wrong: what is inside it is what
-    counts, not that it exists.  The versions come from the inventory and NOTICE of the tagged
-    commit, which is the checkout this runs in.
+    never mirrored would ship a dead pointer.  The name carries the versions of Qt and of every
+    package that brings a vendored part (OpenCV with its FFmpeg, lxml with its libiconv), but a
+    half-filled release of a failed upload has the right name and the wrong contents: what is
+    inside it is what counts, not that it exists.  The versions come from the inventory and NOTICE
+    of the tagged commit, which is the checkout this runs in.
 
     Raises:
         SystemExit: GitHub answered with anything but the release or a "not found", or the tree
@@ -246,12 +246,13 @@ def missing_sources_release(repo: str, tree: Path = ROOT) -> str | None:
         contents = mirror_sources.tree_contents(tree)
     except (OSError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
-    name = mirror_sources.sources_release_tag(contents.qt)
+    name = mirror_sources.sources_release_tag(contents)
     assets = mirror_sources.release_assets(name, repo)
     if assets is None:
         return (
             f"there is no release '{name}', so the downloads would point at nothing for the "
-            f"source of Qt {contents.qt}.\nCreate it before the tag is pushed: "
+            f"source of Qt {contents.qt} and the parts NOTICE names.\n"
+            "Create it before the tag is pushed: "
             f"python tools/release/mirror_sources.py --upload --repo {repo}"
         )
     missing = mirror_sources.missing_assets(assets, contents)

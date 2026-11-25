@@ -71,7 +71,7 @@ certifi (MPL-2.0), the version Help > Licenses lists:
   https://pypi.org/project/certifi/
 
 The same sources, as one download, are published with this release:
-  https://github.com/JoHoenk/teachers-teammate/releases/tag/third-party-sources-qt6.12.0
+  https://github.com/JoHoenk/teachers-teammate/releases/tag/third-party-sources-qt6.12.0-lxml-6.1.3-opencv-python-headless-5.1.0.95
 It holds the four Qt modules above, pyside-setup at the matching tag, the FFmpeg and libiconv
 tarballs with their signatures, and the opencv-python-headless and lxml sources. It is never the
 "latest" release, so the app's update check does not see it.

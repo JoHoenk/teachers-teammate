@@ -2,10 +2,13 @@
 """Mirror the third-party sources our downloads promise: one release per version we ship.
 
 Nothing in this repository holds the Qt, PySide6, FFmpeg or libiconv sources, and the LGPL wants
-them next to the download, so every version a release carries gets a sources release of its own:
-``third-party-sources-qt<version>``.  This tool fetches the files NOTICE names, holds each one to
-the digest its author publishes, writes ``SHA256SUMS`` and a ``README.txt`` into the set, and
-uploads the set.  It is never marked *Latest*, so the app's update check cannot see it.
+them next to the download, so every combination of versions a release carries gets a sources
+release of its own: ``third-party-sources-qt<qt>`` and, for each package that carries a part whose
+source we owe (OpenCV with its FFmpeg, lxml with its libiconv), ``-<package>-<version>``.  A set is
+never replaced by another version's, so an older download keeps its sources.  This tool fetches the
+files NOTICE names, holds each one to the digest its author publishes, writes ``SHA256SUMS`` and a
+``README.txt`` into the set, and uploads the set.  It is never marked *Latest*, so the app's update
+check cannot see it.
 
 FFmpeg and libiconv publish a signature (``.asc``, ``.sig``) and no digest, so those two tarballs
 are signature-only: the set carries the signature and neither the tool nor the set verifies it.
@@ -24,6 +27,7 @@ Usage (from the repository root; ``--upload`` needs ``gh`` and ``GH_TOKEN``):
     python tools/release/mirror_sources.py                        # fetch and check, then discard
     python tools/release/mirror_sources.py --keep dist/sources    # keep the set for reading
     python tools/release/mirror_sources.py --bundle dist/teachers-teammate
+    python tools/release/mirror_sources.py --bundle dist/teachers-teammate --no-fetch
     python tools/release/mirror_sources.py --upload --repo JoHoenk/teachers-teammate
 """
 
@@ -169,9 +173,24 @@ class SourceSet:
     files: tuple[str, ...]
 
 
-def sources_release_tag(qt: str) -> str:
-    """Return the name of the release that holds the sources of Qt *qt*."""
-    return f"third-party-sources-qt{qt}"
+def sources_release_tag(contents: Contents) -> str:
+    """Return the name of the release that holds the sources of *contents*.
+
+    Qt's version and that of every package that carries a vendored part (OpenCV with its FFmpeg,
+    lxml with its libiconv) name the set, so a bump of any of them makes another release instead of
+    replacing the files an older download still points at.
+    """
+    packages = sorted({(entry.package, entry.package_version) for entry in contents.vendored})
+    return f"third-party-sources-qt{contents.qt}" + "".join(
+        f"-{package}-{version}" for package, version in packages
+    )
+
+
+def sources_release_title(contents: Contents) -> str:
+    """Return the title of the sources release of *contents*."""
+    packages = sorted({(entry.package, entry.package_version) for entry in contents.vendored})
+    named = [f"Qt {contents.qt}", *(f"{package} {version}" for package, version in packages)]
+    return "Third-party sources for " + ", ".join(named)
 
 
 def qt_version(pyside: str) -> str:
@@ -359,8 +378,8 @@ def asset_patterns(contents: Contents) -> dict[str, re.Pattern[str]]:
 def missing_assets(names: Iterable[str], contents: Contents) -> list[str]:
     """Return what a release holding *names* lacks of the sources of *contents*.
 
-    A release keeps the name ``third-party-sources-qt<version>`` while the Qt version stays the
-    same, so its name alone says nothing about what is inside it.
+    The release name carries versions, not files: a half-filled release of a failed upload has the
+    right name, so what is inside it is what counts.
     """
     return [
         f"it holds no {what}"
@@ -644,6 +663,7 @@ def upload_commands(
     files: tuple[str, ...],
     repo: str,
     *,
+    title: str,
     notes: str,
     existing: tuple[str, ...] | None,
 ) -> list[list[str]]:
@@ -655,7 +675,6 @@ def upload_commands(
     """
     paths = [str(folder / name) for name in files]
     kept = set(files)
-    title = f"Third-party sources for Qt {tag.removeprefix('third-party-sources-qt')}"
     commands = [
         ["gh", "release", "delete-asset", tag, name, "--repo", repo, "--yes"]
         for name in sorted(existing or ())
@@ -686,10 +705,15 @@ def upload_commands(
     return commands
 
 
-def upload(tag: str, folder: Path, files: tuple[str, ...], repo: str, *, notes: str) -> None:
+def upload(
+    tag: str, folder: Path, files: tuple[str, ...], repo: str, *, title: str, notes: str
+) -> None:
     """Create or fill the release *tag* with *files*, then check that GitHub serves them."""
     existing = release_assets(tag, repo)
-    for command in upload_commands(tag, folder, files, repo, notes=notes, existing=existing):
+    commands = upload_commands(
+        tag, folder, files, repo, title=title, notes=notes, existing=existing
+    )
+    for command in commands:
         _run(command)
     latest = _run(
         ["gh", "release", "view", tag, "--repo", repo, "--json", "isLatest", "--jq", ".isLatest"]
@@ -717,6 +741,18 @@ def upload(tag: str, folder: Path, files: tuple[str, ...], repo: str, *, notes: 
     print(f"Published {tag}; it is not the latest release.")
 
 
+def bundle_problem(bundle: Path, archives: tuple[str, ...]) -> str | None:
+    """Return what keeps the Qt libraries of the Linux *bundle* from being covered, or ``None``."""
+    lib_dir = bundle / "_internal" / "PySide6" / "Qt" / "lib"
+    if not lib_dir.is_dir():
+        return f"{lib_dir} is missing; build the bundle first"
+    try:
+        problems = uncovered(bundle_modules(lib_dir), archives)
+    except ValueError as exc:
+        return str(exc)
+    return "\n".join(problems) or None
+
+
 def main(argv: list[str] | None = None) -> int:
     """Fetch, check and (with ``--upload``) publish the sources of the shipped versions."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -737,12 +773,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--upload",
         action="store_true",
-        help="publish the set as third-party-sources-qt<version> (public; needs gh)",
+        help="publish the set as third-party-sources-qt<qt>-<package>-<version>... (public; needs gh)",
     )
     parser.add_argument(
         "--repo", default=None, metavar="OWNER/NAME", help="the repository --upload writes to"
     )
+    parser.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="with --bundle: check the bundle's Qt modules against NOTICE and stop (offline)",
+    )
     args = parser.parse_args(argv)
+    if args.no_fetch and args.bundle is None:
+        parser.error("--no-fetch needs --bundle")
+    if args.no_fetch and (args.upload or args.keep is not None):
+        parser.error("--no-fetch downloads nothing, so there is nothing to --keep or --upload")
 
     try:
         contents = tree_contents()
@@ -751,18 +796,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.bundle is not None:
-        lib_dir = args.bundle / "_internal" / "PySide6" / "Qt" / "lib"
-        if not lib_dir.is_dir():
-            print(f"{lib_dir} is missing; build the bundle first", file=sys.stderr)
+        problem = bundle_problem(args.bundle, contents.modules)
+        if problem is not None:
+            print(problem, file=sys.stderr)
             return 1
-        try:
-            problems = uncovered(bundle_modules(lib_dir), contents.modules)
-        except ValueError as exc:
-            print(exc, file=sys.stderr)
-            return 1
-        if problems:
-            print("\n".join(problems), file=sys.stderr)
-            return 1
+        if args.no_fetch:
+            print(f"Every Qt module of {args.bundle} has its source archive in NOTICE.")
+            return 0
 
     if args.upload and not args.repo:
         print("--upload needs --repo OWNER/NAME", file=sys.stderr)
@@ -791,10 +831,11 @@ def main(argv: list[str] | None = None) -> int:
         print("FFmpeg and libiconv publish no digest: their signatures travel unverified.")
         if args.upload and args.repo:
             upload(
-                sources_release_tag(contents.qt),
+                sources_release_tag(contents),
                 folder,
                 found.files,
                 args.repo,
+                title=sources_release_title(contents),
                 notes=release_notes(contents),
             )
     return 0

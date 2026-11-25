@@ -16,6 +16,7 @@ from tools.release import mirror_sources
 
 QT, OPENCV, FFMPEG, LIBICONV, LXML = "6.12.0", "5.1.0.95", "9.0.2", "1.18", "6.1.3"
 MODULES = ("qtbase", "qtsvg", "qtimageformats", "qtwayland")
+SOURCES_TAG = f"third-party-sources-qt{QT}-lxml-{LXML}-opencv-python-headless-{OPENCV}"
 
 SUBMODULES = f"{mirror_sources.QT_ARCHIVE}/6.12/{QT}/submodules"
 PYSIDE_DIR = f"{mirror_sources.PYSIDE6_SOURCES}/PySide6-{QT}-src"
@@ -347,13 +348,29 @@ def test_uncovered_asks_for_qttools_when_the_bundle_carries_uitools() -> None:
     assert problems == ["QtUiTools comes with qttools, which the set does not hold"]
 
 
-def test_sources_release_tag_names_the_qt_version() -> None:
+def test_sources_release_tag_names_every_package_that_carries_a_vendored_part() -> None:
     """
-    Given  a Qt version
+    Given  the Qt version and the packages that carry FFmpeg and libiconv
     When   sources_release_tag() is called
-    Then   the tag is the one NOTICE points at
+    Then   the tag names Qt and each package with its version, in a fixed order, so a bump of any
+           of them makes another release and an older download keeps the sources it points at
     """
-    assert mirror_sources.sources_release_tag(QT) == f"third-party-sources-qt{QT}"
+    tag = mirror_sources.sources_release_tag(_contents())
+
+    assert tag == SOURCES_TAG
+    assert tag != mirror_sources.sources_release_tag(_contents(opencv="5.2.0.1"))
+    assert tag != mirror_sources.sources_release_tag(_contents(qt="6.13.0"))
+
+
+def test_sources_release_title_names_qt_and_the_packages() -> None:
+    """
+    Given  the contents of a sources release
+    When   sources_release_title() is called
+    Then   the title says which Qt and which packages the set is for
+    """
+    title = mirror_sources.sources_release_title(_contents())
+
+    assert title == f"Third-party sources for Qt {QT}, lxml {LXML}, opencv-python-headless {OPENCV}"
 
 
 def _tree(tmp_path: Path, *, opencv: str = OPENCV) -> Path:
@@ -787,7 +804,7 @@ def test_release_assets_read_the_files_the_release_holds() -> None:
     )
 
     with patch.object(mirror_sources, "_run", return_value=completed):
-        assert mirror_sources.release_assets("third-party-sources-qt6.12.0", "owner/name") == (
+        assert mirror_sources.release_assets(SOURCES_TAG, "owner/name") == (
             "README.txt",
             "SHA256SUMS",
         )
@@ -804,7 +821,7 @@ def test_release_assets_return_nothing_for_a_release_that_is_not_there() -> None
     )
 
     with patch.object(mirror_sources, "_run", return_value=completed):
-        assert mirror_sources.release_assets("third-party-sources-qt6.12.0", "owner/name") is None
+        assert mirror_sources.release_assets(SOURCES_TAG, "owner/name") is None
 
 
 def test_release_assets_exit_when_github_answers_otherwise() -> None:
@@ -819,7 +836,7 @@ def test_release_assets_exit_when_github_answers_otherwise() -> None:
         patch.object(mirror_sources, "_run", return_value=completed),
         pytest.raises(SystemExit, match="could not read the release"),
     ):
-        mirror_sources.release_assets("third-party-sources-qt6.12.0", "owner/name")
+        mirror_sources.release_assets(SOURCES_TAG, "owner/name")
 
 
 def test_upload_creates_a_release_that_is_never_latest(tmp_path: Path) -> None:
@@ -831,16 +848,17 @@ def test_upload_creates_a_release_that_is_never_latest(tmp_path: Path) -> None:
     files = _set_files()
 
     commands = mirror_sources.upload_commands(
-        "third-party-sources-qt6.12.0",
+        SOURCES_TAG,
         tmp_path,
         files,
         "owner/name",
+        title="a title",
         notes="what it holds",
         existing=None,
     )
 
     assert len(commands) == 1
-    assert commands[0][:4] == ["gh", "release", "create", "third-party-sources-qt6.12.0"]
+    assert commands[0][:4] == ["gh", "release", "create", SOURCES_TAG]
     assert str(tmp_path / files[0]) in commands[0]
     assert "--latest=false" in commands[0]
 
@@ -854,18 +872,19 @@ def test_upload_fills_an_existing_release_and_rewrites_its_text(tmp_path: Path) 
     files = _set_files()
 
     commands = mirror_sources.upload_commands(
-        "third-party-sources-qt6.12.0",
+        SOURCES_TAG,
         tmp_path,
         files,
         "owner/name",
+        title="a title",
         notes="what it holds",
         existing=files,
     )
 
     upload, edit = commands
-    assert upload[:4] == ["gh", "release", "upload", "third-party-sources-qt6.12.0"]
+    assert upload[:4] == ["gh", "release", "upload", SOURCES_TAG]
     assert "--clobber" in upload
-    assert edit[:4] == ["gh", "release", "edit", "third-party-sources-qt6.12.0"]
+    assert edit[:4] == ["gh", "release", "edit", SOURCES_TAG]
     assert edit[-2:] == ["--notes", "what it holds"]
 
 
@@ -879,10 +898,11 @@ def test_upload_drops_the_files_of_an_earlier_set(tmp_path: Path) -> None:
     files = _set_files()
 
     commands = mirror_sources.upload_commands(
-        "third-party-sources-qt6.12.0",
+        SOURCES_TAG,
         tmp_path,
         files,
         "owner/name",
+        title="a title",
         notes="what it holds",
         existing=("ffmpeg-9.0.1.tar.xz", "ffmpeg-9.0.1.tar.xz.asc", mirror_sources.README_NAME),
     )
@@ -893,7 +913,67 @@ def test_upload_drops_the_files_of_an_earlier_set(tmp_path: Path) -> None:
         "gh",
         "release",
         "delete-asset",
-        "third-party-sources-qt6.12.0",
+        SOURCES_TAG,
         "ffmpeg-9.0.1.tar.xz",
     ]
     assert [command[2] for command in commands[2:]] == ["upload", "edit"]
+
+
+def _linux_bundle(root: Path, *libraries: str) -> Path:
+    """Lay out the Qt library folder of a Linux bundle holding *libraries*."""
+    lib_dir = root / "_internal" / "PySide6" / "Qt" / "lib"
+    lib_dir.mkdir(parents=True)
+    for name in libraries:
+        (lib_dir / name).touch()
+    return root
+
+
+def test_no_fetch_accepts_a_bundle_whose_modules_the_set_covers(tmp_path: Path) -> None:
+    """
+    Given  a Linux bundle that holds QtCore and QtSvg, and the four archives NOTICE names
+    When   main() runs with --bundle and --no-fetch
+    Then   it exits 0 and downloads nothing, so CI can run it on every build
+    """
+    bundle = _linux_bundle(tmp_path, "libQt6Core.so.6", "libQt6Svg.so.6")
+
+    with (
+        patch.object(mirror_sources, "tree_contents", return_value=_contents()),
+        patch.object(mirror_sources, "collect") as collect,
+    ):
+        code = mirror_sources.main(["--bundle", str(bundle), "--no-fetch"])
+
+    assert code == 0
+    collect.assert_not_called()
+
+
+def test_no_fetch_fails_for_a_module_no_archive_carries(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    Given  a Linux bundle that gained QtCharts, which no archive of the set carries
+    When   main() runs with --bundle and --no-fetch
+    Then   it exits 1 and names the module, so a PySide6 that gains a module turns the build red
+    """
+    bundle = _linux_bundle(tmp_path, "libQt6Core.so.6", "libQt6Charts.so.6")
+
+    with (
+        patch.object(mirror_sources, "tree_contents", return_value=_contents()),
+        patch.object(mirror_sources, "collect") as collect,
+    ):
+        code = mirror_sources.main(["--bundle", str(bundle), "--no-fetch"])
+
+    assert code == 1
+    assert "QtCharts" in capsys.readouterr().err
+    collect.assert_not_called()
+
+
+def test_no_fetch_without_a_bundle_is_refused() -> None:
+    """
+    Given  --no-fetch and no bundle
+    When   main() parses its arguments
+    Then   it exits with a usage error instead of checking nothing and reporting success
+    """
+    with pytest.raises(SystemExit) as stopped:
+        mirror_sources.main(["--no-fetch"])
+
+    assert stopped.value.code == 2

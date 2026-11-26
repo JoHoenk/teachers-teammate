@@ -113,8 +113,8 @@ def _answers(**overrides: str) -> dict[str, str]:
             f"{module}-everywhere-src-{QT}.tar.xz\n"
             for module in MODULES
         ),
-        f"{PYSIDE_DIR}/": _listing(PYSIDE, "sha256sums.txt"),
-        f"{PYSIDE_DIR}/sha256sums.txt": f"{_sha256(files[PYSIDE])}  {PYSIDE}\n",
+        f"{PYSIDE_DIR}/": _listing(PYSIDE),
+        f"{PYSIDE_DIR}/{PYSIDE}.sha256": f"{_sha256(files[PYSIDE])}  {PYSIDE}\n",
         f"{FFMPEG_DIR}/": _listing(FFMPEG_ARCHIVE, FFMPEG_SIGNATURE, "ffmpeg-9.0.1.tar.xz"),
         f"{LIBICONV_DIR}/": _listing(LIBICONV_ARCHIVE, LIBICONV_SIGNATURE, "libiconv-1.17.tar.gz"),
         **_sdist_answers("opencv-python-headless", OPENCV, SDIST, files),
@@ -220,12 +220,36 @@ def test_check_digest_refuses_another_file(tmp_path: Path) -> None:
 
 def test_published_sums_refuse_a_folder_that_publishes_no_digest() -> None:
     """
-    Given  a folder that lists its files and no digest list (Qt for Python publishes none)
+    Given  a folder that lists its files and no digest list
     When   published_sums() is called
     Then   a ValueError names the folder, so its files are never taken unchecked
     """
     with pytest.raises(ValueError, match=r"publishes no sha256sums\.txt or md5sums\.txt"):
         mirror_sources.published_sums(_read(_answers()), PYSIDE_DIR, (PYSIDE,))
+
+
+def test_sidecar_digest_reads_the_sha256_file_beside_a_tarball() -> None:
+    """
+    Given  a folder whose index omits the <name>.sha256 file that sits beside the tarball
+    When   sidecar_digest() is called
+    Then   the digest in that file is returned
+    """
+    digest = mirror_sources.sidecar_digest(_read(_answers()), PYSIDE_DIR, PYSIDE)
+
+    assert digest == _sha256(_files()[PYSIDE])
+
+
+def test_sidecar_digest_refuses_a_tarball_without_a_sha256_file() -> None:
+    """
+    Given  a folder with no <name>.sha256 beside the tarball
+    When   sidecar_digest() is called
+    Then   a ValueError names the folder, so the file is never taken unchecked
+    """
+    answers = _answers()
+    del answers[f"{PYSIDE_DIR}/{PYSIDE}.sha256"]
+
+    with pytest.raises(ValueError, match=f"publishes no digest for {PYSIDE}"):
+        mirror_sources.sidecar_digest(_read(answers), PYSIDE_DIR, PYSIDE)
 
 
 def test_published_digest_names_a_file_the_list_leaves_out() -> None:
@@ -649,13 +673,14 @@ def test_pypi_sdist_refuses_a_release_without_one() -> None:
 
 def test_collect_refuses_a_pyside_folder_that_publishes_no_digest(tmp_path: Path) -> None:
     """
-    Given  the PySide6 source folder as Qt publishes it, with no digest list in it
+    Given  the PySide6 source folder without the <name>.sha256 beside its tarball
     When   collect() runs
     Then   a ValueError names the folder instead of taking the tarball unchecked
     """
-    answers = _answers(**{f"{PYSIDE_DIR}/": _listing(PYSIDE)})
+    answers = _answers()
+    del answers[f"{PYSIDE_DIR}/{PYSIDE}.sha256"]
 
-    with pytest.raises(ValueError, match=r"publishes no sha256sums\.txt or md5sums\.txt"):
+    with pytest.raises(ValueError, match=f"{PYSIDE_DIR} publishes no digest for {PYSIDE}"):
         mirror_sources.collect(
             tmp_path,
             _contents(),

@@ -1,4 +1,4 @@
-@startuml Teacher's Teammate -- Processing Pipeline
+@startuml Teacher's Teammate — Pipeline stages
 top to bottom direction
 skinparam defaultFontSize 11
 skinparam shadowing false
@@ -11,74 +11,66 @@ skinparam package {
   FontStyle bold
   Padding 8
 }
-
 skinparam component {
   BackgroundColor #FFFFFF
   BorderColor #90A4AE
   FontSize 10
 }
-
 skinparam component<<local>> {
   BackgroundColor #E8F5E9
   BorderColor #388E3C
-  FontSize 10
 }
-
-skinparam component<<cloud>> {
+skinparam component<<choice>> {
   BackgroundColor #E3F2FD
   BorderColor #1565C0
-  FontSize 10
 }
 
-' Stage 1: Input
-package "1  Input" as S_IN {
+package "1  InputProvider" as S_IN {
   component "PDF · JPG / PNG · TXT" as IN <<local>>
 }
 
-' Stage 2: Image Preparation
-package "2  Image Preparation  (local)" as S_PRE {
+package "2  ImagePreprocessor  (scans only)" as S_PRE {
   component "Automatic · Original page" as PRE <<local>>
 }
 
-' Stage 3: Text Recognition (OCR)
-package "3  Text Recognition (OCR, local only)" as S_OCR {
-  component "Ollama vision model  (local) -- recommended" as OCR_OL <<local>>
-  component "Built-in reader (PP-OCR, local) -- no server needed" as OCR_ALT <<local>>
+package "3  OCRProcessor  (scans only; skipped for TXT and for PDFs with a text layer)" as S_OCR {
+  component "Ollama vision model\n(this computer or own network)" as OCR_OL <<local>>
+  component "Built-in reader (PP-OCR)" as OCR_ALT <<local>>
 }
 
-' Stage 4: Remove Personal Information (optional)
-package "4  Remove Personal Information  (local · optional)" as S_AN {
-  component "AI name detection (spaCy) + pattern matching\n(names · e-mail · phone · IBAN · address · date)" as AN <<local>>
+package "3b  OcrOutputPostprocessor" as S_POST {
+  component "One notation: plain text or Markdown" as POST <<local>>
 }
 
-' Stage 5: Proofreading (optional)
-package "5  Proofreading  (optional)" as S_CO {
-  component "Ollama  (local)" as CO_OL <<local>>
-  component "Cloud Provider  (cloud)\n(Mistral (EU) · OpenAI · Anthropic · Google · others)" as CO_CLD <<cloud>>
+package "4  Anonymizer  (optional)" as S_AN {
+  component "spaCy names + patterns\n(e-mail · phone · IBAN · address · date)" as AN <<local>>
 }
 
-' Stage 6: Content Review (optional)
-package "6  Content Review  (optional)" as S_EV {
-  component "Ollama  (local)" as EV_OL <<local>>
-  component "Cloud Provider  (cloud)\n(Mistral (EU) · OpenAI · Anthropic · Google · others)" as EV_CLD <<cloud>>
+package "5  Corrector  (optional)" as S_CO {
+  component "Ollama" as CO_OL <<choice>>
+  component "Online service" as CO_CLD <<choice>>
 }
 
-' Stage 7: Output
-package "7  Output" as S_OUT {
-  component "Word document (.docx) · text files" as OUT <<local>>
+package "6  Evaluator  (optional; needs 5)" as S_EV {
+  component "Ollama" as EV_OL <<choice>>
+  component "Online service" as EV_CLD <<choice>>
 }
 
-' Pipeline flow
+package "7  DocumentCreator" as S_OUT {
+  component "Word (.docx) · text files\n(names put back)" as OUT <<local>>
+}
+
 S_IN  -down-> S_PRE
 S_PRE -down-> S_OCR
-S_OCR -down-> S_AN  : optional
+S_OCR -down-> S_POST
+S_POST -down-> S_AN
 S_AN  -down-> S_CO
-S_CO  -down-> S_EV  : optional
+S_CO  -down-> S_EV
 S_EV  -down-> S_OUT
 
 legend right
-  <back:#E8F5E9>local</back>  runs on your computer -- no internet required
-  <back:#E3F2FD>cloud</back>  requires an internet connection and access key
+  <back:#E8F5E9>green</back>  runs on this computer or in the own network
+  <back:#E3F2FD>blue</back>  the teacher chooses: Ollama, or an online service
+         (confirmed before a run; names hidden when stage 4 is on)
 endlegend
-
 @enduml

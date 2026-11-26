@@ -1,210 +1,114 @@
 # AGENTS.md
 
-Guidance for AI coding agents (Claude Code, Copilot, Codex, …) working in this repository.
-People: see [CONTRIBUTING.md](CONTRIBUTING.md). Claude Code reads this file through `CLAUDE.md`.
-
-**Teacher's Teammate** is a batch OCR and proofreading pipeline (CLI + PySide6 GUI) for
-handwritten documents.
+Rules for coding agents. **Teacher's Teammate** is a batch OCR and proofreading pipeline (CLI +
+PySide6 GUI) for handwritten documents.
 
 ## Commands
 
 ```bash
-bazel test //tests:unit_tests --test_output=errors   # fast, no external services
-bazel test //tests/... --test_output=errors           # full suite (skips Ollama tests if absent)
+bazel test //tests:unit_tests --test_output=errors   # fast
+bazel test //tests/... --test_output=errors           # full suite
 bazel test //tests:test_config --test_output=errors   # one test file
-bazel test //:lock_tests --test_output=errors         # the three locks after a dependency change
-bazel test //:lint --test_output=errors               # ruff + ty
-bazel run //:format.fix                               # ruff format + lint-safe fixes
-bazel build //docs:html                               # Sphinx docs (serve: bazel run //docs:html.serve)
+bazel test //:lock_tests --test_output=errors         # after a dependency change
+bazel test //:lint --test_output=errors               # ruff + ty; never a local ruff/ty
+bazel run //:format.fix
+bazel build //docs:html
 ```
-
-Coverage: see `docs/testing.md`. A venv (`source .venv/bin/activate`) is for running the app
-and the editor, not for Bazel.
 
 ## Architecture
 
-Layers, innermost first; a layer imports only from those above it in this list
-(`tests/unit/test_layer_imports.py` guards it):
+Layers, innermost first; each imports only inner ones (`tests/unit/test_layer_imports.py`):
+`pkg` (`exceptions.py`, `messages.py`) → `domain/` (pure, no I/O) → `texts/` (every sentence a
+teacher reads) and core (`config.py`, `interfaces.py`, `cache_keys.py`, `run_rules.py`,
+`settings_schema.py`), which do not import each other → `infrastructure/` → `application/` (one
+service per topic; the only entry for GUI and CLI; does not import `texts/`) → `gui/`, `cli.py`.
 
-```
-domain/          — pure business concepts (freshness policy, stage names); no I/O
-texts/           — every sentence a teacher reads; Qt-free, imports `domain` and `pkg`;
-                   infrastructure and the adapters use it, `application` does not
-interfaces.py    — ABCs for every pipeline stage; SUPPORTED_SUFFIXES lives here
-infrastructure/  — concrete implementations (OCR engines, LLM providers, DOCX builder, etc.)
-infrastructure/workflow/ — FileProcessor (per-file stage orchestrator), run_files() coordinator
-application/     — the services, one per topic: RunService (the run) in `run.py`, plus
-                   providers, reader, recommendations, speeds, anonymization, addons, releases
-                   (the update check), data_flow, setup, export, stored results (what earlier
-                   runs kept), DocumentQueries (reads) and DocumentCommands (writes), reached
-                   as `.run` / `.stored` / `.documents` / `.commands`; the only entry for GUI
-                   and CLI
-gui/ / cli.py    — adapters; no discovery or availability logic
-                   (gui/settings/ = the Settings window, one page per topic)
-```
-
-`gui/` and `cli.py` import `pkg`, `core`, `domain`, `application` and `texts` only — never
-`infrastructure`. The modules that wire concrete classes are the exception and the only
-exception: `gui/composition.py`, `gui/__main__.py`, `gui/benchmark/composition.py`,
-`gui/benchmark/__main__.py`, `cli_composition.py`, `__main__.py`, `frozen_entry.py` and
-`frozen_modes.py`.
-A module does not re-export a name it does not define either: a name has one home, and a
-caller imports it from there.
-
-Pipeline stages, each an ABC in `interfaces.py`: InputProvider → ImagePreprocessor →
-OCRProcessor (TXT files skip it) → OcrOutputPostprocessor → Anonymizer (optional) →
-Corrector (`proofreading/`, optional) → Evaluator (optional) → DocumentCreator. The stage
-list and its diagrams are in `docs/development.md` → "Architecture".
-
-`OCRPipeline` (`infrastructure/pipeline.py`) is the composition root: it wires services and
-holds no stage logic. `FileProcessor` runs all stages for one file; `run_files()` (a plain
-function in `coordinator.py`) iterates over the file list.
-
-Two GUI apps share these layers: the main window (`teachers-teammate-gui`; the CLI
-`teachers-teammate` runs the same pipeline) and **Benchmark** (`gui/benchmark/`).
+- `gui/` and `cli.py` never import `infrastructure`. Only the composition modules wire concrete
+  classes: `gui/composition.py`, `gui/__main__.py`, `gui/benchmark/composition.py`,
+  `gui/benchmark/__main__.py`, `cli_composition.py`, `__main__.py`, `frozen_entry.py`,
+  `frozen_modes.py`.
+- A name has one home; no module re-exports a name it does not define.
+- Stages are ABCs in `interfaces.py`. `OCRPipeline` wires them, `FileProcessor` runs one file,
+  `run_files()` the list.
+- Before touching an area, read its section in `docs/extension_points.md`.
 
 ## Hard rules
 
-What the code cannot tell you. Each is explained in [docs/extension_points.md](docs/extension_points.md)
-or `docs/development.md`.
-
-**Privacy and what runs where**
-- Text recognition never uses an online engine (`LOCAL_OCR_ENGINES`). An LLM provider is shown
-  and confirmed as an online service unless `PROVIDER.self_hosted` is `True`.
-- The privacy settings are not part of the proofreading and review fingerprints; what a run
-  sent is stored with its result (`SentRecord`).
+**Privacy**
+- Text recognition never uses an online engine (`LOCAL_OCR_ENGINES`). An LLM provider counts as
+  online unless `PROVIDER.self_hosted`.
+- Privacy settings are not part of the proofreading and review fingerprints; what a run sent is
+  stored with its result (`SentRecord`).
+- A log line never holds a document's text, a prompt or a key.
 
 **Nothing starts by itself**
-- Model and add-on downloads only on request (a button, the Setup Assistant, a CLI flag),
-  never at start-up and never silently.
-- The Ollama network search only from an explicit user action; `ollama_url` never changes
-  without the teacher choosing it. The Setup Assistant writes only keys that Settings or the
-  main window already own and never turns anything off.
+- Downloads only on request (button, Setup Assistant, CLI flag), never at start-up.
+- The Ollama network search only on a user action; `ollama_url` changes only by the teacher's
+  choice. The Setup Assistant writes only keys Settings or the main window own and never turns
+  anything off.
 
 **Where code goes**
-- GUI and CLI contain no discovery or availability logic: implement it in the service that
-  owns the topic (`application/run.py`, `providers.py`, …), call it from the GUI.
-- A sentence a teacher reads is defined in `teachers_teammate/texts/` and used by reference,
-  never a literal at the call site. Message boxes and file pickers go through
-  `gui/_dialogs.py`. `tests/unit/test_user_text_centralised.py` enforces it.
-- A failure raised in `infrastructure` carries a `Message` (`teachers_teammate/messages.py`): a
-  key and its data, never a sentence. `texts/messages.py` words it. A caught error goes in as
-  `message_of(exc)`, never `str(exc)`; a new key is an enum value, a factory, a renderer and a line
-  in the golden list of `tests/unit/test_messages.py`, and a released key's value never changes.
-- A service is built once per entry point (`application/composition.py`, called from the
-  composition modules); every other class is given the one it uses, never builds or looks one up
-  (`tests/unit/test_service_construction.py`).
-- A new setting goes on exactly one page of `gui/settings/` (or in `ConfigPanel` if it is a
-  per-batch choice), never two.
-- Anything a teacher cannot rebuild lives in the config or data root, never the cache.
-- A diagnostic goes to `logging` (it lands in `<data root>/logs/teachers-teammate.log`, Help →
-  Open Log Folder); a sentence a teacher reads goes to the Reporter or to `texts/`. Nothing
-  prints. A log line never holds a document's text, a prompt or a key
-  (`tests/unit/test_log_lines_carry_no_text.py`).
-- An `except` that only passes, continues or returns a constant says in a comment why nothing
-  happens, or writes a line (`tests/unit/test_silent_handlers.py`).
+- No discovery or availability logic in GUI or CLI: it goes in the owning service.
+- Teacher-facing sentences live in `texts/`, never as literals; dialogs and file pickers go through
+  `gui/_dialogs.py`.
+- An `infrastructure` failure carries a `Message` (key + data), worded in `texts/messages.py`. Pass a
+  caught error as `message_of(exc)`, never `str(exc)`. A new key: enum value, factory, renderer,
+  golden line in `tests/unit/test_messages.py`; a released key's value never changes.
+- A service is built once per entry point (`application/composition.py`) and passed in, never built
+  or looked up elsewhere.
+- A collaborator a service branches on is a `Protocol` in `application/ports.py`, passed through the
+  constructor. The lazy-import and infrastructure-import budgets of `application/` only shrink.
+- A setting lives on exactly one page of `gui/settings/` (or in `ConfigPanel` if per batch).
+- What a teacher cannot rebuild lives in the config or data root, never the cache.
+- Diagnostics go to `logging`; nothing prints. An `except` that only passes, continues or returns a
+  constant says why in a comment.
 
 **Results and caches**
-- `raw_text` / `correction_text` are plain or Markdown (`raw_text_format`): use
-  `TextFormatter.plain_text` / `.document`, and `PlainMap` for positions in views, never
-  string arithmetic on a widget's text.
-- A stored review is never half right: if `fits(review, raw_plain)` fails, drop it with a
-  warning. All readers go through `align()`.
-- A stopped file is `ProcessingResult.stopped`, never a failure, never stored half done.
-  Recognition switched off makes a file *skipped*, never an error.
-- Output of the reader changes → bump `READER_VERSION`; automatic image preparation changes →
-  bump `AUTO_VERSION` and keep `tests/unit/test_preprocessing_auto_golden.py` green.
-- Model temperatures only through `request_profile()` / `review_temperature()`.
+- `raw_text` / `correction_text` are plain or Markdown: use `TextFormatter.plain_text` / `.document`
+  and `PlainMap` for positions, never string arithmetic on a widget's text.
+- A stored review that fails `fits(review, raw_plain)` is dropped with a warning; readers go through
+  `align()`.
+- A stopped file is `ProcessingResult.stopped`, never a failure or half stored. Recognition off makes
+  a file *skipped*, not an error.
+- Reader output changes → bump `READER_VERSION`; automatic image preparation changes → bump
+  `AUTO_VERSION`.
+- Temperatures only through `request_profile()` / `review_temperature()`.
+- The system prompts in `domain/correction_prompts.py` are fixed: not editable, no output-format
+  rules. A measured step ① variant's text never changes; another text is another id.
 
-**Evaluation records**
-- Every record — runs, test sets with their texts, marks, machines, model sizes, gate records — lives
-  in the private repository `teachers-teammate-evals`, which every tool takes as `--store`. Never in
-  this one: `store_path()` refuses a store inside this tree and `tests/tools/test_no_eval_records.py`
-  fails on a run file, a manifest, a size record or a marks file here. The texts come from corpora
-  that may not be passed to a third party, so that repository stays private.
-- A gate record is a verdict, the runs it rests on and the command that reproduces the figures — no
-  figure. A number copied into a record goes stale the first time a scorer changes.
-
-**Prompts**
-- The system prompts in `domain/correction_prompts.py` are fixed: never editable, never with
-  output-format rules. A step ① variant's text never changes once a measurement used it
-  (the cache key hashes it); another text is another id.
-
-**Generated and ignored files**
+**Repository**
+- Evaluation records live only in the private `teachers-teammate-evals` (`--store`). A gate record
+  holds no figures.
 - Never hand-edit `third_party_licenses/` (except `curated/`); run `tools/licenses/inventory.py`.
-- The git-ignored working-notes folder is not part of the repository. No source, test or
-  document may point into it or cite its ids
-  (`tests/tools/test_no_plan_references.py`).
+- Nothing points into the git-ignored working-notes folder or cites its ids.
 
-## Extension points
+## Conventions
 
-[docs/extension_points.md](docs/extension_points.md) has one section per task (new pipeline
-stage, LLM provider, OCR engine, local model file, input file type, run requirement, GUI
-setting, proofreading exchange, evaluation corpus, …). Read the section before you touch
-that area. A new LLM provider is a new file in `infrastructure/providers/` plus its two
-default models in `_model_defaults.py`.
+- `ty`: suppress with `# ty: ignore[<rule>]` (ty's own rule names), never `# type: ignore`. An
+  unresolvable optional import goes in `allowed-unresolved-imports` in `pyproject.toml`.
+- Lazy import inside a function: `# noqa: PLC0415`.
+- Commits: branch `joho_<topic>` off `main`; subject `[area, area] Sentence` (areas from `git log`).
+  Before a PR, lint and the full suite pass.
 
-## Commits and pull requests
-
-- Branch off `main`, named `joho_<topic>`. Commit subjects are `[area, area] Sentence`
-  (`[app, gui]`, `[tests]`, `[docs]`, `[bazel]`, `[packaging]`, `[tool]`), and the merge adds
-  `(#NN)`. Look at `git log` before inventing an area.
-- Before a PR: `bazel test //:lint` and `bazel test //tests/...` pass.
-
-## Code conventions
-
-- Line length 100, double quotes (`[tool.ruff]` in `pyproject.toml`).
-- Lazy imports (inside functions): add `# noqa: PLC0415`. The count of them in `application/` is
-  pinned by `tests/unit/test_lazy_import_budget.py`; a collaborator a service branches on belongs
-  in `application/ports.py` as a `Protocol` and comes in through the constructor. Which
-  `application/` modules import `infrastructure` at all, and how many names each imports, is
-  pinned by `tests/unit/test_application_infrastructure_budget.py`; both tables only shrink.
-- Type checker is `ty`. Suppress with `# ty: ignore[<rule>]`, **not** `# type: ignore[...]`
-  (ty ignores it silently). ty uses its own rule names (`invalid-assignment`,
-  `invalid-argument-type`, `invalid-method-override`, `unresolved-attribute`, …). Prefer
-  fixing the cause. A module ty cannot resolve (an optional extra) is listed in `allowed-unresolved-imports` in
-  `pyproject.toml`; every other import must resolve.
-- **Run linters through Bazel only** (`bazel test //:lint`, `bazel run //:format.fix`). A
-  `ruff` or `ty` in a local `.venv` can be a different version and give different results.
-- GUI code: test widgets and threads with pytest-qt.
-
-## Writing: docs and comments
-
-- Say it once, short and plain. Describe the current state only: no history ("was", "now",
-  "previously", "no longer", "since"), no upgrade notes, no stories, no dated measurements or
-  status. History is in git; plans and open items go in the git-ignored working-notes folder.
-- A rule or a number lives in one place, preferably the code. A doc points to it and does not copy
-  it; a copied figure goes stale.
-- Each document keeps to its reader: `README.md` and `docs/index.md`, `using_the_app.md`,
-  `advanced_user_guide.md` are for teachers (what they see, in their words); everything else is for
-  developers.
-- Code comments and docstrings only where the code is not obvious, one or two lines, and never
-  history. A field's docstring says what it means, not how it came about.
-
-## Testing conventions
+## Tests
 
 - Every test has a `"""Given … / When … / Then …"""` docstring.
-- A test's Bazel `deps` list the highest layer it imports (`_DOMAIN_LIB`,
-  `_INFRASTRUCTURE_LIB`, `_APPLICATION_LIB`, `gui_layer_lib`, … in `tests/BUILD`), never
-  `//teachers_teammate:ocr_lib` / `:gui_lib` (every test would rerun on every edit). A new
-  module goes into its layer's `_*_SRCS` list in `teachers_teammate/BUILD`. See
-  `docs/testing.md` → "Test dependencies and Bazel's cache".
-- Configs: `make_config(tmp_path, **overrides)` from `tests/conftest.py` (a plain function,
-  not a fixture).
-- Patch at the import site, not at the origin:
-  - `teachers_teammate.infrastructure.stage_builder.PpOcrProcessor` (`make_config` defaults to
-    the built-in reader `ppocr`; `conftest.py` points the model store at an empty temporary
-    folder, so nothing downloads).
-  - A test that needs an Ollama *server* (real client, threads, pull stream) uses
-    `tests/fakes/fake_ollama.py:FakeOllama`, the one stand-in. Need another answer? Teach
-    it a switch; do not write a second server or monkeypatch `OllamaClient`. Only a test of
-    `OllamaClient`'s own handling of the library patches
-    `patch.dict(sys.modules, {"ollama": mock_ollama})`.
-  - Lazy provider imports: `langchain_openai.ChatOpenAI`.
-- Under Bazel only `langchain-core` is installed. A test never relies on a provider package
-  being present: `patch.dict(sys.modules, {"langchain_anthropic": None})` simulates a missing
-  one and expects `RuntimeError` ("is not installed"). `build_llm()` converts a provider's
-  `SystemExit` into `RuntimeError`.
-- The built-in reader's real models run only in tests marked `needs_reader_models`
-  (`reader_store(tmp_path)`, Bazel `http_file`s); everything else uses `fake_reader_store` or
-  patches the processor. No test touches the network.
+- Bazel `deps` name the highest layer the test imports (`_DOMAIN_LIB`, `_APPLICATION_LIB`, … in
+  `tests/BUILD`), never `:ocr_lib` / `:gui_lib`. A new module goes into its layer's `_*_SRCS` in
+  `teachers_teammate/BUILD`.
+- Configs: `make_config(tmp_path, **overrides)` (plain function). Patch at the import site, e.g.
+  `teachers_teammate.infrastructure.stage_builder.PpOcrProcessor`, `langchain_openai.ChatOpenAI`.
+- An Ollama server in a test is `tests/fakes/fake_ollama.py:FakeOllama`; extend it, never write a
+  second one or monkeypatch `OllamaClient`.
+- Only `langchain-core` is installed under Bazel: simulate a missing provider with
+  `patch.dict(sys.modules, {"langchain_anthropic": None})` and expect `RuntimeError`.
+- Real reader models only in tests marked `needs_reader_models`; others use `fake_reader_store`. No
+  test touches the network. GUI: pytest-qt.
+
+## Writing
+
+- Short and plain, current state only: no history, upgrade notes, stories or dated figures.
+- A rule or number lives in one place, preferably the code; docs point to it.
+- `README.md`, `docs/index.md`, `using_the_app.md`, `advanced_user_guide.md` are for teachers, in
+  their words; everything else for developers.
+- Comments only where the code is not obvious, one or two lines, never history.

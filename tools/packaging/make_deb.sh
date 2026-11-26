@@ -130,29 +130,30 @@ License: GPL-3+
  in /usr/share/common-licenses/GPL-3.
 Comment: The bundled third-party components and their license texts are listed in
  third_party_license.txt next to this file, and in the "Third-Party Licenses" tab of
- Help > Licenses in the application. third_party_host_libraries.txt names the libraries that
- came from the build machine, with their Debian copyright files. The Qt libraries are separate
- files in /opt/${PKG_NAME}/_internal/PySide6/Qt/lib and can be replaced with a compatible
- build.
+ Help > Licenses in the application. The libraries of the system (X11, glib,
+ OpenSSL, ...) are not part of the package: it depends on the distribution's
+ own. The Qt libraries are separate files in
+ /opt/${PKG_NAME}/_internal/PySide6/Qt/lib and can be replaced with a
+ compatible build.
 EOF
 } > "${DOC_DIR}/copyright"
 
 cp "${ROOT}/NOTICE" "${DOC_DIR}/NOTICE"
 cp "${ROOT}/teachers_teammate/assets/third_party_licenses.txt" "${DOC_DIR}/third_party_license.txt"
-# The libraries the bundle took from the build machine, written by check_linux_bundle.py
-# --host-libs into _internal/.
-if [[ -f "${BUILD}/_internal/third_party_host_libraries.txt" ]]; then
-    cp "${BUILD}/_internal/third_party_host_libraries.txt" "${DOC_DIR}/"
-fi
 
 # ── DEBIAN/control ───────────────────────────────────────────────────────────
 
 # The whole package tree except the control files, as dpkg counts it.
 INSTALLED_SIZE=$(du -sk --exclude=DEBIAN "${PKG_DIR}" | cut -f1)
 
+# dpkg sorts 1.2.3-rc.1 after 1.2.3 (the part after the dash is a revision); 1.2.3~rc.1 sorts
+# before it, so a pre-release upgrades to the final version.
+TILDE='~'
+DEB_VERSION="${VERSION/-/${TILDE}}"
+
 cat > "${PKG_DIR}/DEBIAN/control" <<EOF
 Package: ${PKG_NAME}
-Version: ${VERSION}
+Version: ${DEB_VERSION}
 Architecture: ${ARCH}
 Maintainer: ${MAINTAINER}
 Installed-Size: ${INSTALLED_SIZE}

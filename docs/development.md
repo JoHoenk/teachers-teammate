@@ -2,56 +2,24 @@
 
 ## Scope
 
-This guide covers contributor workflows and the codebase. What teachers see is in the
-{doc}`user guides <using_the_app>`; how models are evaluated is in `evaluations/README.md`.
-
-## Prerequisites
-
-- Python 3.14
-- [Bazel](https://bazel.build/) — used as the build and test harness; all `bazel` commands below assume it is on `PATH`
-
-### Set up the development environment
-
-```bash
-# A venv with every extra, installed against the pinned constraints
-python tools/build/make_venv.py .venv --for dev
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-```
-
-The same script builds the bundle's venv (`--for build`) and the one the tests run in
-(`--for test`), so a developer environment and CI install the same versions. Running it again
-(after `deactivate`) recreates the venv; it refuses a folder that is not one.
+How the code is built and why. Setup, everyday commands and the rules of a change are in
+[CONTRIBUTING.md](https://github.com/JoHoenk/teachers-teammate/blob/main/CONTRIBUTING.md); the
+windows in {doc}`gui`; model evaluation in `evaluations/README.md` and `evaluations/TOOLS.md`.
 
 ## Development checks
 
-### Linting
+`bazel test //:lint` runs ruff, ty, shellcheck for the `.sh` scripts and PSScriptAnalyzer for the
+`.ps1` scripts (skipped off Linux; its rules are in `third_party/lint/PSScriptAnalyzerSettings.psd1`),
+all from `aspect_rules_lint`; a version bump is a rules_lint bump. Run them through Bazel only: a
+`ruff` or `ty` from a local `.venv` can be another version. They cover the whole first-party tree,
+the build, packaging and release scripts of `tools/` included, because those decide what ships. The
+libraries they visit are the one `_LINTED` list in the root `BUILD`;
+`tools/ci/check_lint_coverage.py` fails the lint job when a package is missing from it.
 
-```bash
-bazel test //:lint          # ruff, ty, shellcheck, PSScriptAnalyzer
-bazel test //:py_ruff
-bazel test //:py_ty
-bazel run //:format.fix     # ruff format and the lint-safe fixes
-```
+Size is not a lint rule: `tests/unit/test_class_size.py` is the gate for a class or function that
+grew into several jobs, one ratchet per number.
 
-ruff and ty come with `aspect_rules_lint` (see `MODULE.bazel`), the same ruff the formatter
-uses; a version bump is a rules_lint bump. Run them through Bazel only — a `ruff`/`ty` from a
-local `.venv` can be a different version and report different results.
-
-The linters (ruff, ty, shellcheck for the `.sh` scripts and PSScriptAnalyzer for the `.ps1`
-scripts, all from `aspect_rules_lint`; `bazel test //:lint` runs them; the PowerShell one is skipped
-off Linux, and its rules are in `third_party/lint/PSScriptAnalyzerSettings.psd1`) cover the whole
-first-party tree: the app, the tests and every folder of `tools/` (the build, packaging and release
-scripts decide what ships, so they get the same gate as the app). The libraries they visit are the
-one `_LINTED` list in the root `BUILD`, one per package of Python; `tools/ci/check_lint_coverage.py`
-fails the lint job when a package is missing from it, so a new folder under `tools/` needs no
-second list.
-
-Size is not a lint rule: no linter sees a class or a function that grew into several jobs.
-`tests/unit/test_class_size.py` is that gate — one ratchet per number, over every layer, and a unit
-over its limit is listed there at the size it has.
-
-The workflow files have their own linters, because rules_lint has none for them (`lint-ci` in
-`.github/workflows/format_lint.yml` runs them):
+The workflow files have their own linters (`lint-ci` in `.github/workflows/format_lint.yml`):
 
 ```bash
 python -m venv /tmp/ci-lint && /tmp/ci-lint/bin/pip install -r tools/ci/requirements.txt
@@ -60,34 +28,21 @@ python -m venv /tmp/ci-lint && /tmp/ci-lint/bin/pip install -r tools/ci/requirem
 ```
 
 A workflow holds no logic. What a `run:` block would decide (a tag's form, the release files, an
-install test) is a script in `tools/` with a unit test, so it runs and fails the same way on a
-laptop.
+install test) is a script in `tools/` with a unit test, so it runs and fails the same way on a laptop.
 
-### Type checking
+`bazel run //:format.fix` formats (ruff, buildifier) and applies the lint-safe fixes;
+`//:format.check` only checks. How tests are written and run is in {doc}`testing`.
 
-```bash
-bazel test //:py_ty
-```
+## Dependency locks
 
-### Formatting
+After a change in `pyproject.toml`, regenerate the pinned locks and check them:
 
 ```bash
-# Project formatters (ruff + buildifier)
-bazel run //:format.fix
-bazel run //:format.check
-
-# Direct buildifier command
-bazel run //:buildifier.fix -- -r .
+bazel run //:requirements_dev.update
+bazel run //:requirements.update
+bazel run //:requirements_addons.update   # the lock of the add-on extras
+bazel test //:lock_tests --test_output=errors
 ```
-
-### Tests
-
-```bash
-bazel test //tests/...
-```
-
-How tests are written, run and given their Bazel dependencies: see *Testing Guide*
-(`docs/testing.md`).
 
 ## Documentation build
 
@@ -96,31 +51,26 @@ bazel build //docs:html
 bazel run //docs:html.serve
 ```
 
-The diagrams are drawn by PlantUML, whose jar is the one Maven artifact (`MODULE.bazel`) and is
-pinned in `maven_install.json`. A different PlantUML version needs
-`bazel run @blueprint_maven_dependencies//:pin` afterwards, which rewrites that file.
-
-## Dependency lock updates
-
-Run these after adding, removing, or upgrading a dependency in `pyproject.toml` to regenerate the pinned lock files that Bazel uses:
-
-```bash
-bazel run //:requirements_dev.update
-bazel run //:requirements.update
-```
-
+PlantUML draws the diagrams; its jar is the one Maven artifact (`MODULE.bazel`), pinned in
+`maven_install.json`. Another PlantUML version needs `bazel run @blueprint_maven_dependencies//:pin`
+afterwards. A diagram names modules and classes, never private methods, so it stays true when the
+code behind them moves; `tests/tools/test_diagrams.py` holds the exception diagram to
+`exceptions.py` and every diagram to a page that shows it.
 
 ## Architecture
 
-The layers, innermost first. A layer imports only from the layers above it in this list
+The parts, innermost first. A part imports only from the parts in its row
 (`tests/unit/test_layer_imports.py` enforces it):
 
-- **Domain** (`domain/`) — pure business concepts (stage names, freshness policy); no I/O.
-- **Texts** (`texts/`) — every sentence a teacher reads; Qt-free, imports only `domain` and `pkg`; infrastructure and the presentation layer import it, `application` and `domain` never do.
-- **Interfaces** (`interfaces.py`) — the ABC of every pipeline stage.
-- **Infrastructure** (`infrastructure/`) — concrete implementations: OCR engines, LLM providers, file I/O, DOCX builder, and the pipeline orchestration in `infrastructure/workflow/`.
-- **Application** (`application/`) — the services, one per topic (`run.py` for the run, `documents.py`, `commands.py`, …); they coordinate the use cases and are the only entry point for the GUI and CLI.
-- **Presentation** (`gui/`, `cli.py`) — translates user interactions into application calls and renders results. Contains no business logic, and imports `pkg`, `core`, `domain`, `application` and `texts` only.
+| Part | Holds | May import |
+|---|---|---|
+| `pkg` | `exceptions.py`, `messages.py` | nothing |
+| `domain/` | pure rules and concepts (stage names, freshness, model catalog, review, privacy levels); no I/O | `pkg` |
+| core | `config.py`, `interfaces.py` (the ABC of every stage), `cache_keys.py`, `run_rules.py`, `settings_schema.py`, `atomic_file.py` | `pkg`, `domain` |
+| `texts/` | every sentence a teacher reads; Qt-free | `pkg`, `domain` |
+| `infrastructure/` | OCR engines, LLM providers, stores, the DOCX builder, the pipeline in `workflow/` | `pkg`, `domain`, core, `texts` |
+| `application/` | the services, one per topic; the only entry for the adapters | `pkg`, `domain`, core, `infrastructure` |
+| `gui/`, `cli.py` | adapters: translate input into service calls and render the answers | `pkg`, `domain`, core, `application`, `texts` |
 
 The presentation layer never imports `infrastructure`. The modules that wire concrete classes
 are the exception, and the only one: `gui/composition.py`, `gui/__main__.py`,
@@ -144,17 +94,70 @@ is the ratchet of `tests/unit/test_lazy_import_budget.py`. The modules that stil
 service starts. A pure rule is never among them — it is imported from `domain` or the core.
 `application/composition.py` is not in the table: naming the concrete classes is its job.
 
-```{uml} assets/component_diagram.puml
+```{uml} assets/layers.puml
 :align: center
-:alt: Teacher's Teammate component architecture
+:alt: The layers and what each may import
 :width: 100%
 ```
 
-The processing stages and the choices at each stage:
+The same test holds two more rules:
+
+- Only the composition modules named in the diagram import `infrastructure`; every other adapter
+  module does not.
+- A module publishes only the names it defines, never `from … import Name as Name` and no
+  imported entry in `__all__` (a subpackage's `__init__.py` lists the names of its own modules).
+  A name has one home, and a caller imports it from there.
+
+**Services and ports.** A service in `application/` does not reach into `infrastructure` from a
+method body. What it needs comes in through its constructor, typed by a `Protocol` in
+`application/ports.py` (`OllamaServer`, `AddonState`, `HardwareProbe`, `NameModels`);
+`application/composition.py` hands over the running app's class, a test hands over a fake. A lazy
+import (an add-on package that must not load at start-up, a module that imports back) carries
+`# noqa: PLC0415`. Their count in `application/` and the modules that still import
+`infrastructure`, with how many names each takes, are ratchets
+(`tests/unit/test_lazy_import_budget.py`, `tests/unit/test_application_infrastructure_budget.py`):
+the numbers only fall. A pure rule is never among them; it belongs in `domain` or core.
+
+### What a run is made of
+
+```{uml} assets/runtime_components.puml
+:align: center
+:alt: The parts of a run and the stores
+:width: 100%
+```
+
+`application/composition.py` builds `AppServices` once per entry point; every other class is
+given the service it uses. `OCRPipeline` is the composition root of one run and holds no stage
+logic: `run_files()` iterates over the files and `FileProcessor` runs all stages for one file.
+Two stores keep two kinds of fact apart: the cache (`StateRepository`) holds what the models
+produced and no edit writes to it; `TeacherWorkStore` holds what the teacher changed and decided,
+and `DocumentCommands` is its one writer (see *Storage, hashing & caching*).
+
+### One run, one file
+
+```{uml} assets/sequence_run_documents.puml
+:align: center
+:alt: Run selected documents
+:width: 100%
+```
+
+```{uml} assets/activity_file_processor.puml
+:align: center
+:alt: The stages of one file and how it ends
+:width: 70%
+```
+
+### Stages and where they run
 
 ```{uml} assets/pipeline_stages.puml
 :align: center
-:alt: Teacher's Teammate processing pipeline stages and options
+:alt: The pipeline stages and the choices at each
+:width: 100%
+```
+
+```{uml} assets/data_flow.puml
+:align: center
+:alt: What runs where and what leaves the computer
 :width: 100%
 ```
 
@@ -245,24 +248,25 @@ Rules:
   or the picker opens wherever Qt last was. A test patches this module once instead of every window.
 
 **The ratchet test.** `tests/unit/test_user_text_centralised.py` parses `gui/`, `cli.py`,
-`application/`, `infrastructure/` and `domain/` with `ast` and fails on a string literal (or
-f-string) handed to a sink that shows text. The sinks are the tables at the top of
-`tools/user_text/inventory.py` (`_QUALIFIED`, `_SIMPLE`, `_MARKED`, `_KEYWORDS`,
-`_FIELD_KEYWORDS`): widget calls, dialogs, the readiness line's fixes, a line sent to a log, a
-CLI line, a prose keyword, a raised exception. It also fails on a module constant whose name says a
-teacher reads it (`_CONSTANT_SUFFIXES`, and for a one-word value `_SHORT_SUFFIXES`; a list, tuple or
-dict constant is read item by item), on a sentence handed to a function imported from `texts`
-(`dlg.copy_failed("Could not copy")` — the sentence belongs in the function; a word without a space
-is an id and passes), and on a template of `texts` filled at a call site with `.format`. A sentence
-that is only *returned* or kept in a local variable is not a sink, so the test cannot see it:
-build it in `texts/` and call it. What is not a sink is listed in the same module: a `raise` that
-states an invariant of the code (any raise in `domain/`, `INVARIANT_MESSAGES`), the step reasons of
-`infrastructure/preprocessing/` (debug log), the constants in `NON_TEXT_CONSTANTS`, and the
-Word file's label tables. A test fails on an entry of either list whose literal is gone. The allowlist
-`tools/user_text/allowlist.py` is empty: the test fails on any literal it sees at a call site, and a
-second test fails on an entry whose literal is gone, so the answer is to put the sentence in
-`texts/`, not to add an entry. `tools/user_text/inventory.py` scans the same sources and writes
-a CSV of what it found (`bazel run //tools/user_text:inventory -- --out user_text.csv`).
+`application/`, `infrastructure/` and `domain/` with `ast` and fails on:
+
+- a string literal or f-string handed to a sink that shows text: widget calls, dialogs, the
+  readiness line's fixes, a log line, a CLI line, a prose keyword, a raised exception (the tables
+  `_QUALIFIED`, `_SIMPLE`, `_MARKED`, `_KEYWORDS`, `_FIELD_KEYWORDS` in
+  `tools/user_text/inventory.py`);
+- a module constant whose name says a teacher reads it (`_CONSTANT_SUFFIXES`, `_SHORT_SUFFIXES`
+  for one-word values; list, tuple and dict constants item by item);
+- a sentence handed to a `texts` function (`dlg.copy_failed("Could not copy")`; a word without a
+  space is an id and passes);
+- a `texts` template filled with `.format` at a call site.
+
+A sentence only *returned* or kept in a local variable is not a sink and goes unseen: build it in
+`texts/`. Not sinks, listed in the same module: invariant raises (any in `domain/`,
+`INVARIANT_MESSAGES`), the step reasons of `infrastructure/preprocessing/` (debug log),
+`NON_TEXT_CONSTANTS`, and the Word file's label tables. A test fails on a listed entry whose literal
+is gone. The allowlist `tools/user_text/allowlist.py` is empty and stays empty: move the sentence to
+`texts/` instead. `bazel run //tools/user_text:inventory -- --out user_text.csv` writes a CSV of
+what the scan finds.
 
 **Out of scope, and must stay where it is:** the LLM prompts in
 `domain/correction_prompts.py` (versioned and hashed into the protocol fingerprint and the
@@ -270,34 +274,6 @@ cache key — moving text changes cache keys), the developer log (`logging`, `lo
 exceptions that never reach a teacher, `tools/`, tests and docs. The Word output's en/de
 label tables follow the *document* language, not the UI language, and stay in
 `docx_builder.py` / `docx_comments.py`.
-
-### Runtime sequence diagrams
-
-The diagrams below show the three main runtime flows.
-
-#### GUI initialisation
-
-```{uml} assets/sequence_gui_init.puml
-:align: center
-:alt: GUI initialisation sequence
-:width: 100%
-```
-
-#### Open input folder
-
-```{uml} assets/sequence_open_folder.puml
-:align: center
-:alt: Open input folder sequence
-:width: 100%
-```
-
-#### Run selected documents
-
-```{uml} assets/sequence_run_documents.puml
-:align: center
-:alt: Run selected documents sequence
-:width: 100%
-```
 
 ### Benchmark app
 
@@ -365,152 +341,11 @@ recommendations — so a default may not fit a small computer.
 `structured_output=True` gives a writing model the `explanations ✓` badge; it never switches
 the proofreading mode. `DEFAULT_WRITING_MODEL` and the first entry of every
 `RECOMMENDED["general"]` list must carry the flag — a test enforces it. The flag is not
-guessed: `tools/verify_model_catalog.py --structured-output` (gate 1) checks every `general`
+guessed: `tools/verify_model_catalog.py --structured-output` (gate 1, see `evaluations/TOOLS.md`) checks every `general`
 model that is reachable through a local Ollama server and reports the value to enter in the
 catalog by hand, like the download sizes. A mismatch against the catalog counts as a failure. A
 model without the flag (`mistral:latest`) is offered and used like any other model, but has no
 badge and is not recommended.
-
-Gate 1 checks whether a model fills in a JSON answer format reliably (the process it belongs to is
-in `evaluations/README.md`).  It sends the one-request review of the evaluation baseline
-(`tools/evaluation/run/one_request/`): the system prompt at level B2 in the text's language, the
-user message, the JSON schema as `format`, `think=False`, the model's step-① temperature and
-`num_ctx` 8192.  A test pins the request to the one-request corrector's.  `--temperature` overrides
-the temperature for every model named.
-
-Six invented fixtures (`tools/evaluation/checks/gate1_fixtures.py`): plain English, German and
-French, Markdown with formatting marks, one full page of dense German, and one German page that is
-the longest prefix of whole sentences the budget allows.  German tokenises longest, so the two long
-fixtures are the worst case.  The size is the corrector's own budget
-(`structured_check.review_budget`, pinned to `NativeOllamaCorrector.max_text_chars`); a fixture
-longer than its budget is reported as too long instead of being sent, and CI keeps the shipped
-fixtures within it.
-
-A run is judged in this order, the first failure wins: too long (hard), request failed (hard), cut
-off (`done_reason == "length"`, hard, whether or not the answer still validates), invalid, no
-sentences, unchanged, too few sentences placed, partial coverage of a long fixture, too few
-explained (all soft).  Above temperature 0 every fixture runs three times (18 runs).  A model passes
-with at most one soft failure; with exactly two the check runs 18 more and passes with at most four
-over both rounds; any hard failure fails it in either round.  A pass also needs the explained share
-over all runs to reach `CheckRule.explained_overall`.  At temperature 0 a repeat is the same answer,
-so each fixture runs once and there is no second round.  The numbers are the fields of `CheckRule`
-(`tools/evaluation/checks/check_rule.py`).
-
-Each run prints placed / explained / orphans / covered / prompt and answer tokens / margin /
-`done_reason` / seconds. The **margin** is what the window had left after the request and the
-answer; it is not a verdict, but the summary names the smallest one on the budget fixture and
-warns below a tenth of the window, because such a model passes with little room to spare.
-
-**The record and the re-run.** The command prints its own header: date, command line, tool
-commit, Ollama version, window, temperature, eval version and fingerprint, and
-`ANSWER_FORMAT_VERSION` — a verdict is only valid for the answer format it was made on. Per model
-it adds the digest, the quantisation and the parameter size, and notes when the app would run
-that model at a larger window than the one checked. `--answers DIR` saves every answer to a
-JSON-lines file (they stay local: the fixtures are invented, but the answers are large), and
-`verify_model_catalog recheck FILE` judges those answers again with the current rule, without a
-server. It refuses a file whose fingerprint differs from the current one, and a run whose text no
-longer hashes to what was sent.
-
-**The smoke check, before the eighteen runs.** A *setup* is one model asked one way: tag, request
-profile (compact JSON on or off), temperature, window, exchange and steps. A full gate-1 run is the
-expensive way to find out whether a setup works at all. `verify_model_catalog smoke` sends gate 1's
-own requests, cheap to expensive, one run each, and stops at the first fixture that fails twice: at
-most ten requests, a few seconds to a few minutes. It is gate 1's first stage, not a verdict — a
-pass means "no sign of a systematic fault", never "passes gate 1".
-
-**The size limit comes before the first request.** A setup whose model does not fit the card cannot
-be judged on quality, so the check asks what the model needs at the window it is about to use (see
-*Model sizes*): above `--fit-limit` (default `16gb`, `off` skips the check) the setup fails with no
-request sent, and a model with no record at that window is measured on the spot, exactly as `fit`
-does — unload, settle, one short request, `/api/ps` — so the screen never decides on a guess, and
-the smoke check's own first request then finds the model loaded. A server that cannot be measured
-is a warning, not a failure: the screen is worth more than the figure. The header of the run and of
-the answers file names the limit, so a gate-1 record says under which limit it was screened.
-
-The fixtures are plain DE, Markdown, plain EN, plain FR and the full page DE; the budget fixture
-is left out because it shows the same faults as the full page at twice the cost. A fixture fails
-the setup only when **the same fixture fails twice in a row** — the app's own "ask once more", so
-one unlucky run never rejects a model. At a 5 % soft-failure rate per run a good model is rejected
-0.25 % of the time per fixture; a setup that fails 70 % of the time or more is caught at least
-49 % per fixture it fails on. Two failures a second try cannot cure fail at once: a request the
-server refused, and the collapse to one sentence on the full page (fewer than 20 % of its error
-sentences covered and none in the last third — `qwen3.5:9b` with the compact rule), whose line
-names the likely cause and the rule to try instead. One `NO_SENTENCES`, one `CUT_OFF_ONCE`, a
-fixture that needed its retry, a partial memory split and a window other than the one asked are
-warnings, not failures. A request that waits for its first token in vain (`OCRTimeoutError`) is
-retried like any failure and counts as a soft failure when it happens twice. The timeout (120 s)
-bounds only that wait — a model that has begun to answer may take minutes — and the first request
-waits 600 s longer, because it loads the model. **The window does not stop a runaway**: a model on
-Ollama's llama.cpp runner shifts its context and keeps writing, and the app sends no
-`num_predict`. So `--deadline` (240 s, 600 s for the two long fixtures) bounds the whole answer:
-past it the request is abandoned through `total_timeout` of `OllamaClient.chat_with_stats` (the
-stream is closed, so the server stops generating), the run counts as cut off, and a setup that
-runs away twice fails. `--deadline 0` sets no limit. The app itself sets no deadline and no
-`num_predict`; capping the answer there would change the request and is a separate decision. Before the
-first fixture the check also reports the setup itself: the
-system text carries `COMPACT_ANSWER_RULE` exactly when the profile says on, and `/api/ps` shows
-the window and whether the model sits on the card.
-
-**The smoke runs are gate 1's runs.** `--answers DIR` saves them like any other answer, so
-`structured-output --continue FILE` judges them with the current rule, sends only the runs still
-missing (13 of 18 for a setup that passed every fixture first time) and prints one record that
-holds all of it. A setup that failed the smoke check is not continued unless `--force` is given,
-and never when a second try could not have cured it (a hard failure is a gate-1 FAIL as it stands;
-a soft one is "no verdict"). A file that goes on past the failing fixture is an interrupted gate-1
-run, not a smoke check, and is continued. A request that timed out is not saved as a run, so gate 1
-asks it again under its own timeout. `--no-smoke` skips the stage, and
-`evaluate run` smokes each setup once before its first session.  The screen is the one the setup
-sends: `one-request-review` gets gate 1's own check, `text-first` step ①'s request on the three
-plain fixtures (a comparison sends plain text only, so text mode's Markdown fixture and prompt
-would skip a model for a fault the run never meets), and `one-request-text` text mode's request on
-its three short fixtures.
-
-The window is `--num-ctx`, 8192 by default: the window the app uses for proofreading, always. A
-model the automatic rule would lift above the checked window on a tier's card is noted in the
-header; while proofreading is capped at the base window that note does not fire, and it is the
-reminder to check the larger window when the cap is raised.
-
-A verdict belongs to the **exact tag** it was measured on. The app sends only the temperature and
-`num_ctx`; `top_k`, `top_p`, penalties and the chat template come from how the tag was packaged
-(the official `qwen3.5:9b` ships `top_k 20`, `top_p 0.95`, `presence_penalty 1.5`; the same model
-imported from a `hf.co/unsloth/…` GGUF ships none of them). The check prints the settings a tag
-brings along, so a result can be traced. Check a Hugging Face build as its own tag; do not
-transfer a verdict between packagings.
-
-The check talks to `$OLLAMA_HOST` (else `127.0.0.1`); `--ollama-url` overrides it. (The app's own *Settings → This computer → Find…* finds the Windows host for you, see "Finding the Ollama server".) From WSL in
-its default NAT mode `127.0.0.1` is WSL itself, so point it at the Windows host
-(`ip route show default`), or set `networkingMode=mirrored` in `%USERPROFILE%\.wslconfig` and run
-`wsl --shutdown` so `127.0.0.1` reaches Windows. Ollama on Windows must listen on the network
-(`OLLAMA_HOST=0.0.0.0`) for the first option.
-
-To check a candidate **before** adding it to the catalog, pass its tag; `--tag` implies
-`--structured-output`. A list may mix both: a tag the catalog knows is checked against its
-`structured_output` flag and counted in the tally, the others are candidates that only get a pass
-or fail:
-
-```bash
-bazel run //tools:verify_model_catalog -- --tag ministral-3:8b --tag gemma4:e4b
-bazel run //tools:verify_model_catalog -- --tag qwen3.5:9b --temperature 0.2
-bazel run //tools:verify_model_catalog -- structured-output --answers ~/gec-testset/gate1 \
-    --tag qwen3:4b --tag gemma4:e2b
-bazel run //tools:verify_model_catalog -- recheck ~/gec-testset/gate1/*.jsonl
-```
-
-Catalog values can drift as Ollama tags change. The developer tool
-`tools/verify_model_catalog.py` (needs network, not run in CI) compares the catalog
-against the real registry manifests:
-
-```bash
-bazel run //tools:verify_model_catalog            # check tags exist and sizes match
-bazel run //tools:verify_model_catalog -- --ollama  # also inspect capabilities via a local server
-bazel run //tools:verify_model_catalog -- --structured-output  # run the review check (see above)
-bazel run //tools:verify_model_catalog -- --tag ministral-3:8b  # check a candidate before adding it
-bazel run //tools:verify_model_catalog -- --structured-output --temperature 0.2  # compare a temperature
-bazel run //tools:verify_model_catalog -- --structured-output --answers DIR  # keep the answers
-bazel run //tools:verify_model_catalog -- smoke --answers DIR --tag qwen3:4b  # screen a setup first
-bazel run //tools:verify_model_catalog -- structured-output --continue DIR/*.jsonl  # finish it
-bazel run //tools:verify_model_catalog -- recheck DIR/*.jsonl  # judge them again, no server
-```
 
 A writing model that can also read scanned pages lists `also_uses=frozenset({"ocr"})`;
 `catalog_uses()`, `suitability()` and `models_for()` then treat it as a reading model as
@@ -522,121 +357,22 @@ of the Ollama registry.
 Every entry also names the terms its weights come under (`OllamaModelSpec.licence`, a
 `ModelLicence` with the name, a link and — only when the licence restricts *use* — one sentence).
 The app never ships a model, so a permissive licence (MIT, Apache-2.0) adds nothing a teacher has
-to know; a restrictive one does.  That is the default reading model only: Chandra OCR 2's
-weights are under a modified OpenRAIL-M licence: free for personal use and research, and for
-other use only below $2M in revenue or funding; schools are not named, so the note asks a school to
-check the licence.  `licence_note(tag)` returns the
-sentence; the Add-ons model tree shows it in its *License* column and the Setup Assistant in the
-tooltip of the download box.  The facts were read from each model's licence on 2026-11-18 — check
-them again when a model is added or a tag moves to a new version.
+to know; a restrictive one does, and only the default reading model has one.  `licence_note(tag)`
+returns the sentence; the Add-ons model tree shows it in its *License* column and the Setup Assistant in the
+tooltip of the download box.  Check a model's licence again when it is added or a tag moves to a
+new version.
 
 ### Model sizes: what a model needs on the card
 
 `OllamaModelSpec.memory_gb` and `context_gb_per_8k` say how much a model needs at 8,192 tokens and
 how much it grows per further 8,192. `model-fit/sizes.jsonl` in the private evaluation repository
-holds the measurements they come from: one JSON object per line, append-only, numbers only. The fields are documented on `FitRecord` in `tools/evaluation/checks/model_fit.py`;
-machines are in `tools/evaluation/core/machines.py`.
-
-**One record per model, machine, device and window.** It carries what Ollama reports from `/api/ps`
-(`size`, `size_vram`, the window it really loaded) and what the card really held, from the memory
-agent's window around the load (`idle`, `peak`, `end`, the card's total). Every figure is a raw
-byte count; the reports divide by 10⁹, the unit of the catalog's sizes. Nothing derived is stored:
-the card's increase, the need, the growth and the tier windows are computed when the file is read,
-so a change of the rule costs no new measurement. The record is `format: 3`; a line of another
-version is refused, not guessed at.
-
-**The need is `max(Ollama's size, the card's increase)`.** Ollama's figure leaves out the driver's
-and the runtime's share; the card's increase cannot exceed the physical card. Taking the larger is
-cautious in both directions. A step that spills — Ollama's `size_vram` below `size`, or the card's
-peak within 2 % of its total — is kept and flagged: it is a real figure, but its need is a lower
-bound, so it does not feed the growth. A record made with `--no-agent` has Ollama's figure as its
-need and is flagged `no card reading`.
-
-**Measuring.** `verify_model_catalog fit` loads the model at every step of `CONTEXT_STEPS` with the
-app's own proofreading options, and empties the server before each step so the model is loaded at
-exactly the window asked for:
-
-```bash
-bazel run //tools:verify_model_catalog -- fit --store ~/git/teachers-teammate-evals \
-    --machine rx9070xt-server \
-    --ollama-url http://gpu-server.example:11434 --gpu-agent http://gpu-server.example:11436 \
-    --gpu-token-file ~/.config/gpu_agent.token --tag gemma4:e4b --tag qwen3:4b
-```
-
-The request is a copy of a short German text (about 170 tokens), long enough to read the model's
-speed from: every record stores the answer tokens and the generation time (`tokens_per_second`), and
-the report shows the speed next to Ollama's own split between card and processor
-(`ollama_card_share`, the share the app's full-speed rule is about), so the rating's share
-thresholds can be checked against measured speeds.
-
-`--cpu-only` sends `num_gpu` 0 and measures at 8,192 tokens only: the speed of the processor, for
-the tier that has no card. The record's `device` is then `cpu`, and the size lookups (`latest`,
-`size_for_decision`, `catalog_lines`) skip such records, because the card's share is missing from
-their need.
-
-`--machine` is an id of the store's `machines/`, and it is required when measuring: what the id
-stands for is written once in that file, because Ollama's API cannot report it. An id the registry
-does not hold is refused, naming the known ones. A step already stored for the same build and
-version is skipped (`--again` measures it again). The ladder stops for a tag when Ollama loaded a
-smaller window than asked for (the model's own maximum) or when the request fails; a failing tag
-does not stop the next one. Exit codes: 0 every step measured or already stored, 1 a failure, 2 the
-server or the agent cannot be reached.
-
-**Reading it back, without a server.** `fit --report` prints, per model, machine and device, the
-need at each window, Ollama's figure next to the card's increase, the growth per 8k (short and long
-span, flagged when not linear), the difference to the catalog's `memory_gb` (flagged above
-`MEMORY_TOLERANCE`, 10 %), and the largest window that still fits a card of a given size
-(`--fit-limit`, repeatable; default `8gb` and `16gb`). A record whose `ollama_version` differs from
-the one the machine runs now is marked as another backend, not hidden. `--compare A B` puts two
-machines side by side and marks each figure that disagrees (need within 10 %, growth within 20 % or
-0.1 GB). `--catalog` prints the two values to enter by hand, taking the larger of two machines that
-disagree.
-
-**The limit is the app's own rule.** A tier's limit is `card_budget_gb(tier) / FULL_SPEED_SHARE`:
-15.11 GB for `16gb`, 7.56 GB for `8gb`. `runs_at_full_speed()` in `domain/model_catalog.py` is the
-one place that decides whether a need fits a card at full speed, and `context_budget` uses it, so
-the screen and the app cannot disagree about a tier. A number (`--fit-limit 14.5`) is that many GB;
-`off` skips the check.
+holds the measurements they come from (`evaluations/TOOLS.md`, *Model sizes and the memory agent*).
 
 **How the catalog's figures come from it.** `memory_gb` is the need at 8,192 tokens and
 `context_gb_per_8k` the growth, both from `fit --report --catalog`, entered by hand in one commit
 that names the store lines' dates. Until a model has a measured growth it stays at 8192. The
 figures are measured on one backend and cross-checked on another; where the two disagree, the
 larger one is entered, because the model has to fit the machine that needs more.
-
-### Memory agent: what the card really holds
-
-Ollama's `/api/ps` reports what it *thinks* it put on the card. The memory agent
-(`tools/evaluation/run/gpu_agent.py`) reports what the card really holds, sampled from the driver, so a
-measurement can say how far Ollama's bookkeeping is from the hardware. It is a small stdlib-only
-HTTP server that travels alone: it is copied to the machine with the card and runs there, because
-the card is on that machine and not on the one that runs the tools.
-
-**What it reports.** `GET /info` returns the platform, the vendor and the source of the reading
-(`sysfs` for AMD on Linux, `nvidia-smi` for NVIDIA), the cards with their totals, the card's use
-right now, and the main memory's total and available. `POST /window` opens a window and returns its
-number; `POST /window/<n>/close` returns the window's statistics: the card's use at the start, the
-peak, the mean, the minimum and the end, the main memory's lowest available, the number of samples
-and the seconds it was open. A window older than an hour is dropped, and at most eight are kept.
-
-**Starting it.** On the server it runs as a user service, so it survives a logout and starts with
-the machine:
-
-```bash
-python3 tools/evaluation/run/gpu_agent.py --token-file ~/.config/gpu_agent.token --port 11436
-```
-
-On Windows it runs in the Windows session, not in WSL: WSL's `nvidia-smi` sees the card but reports
-0 MiB used. The token file holds one secret; the agent refuses every request without it
-(`X-Token`), and the tools read the same file (`--gpu-token-file`). The port has to be reachable
-from the machine that runs the tools, so a firewall rule for it is part of the setup. The agent
-never writes anything, never loads or unloads a model, and never touches the server: it only reads
-the driver and the main memory.
-
-`AgentClient` (`tools/evaluation/run/agent_client.py`) is the other side: `info()`, `open_window()`,
-`close_window(window)` and `settle()`, which waits until the card's use has stayed within a
-tolerance for several readings in a row (and at least a short while) before a measurement
-starts; the driver can give memory back a second after the server reports a model unloaded. `fit` and the smoke check's size limit are its two users.
 
 ### Rating a model against the computer's memory
 
@@ -648,10 +384,10 @@ measured where possible (*Model sizes*, above).
 
 | Quantity | Rule (constants in `domain/model_catalog.py`) |
 | --- | --- |
-| Card budget | `CARD_USABLE_SHARE` (85 %) of the card's memory; Apple Silicon 66 % of the unified memory (`HardwareDetection.card_gb`); none without a card |
-| Reserve | the larger of `SYSTEM_RESERVE_MIN_GB` (8 GB) and `SYSTEM_RESERVE_SHARE` (20 %) of the total main memory; swapping to disk is never counted as memory |
-| Works (`WORKS`) | at least `FULL_SPEED_SHARE` (0.9) of the model fits the card; without a card, up to `CPU_COMFORT_GB` (5 GB: a page in under five minutes on an ordinary processor, measured with `fit --cpu-only`) |
-| Slow (`SLOW`) | the part that does not fit (the *spill*) fits in main memory beyond the reserve; `ModelRating.very_slow` when under `SLOWER_SHARE` (0.7) of the model fits the card, or there is no card |
+| Card budget | `CARD_USABLE_SHARE` of the card's memory; a share of the unified memory on Apple Silicon (`HardwareDetection.card_gb`); none without a card |
+| Reserve | the larger of `SYSTEM_RESERVE_MIN_GB` and `SYSTEM_RESERVE_SHARE` of the total main memory; swapping to disk is never counted as memory |
+| Works (`WORKS`) | at least `FULL_SPEED_SHARE` of the model fits the card; without a card, up to `CPU_COMFORT_GB` (a page in under five minutes on an ordinary processor, measured with `fit --cpu-only`) |
+| Slow (`SLOW`) | the part that does not fit (the *spill*) fits in main memory beyond the reserve; `ModelRating.very_slow` when under `SLOWER_SHARE` of the model fits the card, or there is no card |
 | Does not fit (`TOO_LARGE`) | the spill does not fit; also whenever the main memory is unknown (a remote server) and the model is not within the card |
 | Recommended (`BEST` / `GOOD`) | the tier's list, but never for a model that does not fit the computer's known memory |
 
@@ -661,7 +397,7 @@ ratios, so they scale with the computer.
 `RunService._memory_shortfall()` is the run-time counterpart, used by
 `check_run_preflight()` (both adapters) before a run: for an Ollama on this computer,
 the part of every catalogued model that does not fit the card (all of it on Apple Silicon) has to
-fit the main memory that is free *right now*, minus `RUN_MEMORY_MARGIN_GB` (2 GB).  It reads
+fit the main memory that is free *right now*, minus `RUN_MEMORY_MARGIN_GB`.  It reads
 `ModelRecommendationService.available_memory_gb()` (`psutil`'s `available`, never swap).  It is a
 **warning**, not a refusal: free memory changes from run to run, so the GUI offers "Run anyway" and
 the command line needs `--ignore-memory-check`.  `check_run_preflight()` therefore runs the memory
@@ -676,7 +412,7 @@ The check behaves as it would after Ollama unloaded every model, which is the ca
 about anyway, since Ollama unloads idle models to make room.  On Apple Silicon the whole model
 counts against main memory; "Run anyway" covers a warning that turns out too cautious.
 
-### Speed estimates: the test, the real runs and the time left
+## Speed estimates: the test, the real runs and the time left
 
 Three questions, three answers, one owner each:
 
@@ -689,7 +425,7 @@ Three questions, three answers, one owner each:
 No widget computes a duration: `texts/review.py` formats the figures the service returns, and
 `gui/_run_status.py` turns them into the note on the progress bar.
 
-#### Where the teacher sees it
+### Where the teacher sees it
 
 The speed of a computer is a fact about the computer, so the **Test speed** button, the rows per
 step and the warnings are on *Settings → This computer* (`gui/settings/_speed_panel.py`, group
@@ -715,7 +451,7 @@ all three together.  *Corrections only* sends step ① alone: one copy, one answ
 come from the exchange's `cost_model()` until three samples of the mode the run is set to
 (`exchange` or `text`) say how long this class's answers are.
 
-#### What is measured, and with which request
+### What is measured, and with which request
 
 The test sends the app's own requests, so a figure means what a run will cost:
 
@@ -729,54 +465,54 @@ The proofreading step measures step ① because it is the request every run send
 measures rates, not answer lengths: a plain rewrite of the paragraph, at that step's temperature
 and thinking, with no answer schema.
 
-`MEASURE_ANSWER_TOKENS` (200) caps the two writing steps: enough for a steady rate, short enough
-that the whole test stays under a minute and a half on a card.  `MEASURE_TIMEOUT_S` (90) is the
+`MEASURE_ANSWER_TOKENS` caps the two writing steps: enough for a steady rate, short enough
+that the whole test stays under a minute and a half on a card.  `MEASURE_TIMEOUT_S` is the
 limit per request; a step that hits it is `TOO_SLOW`, and its figure is a lower bound at best.  A
 warm-up request (`WARMUP_PROMPT`, one token) loads the model first, so the load time is reported
 separately instead of being counted as speed.
 
-The test page is drawn (`draw_test_page`, `TEST_PAGE_WORDS` 350) and then preprocessed exactly as
+The test page is drawn (`draw_test_page`, `TEST_PAGE_WORDS`) and then preprocessed exactly as
 a run preprocesses a scan, because the image the model sees decides the image token count.
 
-#### The maths (`domain/performance_estimate.py`, pure)
+### The maths (`domain/performance_estimate.py`, pure)
 
 | Piece | Meaning |
 | --- | --- |
 | `ModelSpeed(read_tps, write_tps, image_tokens)` | one model on one machine: request tokens per second, answer tokens per second, tokens of one page image |
 | `TimeRange(low_s, high_s, typical_s)` | a duration as a range; `scaled` and `__add__` keep the three figures together |
 | `AnswerLength(low, typical, high)` | how long a model's answers are: per 100 words for a writing model, per page for a reading one |
-| `ExchangeCost(requests_per_page, answer_tokens_per_100_words, text_copies)` | what an exchange costs per step; `DEFAULT_EXCHANGE_COST` holds the text-first exchange's provisional figures (① 1 copy, ② 2, ③ 1) |
+| `ExchangeCost(requests_per_page, answer_tokens_per_100_words, text_copies)` | what an exchange costs per step; `DEFAULT_EXCHANGE_COST` holds the text-first exchange's provisional figures |
 | `proofreading_time(speed, words, cost, steps, *, answer=None)` | a proofreading run: the text times the copies of the steps that run, plus their answers |
-| `band(seconds_per_page)` | `SpeedBand`: `FAST` up to `FAST_LIMIT_S` (30 s), `OK` up to `OK_LIMIT_S` (90), `SLOW` up to `SLOW_LIMIT_S` (300), else `VERY_SLOW` |
+| `band(seconds_per_page)` | `SpeedBand`: `FAST` up to `FAST_LIMIT_S`, `OK` up to `OK_LIMIT_S`, `SLOW` up to `SLOW_LIMIT_S`, else `VERY_SLOW` |
 | `machine_factor(measured, reference)` | how much slower this computer is than the reference machine; `None` when either figure is missing, so "unknown" is never read as "the same" |
 | `median_factor`, `percentile` | the middle of several models' factors; the 10th and 90th percentile of a set of figures |
 | `MachineFactors(writing, reading)` | the two factors, with `for_category` picking one: a card can be better at reading a page than at writing an answer |
 | `expected_speed`, `expected_band` | a model's reference speed carried to this computer by the factor, and the band of the middle of the resulting range |
 | `SpeedSource` | `MEASURED` (this model, this computer) or `EXPECTED` (from the reference machine) |
 
-The constants that stand in for a measurement, each with where its value comes from:
+The constants that stand in for a measurement, and what their values rest on:
 
-| Constant | Value | From |
-| --- | --- | --- |
-| `TYPICAL_PAGE_WORDS` | 250 | a handwritten A4 page of an essay holds 200 to 300 words |
-| `CHARS_PER_WORD` | 6.0 | German prose is the longest of the three languages (about 6.2), English the shortest (about 5.5) |
-| `DEFAULT_CHARS_PER_TOKEN` | 4.0 | between the window budget's cautious 3 and the 4.3 to 5 measured on German prose at page length |
-| `DEFAULT_IMAGE_TOKENS` | 1500 | a full A4 page at 300 DPI; how many tokens a vision model makes of it depends on its own encoder |
-| `TEXT_MODE_ANSWER` | 120 / 141 / 151 | `gemma4:e2b` over 9 texts on 2026-11-13; text mode answers with about the text's own length, so one figure serves every model |
-| `CONTENT_REVIEW_ANSWER` | 80 / 120 / 200 | a review answers with a short assessment; deliberately wide |
-| `DEFAULT_READING_ANSWER` | 350 / 600 / 1100 | a page of about 250 words plus the markup a reading model adds |
+| Constant | Rests on |
+| --- | --- |
+| `TYPICAL_PAGE_WORDS` | a handwritten A4 page of an essay holds 200 to 300 words |
+| `CHARS_PER_WORD` | German prose is the longest of the three languages (about 6.2), English the shortest (about 5.5) |
+| `DEFAULT_CHARS_PER_TOKEN` | between the window budget's cautious 3 and the 4.3 to 5 measured on German prose at page length |
+| `DEFAULT_IMAGE_TOKENS` | a full A4 page at 300 DPI; how many tokens a vision model makes of it depends on its own encoder |
+| `TEXT_MODE_ANSWER` | `gemma4:e2b` over nine texts; text mode answers with about the text's own length, so one figure serves every model |
+| `CONTENT_REVIEW_ANSWER` | a review answers with a short assessment; deliberately wide |
+| `DEFAULT_READING_ANSWER` | a page of about 250 words plus the markup a reading model adds |
 
 A model without an `answer_length` gets the median over the catalogued models of its kind, not a
 constant (`default_answer_length`).
 
-#### The store (`infrastructure/speed_store.py`)
+### The store (`infrastructure/speed_store.py`)
 
-Two files, both `SCHEMA` 1, both keyed by what makes a figure go out of date:
+Two files, both versioned by `SCHEMA`, both keyed by what makes a figure go out of date:
 
 | Store | Key | Holds |
 | --- | --- | --- |
 | `SpeedStore` | `SpeedKey`: server, tag, digest, Ollama version, graphics card | the test's result per step, with its outcome and message |
-| `SampleStore` | `SampleKey`: server, tag, step, mode | the last `KEEP_SAMPLES` (20) samples of real runs |
+| `SampleStore` | `SampleKey`: server, tag, step, mode | the last `KEEP_SAMPLES` samples of real runs |
 
 The mode is part of the sample key because it decides how long the answer is: `exchange` is the
 three steps' answers together, `text` is step ① alone, which is about the text's length.  Mixing
@@ -790,7 +526,7 @@ what a newer one measured.  Server addresses are normalised on write and on read
 
 `RunStatsCollector` (`infrastructure/run_stats.py`) writes the samples: the pipeline hands it to
 the Ollama client as `stats_sink`, so every request of a run is seen.  It sums the requests of one
-page or one document into one `RunSample`, and counts a load only from `LOAD_THRESHOLD_S` (1 s) up,
+page or one document into one `RunSample`, and counts a load only from `LOAD_THRESHOLD_S` up,
 so a model that was in memory does not look like one that had to be loaded.  Collecting statistics
 never fails a document: a sink that cannot write (full or read-only disk) is logged and skipped.
 A step that failed, or whose answer came back without a review (`CorrectionOutcome.fell_back`: a
@@ -798,13 +534,13 @@ report of step ② or ③ failed, so the answer lacks part of what was asked), i
 requests of the failed attempt would be counted into the answer length of the mode that finally
 answered.
 
-#### Real runs win over the test
+### Real runs win over the test
 
 `speed_summary` prefers the samples to the stored test, per step and per model:
 
-- from `MIN_ANSWER_SAMPLES` (3) samples the run figures replace the catalog's answer length: they
+- from `MIN_ANSWER_SAMPLES` samples the run figures replace the catalog's answer length: they
   are this class's error level with this model and these instructions, which no test can know.
-- from `PERCENTILE_SAMPLES` (10) the range is the 10th to the 90th percentile, so one runaway
+- from `PERCENTILE_SAMPLES` the range is the 10th to the 90th percentile, so one runaway
   answer no longer widens it.
 - a step whose samples are missing falls back to the test, and a step with neither keeps its row
   in `SpeedSummary.unmeasured`, with the band the catalog expects here.  `class_set` is `None`
@@ -813,22 +549,22 @@ answered.
 `SpeedSummary.sample_count` and `sample_pages` say which of the two a row rests on, and the panel
 says it in words ("Based on your last 12 proofread documents").
 
-#### The time left
+### The time left
 
 `RunPace` (`gui/_run_status.py`) starts from the store's seconds per page.  After the first file
-the run's own pace takes over, blended with the estimate for the first `BLEND_FILES` (3) files: one
+the run's own pace takes over, blended with the estimate for the first `BLEND_FILES` files: one
 fast file is not a pace.  `pages_left` counts the pages of the files that are not done yet, from
 the run's page counts when they are known and from the average of the files done so far otherwise.
 Nothing known at all gives no figure, which is better than a guess the teacher would plan around.
 
-#### Which models have reference figures
+### Which models have reference figures
 
 Only the catalog entries with a `reference_speed` get an expected band, and no entry has a
 `read_tps`: a reading model gets no expected band, and `MachineFactors.reading` stays `None` until
 reading models are measured on the reference machine.  `tools/dev/ocr_page_tokens.py` measures them,
 and `report --performance --catalog-lines` prints the `answer_length` lines for the writing models.
 
-### Who owns what (hardware detection and recommendations)
+## Who owns what (hardware detection and recommendations)
 
 | Piece | Where | Rule |
 |---|---|---|
@@ -851,7 +587,7 @@ Details that are easy to get wrong:
   model needs a server round trip, so the dialogs have no synchronous "cache hit"
   shortcut for Ollama.
 
-### AI services: providers, model lists and install hints
+## AI services: providers, model lists and install hints
 
 Proofreading and content review share one widget, `AiServiceSection`
 (`gui/settings/_ai_service_section.py`); an `AiServiceSpec` only names the settings keys of
@@ -888,7 +624,7 @@ the step.  What it relies on:
   (`domain/data_location.py:DataRegion`), which feeds `PrivacyLevel` and the
   "don't ask again" fingerprint.
 
-### Finding the Ollama server
+## Finding the Ollama server
 
 Rules in `domain/ollama_discovery.py` (pure: `OLLAMA_HOST` parsing, `/proc/net/route` and
 `resolv.conf` parsing, `classify_host`, `scan_targets`), I/O in `infrastructure/ollama_discovery.py`
@@ -918,117 +654,12 @@ and `ollama_utils.ollama_server` pass `own_host_names` and `windows_host_address
   Hardware and memory probing keep the default (`False`): from inside WSL those figures belong
   to the Linux side.
 
-### Remembered "don't ask again" answers
-
-`gui/_privacy_settings.py:FlowAcknowledgements` is the only code that reads or writes them
-(QSettings key `privacy/acknowledged_data_flows`, one line per answer: its fingerprint).  The
-question before a run, the list in Settings → Privacy and "Ask again" all use it.  The line the
-list shows is put into words when it is read, by `texts/privacy.py:describe_fingerprint()`, so
-no wording sits in the settings file.
-
-The fingerprint is versioned (`v2|` …, with the data region), so an answer whose fingerprint has
-another version does not match and the user is asked again.  Parts are separated by `|` and their
-fields by `:` — the host may itself contain a colon and is always the field before the
-last one, which is why the age of a record is a prefix rather than another field.
-`describe_fingerprint()` reads both formats.
-`PrivacyPage` (`gui/settings/_privacy_page.py`) puts a first tab for these answers
-(`SendingDataTab`) in front of the anonymizer rules; its changes are applied by the Settings
-window's OK only (`apply()`).
-
-### "What is sent for this file": who builds it and who shows it
-
-`application/sent_text.py` answers the one question the status box leaves open — *which text
-does the service read?* — without spaCy, a model or a widget:
-
-- `describe_sent_texts(flow, *, raw_text, correction_text, anonymize, preview_extracted,
-  correction, evaluation_prompt)` walks `DataFlow.outbound` (the steps that leave the
-  computer) and returns a frozen `SentText` per step: proofreading gets the extracted text,
-  content review the proofread text, each anonymized first when the step says names are
-  hidden.  A step whose names are hidden needs `anonymize`; without it the text is reported
-  as written, because hiding it is impossible.
-- The function keeps an internal `hidden()` memo, so every distinct text is anonymized at
-  most once.  The proofreading section, the content-review section and the comparison view
-  therefore share one spaCy pass, and the shared cache behind `anonymize`
-  (`application/anonymization.py`, see *Shared anonymization cache*) answers the second call.
-- `preview_extracted` asks for the anonymized extracted text as well, for the dialog's
-  original-vs-anonymized tab; the service passes `config.anonymization_enabled`, so the tab
-  appears exactly when names are actually being hidden.
-- `DocumentQueries.describe_sent_texts()` supplies `anonymize` (the caching
-  preview anonymizer, `None` when removal is off) and fills `correction` and
-  `evaluation_prompt` with the same code the stages use (`_sent_correction` /
-  `_sent_evaluation_prompt`), so the dialog cannot drift from what a run sends.  A `SentText`
-  carries the requests as data — the `(step, system prompt)` pairs and the teacher's notes —
-  and the dialog words them through `texts/review.py:prompts_block()`.  `SentTexts` carries the
-  sections, `flow.level`, the raw text and the anonymized raw text.  Its `stored` argument is the file's `DocumentStateView.sent`
-  (see *How a stored result was sent*), so the dialog can put what is already stored next to
-  what the next run would send.
-
-`gui/_what_is_sent_dialog.py` only presents that report: one `_SentSection` per step (title
-and badge, the names note, the text with placeholders highlighted by
-`highlighted_html()`, the instructions in a collapsed block), a *Personal information* tab
-built from `DiffWidget`, and — for a local run — `Everything stays on this computer.`  The
-main window works the report out on a background task (`_sent_texts_task`; a small "Working out what is sent…"
-dialog is shown meanwhile) and shows it modally.
-
-### Cell tooltips in the results table
-
-The results table shows where a stage's text went without adding a column:
-`data_flow_changed` on the config panel (emitted by `refresh_data_flow()`, which caches the
-`DataFlow`) and the main window's `_on_data_flow_changed` push
-`{stage.stage: stage_tooltip(stage)}` into `ResultsTable.set_stage_tooltips()`.
-`stage_tooltip()` (`gui/_data_flow_summary.py`) is the one-line wording, e.g.
-*Sent to Mistral (EU), names hidden*.
-
-A cell can already carry its own message (an unclear count, a warning, an error).  That text
-lives in `_ROLE_NOTE` and is written through `_set_note()`; `_compose_tooltip()` joins the
-stage line, how the stored result was sent (`sent_lines()` of the row's `SentStatus`, left out
-while the run is redoing that stage) and the cell's note with blank lines, so none replaces
-another.  `set_stage_tooltips()` redraws every row, so the cells follow a settings change.
-
-### How a stored result was sent
-
-The tooltip and the dialog answer two different questions: *where would the text go now*
-(`DataFlow`, from the current settings) and *where did the stored result really go*
-(`SentRecord`, from the run that made it).  The second one has to survive a settings change,
-so it is stored with the result:
-
-- `domain/data_location.py:SentRecord` holds the **inputs** of the classification, not the
-  verdict: `provider`, `model`, `endpoint` (the Ollama host; empty for a provider, none of
-  which has a base-URL setting), `names_hidden` (the number of placeholders), `hiding_on` (whether hiding was switched on,
-  which tells "nothing found to hide" from "names as written") and `privacy` (the fingerprint
-  of the anonymizer settings).  A changed rule therefore changes
-  the wording, not the stored data.  `from_dict()` returns `None` for anything that is not
-  one of ours — including a record without a provider, which would otherwise read as an
-  unnamed online service.
-- `SentStatus` pairs the record with `other_privacy_settings`, the comparison with the current
-  `privacy_key(config)` of `cache_keys.py`.  The comparison is by settings, not by text: working
-  out the text would need a spaCy pass per document.
-- `cache_keys.py:sent_record(config, stage, *, names_hidden, facts)` builds it (it holds the
-  `Config`); `application/data_flow.py:sent_location(record)` classifies it through the same
-  `llm_location()` the box uses, so the two cannot disagree.
-- `DocumentState` keeps `correction_sent_text`, `correction_sent_map`, `correction_sent` and
-  `evaluation_sent`; `DocumentStateView.sent` exposes them keyed by stage name.
-  `DocumentQueries._sent_verdict()` (`application/documents.py`) adds the comparison in
-  `_documents()` (behind `queue_rows()`) and `load_view()` — the state repository does not know the
-  settings.  The current fingerprint is computed lazily, only for a view that has a record.
-  `sent_location()` writes a bare IPv6 host (`::1`) in brackets before it asks `llm_location()`.
-- The record belongs to its result: every path that clears a result clears its record too
-  (`record_ocr_result`, `invalidate_from_stage`, `record_correction_result` for the review).
-  The teacher's edits never touch it: they go to `TeacherWorkStore`.  `load_valid()` drops sent fields
-  whose result is not stored (`_without_orphan_sent`) and keeps the recognised text, so a
-  stray record never costs a new reading; `DocumentStateView.sent` only lists stages that are
-  done, so a stage `reconciled_view()` marks stale shows no line.
-- The wording lives in `texts/review.py` (`_how_sent` builds the phrase once; `sent_lines`
-  and `stored_result_line` frame it for the tooltip and the dialog);
-  `GUI` writes the cells' lines from `view.sent` after every load, including `_on_file_done`; the dialog shows one line per stored result in a grey block at the
-  top of the *What is sent* tab (`stored_lines()`, `objectName="stored_results"`).
-
-### Stopping a run and run outcomes
+## Stopping a run and run outcomes
 
 A run has two stop events, both owned by `OCRWorker` and set through `request_stop(now=...)`:
 `stop_after_file_event` ("Stop": the file being processed finishes completely, no new file
 starts) and `stop_event` ("Stop now": also cancels the Ollama request being made and stops
-the file at its next step).  The Stop button is two-step (`_StopStage` in `_main_window.py`).
+the file at its next step).  The Stop button is two-step (`StopStage` in `gui/_run_session.py`).
 
 The result of a run is `domain/run_summary.py:RunSummary`: `succeeded`, `failed`, `skipped`,
 `stopped` (interrupted by Stop now), `not_started` and `error` (the run could not start).
@@ -1064,15 +695,15 @@ Rules that keep a stop honest:
   passes its stop event to the shared client, and to the built-in reader, which checks it before
   every line (`RunStoppedError`) and so stops within a line.
 * **Closing the window** (`MainWindow.closeEvent`): a spontaneous close during a run asks first
-  (`_confirm_close_during_run`; File → Quit asks the same through `_on_quit_requested`), then
+  (`MainWindow` asks first; File → Quit asks the same), then
   `request_stop(now=True)`, disconnects the worker's signals (no dialog on a hidden window) and
-  waits at most `CLOSE_GRACE_MS` (3 s).  A worker still running after that is detached
+  waits at most `CLOSE_GRACE_MS`.  A worker still running after that is detached
   (`_worker.detach_running_worker`) and `_app_bootstrap.finish_process` ends the process with
   `os._exit` instead of destroying a running `QThread` (which aborts).  The Benchmark window
   does the same after its 2 s wait.  `StateRepository.save` writes a temporary file and swaps
   it in (`os.replace`), because the process may now end during a save.
 
-### Keeping the computer awake
+## Keeping the computer awake
 
 `infrastructure/power.py` implements the `SleepBlocker` interface (`interfaces.py`) for each
 platform without extra packages; `hold(reason)` is a context manager that yields whether the
@@ -1103,504 +734,36 @@ replaces `power.default_sleep_blocker` with the null blocker; a test that cares 
 Windows (Modern Standby may need `PowerRequestExecutionRequired` too), `pmset -g assertions`
 on macOS, `systemd-inhibit --list` on Linux.
 
-### Background tasks in the GUI
+## Request profiles: temperatures and prompts per model
 
-There are two kinds of background work, one module each.
-
-**A query or a fetch** — no window waits for it, and only the newest answer counts — uses
-`gui/_background.py`:
-
-```python
-self._task = LatestTask(owner=self)            # "latest wins" per widget
-self._task.submit(lambda: service.slow_call(), self._on_done)   # on_done(result, error)
-run_streaming(fetch, on_item, on_done, owner=self)              # items as they arrive
-```
-
-Tasks run on a shared `QThreadPool`; results arrive on the GUI thread through a queued
-signal, results for a destroyed `owner` are dropped, and superseded results of a
-`LatestTask` are ignored. There is no thread object to destroy, so closing a dialog while
-a task runs cannot abort the process. The main window waits a bounded moment for running
-tasks when it closes (`wait_for_background_tasks`). A task that waits on a remote server (model
-lists, the update check, a server search) passes `network=True` and runs on a second pool: it
-cannot be interrupted, so a stale one keeps its thread until it ends, and it must not hold up the
-local tasks meanwhile. In GUI tests, `neutralize_gui_threads` keeps a smoke test offline: it
-patches `LatestTask.submit` and `submit_streaming` and the `run_in_background` of the modules that
-call it directly.
-
-**A long job** — a pip install, a model download, an Ollama pull: it reports while it runs, its
-thread must not be destroyed before it ended even if the window that asked is closed, and it can
-be stopped only between two chunks — subclasses `LongJobThread` (`gui/_long_job.py`) and
-implements `work()` alone:
-
-```python
-class _PipInstallThread(LongJobThread):
-    def work(self) -> None:                     # the result travels with finished_ok
-        self._svc.addons.install_packages(self._packages, self.log_line.emit)
-```
-
-The base carries `log_line`, `progress`, `finished_ok`, `finished_err`, a stop event that
-`work()` watches where it waits, and `stop()`. A job that ended unfinished because it was stopped
-raises `ModelDownloadCancelledError` from `work()` and reports `ABORTED`; one that finished anyway
-reports its result. It holds every started job until it has ended, so a window may let go of
-one that is still running — destroying a running `QThread` aborts the process — and the
-application waits a bounded moment for them when it closes (`wait_for_long_jobs`).
-
-A `QThread` subclass of its own is refused by `tests/unit/test_thread_kinds.py`. The two that
-stay are `OCRWorker` and `BenchmarkWorker`: a run of their own, with a worker thread that has
-to be stopped and detached as a whole.
-
-### The evaluation tools
-
-Three command lines, one job each.  They parse arguments and print; the work is in
-`tools/evaluation/` (see *Where the code lives*).
-
-| Tool | Commands | Reads | Writes |
-| --- | --- | --- | --- |
-| `tools/evaluate.py` | `run` | the test set in the store, a running Ollama server | answers, appended to `runs/` below `--store` |
-| `tools/report.py` | `table`, `compare`, `gate`, `passes`, `sheet`, `page` | the store | the report folder (`page`); the rest prints |
-| `tools/store.py` | `convert`, `validate`, `marks`, `accept-marks`, `manifest` | the store, the corpora, a filled-in sheet | the marks files, the accepted alternatives |
-
-`prepare_gec_testset.py` builds a test set into the store and is not one of the three: it reads the
-corpora and writes `testsets/<id>/`.
-
-**Two criteria come before quality.**  Whether a model fits a computer and how long it takes for a
-page are written in `evaluations/README.md` (*Fit and speed*, *The pick*); the thresholds are
-constants in `domain/model_catalog.py` and nowhere else.  `report table --tiers` prints both per
-tier from the records (`report/tables/fit.py`): the memory a model held on a card of that tier
-against the share of the card the app gives it, a processor-only computer by the model's size in the
-catalog, and a page of `TYPICAL_PAGE_WORDS` words in the app's speed bands — measured by a full-exchange run where
-one exists, else computed from the measured writing rate.
-
-**The store is a repository of its own.**  Every evaluation record — the runs, the test sets with
-their texts, the marks, the machines, the model sizes, the gate records — lives in the private
-repository `teachers-teammate-evals`, cloned to `~/git/teachers-teammate-evals`, which is what
-`--store` names (every command takes it; none guesses it).  It holds the corpus text, so it may
-never be published; this repository holds the code and the formats (`evaluations/README.md`, `evaluations/FORMAT.md`) and no record.
-`core/paths.py:store_path()` refuses a store inside this repository's working tree, and
-`tests/tools/test_no_eval_records.py` fails when a run file, a manifest, a size record or a marks
-file appears here.  That repository is a Bazel module that depends on this one (a sibling clone,
-`local_path_override`), so the tools also run from there: `bazel run //:report -- table`,
-`//:store`, `//:evaluate`, `//:prepare_gec_testset`, `//:verify_model_catalog`.  This is why the
-`ocr_test_dependencies` pip hub is not a dev dependency here.
-
-**A run is named by its axes.**  `core/axis_table.py` declares every attribute a run can vary in
-once, and `core/axes.py` derives the four keys from it: the **compare key** (what two runs must
-share to be pooled — the task, the test set and every axis away from its default), the **series
-key** (the compare key plus the machine and isolation: one gate group), the **run key** (the series
-key plus the repeat: one file) and the **environment key** (the compare key plus the machine, the
-server version and isolation: the speed table).  The file name is a label derived from the axes and
-never read back.
-
-**Adding an axis.**  One `Axis(...)` line in `AXES` and one field on `Protocol`; the record codec,
-the file name's tags, the labels and `compare --along` all iterate `AXES`, and a test asserts the
-two agree.  An axis with a default moves no key, no sample, no cache and no file name, because a
-value at its default is left out of the compare key.  `compare_role` says how a comparison treats
-it: `MODEL` (two values are two models to compare), `FIXED` (it may not vary inside one comparison)
-or `DERIVED` (another axis determines it).  An axis a newer writer added and this reader does not
-know is kept under `unknown.<name>`, so two runs that differ in it never pool by accident.
-
-### Request profiles: temperatures and prompts per model
-
-A writing model must pass two gates before it is recommended (`evaluations/README.md`).  **Gate 1**
-is the structured-output check above (`verify_model_catalog.py`); its first stage is the smoke
-check: a setup that fails it is not sent the eighteen runs, and one that passes it is continued
-from its own answers.  **Gate 2** (`evaluate.py` runs it, `report.py` reads it) asks how good its
-corrections are.  It sends what the app sends, at the temperatures the app sends that model (it
-builds the app's own corrector — the proofreading exchange inside the app's `ChunkingCorrector`, with the
-app's own tokeniser and word diff — and the one-request corrector for the two one-request
-exchanges), so a result describes the request a teacher's run sends, including the app's long-text
-path: a text longer than the window's budget is proofread in pieces, one request each, and the
-answer line records how many (`pieces`).
+What differs per model in the request the app sends is one `RequestProfile`
+(`domain/model_catalog.py`); `request_profile(tag, provider)` resolves it, and the evaluation tools
+send the same request (`evaluations/TOOLS.md`). The corrector, the *What is sent for this file*
+dialog and the correction cache key (`RequestProfile.fingerprint()`) read the one object, so the
+dialog shows the request that is sent and a profile change re-runs only that model's corrections.
 
 - **One `StepProfile` per step** (① correct, ② explain, ③ unclear): `temperature`, `think`,
   `options` and, on step ① only, `prompt`.
-- **Temperatures.** Step ① rewrites the text, so its value is measured: `STEP_ONE_TEMPERATURES`
-  (0.05 for the models that get worse with every step up), else `STEP_ONE_DEFAULT_TEMPERATURE`
-  (0.4). Steps ② and ③ and the content review answer a small object and run at the value of the
-  model's card, `MAKER_TEMPERATURES`, else `DEFAULT_CORRECTION_TEMPERATURE` (0.2) or
-  `DEFAULT_REVIEW_TEMPERATURE` (0.7). An online provider gets 0.2 in every step; text recognition
-  is fixed at `OCR_TEMPERATURE` (0.0). Teachers set none. Read the tables only through
-  `request_profile()` / `review_temperature()`.
+- **Temperatures.** Step ① rewrites the text, so its value is measured: `STEP_ONE_TEMPERATURES`,
+  else `STEP_ONE_DEFAULT_TEMPERATURE`. Steps ② and ③ run at the value of the model's card
+  (`MAKER_TEMPERATURES`), else `DEFAULT_CORRECTION_TEMPERATURE`. The content review resolves its own
+  (`review_temperature`, default `DEFAULT_REVIEW_TEMPERATURE`). An online provider gets 0.2 in
+  every step; text recognition is fixed at `OCR_TEMPERATURE`. Teachers set none. Read the tables
+  only through `request_profile()` / `review_temperature()`.
 - **Thinking.** `think=False` for every model, except a family in `THINK_LEVELS` that ignores the
-  flag (`gpt-oss` is asked for `"low"`).
+  flag.
 - **Sampling values** (`options`, names from `SAMPLING_OPTIONS`) are empty by default: the model's
   own tag (its Modelfile) decides top-k, top-p and the penalties.
 - **Prompt variants.** `STEP_ONE_PROMPTS` names the step-① variant (`CORRECT_VARIANTS` in
   `domain/correction_prompts.py`) a model is sent; empty until a measurement on both test sets
-  adopts one. A variant that a measurement used never changes its text — another text is another
-  id — because the cache key hashes it (`prompt_identity()`).
-- **One object, three readers.** The corrector, the *What is sent for this file* dialog and the
-  correction cache key (`RequestProfile.fingerprint()`) read the same profile, so the dialog shows
-  the request that is sent and a profile change re-runs only that model's corrections.
-
-```bash
-# 1. Build the test set from the public corpora (kept outside the repository)
-bazel run //tools:prepare_gec_testset -- --testset gec-2026-12 \
-    --corpora ~/gec-testset/corpora.json --store ~/git/teachers-teammate-evals
-# 2. Send every text to the models (answers are appended; an interrupted run resumes)
-bazel run //tools:evaluate -- run --store ~/git/teachers-teammate-evals --machine rx9070xt-server \
-    --testset gec-2026-12 --model gemma4:e4b
-#    ... and ask for the corrected text only (no JSON, no explanations) on the same texts
-bazel run //tools:evaluate -- run --store ~/git/teachers-teammate-evals --machine rx9070xt-server \
-    --testset gec-2026-12 --model gemma4:e4b --exchange one-request-text
-# 3. Print the table / which kinds of error were found / the explanations a teacher marks
-bazel run //tools:report -- table --store ~/git/teachers-teammate-evals
-bazel run //tools:report -- table --store ~/git/teachers-teammate-evals --by-error category
-bazel run //tools:report -- sheet --run RUN_NAME --store ~/git/teachers-teammate-evals > spotcheck.md
-```
-
-**A run that is checked before it starts, and read afterwards.**  `run --dry-run` makes the same
-plan the run makes and prints it: one line per session (model, temperature, mode, repeat, how many
-texts it would send), the results files that already hold every text, the refusals, and the number
-of requests.  It sends nothing but the server probe, which reads the version and the model's
-details, so a night's work can be checked in a second; a refusal exits 2, as the run would.
-`run --log FILE` appends one JSON line per event — `complete`, `session`, `smoke`, `row` (with the
-row's seconds and whether it lost text) — and closes with `finished`, `refused` or `interrupted`.
-Ctrl-C is how a night is paused, so a paused run still says where it stopped.  At the end a run
-that lost a setup says so: `N of M planned sessions did not run:` and one line per session with the
-reason the smoke check gave.  The exit code stays 0 — a script that chains runs decides for itself
-what a skipped setup means, and a run that wrote most of its rows is not a failure.
-
-**Evaluation report.** `bazel run //tools:report -- page --store ~/git/teachers-teammate-evals
---report-out ~/gec-testset/reports/NAME [--zip] [--single-file]
-[--model TAG] [--languages de,en]` writes one static page (opens from `file://`, no server) with the
-scorecard, a heat map, the sentences of every variant next to the reference, and the error types.
-Python computes every number with the report's own functions; the page only displays. A run it
-cannot use (no header, another test set, sessions that disagree, an older header) is listed in the
-footer with the reason. The output must lie outside a git work tree (a report holds corpus text)
-and be a new or earlier-report folder. Reading the store scores every answer again, which takes
-minutes on long texts; the tool prints each file as it goes. Code: `tools/evaluation/report/viewer/`.
-
-**The test sets, metrics, floors and the comparison** are described in `evaluations/README.md`; their
-numbers are in `tools/evaluation/report/gates.py`, `stats.py` and `metrics/`. The held-out set is built like the first:
-`prepare_gec_testset --testset gec-2026-12-heldout --corpora ~/gec-testset/corpora.json --store
-~/git/teachers-teammate-evals`.
-
-**Gate 2 and the comparison on the command line.** The floors are `report/gates.py`
-(`GateTwoRule.measure(group)` returns one check per floor and language, `rate(measurement, marks)`
-decides which enter the outcome, `judge` is both), the comparison `report/compare.py` and
-`report/stats.py`.
-
-```bash
-# the floors and the explanations of one model
-bazel run //tools:report -- gate --store ~/git/teachers-teammate-evals \
-    --model ministral-3:14b [--exchange text-first] [--steps correct,explain,unclear] \
-    [--temperature X] [--machine rx9070xt-server] [--testset gec-2026-12]
-# one model against another
-bazel run //tools:report -- compare --store ~/git/teachers-teammate-evals \
-    --testset gec-2026-12 --along model --baseline gemma4:e4b
-# one model over its temperatures, step ① alone, with the best row and its ties
-bazel run //tools:report -- compare --store ~/git/teachers-teammate-evals \
-    --testset gec-2026-12 --machine rx9070xt-server --model qwen3.5:4b \
-    --exchange text-first --steps correct --along temperature --baseline 0.05 \
-    --where step_one_prompt=standard --where sampling.presence_penalty=
-# what a second and a third pass of each configuration would add, and what they would cost
-bazel run //tools:report -- passes --store ~/git/teachers-teammate-evals \
-    --testset gec-2026-12
-```
-
-A command names a model, not a file: the runs are read from `--store`, and `--model`,
-`--temperature`, `--exchange`, `--steps`, `--digest`, `--compact-json`, `--machine` and `--testset`
-narrow them.  The machine and the test set default to those of the newest run, and the command
-prints what it chose and which other series the store holds.  `gate` reads the model's step-①
-temperature unless `--temperature` names one; `compare` reads every temperature it did not name.  A
-comparison takes the test set and the machine from the runs it reads, never from the axis it
-varies.  What is left ambiguous is refused rather than guessed: every axis in which the runs differ
-has to be named in `--along` or fixed with `--where` (`--where sampling.presence_penalty=` keeps the
-runs without that option; `machine` and `isolated` name where a run ran).  `gate` needs `--store`, because its spot-check floor reads the marks
-files of the set.  One line per check (`✓`, `✗`, `·` for a diagnostic), then the outcome.  Exit
-codes: `gate` 0 for `PASS` / `PASS_PENDING`, 1 for `FAIL` or `INCOMPLETE`; `compare` 0 when it
-printed its tables; both 2 when the selection is refused.  The record of a gate is
-`gates/gate2-<date>.md` in the private evaluation repository: a verdict, the runs it rests on and
-the command, no figure.
-
-**`compare`** scores every answer again and forms the groups from the headers, so a run that lost a
-repeat says so (`skipped <file>: <reason>`).  `--along` names the axes that vary, comma-separated
-(`model`, `temperature`, `exchange`, `steps`, `num_ctx`, `compact_json`, `sampling.<option>` and the
-rest of `core/axis_table.py`), `--where` fixes others, and `--baseline` names the value of the first
-axis the differences are measured against — the first row when it is not given.  `--corrections`
-compares the corrections only: `text-first` and `text-first/correct` count as one measurement,
-because step ① writes the corrections of both.  Along `temperature` the table shows, per
-temperature, the deciding mean F0.5 with German and English beside it, recall, precision, left
-alone, coverage, false alarms per text, the spread of the repeats, lost or added texts, seconds per
-100 words, answer tokens per text, the fixes, wrong changes and misses per 300-word page, and the
-difference against the baseline with its 95 % interval.  Below it the best row is named with every
-row that is not worse beyond the noise: a tie goes to the cheaper configuration, which is a choice,
-not a number.
-
-**Passes.**  `passes --store DIR --testset NAME` asks what a second and a third pass of one
-configuration would buy if the passes were merged by a vote.  An edit's *votes* are how many of the
-repeats made it.  The table shows the single pass (the mean of the repeats), the edits at least two
-of three made, and the edits every repeat made; then what share of a single pass's edits not every
-repeat made, and how many of its false alarms and of its real fixes that share holds; then the
-precision of an edit made by one, two and three passes.  The last column is the time against one
-pass, `1 + (k - 1) × step ①'s share`, because a further pass repeats only step ①; a run without step
-tags shows a dash.  A group of one repeat is left out; a repeat that lacks a text another has is
-refused.
-
-**Marking explanations and accepting alternatives.**  `report -- sheet --run RUN_NAME --store DIR`
-prints the sheet of a run's explanation sample with the source sentences; `store -- marks SHEET.md
---marker NAME` writes `marks/<marker>__<question_sha256>.jsonl` (`--marker` is required, because
-the name goes into the repository).  The file is merged, not replaced, and the explanation's hash is
-part of a mark's identity, so a verdict on one model's explanation is not credited to another's.
-`store -- validate` checks the file against its set; `gate` reads a marks file only when that check
-passes.  The sample's seed is the run key, not the file name, so renaming a run file draws no other
-sample.  `store -- accept-marks --testset NAME --marker NAME --store DIR` turns one marker's `valid`
-edit marks into the set's accepted alternatives; the file is merged, a disagreement between markers
-is listed, never resolved, and a mark whose edit no stored answer makes is listed.
-`report -- table --no-accepted` scores without them.
-
-**Exchange and steps.**  `run --exchange` says how the text travels and `run --steps` which steps of
-it run.  `text-first` is the app's proofreading exchange (① the corrected text, ② the explanations,
-③ the unclear check) and the default; `one-request-review` asks for corrections with explanations in
-one JSON answer; `one-request-text` for the corrected text only.  `--steps correct` sends step ①
-alone, so `text-first --steps correct` scores the exchange's corrections for a fraction of its
-time (`--performance` prints step ①'s share).  It is the exchange's own code: the port refuses the
-requests of steps ② and ③ (`OnlyStepsPort`) and the exchange treats that as "no explanations, no
-unclear list", so the prompt, the cut-off handling and the text budget (hence the pieces of a long
-text) are the exchange's, and a test pins that its request hashes like the exchange's first one.
-Its rows have no review, no warning and no explanations, like `one-request-text`'s.  Use it for
-every question about the corrections (temperature, sampling values, prompts, passes, thinking,
-budgets); use `text-first` for the explanations, the unclear flags and the time of a whole page.
-The exchange and the steps are tags of the run file's name
-(`2026-11-16_rx9070xt-server_gemma4-12b_6114515d__steps-correct__temperature-0.4__repeat-3__<key8>
-.run.jsonl`; a run that ran no step of the exchange reads `steps-none`), and the table keeps them
-apart.  A run
-without `explain` has no explanations, so "Explained", orphans and "Same category" stay empty for
-it.
-
-`run --option NAME=VALUE` (repeatable) sends sampling values with step ①, besides the temperature:
-`top_k`, `top_p`, `min_p`, `presence_penalty`, `frequency_penalty`, `repeat_penalty`
-(`SAMPLING_OPTIONS`).  Without it the request carries the temperature and the window only and the
-model's own tag decides the rest, as in the app.  A run with options writes a file of its own — each
-sampling option is a tag of the name
-(`…__sampling.presence_penalty-0__temperature-0.2__repeat-1__<key8>.run.jsonl`) — and the options are
-part of the compare key, so a report keeps runs asked with different values apart.  Every request of
-the exchange is tagged with its step in the performance record (`step`, derived from its system
-prompt), and `--performance` prints step ①'s share of the time.
-
-`run --prompt NAME` asks step ① with a named variant of its system prompt (`keep`, `find` or
-`shot`, `CORRECT_VARIANTS` in `domain/correction_prompts.py`) instead of the model's own;
-`--prompt standard` sends the standard `CORRECT_SYSTEM` to a model that has an adopted variant
-(to measure the two against each other).  Only `text-first` sends it, so another exchange refuses.
-The variants are written from what the evaluation showed and never from a test text: `keep` for
-the models that over-edit (the false alarms of those models are mostly extra edits inside
-sentences that have a mistake, so a sentence with a mistake changes only the words of
-the mistake; a short list says what is no mistake and is not to be added either, an optional comma
-included), `find` for the models that leave mistakes alone (a checklist of what to look at in every
-sentence, its comma rule per language), `shot` with two invented worked examples (labelled so that
-no label can start an answer; the exchange refuses an answer that starts with a `Word:` label the
-text does not start with: `framing_problem`).  A variant's rules and examples come from German and
-English, the languages that were measured, and say so: a model's variant is sent for every text
-language.  A variant is part of the request profile (`StepProfile.prompt`,
-step ① only; `STEP_ONE_PROMPTS` in `model_catalog.py` is the table of the models that are sent one,
-empty until a measurement on both test sets adopts a variant; another quantisation of a listed
-model is sent the same one).  A run with a variant writes a file of its own
-(`…__step_one_prompt-keep__temperature-0.2__repeat-1__<key8>.run.jsonl`; the name follows the prompt
-the requests carry, so a model with an adopted variant writes that file without a flag and
-`--prompt standard` writes the plain one), and the prompt is part of the compare key, so a report
-keeps runs of different prompts apart.  The fingerprint hashes the text of every variant, so a changed
-variant needs a new protocol version once a version has been merged or measured; a variant that a measurement used is never edited, another text is another id.
-The cache key of the correction stage carries the variant (id and hash of its text,
-`prompt_identity()`) only for a model that has one.
-
-**The request per model, and a second try.**  The request the app sends is not the same for every
-model.  `RequestProfile` (`domain/model_catalog.py`) holds what differs, the catalog carries one per
-model, and `request_profile(tag)` resolves it — the default for a model the catalog does not know
-(see *Request profiles* above):
-
-* `temperature` differs by step.  Step ① runs at `STEP_ONE_TEMPERATURES` (0.05 for `qwen3.5:4b` /
-  `:9b`, the Ministral models and `mistral-nemo:12b`) or 0.4: over 0.05, 0.4, 0.7 and 1.0, no model
-  was better above 0.4, and those models get worse with every step up (`compare --along
-  temperature` on the step-① runs of `gec-2026-12`).  Steps ② and ③ run at `MAKER_TEMPERATURES`,
-  else `DEFAULT_CORRECTION_TEMPERATURE` (0.2).  An online provider gets 0.2 in every step
-  (`Config.correction_temperature`, the chat model's temperature).  The correction cache key holds
-  the temperature of all three steps.  The content review resolves its own the same way
-  (`review_temperature`, default 0.7); text recognition is fixed at 0.0.
-* `compact_json` (default **off**) adds `COMPACT_ANSWER_RULE` to a one-request review.  The
-  exchange does not send that request; the evaluation tools measure it as a per-model decision.
-
-Sampling is *not* in the profile by default: top-k, top-p and the penalties come from the tag, which
-is where the vendors put their recommendations.  The three readers of the fixed part — the
-corrector, the dialog that shows "what is sent for this file", and the cache key — resolve the same
-object, so the dialog shows the request that is sent and a profile change invalidates only that
-model's cached corrections.
-
-A step answer the window cut off is asked **once more** (`cut_off_tries`: not for an online service
-and not at temperature 0, where it would be the same answer), and a cut-off *repair* answer is not
-retried (`infrastructure/proofreading/runner.py`).  The evaluation mirrors it: `RecordingClient`
-sends `seed + k` for the *k*-th identical request, so a repeat samples afresh, and gate 1 sends the
-second try and stores both attempts (`attempt` 1 and 2).  Its verdicts: cut off twice is
-`TRUNCATED` (hard), cut off once and then answered is `CUT_OFF_ONCE` (soft), and a second answer
-that fails another test gets that test's verdict.
-
-**Protocol version.**  What a run measured and how — the prompts, the answer format, the window, the
-level and the long-text budget — is versioned in `tools/evaluation/core/protocol.json`, not by commit.
-`run` computes the fingerprint of that request side before the first request and stops with exit
-code 2 when the current version does not accept it, so an uncommitted prompt edit is caught like a
-committed one.  The fingerprint is captured from the correctors a run builds, for every setup,
-language and profile variant: a hash of every request the probe text produces (system and user
-message, answer schema, options), the text budget the app splits a long text by, the repair message
-and the answer format version.  A version that only *adds* something (a setup, a profile variant)
-leaves every earlier request hash as it was, and its entry says so.  Raising the version means adding an entry with the new fingerprint, the date and a
-line saying why, and setting `current` to it; do it when the check refuses.  A change of the
-scoring, the caps or the edit extraction does not move the fingerprint: it raises `scorer_version`
-(`report/score.py`), and the golden numbers of the tests fail until it does.  Old entries are never
-edited or removed.  A run resumed after a tool,
-Ollama or model change is refused as well, before the first request of any combination: the
-sessions of one run have to agree on the protocol, the test set (by hash), the machine, the model
-digest and the request settings including the timeout, and a results file without a header is
-refused.  The fingerprint is compared by its version, not by its value: two fingerprints of one
-version are one protocol, so an additive change does not block a long run in progress, while a
-changed `instructions` hash per language still refuses.
-`tool_revision` stays in the header as a pointer for a human reader; nothing checks it.
-
-**What Ollama reports about memory.**  `memory_gb` in the catalog is the total a model needs at the
-8192-token window, on the card and in main memory together.  Ollama's own size report (`/api/ps`)
-can be far off for some models, so the fit check reads the card through the memory agent, and the
-graphics-memory column of a report is the figure to trust, not *On the card*.
-
-**Speed, memory and repeatable runs.**  Every answer line of a `run` records what its text cost
-(`Answer.requests`, `tools/evaluation/core/performance.py`): each request with Ollama's token
-counts and durations, the models the server had loaded, the graphics-memory peak, the seed.  The
-report shows it with `report --performance`: seconds per 100 words of student text (what a teacher
-waits), answer tokens per second (how fast the machine runs the model), answer tokens per 100
-words, requests per text (a repair or fallback adds one), graphics memory added over the idle
-baseline.  Options of `run`:
-
-| Option | Effect |
-| --- | --- |
-| `--seed N` (default 20261109) | The app sends no seed; the evaluation sends one so a run can be repeated on the same machine and software. |
-| `--repeat N` | Run every text N times; repeat k uses seed + k - 1 and a file tagged `repeat-k` |
-| `--isolate` | Unload every model first, refuse a server that will not become idle, unload the model afterwards.  Only on a server you own |
-| `--gpu-sampler amd\|nvidia`, `--gpu-ssh "ssh.exe user@host"`, `--gpu-agent URL`, `--gpu-token-file PATH` | Sample the graphics memory in use once a second: on this machine, through SSH (from WSL the Windows client `ssh.exe` holds the key), or through the memory agent on the machine with the card |
-| `--machine ID` | The machine the server runs on, an id of the store's `machines/`; required, and written into the header |
-
-Each run file starts with its header — the model's digest, quantisation, parameter size and family,
-the window, the seed, the machine and the Ollama version — and appends one session line per
-invocation with the tool revision, the idle graphics memory and what the server had loaded.  The
-protocol (`tools/evaluation/run/measure.py`): unload and check,
-start the sampler, one unscored warm-up request that loads the model, then per text note what is
-loaded before and after.  A text is **shared** when another model was loaded at either point; shared
-texts are left out of every speed and memory figure.  Samples are stamped when they arrive here,
-because the server's clock can be seconds off, and a one-second sampling interval is the limit of
-the memory peak.  The speed runs sample with the local process, through SSH or through the memory
-agent (see *Memory agent*), which is what the fit check reads.
-
-**Committing a run as evidence.**  A run is committed in the store itself, which is the private
-repository: the file the tools write is the file the tools read, nothing is converted, cut or
-encoded on the way in.  `store -- validate` checks the store's files without the corpora, and
-`store -- manifest` checks that a test set is still the one the corpora give — every corpus file and
-every item:
-
-```bash
-bazel run //tools:store -- validate --store ~/git/teachers-teammate-evals
-bazel run //tools:store -- manifest --testset gec-2026-12 \
-    --corpora ~/gec-testset/corpora.json
-```
-
-The method is in `evaluations/README.md`, the store's layout and rules in
-`evaluations/FORMAT.md`, the fields in the records of `tools/evaluation/core/`; the test-set manifest and the machine files are written once and then
-pinned.
-
-Things to know when reading the figures:
-
-* **Compare speed only between runs on the same machine.**  Backends, memory and drivers differ
-  between the machines of `machines/`.
-* **Tokens per second is not waiting time.**  Models write different amounts for the same text, and
-  one model writes several times more in `one-request-review` than in `one-request-text`; seconds
-  per 100 words is what a teacher waits.
-* **The samplers read `amd-smi` and `nvidia-smi`.**  Other cards and versions may print other
-  columns.
-* A sampler started over SSH is killed by process id on the remote machine; stopping the local
-  `ssh.exe` alone leaves `amd-smi` running there.
-
-**Where the code lives.**  `tools/evaluation/` is one package per layer, and the command lines
-(`evaluate.py`, `report.py`, `store.py`, `prepare_gec_testset.py`) only parse arguments and print.
-A layer imports only the layers below it:
-
-```
-report -> store -> input -> core, metrics
-run     -> store, input, core, metrics
-checks  -> run, core, metrics
-viewer  -> report, run, store, input, core, metrics
-convert -> store, input, core, metrics
-```
-
-| Module | Job |
-| --- | --- |
-| `core/records` | The typed records of every stored format: test set, run file, marks. |
-| `core/formats` | The format version of every file, JSONL with sorted keys, and the fields a reader keeps. |
-| `core/axis_table` | Every axis of a run, declared once: its field, its codec, its label, its tag and its compare role. |
-| `core/axes` | The four keys (compare, series, run, environment) and the file name derived from the axes. |
-| `core/machines` | The machine registry: the ids a run and a size measurement name, read from the store's `machines/`. |
-| `core/modes` | How a model is asked: the exchange and its steps. |
-| `core/labels` | The corpus labels of the reference edits and the category agreement. |
-| `core/languages` | The language codes of the test set and the names the corrector is asked in. |
-| `core/performance` | What one text cost: requests, tokens, seconds, memory. |
-| `core/protocol_table` | The version file of the request side, and which version a fingerprint belongs to. |
-| `core/sizes` | The size record: what a model needs and how fast it writes on one machine and device, and the store it is read from. |
-| `metrics/item_scores` | Every number of one text, from counts. |
-| `metrics/gleu` | The GLEU counts of the model and of the source. |
-| `metrics/text_loss` | How much of a text an answer keeps, and how much it adds. |
-| `metrics/quality` | The word diff, the edit matching and the sentence rules the numbers rest on. |
-| `store/layout` | Where the parts of the store live, and what a run file is called. |
-| `store/reader`, `store/writer` | Reading and writing the store's files as typed records. |
-| `store/validate` | What a test set, a run file and a marks file must satisfy. |
-| `store/marks`, `store/accept` | What a mark means, and the accepted alternatives it becomes. |
-| `convert/v1` | The one-off converter: a run of format 1 read and written as format 2. |
-| `input/testset` | The test set: its manifest, its items and the way from a pointer to a text. |
-| `input/corpora/` | One module per corpus: what it may be used for, which files it is, how a pointer becomes a text. |
-| `input/recipes/` | One module per test-set id: the selection rule, its seed and the corpora it needs. |
-| `run/runner` | The run loop: plan, resume, warm-up, header, sampler. |
-| `run/measure` | The requests, the server and the graphics memory of a measured run. |
-| `run/session` | The sessions of one run and whether it may be resumed. |
-| `run/protocol` | The fingerprint of the request side, captured from the corrector. |
-| `run/app_corrector` | The one-request corrector, as the tools build it — the baseline the exchange is measured against. |
-| `run/one_request/` | The one-request path itself: `correction.py` (the correctors), `correction_schema.py` (the answer model), `answer_format.py`, `presets.py` (the per-language policy presets), `sentence_review.py`. Nothing under `teachers_teammate/` imports it. |
-| `run/comparison` | Runs a test set through that corrector and turns the answers into rows. |
-| `run/gpu_agent`, `run/agent_client` | The memory agent on the machine with the card, and the client that reads it. |
-| `report/score` | The one scoring path, and `SCORER_VERSION`. |
-| `report/load` | The store as a report reads it. |
-| `report/summary` | The numbers a report is made of: one summary per model, temperature, language and band. |
-| `report/groups` | Which runs may be compared: the group key, the runs of one key, and the spread of a number over the repeats. |
-| `report/pooled` | The counts of one language, added up over the repeats. |
-| `report/stats` | The paired bootstrap, the interval, the minimum effect and `verdict_of`. |
-| `report/compare` | One comparison along the axes that vary: the rows, the baseline and the verdicts. |
-| `report/gates` | Gate 2: the floors of one model, the comparison of two, the paired bootstrap. |
-| `report/spot_check` | The explanation check: the sample of a run, the sheet, the marks. |
-| `report/select` | Which committed runs a gate-2 command reads: the newest series of a model, and what it refuses as ambiguous. |
-| `report/tables/` | The tables: `models`, `by_error`, `performance`, `fit`, `sweep`, `passes`, `false_alarms`. |
-| `report/viewer/` | The static report page. |
-| `checks/` | The checks that run a model rather than read a run: `structured_check`, `model_fit`, `smoke`, `gate_one`, `check_rule`, `download_sizes`. |
-
-`report` imports nothing above it: the command lines and `viewer` read it, and the numbers it prints
-come from `summary`, which `groups` and `gates` read instead.  A test in
-`test_evaluation_session.py` reads the imports of every module of the run layer and refuses one that
-reaches above it.
-
-### Adding a corpus or a test set
-
-A corpus is one module in `tools/evaluation/input/corpora/`, named after the corpus with `-` replaced by
-`_`. Nothing lists it: the package finds every module whose name does not start with `_` and reads
-its `ADAPTER`, the way the app finds its providers. The class declares what a manifest needs —
-`NAME`, `LICENCE` (copied word for word into every manifest that uses it), `RESTRICTED` (the licence
-forbids passing on any part, so a run over it stores no words at all), `LANGUAGES`, `HINT` (what
-`--corpus NAME=PATH` expects, for refusals and `--help`), `SPLITS` (the default first) and, for a
-corpus that lives in the repository, `DEFAULT_ROOT` — and it implements two things: `files()`, every
-file it reads keyed by the name the manifest records, and `resolve(item)`, which turns a pointer into
-a text. **An adapter reads only the files it pins**: that is what makes `corpus_problems` meaningful,
-and a test resolves every item of the invented set while recording the paths opened.
-
-The selection *rule* is not the corpus's: one corpus serves several sets and one set draws on
-several corpora. It lives in `tools/evaluation/input/recipes/`, one module per test-set id, found the same
-way, setting `RECIPE` to a `Recipe(testset, seed, corpora, select)`. `prepare_gec_testset --testset ID`
-picks the recipe, and `ID` is required: with two recipes a default would build the wrong set sooner
-or later. A recipe never changes once its manifest is committed — another selection is another
-test-set id.
-
-Each needs its tests: `tests/tools/test_evaluation_input.py` covers the declarations, the refusals,
-the splits, the pointers, the manifest and the rebuild of every item.
+  adopts one. A variant a measurement used never changes its text — another text is another id —
+  because the cache key hashes it (`prompt_identity()`). Another quantisation of a listed model is
+  sent the same variant.
+- **`compact_json`** (default off) adds `COMPACT_ANSWER_RULE` to a one-request review. The exchange
+  does not send that request; the evaluation tools measure it per model.
+- **A cut-off answer is asked once more** (`cut_off_tries`: not for an online service and not at
+  temperature 0, where it would be the same answer); a cut-off *repair* answer is not retried
+  (`infrastructure/proofreading/runner.py`).
 
 ## Text recognition engines
 
@@ -1725,14 +888,14 @@ wrong costs less than a thing they do to a page that did not need it.  A changed
 changed constant and an `AUTO_VERSION` bump.
 
 **Page models.**  `DOC_ORI` (PP-LCNet_x1_0_doc_ori) and `UVDOC` are `LocalModel`s in
-`domain/local_models.py` (group `PAGE_MODELS`, 39 MB, Apache-2.0, PaddlePaddle).  The installed app
+`domain/local_models.py` (group `PAGE_MODELS`, Apache-2.0, PaddlePaddle).  The installed app
 carries them (see *Local model files*); otherwise they are downloaded only on request: **Download…** on Scan quality, the **Page models** box on Add-ons → Reading models
 (`PAGE_MODELS_ITEM` of `domain/install_item.py`, between the reader and the Ollama pulls in
 `InstallRound`), or
 `--download-page-models`.  Missing page models are **not** an `IssueKind`: a run never waits for
 them; the CLI prints one notice line (`texts/addons.py:PAGE_MODELS_SKIPPED_NOTICE`).  `UVDoc`
 answers an image at
-the size it was given, so the page goes to it scaled to at most `FLATTEN_MAX_SIDE` (2048).
+the size it was given, so the page goes to it scaled to at most `FLATTEN_MAX_SIDE`.
 
 **Identity.**  `domain/local_models.auto_identity(engine, page_steps)` is the identity; for
 `auto` it adds `v<AUTO_VERSION>`, `colour` / `gray`, and `+turn` / `+flatten` for the page models
@@ -1765,7 +928,7 @@ turned 90/180/270° is restored, a curved page's lines get straighter).
 
 `domain/local_models.py` is the catalogue of model files the app runs itself (not through
 Ollama): a `LocalModel` has a Hugging Face repo, a **pinned commit**, and per file its size and
-SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
+SHA-256.  `READER_MODELS` are the reader's two sets.
 
 `infrastructure/onnx/store.py:ModelStore` keeps them under
 `<user data>/models/<repo name>/<revision>/` (`TEACHERS_TEAMMATE_MODELS_DIR` moves the root;
@@ -1873,8 +1036,7 @@ store, and `tests/unit/test_cache_keys_golden.py` holds the digests that must no
 - `ocr_key(config, source, facts)` (`cache_keys.py`) — a
   fingerprint of the OCR stage configuration (engine, model, preprocess
   method — for `auto` with its version, output and available page models —, language, prompt,
-  temperature). The engine is hashed twice (the shape of the hash is kept so cached OCR results stay
-  valid). For the built-in reader (`ppocr`) the model slot is `reader_fingerprint()`
+  temperature). The engine is hashed twice, a shape the golden digests pin. For the built-in reader (`ppocr`) the model slot is `reader_fingerprint()`
   (`PP-OCRv6_small@<det rev>+<rec rev>/v<READER_VERSION>`) and the language, prompt and
   temperature slots are constants: the reader reads every language with one model, so a
   changed language or Ollama model never re-reads a page, while a new model revision or
@@ -1897,8 +1059,7 @@ store, and `tests/unit/test_cache_keys_golden.py` holds the digests that must no
   document's stored files carry: its state file and its images.  Two files of one name in
   different folders are two documents and never overwrite each other's pages.
 
-**The state schema.**  `StateRepository._SCHEMA_VERSION` is 3.  A file of another version is
-read as missing, so the document is processed again: a review stored in another shape would
+**The state schema.**  A file of another `StateRepository._SCHEMA_VERSION` is read as missing, so the document is processed again: a review stored in another shape would
 otherwise load without explanations and, its key unchanged, never be made again.  The review's offsets are in the plain text of the stored
 `raw_text` (see *Correction review*).
 
@@ -1959,8 +1120,7 @@ state, the queue and the Check tab show nothing of that document: the pages come
 `text_identity` of the transcription the proofreading was made from.  A stored proofreading is
 stale when that differs from the current transcription (text 2, else text 1) — whatever the
 settings.  It guards against a store emptied on one side only: the teacher's transcription gone
-while the cache still holds a proofreading made from it.  `""` (a state written before this
-field) means "made from `raw_text`".
+while the cache still holds a proofreading made from it.  An empty value means "made from `raw_text`".
 
 **Runs keep worked-on corrections by default.**  A stored proofreading that is stale only by its
 settings and whose corrections part applies and is *worked on* (text 5, `checked`, or `kept`)
@@ -2008,9 +1168,9 @@ folder.
 essay, so they share one work, though each has its own cache and its own answer.  Corrections
 written on the answer of one copy do not apply to the other's, and the next write for the other
 replaces them (a corrections part is bound to one answer).  The transcription part is shared as it
-should be.  This is a known limit of keying by content; the alternative — one part per answer —
-was left out because two copies of one essay are rare and the shared transcription is the
-effort that matters.
+should be.  This is the limit of keying by content: one part per answer would cost more than it
+saves, because two copies of one essay are rare and the shared transcription is the effort that
+matters.
 
 **Who owns which text, after every operation:**
 
@@ -2035,13 +1195,6 @@ for documents the run does not hold (the lock), and a *Keep my changes* answer i
 the run starts, so no write races a read of the same document.  A card shown while the run holds
 the document records nothing (`CheckPage.mark_looked_at` is refused under the lock).
 
-Tests: `tests/unit/test_teacher_work.py` (the model, the merge, the changes),
-`tests/unit/test_teacher_work_store.py` (the store), `tests/unit/test_atomic_file.py` (the
-write), `tests/unit/test_domain_policy.py` (the freshness flags),
-`tests/unit/test_file_processor.py` (the pipeline on the current texts),
-`tests/unit/test_documents_service.py` (the merged views, `worked_on_documents`) and
-`tests/unit/test_commands_service.py` (the writes),
-`tests/unit/test_teacher_work_readers.py` (no reader names the cache's type).
 
 ### Shared anonymization cache
 
@@ -2069,651 +1222,43 @@ because the settings are part of the key).  The GUI's `OCRWorker` receives the m
 service, so a run fills the cache that the window's previews and exports read; a worker
 created without one builds its own service and shares nothing.
 
-### Hiding names in the Check tab (`domain/anonymization.py`)
-
-`domain/anonymization.py` is pure — no spaCy, no Qt, no I/O — and holds both directions of
-the placeholder map (placeholder → original surface text):
-
-- `restore(text, mapping)` — literal placeholder → original; what a run does with the text a
-  proofreader returns.  `SpacyAnonymizer.restore` delegates to it.
-- `mask(text, mapping)` — the inverse, used to show the *other* tabs with the stand-ins the
-  extracted text got.  Longest original first (one regex alternation, so `"Anna Müller"` is
-  not cut by `"Anna"`), and an original is only replaced where it stands as a word
-  (`(?<!\w)` / `(?!\w)` only when the value starts or ends with a word character, so
-  `"+49 30 …"` still matches as a whole).  A name the proofreader respelled is not found;
-  that is a documented limitation, not a guess.
-
-`gui/check/_masking.py:Masking` holds that state for the Check tab: the mapping, whether the
-stand-ins are ready, the failure, and the text they were asked for.  The page keeps the texts
-*unmasked* in the `CheckDocument` it was given and asks `Masking.mask(text)` for what it shows,
-so switching the setting off shows the stored text again without a reload.  Whether the names
-are hidden is the 👁 toggle's business and nothing else: no strip above the text says it, because
-a strip that came and went with the toggle moved the texts under the cursor.  Until the
-placeholders have arrived (`Masking.working`) the toggle reads *👁…* with the tooltip *Hiding
-personal information…*, because the names still stand in the text.  Why the texts cannot be
-typed into is the answer to a keystroke in them (`CheckTextView.keyPressEvent`, a tooltip at the
-caret) and the tooltip of the card's buttons (`txt.SHOW_NAMES_TO_CHANGE`); a tooltip over the
-whole text would pop up wherever the pointer rests.  Only a hide that *failed* gets a strip — the names then stand in
-the text while the toggle says they are hidden — and its button emits
-`display_anonymized_changed(False)`, the **Hide names** box's route, so the window stores the
-choice and the Settings → Privacy checkbox follows.  Placeholders are marked as chips:
-`gui/_formatted_text.py:chip_placeholders()` wraps them in the rendered Markdown HTML (markup is
-skipped, so a stand-in that reads like a tag cannot break the document).  No tooltip ever names
-the original.
-
-The marks of the review are carried to the masked text with `Masking.carry(span, text)`, which
-goes through the `OffsetMap` of `domain/anonymization.py:mask_with_offsets()` — the same map the
-notes are masked with, so a name is hidden in the card too and a mark still sits on the right
-words.
-
-The page asks for the stand-ins with `Masking.needs_request(raw_text)` — once per text — and the
-window answers through a background task (`_anonymize_task`), which calls
-`AnonymizationService.anonymize_text()` off the GUI thread and therefore reuses the
-shared cache above (a run then needs no second spaCy pass, and vice versa).  A result that
-belongs to a text the page no longer shows is dropped (`set_anonymization(..., raw_text=…)`),
-and a failure keeps the names hidden behind the strip that says so.  Changing the
-anonymizer settings in the dialog calls `forget_anonymization()`.
-
-The setting itself is a GUI preference, not part of `Config`: the checkbox under
-*Settings → Privacy → Personal info: detection* and the eye button both end in
-`MainWindow._apply_display_anonymized`,
-which stores `privacy/display_anonymized` (`gui/_privacy_settings.py`,
-`display_anonymized()` / `set_display_anonymized()`) and calls
-`CheckPage.set_display_anonymized()`.  It defaults to **on** (`DISPLAY_ANONYMIZED_DEFAULT`):
-only a stored answer shows the names, and without the add-on the checkbox is greyed out and the
-setting takes effect once it is installed.  The checkbox is enabled only while
-`AnonymizationService.anonymizer_available(language)` holds — spaCy importable and the
-model of the document language installed — so a missing add-on greys it out with a tooltip
-pointing at Settings → Add-ons instead of failing later.  The answer is cached per document
-language and refreshed on `data_flow_changed` (the language may have changed) and after the
-privacy add-on is installed.
-
-### Settings window
-
-One modal window (`gui/settings/_window.py:SettingsWindow`) holds everything set up once;
-the main window only holds what changes per batch.  The sidebar lists seven pages
-(`SettingsPage`): General (`GENERAL`: `keep_awake`, `check_for_updates`), AI models, This computer (`AI_SETUP`: computer profile, local server) and Online services (`ONLINE_SERVICES`: the list of API keys), both drawn indented under AI models because they hold no choice of their own (`SUB_PAGES`), Scan quality, Privacy and Add-ons.  The main window
-opens it through the single entry point `MainWindow.open_settings(page, focus=..., preselect=...)`
-and, on OK, applies the result once (`_apply_settings_result`: update the panel, the
-anonymizer rules and the "hide names" view setting, save, check the services, refresh the
-queue); on "Restore defaults › All settings" it resets and saves (`_restore_all_settings`, which also resets the hide-names view and forgets the remembered "don't ask again" answers).
-
-**Page protocol** (`gui/settings/_page.py:SettingsPageBase`).  A page is a widget that shows
-a set of settings and never talks to another page:
-
-| Method | Meaning |
-|---|---|
-| `load(values)` / `values()` | show / return **only the keys the page owns** |
-| `owned_keys()` | those keys; "Restore defaults › This page" resets exactly them (`restore_defaults()`) |
-| `apply()` | save what lives outside the settings dict (API keys, remembered answers), called by OK |
-| `is_valid()` / `validity_changed` | OK is disabled while a page cannot be saved (an invalid regex) |
-| `focus(focus, preselect)` | deep link: bring a part into view (`FOCUS_*` constants), tick entries |
-| `on_shown()` / `on_packages_changed()` | refresh when shown / after an install finished |
-| `set_hardware_setting()` / `set_ollama_url()` | follow what *This computer* changed |
-| `close_blocker()` / `shutdown()` | why the window cannot close now / stop background work |
-
-A new setting is added to the page that shows it: put the widget there and its key in
-`load()`, `values()` and `owned_keys()` (a test checks that no key is owned twice and that every
-page returns exactly its own keys).  Keys of the main window (languages, which steps run,
-Results) stay in `ConfigPanel`.
-
-**Pages are built lazily.**  Each page starts background work (model lists, hardware
-detection, installed-package detection), so a page is built the first time it is shown, and
-`SettingsWindow.values()` merges only the pages that were built.  An unvisited page changes
-nothing.  Settings that other pages change meanwhile (computer profile, server address) are kept in
-the window's working copy, so a page built later
-starts from them.
-
-**Shared state is wired by the window**, not by the pages: the editable profile on *This computer* feeds the read-only profile lines of AI models and Add-ons; its server address
-(announced on `editingFinished`, never while typing) feeds the model lists; a finished
-install on Add-ons calls `on_packages_changed()` on every built page and is re-emitted as
-`SettingsWindow.packages_changed`; choosing a recognition method applies its default image
-preparation on Scan quality.  **Deep links** between pages (a package hint's "Install…", "Download
-a model…", "change…" next to the profile) are `navigate_requested` signals that the window turns
-into `show_page(page, focus, preselect)`; `OpenDownloads` callbacks therefore return at once.
-
-**API keys** are one `ApiKeyDrafts` (`gui/settings/_credentials.py`) owned by the window and passed
-to pages as `SettingsContext.key_drafts`; the key row under the AI service and the list on *Online
-services* are both views of it (`ApiKeyRow`).  A key is held by the app as soon as it is
-committed — on `editingFinished` and 800 ms after the last keystroke — because providers ask
-`ApiKeys` for it when they list their models, and that list is the check that the key works.
-It goes into the keychain/settings file only on OK (`apply()`, which also reports keys the
-keychain refused); every other way out of `done()` (Cancel, Esc, close, Restore › All settings)
-calls `discard()`, which puts back what the app held, after the pages' `shutdown()` stopped any
-commit timer.  `ApiKeys` (`application/api_keys.py`) is the only place a key is kept: the
-environment is only read, so a key the teacher exported before the app started counts and the app
-writes none.
-
-**Where a key lives, and who reads it.**  `infrastructure/credential_store.py` is the store: the
-system's secret store (Keychain, Credential Manager, Secret Service) when there is one, else the
-plain-text `credentials/` group of the app's settings file.  Both it and `gui/_qsettings.py` take
-the file's location from `config.gui_store_location()`, so the two cannot drift apart.  The store
-is built once, in `application/composition.py`, and handed to `ApiKeys` there; a key is asked for
-on first use and the answer is remembered, so the window loads every key at start
-(`ApiKeys.load_stored`, migration included) and a run that asks nothing online never touches the
-keychain.  A key found in the settings file moves into the secret store at the next start
-(`CredentialStore.migrate`), and the uninstaller deletes them all (`ApiKeys.forget_all`).
-
-**One model, an override, and the privacy line.**  The AI models page has one proofreading/review
-block.  There is no setting for "different review model": the box starts ticked when the
-*effective* pairs differ (`review_has_own_model`; an empty model means the task default), and
-with it unticked `values()` writes the proofreading choice into the review keys.  The review
-section is loaded only while ticked, and an unloaded section asks no service.  The context
-window row (`proofreading_context`) is shown only while `context_choice(...).applies`, and
-only after the computer has been checked.  Choosing an online service while names would be sent
-as written is set to tick "Remove personal info": `privacy_line_state` decides the line, a
-transition from not online to online sets the turn-on, and the window hands it to the main window
-as `SettingsResult.turn_on_anonymization` — the stage guard and the confirmation before sending
-stay the authority.
-
-**Add-ons shows one status line, not a log.**  `AddonsPage` fills the window
-(`SettingsPageBase.fills_window`) instead of scrolling: its model tree takes the free height and
-the action row stays at the bottom, so the install button is visible on a laptop.  Above that row
-sits one status line, fed by `InstallRound`'s signals and never by the log text: the running step
-with its number ("Installing spaCy (step 1 of 2)…"), a percentage for a model pull, the elapsed
-time for a pip step (pip reports no progress at all while its output is a pipe), then the last
-round's result, a pending restart, or what the detection found.  The log is behind "Show details",
-opens by itself on a failure, and "Copy" puts it on the clipboard.  Abort appears only while it
-can stop something (`InstallRound.can_abort()`): a download, not a pip install.
-
-**Closing.**  `done()` calls `shutdown()` on every built page (a running model fetch is
-cancelled; a long job it started is held by `LongJobThread` until it ends, never destroyed
-while running).  A pip install or
-language-model download on Add-ons blocks closing (`close_blocker()`), because the new package
-must be made importable first; an Ollama pull belongs to the main window's
-`PullManager` and keeps going.  Dialogs opened from inside the window (the
-preprocessing preview, the add-on installers, message boxes) take the window — or its page — as
-parent, so they cannot open behind it.
-
-Tests: `tests/gui/test_gui_settings_pages.py` (pages and sections),
-`tests/gui/test_gui_settings_window.py` (lazy pages, shared state, deep links, restore,
-closing), `tests/gui/test_gui_addons_page.py`; the main window's side is tested with
-`ScriptedSettingsWindow` (`tests/gui/_gui_harness.py`), a stand-in that returns a scripted
-result.
-
-### Main window: steps, readiness line, fix targets, tools
-
-**Steps.**  `ConfigPanel` has four steps: Documents, Language (with the Level), What should
-happen, Results.  Under recognition, personal-info removal, proofreading and review sits a
-`UsesLine` (`_data_flow_summary.py`) with the model and the place of the step.  The text comes
-from `DataFlowService.describe_steps(config)` (`application/data_flow.py`) -- every step as if it
-were ticked, so an unticked step keeps its (grey) line -- and `short_place` / `uses_line`, which
-share their words with the service list on AI models (`PLACE_*`).  The model is not part of
-`DataFlow`, and so not part of its fingerprint: a remembered "don't ask again" must survive a
-change of model.  The data-flow box (`DataFlowSummary`) keeps only the verdict and the advice;
-it shows the ticked part of the same answer (`application/data_flow.py:ticked_steps`), so the
-places and regions are asked for once per refresh, not twice.
-The review is a child of proofreading: `ConfigPanel.review_will_run()` (ticked **and**
-proofreading ticked) is what `to_config()` and `lookup_config()` pass as `evaluation_enabled`,
-so the box, the preflight, the Ollama model list and the memory check never count a review the
-pipeline would drop (`StageBuilder.build_evaluation`).  The tick itself is kept and saved.
-
-**Requirements and their fixes.**  `check_stage_requirements(config, stage)` (stages `ocr`,
-`anonymizer`, `correction`, `evaluation`) returns `RequirementIssue`s that carry an `IssueKind`,
-never only a sentence; `check_run_preflight(config, for_run=..., recognition=..., fresh=...)` runs
-`ocr` first and exposes the first blocker as `RunPreflight.blocker -> (stage, issue)`.
-`recognition=False` leaves the engine check out for a run that reads no page
-(`needs_text_recognition(files, recognised=...)`: only text files, or text already stored; a PDF
-counts as reading, because its text layer is only known by opening it).  Given `files`, the
-preflight adds the documents whose recognised text an earlier run stored to `recognised`
-(`DocumentQueries.recognised_files()`: a reading made with other settings is not among them), so
-the command line, which passes none, answers like the window.  `for_run=False` is the bare
-readiness question: it leaves out the memory, the wait for Ollama and the output folder (the
-line shows that problem on its own, and with no input folder chosen yet both folders are the
-current one).  `fresh=True` asks Ollama
-for its models again instead of using the cached list ("Check again", a returning window).
-The engine probes (`AddonService.is_module_importable`, `ReaderService.reader_installed`) are
-shared with the connection check, so a package or the reader's models installed from Add-ons are
-seen without a restart (`IssueKind.READER_MODEL_MISSING`, fix: the **Reading models** tab of
-Add-ons with `READER_ITEM` ticked).  A new requirement is therefore: an
-`IssueKind`, its check, and **one row in `gui/_fix_targets.py:fix_for`** -- the line for the
-readiness line and the buttons (`FixAction`: a Settings page + focus + preselect, or a
-`command` such as `retry` / `choose_folder`).  `DependencyGuardDialog(title, issues, actions)`
-(the requirement guard when a step is ticked, and the dialog that stops Run) and the readiness
-line take their buttons from that one table.  A `FixAction`'s preselect entries are
-`InstallItem`s (`domain/install_item.py`): one kind plus one name, never a string key.
-
-**Readiness line** (`gui/_readiness_line.py`).  `readiness(...)` is a pure function: the first
-matching row wins (blocker, Results problem, no documents, no files, nothing selected,
-"Checking…", ready).  `MainWindow._update_readiness()` is instant (it reads the last answer and
-the cheap facts: queue, selection, folder) and runs on every selection change; the answer
-comes from `_start_readiness_check()`, a background `check_run_preflight(..., memory=False)` in
-a `LatestTask`.  It is started by every settings change (via `data_flow_changed`, debounced by
-400 ms), after Settings OK / restore / a finished install or download, at start-up, when the
-window is activated while something blocked, after the queue was refreshed (the files decide
-whether an engine is needed -- this also covers a Results tick: "Text file, anonymized" needs
-name detection) and every 10 s while Ollama is unreachable.  "Check again" and the activation
-re-check pass `fresh=True`.  `ConfigPanel.lookup_config()` is recursive like `to_config()`, so
-"text files would land in the documents folder" gets the same answer for the line and for Run.  The
-line never disables Run: Run checks again (`_check_requirements_then`) and stays the authority.
-A model download takes the line over (`show_download`) and hands it back with a new check.
-
-**Tools menu.**  *System Monitor* is `gui/_system_monitor.py:SystemMonitorWindow`, built at
-start-up and kept hidden so the chart collects every run; `SystemStatsWidget` polls only while
-shown.  It is a **parentless** window of its own, like Benchmark (an owned window would stay on
-top of the main window on Windows), so it can stay open and be arranged next to the main window
-while a batch runs; `MainWindow.closeEvent` closes it, otherwise an open monitor would keep the
-app alive.  *Benchmark…* creates `build_benchmark_window()` in-process (lazy import; the packaged
-build lists `teachers_teammate.gui.benchmark` as a hidden import), as a **parentless** window
--- an owned window would stay on top of it on Windows -- and `MainWindow.closeEvent` calls its
-`close()`, because only that runs the window's own `closeEvent` that stops its worker.  The
-window is kept between uses: when it is shown again after a close, `reload_settings()` re-reads the
-saved server and "My computer" choice and asks for the models again (closing retired a running
-fetch).  A close by the user while a run is going asks first (`event.spontaneous()`); the main
-window closing it as the app quits does not.
-
-Tests: `tests/gui/test_gui_main_window.py` (menus, readiness, tools),
-`tests/gui/test_gui_readiness.py` (fix table, `readiness()`, the line, the dialog),
-`tests/gui/test_gui_config_panel.py` (steps, review rule, uses lines).
-
-### The window tabs and the Check page
-
-`MainWindow._tabs` is the window's `QTabWidget`, built by `_build_tabs()`: index 0 is
-*Documents* (`_main_splitter`, the workflow panel next to the results list and the log), index 1
-is *Check* (`gui/check/_page.py:CheckPage`).  `_check` is disabled while no document has a
-result (`ResultsTable.checkable_source_ids()`), and the tab labels carry the state:
-*Documents · 12 of 28* and *Check — Anna_Mueller.pdf*.
-
-**One query feeds the page.**  `DocumentQueries.check_document(config, source)`
-(`application/check_document.py`) reads the stored state and returns a `CheckDocument`: both
-texts and their plain forms, the review aligned with them, the items the list numbers, the pages
-of the scan, how the results were sent.  The window asks for it once per document
-(`_load_check`) and once per stored edit (`_store_edit`), and never assembles that state itself.
-A typed text is stored and read back through the same query; the alignment is memoised on the
-two plain texts and the review (`_align_cached`).  The document also carries `sent` and
-`preprocess`, so the queue row's *sent* cells come from the same read; the queue keeps no
-preprocessing info of its own.
-
-**Showing a document again.**  `CheckBody.show_document` fills the scan and both texts from the
-`CheckDocument`, also for the document that is already open: a run may have read it again.  Only
-the store's answer to a typed transcription is passed with `typed=True`, which keeps the text
-being typed and the scan as they are (refilling would move the cursor, decode every page and send
-the scan to page one).  A stored edit of the final text goes through `update_document`, which
-never refills a text.  The list of items is rebuilt silently: `SidePanel` tells the page about a
-choice only when the teacher made it, because the page answers by selecting the words in a text
-that may be being typed in.  A typed edit that is waiting for its pause is stored **before** a
-stage run invalidates the cache (`_run_stage`), never after.  A zero-width edit (the student's
-words put back where the model deleted them) is placed with `PlainMap.insertion()`, which does
-not snap forward over a paragraph break.
-
-**Three views, two documents.**  `gui/check/_text_views.py` holds `ReadView` (*What was read*,
-editable), `FinalView` (*Final text*, editable) and `MarkedView` (*With corrections*,
-read-only), in a `QStackedWidget` of `CheckBody`.  *Final text* is loaded whenever a proofreading
-exists, even while *With corrections* is in front: every card action edits `FinalView`'s
-`QTextDocument` and the normal commit path stores it, and *With corrections* is rebuilt from the
-stored result after every commit.
-
-**Marks are overlays, never document formatting.**  In the two editable views a mark is a
-`QTextEdit.ExtraSelection` (background, underline), so `document_from_qt` stores the same
-Markdown with and without marks and typing can never write a mark into a text.  Only
-`MarkedView` carries formatting of its own — the student's words struck through in grey, the
-AI's taken-out words in red — and nothing is ever converted back from it.  A commit that changes
-nothing stores nothing (`markdown == the stored text` is checked before the write).
-
-**Positions come from `PlainMap`, never from arithmetic on a widget's text.**
-`gui/check/_plain_map.py:PlainMap` walks a `QTextDocument` the way `document_from_qt` does and
-records, per text run, `(qt_start, qt_end, plain_start)`; `position(offset)`, `offset(position)`
-and `cursor(document, start, end)` are bisects.  The invariant, tested on every Markdown fixture,
-is `PlainMap.text == TextFormatter.plain_text(stored)`.  List markers and the ` | ` and `\n` of
-tables are *virtual* text: they carry a plain range but no Qt range, so an offset inside one
-snaps to the next run.  Where a document breaks the invariant the view shows its text without
-marks and clicks and the card says so — a wrong mark is worse than none.
-
-**Every action is a text edit in plain offsets.**  `domain/teacher_work.py` holds
-`TextEdit(start, end, text)` and the four functions that build the edits of a card action
-(`take_out`, `put_back`, `use_suggestion`, `suggestion_is_wording`); `apply_edits` is what the
-tests use.  `CheckPage` computes them, `FinalView.apply_plain_edits()` maps them through
-`PlainMap` and applies them last to first in one `beginEditBlock`/`endEditBlock`, so one Ctrl+Z
-undoes one action and the stored text comes from the commit path of typing.  The whitespace rule
-is one function (`_fit_gap`): a replacement keeps the separators around it, an insertion into a
-gap gets one space on the side where the neighbour is a word, a removal takes one adjacent space
-with it, and words are never joined across a block boundary.
-
-**Ctrl+Z is the corrected text's own history.**  `CheckBody` owns two `QAction`s
-(`QKeySequence.Undo` / `Redo`, `WidgetWithChildrenShortcut`) that call the *Final text*
-document's `undo()` / `redo()` and store at once (`flush`), so they work from the list and the
-card too, not only while typing.  A text view that can be typed in keeps the keys for itself
-(Qt's shortcut override), which is what makes Ctrl+Z in *What was read* undo the transcription;
-*With corrections* is read-only and lets the page's action through.  After a step the panel
-chooses the item whose span holds the cursor (`PlainMap.offset`), so the teacher sees what came
-back.  The actions are disabled while *Final text* is read-only (the lock, *Hide names*) or has
-nothing to undo, and the history ends whenever the text is filled again — another document,
-*Hide names*, a reading fix, the reload after a run — because Qt resets it on `set_text`; a
-stored edit coming back (`update_document`) fills nothing and keeps it.  There is no stack of the
-app's own and no approval step per correction: every correction is applied, the teacher takes out
-or changes what is wrong, and *looked at* and *Checked* say how far they got.
-
-**Where an edit goes.**  `_store_edit(kind, text)` calls `edit_transcription` or
-`edit_corrected_text` on `DocumentCommands`, which writes the teacher's work and returns the
-merged view; `_sync_row(view)` fills the row from it.  The cache's texts are never written by an
-edit, so the machine result stays what the models produced and the teacher's text is what every
-reader sees.  The undo stack is untouched by a stored edit coming back (`update_document`), so
-Ctrl+Z works across the store exactly as across the cache.
-
-***Checked*.**  A checkable button in the Check header (`CheckPage.checked_toggled`,
-`CheckPage._refresh_checked`, public as `refresh_checked()`): *Mark as checked* unchecked, *✓ Checked* with a proofreading,
-*✓ Text checked* without.  It marks what the document has now — the corrections when there is a
-proofreading (bound, so a new proofreading starts unchecked), else the transcription, which is
-then stored as a copy.  It is its own undo (not on Ctrl+Z), an edit after it does not uncheck it,
-it is disabled while the lock holds, and it is allowed with *Hide names* on because it changes no
-text.  A typed edit is stored before the mark (`flush_pending_edit`), and a press that cannot be
-stored shows the notice and puts the button back to what the document says.  It does not move to
-the next document — ▶ does.  The queue's *Checked* column shows
-*Checked* / *Text checked* / nothing, and right-click → *Select checked* selects rows with
-either; "checked only" export is that selection plus *Export*, not a separate option.
-
-**The panel: two tabs, a filter row, a card.**  `gui/check/_side_panel.py` holds all three.
-`QTabWidget` with `setTabBarAutoHide(True)` puts the content review beside the list
-(*Corrections · Content*, `show_corrections()` / `show_content()`, chosen by `CheckPage.set_view`
-from the view kind); the tab bar hides itself while there is no review, so a document without one
-looks as it did.  Above the list a `FlowLayout` (`gui/check/_flow.py`, wraps and skips hidden
-widgets) holds one `QCheckBox` per category, plus *Unclear* and *Left out*, each with its count;
-a box whose count is 0 is hidden.  Nothing ticked shows every row, ticked boxes combine, and
-*Not looked at* is a box of its own that narrows whatever else is ticked.  `set_filter()` only
-re-applies row visibility (`_apply_row_visibility`), which also keeps the chosen row when it
-survives and otherwise chooses the first visible one, so a filter never leaves the card pointing
-at a hidden row.  The card is a fixed-height `QScrollArea`
-around the text plus a fixed-height button row: a long explanation scrolls inside the card and the
-buttons stay where the pointer is.  Its text is HTML built by `_body_html()` — the bold
-`before → after` line, the sentence around the change with the student's words highlighted
-(`_context_html()`, masked like the title), the category as a coloured chip and *optional* /
-*AI not sure* as grey tags (`_tags_of()`), then the explanation as normal text.  The button row
-holds *Take out* / *Put back*, *Use suggestion*, the field that replaces the words and *OK*; a
-spelling or punctuation change of the model also carries *Take out all N*, which puts the
-student's words back for every such change still standing (`minor_corrections()`); a correction
-the teacher took out and a change of their own are not in it.  The list's
-`_ItemDelegate` draws the icon, two aligned word columns (`_column_rects()`) and a badge, and
-greys a looked-at row instead of hiding it.  Every row has a badge: a model change shows its
-category (*other* when it has none, and the *Other* box counts it), every other item its kind
-(*unclear*, *left out*, *your change*, *taken out*).
-The colours are one table, `gui/check/_style.py`: `MARK_COLOURS` for the marks in the text,
-`CATEGORY_COLOURS` for the badge and the chip, `KIND_BADGE_COLOURS` for the other rows, in the
-hue of their mark but weaker, so no kind's badge looks like a category's.  The app always runs on the dark theme, so every colour is a dark tint with light text
-on it and the chosen item is the one bright background.
-
-**Looked at.**  `SidePanel.item_shown` fires when an item becomes the chosen one (a list click, a
-text click, the first item on open); the window calls `mark_looked_at` once per new key and
-updates the document's set in place, without a reload.  The keys are `edit:<id>` (also for a
-correction the teacher took out: it is the same item), `unclear:<n>` and `own:<start>-<end>` (the
-words' place in the student's text, so taking another change back does not renumber them); the
-list shows ● for a looked-at item and ○ otherwise (own changes keep ✋, taken out ↶), and the
-footer says "8 of 12 looked at" from `looked_at_progress`.  Own changes do not count, every other
-item counts on its own — a spelling change is a row like any other — and looking at an item is
-never undone and is not *worked on* — a run may still replace the answer.
-
-**Walking the corrections.**  *Next* on the card (`SidePanel.choose_next`) chooses the next row
-that counts for looked-at, in list order and from the top at the end; a document opens at the
-first of them.  With a filter on it stays inside the filter — the next not-looked-at row the
-filter shows — while the counts above the list keep covering the whole document.
-`counts_for_looked_at`, `next_unseen` and `first_unseen`
-(`application/check_items.py`) are pure and on keys, so the list's rows and `looked_at_progress`
-count the same rows.  The walk
-keeps no state of its own: choosing a row is what marks it looked at, so the icons and the footer
-say how far it got, and a card action does not move the choice — the teacher presses *Next* when
-they are done with the item.
-
-**The strip above the texts.**  One `_Banner` (`_refresh_banner`), and it shows the one reason
-that matters most: the lock, a hide that failed, the reading fix, then `doc.warning` (the AI
-warning).  Nothing that comes and goes with the 👁 toggle is in it, because a strip that appeared
-and disappeared moved the texts under the cursor: the privacy state is the toggle's own, the
-reason the texts cannot be typed into is the answer to a keystroke, the 👁 toggle says while the
-names are still being hidden, and the AI warning is visible while the names are hidden.  The
-reading fix's *Edit anyway* is greyed out, with the reason, while the names are hidden: the texts
-would stay locked.  A failed hide is the exception — the names then stand in the text while the toggle
-says they are hidden — so the strip says so and its button shows them again.
-
-**The questions.**  Three, all in `texts/dialogs.py`, all one dialog for the whole selection:
-
-- *Run start* (`_confirm_teacher_work_then`, after the data-flow question and before
-  `_continue_run`): the documents whose proofreading is stale with these settings and whose
-  corrections were worked on, and — in the same dialog — the ones whose corrections belong to no
-  stored proofreading.  *Keep my changes* (default) writes `kept_under` and runs, *Proofread
-  again* invalidates their proofreading first, *Cancel* starts nothing.  Only the second list:
-  *Continue* / *Cancel*.  Any answer but *Cancel* drops the corrections of the second list
-  (`drop_unbound_corrections`): the teacher was told that a new proofreading will not contain
-  them, and they would otherwise be asked about on every run.  The lists come from
-  `worked_on_documents`, worked out in the preflight's background task because it reads the files
-  (`compute_file_hash_cached`: a file is read again only when its size, time or identity changed);
-  only the check that starts a run asks for it (`ask_about_work`), not the readiness line.
-- *Re-run Proofreading* (`_confirm_rerun_then`): the documents of the selection whose corrections
-  were worked on, before the cache is touched.
-- *Re-run Text Recognition*: the documents with a transcription part or worked-on corrections,
-  which the new reading replaces.
-
-All three fail closed: if the question cannot be put together (the look at the work failed), the
-window says so and re-runs nothing.  A re-run drops the work before it resets the cache; if the
-work cannot be dropped, nothing is reset.
-
-A run with changed settings keeps worked-on corrections and says so per file in its log
-("→ Proofreading kept: you worked on it (made with other settings)"), in the window and in the
-CLI alike; the queue shows that proofreading as done with the note *kept* and a tooltip saying
-why and how to get a new one.
-
-**The lock.**  A document the run will redo is read-only from the run's start until its own
-result arrives (`MainWindow._run_pending`, `_run_current`, `_apply_lock`): between the start of
-the run and its file the tab would be stale and editable, and an edit stored then races the run.
-The tab keeps showing what is stored, with the banner *Waiting for this run* and then *Being
-proofread — you can edit it when it is done*.  Documents of the run that are done, and documents
-the run does not touch, stay editable.  `set_lock` calls `flush_pending_edit()` first, so a typed
-edit is stored before the lock takes the view.
-
-**Only the teacher or a run start switches tabs.**  `_load_check()` fills the page and never
-calls `setCurrentIndex`; `_open_check()` does.  `_on_file_done()` reloads the open document and
-leaves the tab alone, `_on_run_finished()` switches nothing, and `_start_worker()` goes to
-*Documents* only because the run's progress lives there.  The reason: a batch of 28 essays must
-not pull the teacher out of the essay they are reading when the next file finishes.  A run that redoes the open document
-locks it but keeps it the open one (`_run_pending`): its result reloads it without a tab switch,
-and a run that ends before reaching it (stopped, failed) reloads it in `_on_run_finished()`.
-
-**Edits go to the open document, not to the selected row.**  `_open_source_for_edit()` reads
-`_current_preview_source_id`; the selection is how rows are chosen for a run, and the two must
-not drift apart.  Opening a document from the queue (`check_requested`) selects its row, so the
-queue shows where the teacher is; clicking the *Check* tab does not (below).
-
-**Clicking *Check* with nothing open** opens the current queue row when it has a result, else
-the first row that has one (`_check_target()`), again without touching the selection.  A rebuilt
-queue that no longer holds the open document closes *Check* and shows *Documents*
-(`_sync_check_with_queue()`).
-
-**Keys.**  Esc leaves *Check* unless the focus is in a text field, a line edit, an editable
-combo box or an open popup (`_escape_is_for_the_focus()` in `gui/check/_page.py`); Ctrl+1 and
-Ctrl+2 are `QShortcut`s on the window, so they work from anywhere (Ctrl+2 only while *Check* is
-enabled).  The arrows in the header step through `checkable_source_ids()` and select the row
-they land on.
-
-**Copy.**  `Copy ▾` takes the text from the table row, not from the view, through
-`ExportService.text_for_copy()` -- the same function *Export text* uses, so a
-copy and an export never disagree.  `flush_pending_edit()` runs first, so a half-typed edit is
-saved before it is copied.  The menu's "names hidden" entries follow
-`_refresh_privacy_availability()` (`_refresh_copy_state()`), so installing the Privacy add-on or
-changing the language updates the open document's menu at once.  The two *Save* entries go
-through the window's export path (`_on_export_requested`), not a second one.
-
-**Every prepared page is kept.**  `PreviewImageStore.persist_page_images()` writes page 1 as
-`<stem>_preprocessed.png` (the `preview_img` the scan shows) and pages 2..N as
-`<stem>_p<N>.png`, listed in `DocumentState.page_images`; the stem is `document_stem(file)`, the
-name of the document's state file, so two files of one name in different folders keep their own
-pages.  `prune_page_images()` removes the ones
-a shorter document no longer has, and `cleanup_intermediate_images()` treats them as
-intermediate.  `DocumentState.load_valid()` drops the list when a file is missing, so a deleted
-cache costs a re-run, never a broken page.
-
-**The page as it was scanned** is kept too, when the image preparation changed the page:
-`persist_original_images()` writes page 1 as `<stem>_original.<ext>` (the `original_img` the
-benchmark and the Word builder read) and pages 2..N as `<stem>_o<N>.<ext>`, listed in
-`DocumentState.original_images` (first = `original_img`).  `prune_original_images()` matches
-`<stem>_original.*` and `re.fullmatch(rf"{re.escape(stem)}_o(\d+)\..+", name)` beyond the new
-count, so the files of a document called `Anna_o2` stay.  A page whose original is missing stays
-prepared when *Original* is on, and a state written before this field has the one original it
-had.  A PDF with a text layer stores every page for the scan as well: `PdfInputProvider` renders
-the pages it skips into `InputPayload.page_images` — at `pdf_render_dpi`, the same resolution
-as the OCR page, because the scan is read by zooming into it — and `FileProcessor` hands them to
-`persist_preview_artifact(pages=…)` as it hands the prepared pages.  The scan's strip
-(`ScanPane` in `gui/check/_scan_view.py`) holds the *Prepared · Original* switch, offered only when a page
-has an original and a step acted on it, and the caption of the steps that prepared the pages
-(`prepared_caption`).  The scan opens fitted to the page; a double click toggles fit page / fit width.
-
-`ScanView` draws each page from its own image and scales the item down to the pane
-(`QGraphicsPixmapItem.setScale`, smooth), so zooming in shows the scanned pixels; the zoom stops at
-twice the page's own pixels (`_ZOOM_NATIVE`), or at `_ZOOM_MAX` where the page is small enough that
-four times the fitted size is already more.  Memory is bounded by `_full`: only the pages in view
-and their neighbours (`_pages_in_view`) are held at their own size, the others hold a copy at
-`_THUMBNAIL_WIDTH`, swapped in by `_refresh_full_pages` when the teacher scrolls or zooms.  A
-text-layer PDF's pages are rendered at `pdf_render_dpi` for the same reason.
-
-**The strips above the text** (`gui/check/_run_strip.py`): `NextStepStrip` over a transcription that
-has not been proofread (*Proofread*, or *Set up proofreading…* via `CheckPage.set_proofreading_ready`)
-and `RunStrip` while the open document is in a run, fed by `MainWindow._refresh_check_run`.  A run
-started from the Check header keeps the tab (`_run_from_check`).
-
-**Focus in the Check tab** (`gui/check/_text_views.py`, `gui/check/_side_panel.py`). Choosing an
-item — by clicking its words in the text or its row in the list — marks it in both. The text
-uses Qt *extra selections* (`CheckTextView._apply_marks`), not HTML, so a click neither
-re-renders the page nor loses the scroll position; the chosen item is the one bright background
-among the dark tints, and the list marks its row with the focus background. `reveal()` scrolls
-to the item and puts the caret on its first word without selecting anything: a selection would
-draw the theme's blue over the mark. A click on a mark
-is found with `cursorForPosition()` → `PlainMap.offset()` → the item whose span contains it,
-innermost first; tests click with `qtbot.mouseClick` on a position found that way, because
-emitting a signal by hand would not show what a person sees.
-
-Tests: `tests/gui/test_gui_check_page.py` (the page on its own),
-`tests/gui/test_gui_check_body.py` (the switch, the banners, the lock, the splitter),
-`tests/gui/test_gui_text_views.py` (the three views and their marks),
-`tests/gui/test_gui_side_panel.py` (the list and the card), `tests/gui/test_gui_plain_map.py`
-(the invariant), `tests/gui/test_gui_scan_view.py` (the pages in one scene),
-`tests/gui/test_gui_main_window.py` (tabs, opening, arrows, shortcuts, copy, run start, the
-lock), `tests/unit/test_preview_image_store.py` (the page files).
-
-### Setup Assistant
-
-`gui/setup/` is a `QWizard` that asks what only the teacher knows and then writes the settings
-once.  It is opened on a first start (no settings file yet), once after an update (`SettingsFile`
-keeps the last-run version under `gui/app_version`) and from **Tools → Setup Assistant…**;
-`MainWindow._open_setup_assistant(first_start=...)` builds the `SetupContext` (the settings as the
-panel shows them, the application service, the main window's `PullManager`, the system
-language on a first start) and connects `SetupAssistant.committed` to `_apply_setup_result`.
-
-**The order follows the answers** (`gui/setup/_flow.py`).  `ORDER` lists the seven pages —
-Welcome, Your classes, The AI on this computer, Proofreading, Names and personal information,
-Ready to set up, All set — and `next_page(page, answers)` decides which one follows, so a page
-only says what it asks and never where to go.  With typed texts the reading model is not asked
-for.  The Privacy page is always on the path; `SetupAnswers.privacy_case` decides its shape (online
-or another PC: *Remove personal info*; this computer: only *Hide names in this app*, handed back as
-`SetupPlan.display_anonymized`, never `False`).  A page that is never reached asks nothing: the
-Ollama status line, the computer profile, the online service section, the model list and the setup
-plan are all built the first time their page is shown.
-
-Every page sits in a scroll area (`SetupPage._content()`), because QWizard gives all pages one
-height and would squeeze a tall page's widgets; `fit_to_screen()` (`gui/_window_geometry.py`) keeps
-the wizard and Settings inside the screen.  The wizard sets `ModernStyle` again on show: Windows
-swaps in its Aero look (a back arrow in the title area); on Windows the app also sets the
-Fusion style, which has no Aero look.  A found Ollama server is a `ServerCard`
-(`gui/_server_card.py`) on the Ollama page, in Settings and in the search dialog.  The proofreading
-page's model list comes from `plan_with_model_choices()` with the suggestion; an empty
-`SetupAnswers.local_model` means *use the recommended one*.  `SetupAnswers.extra_names_model`
-(the Privacy page's extra language, suggested as the computer's own language, because the students'
-names are in it whatever language the text has) becomes `anonymizer_secondary_model` and joins the
-downloads.
-
-**The plan is a pure function** (`application/setup_plan.py`).  `SetupAnswers` is what the pages
-collected, `SetupFacts` is what `SetupService.setup_facts()` measured (profile,
-memory, card, whether Ollama answers, installed tags, free disk, whether removal and name
-detection are on, the missing package), and `build_setup_plan(answers, current, facts, rate=,
-best=, default_model=)` returns a `SetupPlan`: the Settings-window keys, the main-window keys,
-one `PlannedStep` per summary row, the `PlannedDownload`s, whether the review keeps its own
-model, the `DiskVerdict`, and the figures the summary line shows (`needed_gb`, `free_disk_gb`).
-Two rules shape it: **a working choice is kept** (an installed model that fits is not replaced
-by the recommendation, so running the assistant again changes nothing) and **nothing is turned
-off** ("Remove personal info" is only ever set to `True`, and a review with its own model keeps
-it).  The assistant writes only keys the Settings window or the main window already own, so
-`Config`, `DEFAULTS`, the TOML keys and the CLI are untouched and there is no migration.
-A reader that is already chosen (`ocr_engine = ppocr`) is kept like any working choice: its row is
-*kept*, and when its model files are not downloaded the setup plan adds one `DownloadKind.READER_MODEL`
-download (31 MB, the install round's *reader* phase between spaCy and the pulls).  The assistant
-never proposes to switch to the reader.
-
-**The page models** (`DOC_ORI` / `UVDOC`, 39 MB) serve the *Automatic* image preparation whatever
-engine reads the page, so they are planned apart from the reader.  When pages are handwritten,
-`preprocess_method` (saved value, default `auto`) is `auto` and `SetupFacts.page_models_installed`
-is `False`, `build_setup_plan` adds one `DownloadKind.PAGE_MODELS` download (`PAGE_MODELS_ADDON_ID`, stage
-`ocr`, `PAGE_MODELS_SIZE_GB`).  Installed, typed pages or *Original page* plan nothing, and the
-assistant never changes `preprocess_method`.  The summary draws it as its own "Page models" row
-after the reading row (the reading row does not list it); `_start_downloads` hands it to the
-round as `page_models=True`, which runs after the reader.
-
-**The summary's wording lives in `gui/setup/_summary.py`.**  `summary_rows(plan, place_of,
-key_missing=)` turns a plan into `SummaryRow`s — the classes first, then one per step, each with
-the model, the place (`short_place`, the same words as the service list) and its downloads — so
-the lines can be tested without a window.  `SummaryRows` draws them with one ticked checkbox per
-download and hands back the ones the teacher left ticked; those, and only those, reach the round.
-
-**Downloads go through `InstallRound`** (`gui/_install_round.py`, taken out of Add-ons).  Set up
-calls `SetupAssistant.commit(downloads)`, which stores the typed keys once
-(`store_key_drafts`), emits `committed` with a `SetupResult(settings, panel)` and starts the
-round with one list per kind (pip packages, spaCy models, Ollama tags).  An Ollama tag whose
-`possible` is `False` — Ollama is not running — is left out, so it does not fail at once; the
-main window offers it as soon as the server answers.  The Done page follows the round and the
-pull manager, so every line says how far it is, and it offers the speed test on the settings the
-plan leaves behind, drawn again once the queue runs empty.
-
-**Nothing starts by itself.**  The downloads need **Set up**, a network search for a server
-elsewhere starts only from the dialog's own button, **Start Ollama** is a button, and the speed
-test runs only when the teacher presses **Test speed**.  The server address never changes
-without the teacher choosing it.
-
-**How the result is applied.**  `_apply_setup_result` puts the Settings-window keys into the
-panel with `update_settings` and the main-window keys with `load_from_dict` — which skips the
-stage guard, because the models are still downloading and a guard would untick Proofread and
-open a dialog — then saves once, checks the services and refreshes the queue.  Cancel changes
-nothing; on a first start it leaves the current setup in place (`_apply_first_start_defaults`: the
-system language and the best models for this computer).  **Select documents…** closes the window
-and asks the main window for the folder afterwards (`documents_wanted()`), because the folder
-dialog must not open behind the wizard.
-
-**Closing.**  `done()` refuses while the round is busy (`dlg.installation_running()`),
-because the new package must be made importable first; otherwise it calls `shutdown()` on every
-page, which stops the pending plan, the status checks and a running speed test.  Cancel puts the
-typed keys back (`discard_key_drafts`) and forgets the model lists fetched with them.
-
-The packaged build lists `teachers_teammate.gui.setup` as a hidden import, because the main
-window imports the package lazily.
-
-Tests: `tests/gui/test_gui_setup_flow.py` (the order), `tests/gui/test_gui_setup_pages.py` (the
-pages, the summary rows and the done page), `tests/gui/test_gui_setup_assistant.py` (the wizard,
-Set up, Cancel, closing), `tests/gui/test_gui_window_geometry.py` (a small screen),
-`tests/unit/test_setup_plan.py` (the setup plan's rules); the main window's side
-is tested in `tests/gui/test_gui_main_window.py`.
-
-**The walkthrough** (`tests/gui/test_gui_setup_walkthrough.py`) is the one test that runs the whole
-thing: the real `SetupAssistant` and every page, the real `SetupService`
-(`setup_facts`, `plan_setup`, the model listing and rating), the `LatestTask` pool, `InstallRound`,
-`PullManager`, the `ollama` client over loopback HTTP, the real `MainWindow` and
-`ocr.toml` on disk.  Replaced, each at the narrowest seam: Ollama by
-`tests/fakes/fake_ollama.py:FakeOllama` (one loopback port, so a server on the developer's computer
-cannot answer), pip, spaCy, the reader and the page models by recording stubs on the service, the
-model store by one under `tmp_path` with a `bundled_root` that does not exist, and the computer by
-`hardware_profile = "16gb"`, a fixed free disk and a fixed memory.  `SetupAssistant.exec` is
-replaced by a function that shows the wizard, runs the script and closes it — the same sequence
-without the nested modal loop, so a failed assertion is reported instead of swallowed by it.  The
-expected tags come from `best_model(...)`, never from literals, so a catalog update does not break
-the test.  `tests/unit/test_fake_ollama.py` keeps the fake honest: it drives it with the real
-`ollama` client, so a version bump that changes a response model fails there, with a readable
-message, instead of hanging the walkthrough.  `FakeOllama` is the **only** Ollama server in the
-tests: the Add-ons page tests and the discovery probe tests use it too, and what they need beyond
-the walkthrough (a model's size, say) became a parameter of it.  Its answers follow Ollama's own
-source — a list entry always has `modified_at`, `details.format` and `details.parent_model`, and a
-failing pull streams `pulling manifest` before the error line, all in a 200 stream.  Ollama's own
-repository tests the same boundary with `httptest` servers and, for integration, a real
-`ollama serve` on a free port (`integration/`, `OLLAMA_TEST_EXISTING`); we have no such run, so a
-server-side change is not seen until the fake is compared with its source again.
-
-**The packaged build** proves the same on all three systems: the `setup assistant` check in
-`frozen_modes.py` builds the wizard on the real service, clicks through to the summary and waits
-for the setup plan, and — frozen only — asserts that the bundle's page models are seen, so no
-`DownloadKind.PAGE_MODELS` download is planned.  It points the app at `http://127.0.0.1:9` and
-works in a temporary folder, so it answers the same on every machine and writes nothing into the
-user's folders.
+### How a stored result was sent
+
+The tooltip and the dialog answer two different questions: *where would the text go now*
+(`DataFlow`, from the current settings) and *where did the stored result really go*
+(`SentRecord`, from the run that made it).  The second one has to survive a settings change,
+so it is stored with the result:
+
+- `domain/data_location.py:SentRecord` holds the **inputs** of the classification, not the
+  verdict: `provider`, `model`, `endpoint` (the Ollama host; empty for a provider, none of
+  which has a base-URL setting), `names_hidden` (the number of placeholders), `hiding_on` (whether hiding was switched on,
+  which tells "nothing found to hide" from "names as written") and `privacy` (the fingerprint
+  of the anonymizer settings).  A changed rule therefore changes
+  the wording, not the stored data.  `from_dict()` returns `None` for anything that is not
+  one of ours — including a record without a provider, which would otherwise read as an
+  unnamed online service.
+- `SentStatus` pairs the record with `other_privacy_settings`, the comparison with the current
+  `privacy_key(config)` of `cache_keys.py`.  The comparison is by settings, not by text: working
+  out the text would need a spaCy pass per document.
+- `cache_keys.py:sent_record(config, stage, *, names_hidden, facts)` builds it (it holds the
+  `Config`); `application/data_flow.py:sent_location(record)` classifies it through the same
+  `llm_location()` the box uses, so the two cannot disagree.
+- `DocumentState` keeps `correction_sent_text`, `correction_sent_map`, `correction_sent` and
+  `evaluation_sent`; `DocumentStateView.sent` exposes them keyed by stage name.
+  `DocumentQueries._sent_verdict()` (`application/documents.py`) adds the comparison in
+  `_documents()` (behind `queue_rows()`) and `load_view()` — the state repository does not know the
+  settings.  The current fingerprint is computed lazily, only for a view that has a record.
+  `sent_location()` writes a bare IPv6 host (`::1`) in brackets before it asks `llm_location()`.
+- The record belongs to its result: every path that clears a result clears its record too
+  (`record_ocr_result`, `invalidate_from_stage`, `record_correction_result` for the review).
+  The teacher's edits never touch it: they go to `TeacherWorkStore`.  `load_valid()` drops sent fields
+  whose result is not stored (`_without_orphan_sent`) and keeps the recognised text, so a
+  stray record never costs a new reading; `DocumentStateView.sent` only lists stages that are
+  done, so a stage `reconciled_view()` marks stale shows no line.
+- The wording lives in `texts/review.py` (`_how_sent` builds the phrase once; `sent_lines`
+  and `stored_result_line` frame it for the tooltip and the dialog);
+  `GUI` writes the cells' lines from `view.sent` after every load, including the one after a file is done; the dialog shows one line per stored result in a grey block at the
+  top of the *What is sent* tab (`stored_lines()`, `objectName="stored_results"`).
 
 ### Cache vs benchmark store
 
@@ -2741,7 +1286,7 @@ Because the benchmark store is append-only, it bounds growth two ways:
 
 - **Manual deletion** — delete a single run, or all runs for a document, from the
   GUI (`delete_run` / `delete_all_runs`).
-- **Keep-last-N cap** — `BENCHMARK_KEEP_LAST_N` (default 20, in
+- **Keep-last-N cap** — `BENCHMARK_KEEP_LAST_N` (in
   `infrastructure/benchmark/run_store.py`). On each save, runs for that document
   beyond the newest N are evicted (both the JSON and its preview image).
 
@@ -2806,12 +1351,10 @@ engine output ─► clean_ocr_text ─► OcrOutputPostprocessor ─► text + 
 (`"markdown"`: CommonMark + GFM strikethrough/tables + inline `<sup>`/`<sub>`/`<u>`).
 Text is only treated as Markdown when the engine's output carried real formatting, so plain
 OCR output containing `- ` or `*` is never reinterpreted. The correction is written in the
-notation of the raw text, so one `raw_text_format` field covers both. The field has a
-default, so existing cache entries and benchmark runs load as plain text without a schema
-bump — except entries written before the field existed whose text *is* raw model markup:
-`StateRepository.load` drops those (the document is processed again) and
-`StoredRun.from_json_dict` upgrades them to Markdown in memory, so markup is never shown or
-compared as literal text. A model answer wrapped in one code fence (```` ```markdown ````)
+notation of the raw text, so one `raw_text_format` field covers both. The field defaults to plain; an entry
+whose text is raw model markup but says plain is dropped by `StateRepository.load` (the document is
+processed again) and upgraded to Markdown in memory by `StoredRun.from_json_dict`, so markup is
+never shown or compared as literal text. A model answer wrapped in one code fence (```` ```markdown ````)
 is looked through before parsing, and the fence is dropped even when it wraps plain text.
 Beside Chandra's `data-*` HTML, HTML a model writes on its own (`<table>`, `<p>`, `<br>`,
 `<strike>`, …) is recognised as markup; a `# ` before a number (`# 3 Äpfel`) is not a heading.
@@ -2875,7 +1418,7 @@ anything stores them:
   cursor; its review is shifted by that start, the edit ids are renumbered over the whole text
   and `EditNote.sentences` is recomputed from it (`merge_reviews`).  A piece whose plain text is
   not found, or whose shifted review does not fit, loses its review and the file gets
-  `MISSING_REVIEW_WARNING`.
+  `EXPLANATIONS_MISSING`.
 - **Names** (`infrastructure/workflow/file_processor.py`).  The exchange sees placeholders
   (`[PERSON_1]`), and a name is rarely as long as its placeholder, so every edit after a name
   would point at the wrong words.  `restore_with_offsets` returns the restored text and an
@@ -2883,7 +1426,7 @@ anything stores them:
 
 Both are checked with `fits(review, raw_plain)`: every part's `original` must be
 `raw_plain[start:end]`.  A review that does not fit is dropped with a correction warning
-(`REVIEW_UNMATCHED` for names, `MISSING_REVIEW_WARNING` for pieces) instead of being stored: a
+(`REVIEW_UNMATCHED` for names, `EXPLANATIONS_MISSING` for pieces) instead of being stored: a
 half-right review would show AI corrections as the teacher's own.  A stored review is checked
 again when it is read (`application/merged_view.py`): one that no longer fits the stored
 transcription — a restored backup, a text the teacher rewrote while the review stayed — is dropped
@@ -2998,23 +1541,21 @@ is kept.
 **A dropped text is not a correction.** A model can answer with a well-formed text that is
 missing a sentence or a whole paragraph, and nothing in the answer says so. Step ① therefore
 compares its answer with the text it sent (`domain/proofreading/text_loss.py`): an answer that
-keeps less than `LOST_RATIO` (0.80) of the words, writes more than `ADDED_RATIO` (1.25) of them,
-or deletes a run of `RUN_WORDS` (50) words without writing as many in their place is asked for
+keeps less than `LOST_RATIO` of the words, writes more than `ADDED_RATIO` of them,
+or deletes a run of `RUN_WORDS` words without writing as many in their place is asked for
 once more.  A second answer that added text fails the piece like a cut-off.  A second answer that
-**left text out** is **repaired** (`text_loss.repair`): each hunk cutting `RESTORE_MIN_WORDS` (8)
+**left text out** is **repaired** (`text_loss.repair`): each hunk cutting `RESTORE_MIN_WORDS`
 words or more is written back from the student's text, and the repaired text is judged again (still
 not the text: it fails as before).  The file is stored with a warning, its review is made from the
 repaired text (so it fits), and each stretch is an `UnclearNote(left_out=True)`, listed in Check as
 `ItemKind.LEFT_OUT`.  It is a note for the teacher: the Word files and the unclear badge skip it.
 `CorrectionOutcome.left_out` makes the outcome `fell_back` (no speed sample), and the evaluation
-tools count the row as lost text although the stored output is whole.  Marks are not words, and a text under `MIN_RATIO_WORDS` (10)
+tools count the row as lost text although the stored output is whole.  Marks are not words, and a text under `MIN_RATIO_WORDS`
 words is not judged by the ratio: correcting "ich bin müde" into "Ich bin müde." changes its
 length by a third. The run threshold is much
 higher than the one the evaluation tools use against a reference, because the app has no
 reference: a text whose own correction cuts a paragraph looks exactly like a dropped one, so the
-guard only fires on a cut no correction of that text would make. On the saved runs of the
-official test set it fires on the four models that drop text and on no text where most models
-agree.
+guard only fires on a cut no correction of that text would make.
 
 **A rejected answer says why:** the detector's numbers (`words_in`, `words_out`, `cut_run`, `rule_*`,
 `num_ctx`) go to `StepReport.counters` and the warning log; the answer itself only to the debug log,
@@ -3069,53 +1610,182 @@ Nothing outside `infrastructure/proofreading/` sees an exchange's own answer sch
 exchange maps its answer to `ExchangeResult`, and the GUI, the DOCX builder and the cache read
 `CorrectionReview` only.
 
+## Context window and long texts
+
+### The context-budget rule
+
+One pure module, `domain/context_budget.py`, owns both decisions:
+
+```python
+@dataclass(frozen=True)
+class ContextBudget:
+    num_ctx: int
+    chars_per_token: float = 3.0
+    def request_fits(self, request_chars: int, *, answer_tokens: int) -> bool: ...
+    def max_text_chars(self, overhead_chars: int, *, answer_factor: float = 0.0,
+                       answer_tokens: int = 0) -> int: ...
+```
+
+- `chars_per_token` is a cautious estimate (clean German prose has more, misspelt words fewer),
+  so the check refuses a little early rather than too late.
+- **Proofreading in text mode** answers with the text again, so the request may take half of the
+  window (`answer_factor=1.0`, `answers_with_the_same_text()`); that is the check
+  `ensure_prompt_fits()` makes before every request.
+- **Proofreading** is sized by the exchange, not by one request: `T.max_text_chars()` takes the
+  smallest limit of the steps that run, each computed from its own request. Step ① answers with
+  the text again (`answer_factor=1.0`), step ② carries the text twice — every sentence before and
+  after — next to the edit list (`text_copies=2`, plus `EXPLAIN_EDITS_CHARS` for the fixed part),
+  and step ③ answers short. The answer grows with the text, not with the request, so the fixed
+  part of the request is taken out of the window first and only the rest is shared:
+  `text_tokens = (num_ctx − overhead_tokens) / (text_copies + answer_factor)`. With corrections
+  only, step ① is the only request, so its own limit is the one that counts and a text goes out
+  in fewer pieces. The one-request baseline's own figure
+  (`one_request/correction.py:NativeOllamaCorrector.max_text_chars`, `answer_factor=7.0`) is what
+  the evaluation gate measures against; the app does not use it.
+- **Content review** answers short and of a known length, so it passes
+  `answer_tokens=EVALUATION_ANSWER_TOKENS` (an estimate), which removes the artificial half: a
+  review can use the window minus that allowance and its prompt.
+
+`ensure_prompt_fits()` delegates here, and `OllamaClient.chat()` takes the allowance from the
+caller (`answer_tokens`, `None` means "as large as the request"). Over the limit a proofreading
+request warns `TRUNCATED_MESSAGE`; a content review warns its own sentence,
+`TOO_LONG_FOR_REVIEW_WARNING`.
+When both stages use the same model they get the same `num_ctx` (see below), so no reload
+happens between them.
+
+### How large the window is
+
+`domain/context_budget.py` also decides the window, from a fixed ladder
+`CONTEXT_STEPS = (8192, 16384, 32768)` — a ladder rather than an arbitrary size, because a
+window that changes between files makes Ollama reload the model for every file.
+
+- `automatic_num_ctx(spec, card_gb, cap=…)` returns the largest step at which
+  `memory_at_context_gb(spec, step)` still reaches `FULL_SPEED_SHARE` of the graphics card, so a
+  larger window can never turn "Works" into "Slower". Caps: `PROOFREADING_NUM_CTX_CAP` (8192, the
+  base window) for proofreading, `EVALUATION_NUM_CTX_CAP` for content review.
+- **Proofreading stays at 8192.** A window of 16384 sends a long text in one request instead of
+  two, and the answer is then about twice as long — exactly the case small models drift on, and
+  the reason the cap exists. No gate measures that trade, so the app does not take it: both gates
+  run at 8192, and proofreading does too. The cap is raised together with a gate run at 16384.
+- `memory_at_context_gb()` needs the measured `context_gb_per_8k` of the catalog entry. A model
+  without that figure, a custom model, a computer without a card, a remote server and a manual
+  profile with an unknown card size keep 8192.
+- The `proofreading_context` setting (`"auto"` by default, or a fixed step) overrides the rule —
+  for advanced users and remote servers. An unknown value falls back to `"auto"` with a warning,
+  as `hardware_profile` does. With the proofreading cap at the base window it does not change
+  proofreading: it sizes a content review that runs on **its own** Ollama model, which can still
+  get 16384 or 32768. A content review on the same model as proofreading gets 8192 as well, so in
+  the default setup the setting changes nothing.
+- `run_windows()` resolves both stages once per run, each from **its own** model
+  (`proofreading_spec`, `evaluation_spec`), so a larger review model is not sized from the
+  smaller proofreading model; `run_rules.resolve_run_windows()` applies it to a `Config`, and
+  a stage whose provider is online reports the base window (the app does not set one). When
+  proofreading and content review use the same Ollama model, both get the smaller window: one reload per file between the stages would cost
+  seconds on every run, and content review still gains from its own answer allowance.
+- The window is sized for **one model at a time**. `run_files()` runs every stage of one file
+  before the next file, so OCR and proofreading take turns and never run in parallel; a larger
+  window can therefore make Ollama unload the idle OCR model and load the writing model on every
+  file. That is an accepted cost, the same one `ollama_utils.py` already
+  names for a small card: nothing slows down or fails, the models only swap.
+
+The resolved window is passed down (`OllamaPort(num_ctx=…)`, `StageBuilder.resolved_windows()`)
+and used by `proofreading_options()`, `ContextBudget`, the chunk budget below, the correction
+cache fingerprint and the memory rating and run-start warning (`memory_at_context_gb`, per
+model via `run_rules.window_of_model()`). The
+fingerprint part `num-ctx-{…}` exists only for an Ollama corrector and holds the window the run
+really uses (`RunWindows.proofreading`, resolved once and passed to the cache service), so results
+made at 8192 and at 16384 cannot share a cache entry; the evaluation hash carries
+`num-ctx-{windows.evaluation}` for the same reason — a review that failed with "too long" can
+succeed at a larger window. Without resolved windows the key falls back to
+`window_from_setting()`, the pinned window up to the proofreading cap.
+
+The GUI asks `application/run.py:windows_for()` for the keys it
+expects; that never probes the graphics card (the probe runs `nvidia-smi` and must stay off the
+GUI thread), so until this computer has been probed it returns the base windows, and the main
+window probes in a background task and shows the queue again.
+
+### Long texts are proofread in pieces
+
+`ChunkingCorrector` (`infrastructure/proofreading/chunking.py`) decorates the exchange corrector
+in `stage_builder.py`; an online provider's port has no window, so `_chunked` leaves it unwrapped. On
+**every call** it asks its inner corrector for `max_text_chars(language, text_format=…)` —
+computed from the exchange's own prompts and the fixed part of the request, so the figure cannot
+drift from what is really sent, and per call because the Markdown notation hint makes the system
+prompt longer — and:
+
+- a text within that budget goes to the inner corrector unchanged, in one request;
+- a longer text is split by `domain/text_chunks.py` and each piece corrected on its own. The
+  pieces are joined with their original separators and the reviews merged (`merge_reviews`:
+  offsets shifted to the whole text, edit ids renumbered; see *Correction review*).
+
+`split_for_budget(text, max_chars, text_format)` keeps the invariant
+`"".join(c.text + c.separator for c in chunks) == text`: every character is in exactly one chunk,
+in its `text` or in the `separator` that follows it. It cuts at paragraph boundaries (blank lines),
+packing paragraphs greedily; a paragraph that is still too long is cut at sentence ends (`.`, `!`,
+`?`, `…` followed by whitespace), because a model can only fix a sentence it sees whole. A single
+sentence longer than `max_chars` is cut at line breaks, and as the last resort between two
+words (unpunctuated handwriting, a list or table with one entry per line). Only a single word
+longer than `max_chars` cannot be split; it becomes its own chunk and its request reports "too
+long". In Markdown a closed fenced code block is never split, however long: a fence opened in one
+piece and closed in the next would be a different document, so an over-long fence is its own chunk
+and reports "too long". A fence that is never closed is no code block (stray OCR noise) and is
+cut like any other text. A table or list without blank lines is one paragraph, so it stays whole
+as long as it fits, and is cut at line breaks when it does not.
+
+Failure is all-or-nothing: **any piece failed → the whole text has no proofreading**, because a half-corrected
+file must never be cached: a `failed` outcome keeps the original text (`CHUNK_FAILURE` when the
+piece gave no reason), and the `StageError` of a piece goes up unchanged. The pieces after the
+failed one are not sent (their answers would be discarded, and each would wait out the timeout on an
+unreachable server). A piece that fell back to
+text mode does not fail the file; it costs the explanations of that piece and the merged result
+says `EXPLANATIONS_MISSING`. Chunking is
+deterministic for a text and a window, so the cache fingerprint carries the window and a later
+change of it proofreads the file again.
+
+Known costs: there is no context across a cut (a change that spans a boundary cannot be made,
+which cutting at sentence ends keeps rare), and one request per piece is slower in total than one
+big request would have been — if one could fit.
+
+### What the window does not apply to
+
+OCR is the exception on purpose: it limits a page with `num_predict`, which also ends with
+`done_reason == "length"`, but a partial page is still the best result. `OllamaOCRProcessor`
+passes `allow_truncated=True` and keeps the text read so far; an answer that is empty *and* was
+stopped at its output limit raises `OCRError` instead, because there is nothing to keep. OCR requests
+keep Ollama's own window on purpose: a page is bounded by `num_predict`, and a window the app set
+would only make the OCR model reload when the writing model's window differs. Costs of a fixed
+window: a server started with a larger `OLLAMA_CONTEXT_LENGTH` is overridden downwards, and a model
+that both reads scans and proofreads is reloaded on each switch between the two stages.
+`prompt_eval_count` counts only tokens Ollama had to evaluate, so it can be lower than the prompt
+when a prefix is cached; read it as a lower bound.
+
+The evaluation tools (`tools/verify_model_catalog.py`, `tools/evaluate.py`) pin
+`BASE_NUM_CTX` on purpose: their verdicts are compared across models and across
+months, and a window that followed the card of the machine would make two runs incomparable.
+
+
 ## Error handling
 
 ### Design goals
 
-The codebase follows three principles for error handling:
-
-1. **Typed, descriptive exceptions** — each failure mode has its own class so
-   callers can catch exactly what they need without inspecting message strings.
-2. **Hard failures propagate; soft failures return warnings** — unrecoverable
-   problems (missing provider package, unreachable Ollama service, unreadable
-   input) raise exceptions and abort the affected file.  Recoverable problems
-   in optional stages (LLM correction, evaluation) are captured as warning
-   strings and passed to the caller so processing can continue.
-3. **Structured logging instead of bare `print`** — all diagnostic output uses
-   `logging.warning` / `logging.error` so the GUI's log panel and the CLI's
-   stderr stream both receive the same messages without any special-casing.
+- **One class per failure mode**, so a caller catches exactly what it needs and never reads a
+  message string. Each inherits from the matching built-in (`ValueError` for bad input,
+  `RuntimeError` for infrastructure, `FileNotFoundError` for a missing file).
+- **A hard failure raises and ends the file; a soft one is a warning.** A missing provider package,
+  an unreachable Ollama or an unreadable input ends the file. A problem in an optional stage
+  (proofreading, content review) is an outcome with a warning, and the run goes on.
+- **A diagnostic is a log line**, never a `print` (see *Logging*).
 
 ### Exception hierarchy
 
-All custom exceptions live in `teachers_teammate/exceptions.py`. A stage error is raised with a
-text or with a `Message` (see "Where text lives"); `str(exc)` gives the sentence either way.
+Every custom exception is in `teachers_teammate/exceptions.py`. A stage error carries a text or a
+`Message` (see *Where text lives*); `str(exc)` gives the sentence either way.
 
 ```{uml} assets/error_handling.puml
 :align: center
-:alt: Exception hierarchy and raising sites
+:alt: Exception hierarchy
 :width: 100%
 ```
-
-| Exception | Base | Raised by |
-|---|---|---|
-| `PipelineError` | `Exception` | base of every failure that ends one file |
-| `StageError` | `PipelineError` | any stage that could not do its work (also `kind` + `stage`) |
-| `FileSkipped` | `PipelineError` | a file left out on purpose (recognition off, file gone) |
-| `OCRError` | `StageError` | OCR processor implementations |
-| `ConfigFileNotFoundError` | `FileNotFoundError` | `storage_root.resolve_config_path` |
-| `ConfigFileParseError` | `ValueError` | `config._read_toml` |
-| `StorageResolutionError` | `RuntimeError` | `storage_root.resolve_storage_root` |
-| `ProviderNotAvailableError` | `RuntimeError` | provider modules, `ocr_processor`, `stage_builder` |
-| `OllamaUnreachableError` | `OCRError` | `ollama_utils`: server unreachable, HTTP error, unknown model |
-| `ResponseTruncatedError` | `OCRError` | `ollama_utils.OllamaClient.chat` |
-| `AnonymizerError` | `StageError` | `file_processor._hide_personal_info`, `._restore_pii` |
-| `PipelineInputError` | `ValueError` | `input_provider_factory`, `preprocess_service` |
-
-Inheriting from the appropriate built-in (`ValueError` for bad input,
-`RuntimeError` for infrastructure failures, `FileNotFoundError` for missing
-files) lets callers that do not import the custom class still fall through to a
-sensible `except` branch.
 
 ### One error contract: no answer is an exception, a remark is an outcome
 
@@ -3163,11 +1833,11 @@ one of them is visible afterwards:
 - *The answer is too long.* The last stream chunk reports `done_reason == "length"`.
   `OllamaClient.chat_with_stats()` returns that chunk's `ChatStats`, and `chat()` — the entry
   point every caller uses — raises `ResponseTruncatedError` instead of handing the fragment
-  on. (Prompt and answer then add up to exactly `num_ctx`; verified on Ollama 0.40.)
+  on.
 - *The prompt is too long.* Ollama silently drops part of the prompt and still reports
   `done_reason == "stop"`, with a `prompt_eval_count` below the real prompt size. Nothing in
-  the answer shows it, and the `ollama` client library (0.6) cannot send `truncate=false`,
-  which would make the server refuse instead. So `chat()` estimates the request size before
+  the answer shows it, and the `ollama` client library cannot send `truncate=false`, which would
+  make the server refuse instead. So `chat()` estimates the request size before
   sending (`ensure_prompt_fits()`) and raises the same error. It applies only to requests that
   set `num_ctx` and carry no image; the estimate errs towards refusing.
 
@@ -3180,179 +1850,11 @@ app cannot read is never reported as cut off.  `LangChainPort.ask_text()` maps i
 never stored as complete.
 
 `_llm_invoke.py` turns the error into the failure kind `"truncated"`, with the warning
-`TRUNCATED_MESSAGE` (*"The text was too long for the model's working memory."*). What it costs
+`TRUNCATED_MESSAGE`. What it costs
 depends on the step: a cut-off ① fails the file and the source is kept (a half-corrected text is
 never stored), while a cut-off ② or ③ only costs that part of the review — the corrected text is
 stored and a warning says what is missing. A provider error (`"transport"`) fails the file at
 once, because ① would meet the same server.
-
-#### The context-budget rule
-
-One pure module, `domain/context_budget.py`, owns both decisions:
-
-```python
-@dataclass(frozen=True)
-class ContextBudget:
-    num_ctx: int
-    chars_per_token: float = 3.0
-    def request_fits(self, request_chars: int, *, answer_tokens: int) -> bool: ...
-    def max_text_chars(self, overhead_chars: int, *, answer_factor: float = 0.0,
-                       answer_tokens: int = 0) -> int: ...
-```
-
-- `chars_per_token` is 3.0, a cautious estimate (German clean prose is about 4, misspelt words
-  fewer), so the check refuses a little early rather than too late.
-- **Proofreading in text mode** answers with the text again, so the request may take half of the
-  window (`answer_factor=1.0`, `answers_with_the_same_text()`); that is the check
-  `ensure_prompt_fits()` makes before every request.
-- **Proofreading** is sized by the exchange, not by one request: `T.max_text_chars()` takes the
-  smallest limit of the steps that run, each computed from its own request. Step ① answers with
-  the text again (`answer_factor=1.0`), step ② carries the text twice — every sentence before and
-  after — next to the edit list (`text_copies=2`, plus `EXPLAIN_EDITS_CHARS` for the fixed part),
-  and step ③ answers short. The answer grows with the text, not with the request, so the fixed
-  part of the request is taken out of the window first and only the rest is shared:
-  `text_tokens = (num_ctx − overhead_tokens) / (text_copies + answer_factor)`. With corrections
-  only, step ① is the only request, so its own limit is the one that counts and a text goes out
-  in fewer pieces. The one-request baseline's own figure
-  (`one_request/correction.py:NativeOllamaCorrector.max_text_chars`, `answer_factor=7.0`) is what
-  the evaluation gate measures against; the app does not use it.
-- **Content review** answers short and of a known length, so it passes
-  `answer_tokens=EVALUATION_ANSWER_TOKENS` (1536, an estimate). That removes
-  the artificial half — a review can use about (8192 − 1536) × 3 ≈ 19 900 characters minus its
-  prompt.
-
-`ensure_prompt_fits()` delegates here, and `OllamaClient.chat()` takes the allowance from the
-caller (`answer_tokens`, `None` means "as large as the request"). Over the limit a proofreading
-request warns `TRUNCATED_MESSAGE`; a content review warns its own sentence,
-`TOO_LONG_FOR_REVIEW_WARNING` (*"The text is too long for a content review with a local model."*).
-When both stages use the same model they get the same `num_ctx` (see below), so no reload
-happens between them.
-
-#### How large the window is
-
-`domain/context_budget.py` also decides the window, from a fixed ladder
-`CONTEXT_STEPS = (8192, 16384, 32768)` — a ladder rather than an arbitrary size, because a
-window that changes between files makes Ollama reload the model for every file.
-
-- `automatic_num_ctx(spec, card_gb, cap=…)` returns the largest step at which
-  `memory_at_context_gb(spec, step)` still reaches `FULL_SPEED_SHARE` of the graphics card, so a
-  larger window can never turn "Works" into "Slower". Caps: `PROOFREADING_NUM_CTX_CAP` (8192, the
-  base window) for proofreading, `EVALUATION_NUM_CTX_CAP` (32768) for content review.
-- **Proofreading stays at 8192.** A window of 16384 sends a long text in one request instead of
-  two, and the answer is then about twice as long — exactly the case small models drift on, and
-  the reason the cap exists. No gate measures that trade, so the app does not take it: both gates
-  run at 8192, and proofreading does too. The cap is raised together with a gate run at 16384.
-- `memory_at_context_gb()` needs the measured `context_gb_per_8k` of the catalog entry. A model
-  without that figure, a custom model, a computer without a card, a remote server and a manual
-  profile with an unknown card size keep 8192.
-- The `proofreading_context` setting (`"auto"` by default, or a fixed step) overrides the rule —
-  for advanced users and remote servers. An unknown value falls back to `"auto"` with a warning,
-  as `hardware_profile` does. With the proofreading cap at the base window it does not change
-  proofreading: it sizes a content review that runs on **its own** Ollama model, which can still
-  get 16384 or 32768. A content review on the same model as proofreading gets 8192 as well, so in
-  the default setup the setting changes nothing.
-- `run_windows()` resolves both stages once per run, each from **its own** model
-  (`proofreading_spec`, `evaluation_spec`), so a larger review model is not sized from the
-  smaller proofreading model; `run_rules.resolve_run_windows()` applies it to a `Config`, and
-  a stage whose provider is online reports the base window (the app does not set one). When
-  proofreading and content review use the same Ollama model, both get the smaller window: one reload per file between the stages would cost
-  seconds on every run, and content review still gains from its own answer allowance.
-- The window is sized for **one model at a time**. `run_files()` runs every stage of one file
-  before the next file, so OCR and proofreading take turns and never run in parallel; a larger
-  window can therefore make Ollama unload the idle OCR model and load the writing model on every
-  file. That is an accepted cost, the same one `ollama_utils.py` already
-  names for a small card: nothing slows down or fails, the models only swap.
-
-The resolved window is passed down (`OllamaPort(num_ctx=…)`, `StageBuilder.resolved_windows()`)
-and used by `proofreading_options()`, `ContextBudget`, the chunk budget below, the correction
-cache fingerprint and the memory rating and run-start warning (`memory_at_context_gb`, per
-model via `run_rules.window_of_model()`). The
-fingerprint part `num-ctx-{…}` exists only for an Ollama corrector and holds the window the run
-really uses (`RunWindows.proofreading`, resolved once and passed to the cache service), so results
-made at 8192 and at 16384 cannot share a cache entry; the evaluation hash carries
-`num-ctx-{windows.evaluation}` for the same reason — a review that failed with "too long" can
-succeed at a larger window. Without resolved windows the key falls back to
-`window_from_setting()`, the pinned window up to the proofreading cap.
-
-The GUI asks `application/run.py:windows_for()` for the keys it
-expects; that never probes the graphics card (the probe runs `nvidia-smi` and must stay off the
-GUI thread), so until this computer has been probed it returns the base windows, and the main
-window probes in a background task and shows the queue again.
-
-#### Long texts are proofread in pieces
-
-`ChunkingCorrector` (`infrastructure/proofreading/chunking.py`) decorates the exchange corrector
-in `stage_builder.py`; an online provider's port has no window, so `_chunked` leaves it unwrapped. On
-**every call** it asks its inner corrector for `max_text_chars(language, text_format=…)` —
-computed from the exchange's own prompts and the fixed part of the request, so the figure cannot
-drift from what is really sent, and per call because the Markdown notation hint makes the system
-prompt longer — and:
-
-- a text within that budget goes to the inner corrector unchanged, in one request;
-- a longer text is split by `domain/text_chunks.py` and each piece corrected on its own. The
-  pieces are joined with their original separators and the reviews merged (`merge_reviews`:
-  offsets shifted to the whole text, edit ids renumbered; see *Correction review*).
-
-`split_for_budget(text, max_chars, text_format)` keeps the invariant
-`"".join(c.text + c.separator for c in chunks) == text`: every character is in exactly one chunk,
-in its `text` or in the `separator` that follows it. It cuts at paragraph boundaries (blank lines),
-packing paragraphs greedily; a paragraph that is still too long is cut at sentence ends (`.`, `!`,
-`?`, `…` followed by whitespace), because a model can only fix a sentence it sees whole. A single
-sentence longer than `max_chars` is cut at line breaks, and as the last resort between two
-words (unpunctuated handwriting, a list or table with one entry per line). Only a single word
-longer than `max_chars` cannot be split; it becomes its own chunk and its request reports "too
-long". In Markdown a closed fenced code block is never split, however long: a fence opened in one
-piece and closed in the next would be a different document, so an over-long fence is its own chunk
-and reports "too long". A fence that is never closed is no code block (stray OCR noise) and is
-cut like any other text. A table or list without blank lines is one paragraph, so it stays whole
-as long as it fits, and is cut at line breaks when it does not.
-
-Failure is all-or-nothing: **any piece failed → the whole text has no proofreading**, because a half-corrected
-file must never be cached: a `failed` outcome keeps the original text (`CHUNK_FAILURE` when the
-piece gave no reason), and the `StageError` of a piece goes up unchanged. The pieces after the
-failed one are not sent (their answers would be discarded, and each would wait out the timeout on an
-unreachable server). A piece that fell back to
-text mode does not fail the file; it costs the explanations of that piece and the merged result
-says `MISSING_REVIEW_WARNING` (*"Explanations are missing for part of the text."*). Chunking is
-deterministic for a text and a window, so the cache fingerprint carries the window and a later
-change of it proofreads the file again.
-
-Known costs: there is no context across a cut (a change that spans a boundary cannot be made,
-which cutting at sentence ends keeps rare), and one request per piece is slower in total than one
-big request would have been — if one could fit.
-
-#### Measuring the context growth
-
-`context_gb_per_8k` comes from `fit` (see *Model sizes*, above), which loads a model at `num_ctx`
-8192, 16384 and 32768 and reads `ollama ps` and the card:
-
-```bash
-bazel run //tools:verify_model_catalog -- fit --store ~/git/teachers-teammate-evals --machine ID \
-    --ollama-url http://HOST:11434 --gpu-agent http://HOST:11436 --tag TAG
-```
-
-It appends to `model-fit/sizes.jsonl` in the private evaluation repository, and `fit --report`
-prints the figures without a server. A model without a figure stays at 8192. How fast a context
-cache grows depends on the attention design (sliding-window or linear-attention layers grow much
-more slowly), so it cannot be derived from the model size. The report puts the need at 8192 next
-to the catalog's `memory_gb`, gives the growth per 8192 tokens from two spans (they must agree, or
-the growth is not linear) and flags a step that ran partly on the processor. The figures go into
-the catalog by hand, from `fit --catalog`.
-
-OCR is the exception on purpose: it limits a page with `num_predict`, which also ends with
-`done_reason == "length"`, but a partial page is still the best result. `OllamaOCRProcessor`
-passes `allow_truncated=True` and keeps the text read so far; an answer that is empty *and* was
-stopped at its output limit raises `OCRError` instead, because there is nothing to keep. OCR requests
-keep Ollama's own window on purpose: a page is bounded by `num_predict`, and a window the app set
-would only make the OCR model reload when the writing model's window differs. Costs of a fixed
-window: a server started with a larger `OLLAMA_CONTEXT_LENGTH` is overridden downwards, and a model
-that both reads scans and proofreads is reloaded on each switch between the two stages.
-`prompt_eval_count` counts only tokens Ollama had to evaluate, so it can be lower than the prompt
-when a prefix is cached; read it as a lower bound.
-
-The evaluation tools (`tools/verify_model_catalog.py`, `tools/evaluate.py`) pin
-`BASE_NUM_CTX` (8192) on purpose: their verdicts are compared across models and across
-months, and a window that followed the card of the machine would make two runs incomparable.
 
 ### Logging
 
@@ -3400,27 +1902,9 @@ never a document, a file name, a setting or a value. A new phase is `diagnostics
 it does nothing while the diagnostics are off. The file is cleared at the start of a session
 when it is over 1 MB.
 
-### GUI error feedback
-
-Long-running background fetches (model lists, spaCy model availability) use Qt
-signals to report failures to the UI thread without blocking:
-
-- `_ModelFetchThread` (in `_model_fetch.py`) emits `error = Signal(str)` if
-  the network call fails; the receiving slot sets a tooltip on the status label.
-- `_SpacyModelFetchThread` (in `_anonymizer_config_widget.py`) emits the same
-  `error` signal; the slot makes a red status label visible and sets its text.
-
-This prevents silent failures where the combobox simply stays empty and the user
-has no indication of what went wrong.
-
 ## Downloads and installation
 
-:::{note}
-This section is only relevant if you are working on the in-app download or addon-installation feature. For day-to-day development you can skip it.
-:::
-
-This section explains how the in-app Settings → Add-ons page installs packages and
-models, and how those installations survive application restarts.
+How Settings → Add-ons installs packages and models, and how they survive a restart.
 
 ### Addon packages directory
 
@@ -3438,11 +1922,7 @@ The location is computed by `addon_manager.get_packages_dir()` using
 `platformdirs.user_data_dir`. This directory is prepended to `sys.path` by
 `inject_packages_dir()` so anything installed there is importable.
 
-The folder is **not** versioned by Python: a package compiled for another interpreter stays where
-it is after an app update.  `foreign_python_packages()` reads the Python tag in every
-`.dist-info/WHEEL` at each start and treats such a folder like an outdated one — off `sys.path`,
-*Update add-ons* in Settings → Add-ons.  See "The bundle's constraints and add-ons after an app
-update" below.
+The folder is not versioned by Python; see *Another Python* below.
 
 `inject_packages_dir()` first runs `remove_retired_addons()`: the retired Paddle add-on
 (`paddlepaddle`, `paddleocr`, `paddlex`, `opencv-contrib-python`, which shadowed the app's own
@@ -3453,7 +1933,7 @@ OpenCV) is deleted by its `RECORD` files only; numpy is left alone.  It is then 
 - After every successful install or model download, so the newly installed package is
   usable in the same session without a restart.
 
-The function is idempotent — safe to call multiple times.  Every entry point calls it first
+It is idempotent.  Every entry point calls it first
 (`application/composition.inject_addon_packages_dir()`): `frozen_entry.py` and `__main__.py`,
 and `main_gui()`, `main_benchmark()` and `cli.main()` for a wheel install, so a spaCy model
 downloaded in one session is found after a restart however the app was started.
@@ -3584,14 +2064,13 @@ never writes to the packages directory twice at once.
 ### GPU monitoring (bundled, no package to install)
 
 The System Monitor's GPU and VRAM gauges need no add-on.  `nvidia-ml-py` (the `pynvml` module,
-60 KB, BSD) is a runtime dependency in `pyproject.toml`, so it is in the bundle; AMD needs no
+BSD) is a runtime dependency in `pyproject.toml`, so it is in the bundle; AMD needs no
 package at all — `gpu_detector.read_amd_usage()` reads the `amdgpu` driver's sysfs files
 (`gpu_busy_percent`, `mem_info_vram_used`, `mem_info_vram_total`).  `read_gpu_usage()` answers
 `None` when neither source does, and `_stats_widget.py` then shows CPU and RAM only.
 
-There is no start-up question and no QSettings key for it.  `nvidia-ml-py` and `pyamdgpuinfo`
-are in `addon_manager._RETIRED_PACKAGES`, so a copy of them in the add-on folder is removed at
-start.
+`nvidia-ml-py` and `pyamdgpuinfo` are in `addon_manager._RETIRED_PACKAGES`, so a copy of them
+in the add-on folder is removed at start.
 
 GPU *detection* (`infrastructure/gpu_detector.py`) reads the Windows display-adapter registry
 keys or Linux sysfs first and runs `nvidia-smi` / `rocm-smi` / `amd-smi` only to complete a name
@@ -3659,4 +2138,4 @@ can start.
 | pip packages (spaCy, LLM connectors, …) | pip via `--_pip_install_mode` (frozen) or `-m pip` (source) | packages_dir (frozen) / venv (source) | `inject_packages_dir()` |
 | spaCy language models | pip wheel from GitHub Releases | packages_dir | `inject_packages_dir()` |
 | Ollama models | Ollama HTTP API (`/api/pull`) | Ollama data dir | Ollama server running |
-| Built-in reader and page models (31 MB, 39 MB) | in the installed app; from source, HTTPS from `huggingface.co`, only on request (`ModelStore.download`) | the bundle / `<user data>/models/<repo>/<revision>/` | Never at start-up |
+| Built-in reader and page models | in the installed app; from source, HTTPS from `huggingface.co`, only on request (`ModelStore.download`) | the bundle / `<user data>/models/<repo>/<revision>/` | Never at start-up |

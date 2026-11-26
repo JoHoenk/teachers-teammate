@@ -81,7 +81,7 @@ py_binary(
 )
 
 # Developer tool (needs a running Ollama server; not run in CI) that runs writing models over a
-# test set through the app's own corrector.  See docs/development.md -> "Ollama model catalog".
+# test set through the app's own corrector.  See evaluations/TOOLS.md.
 # The checks it screens a setup with sit above `run`, so they are named here and not pulled in by
 # it.
 py_binary(

@@ -30,7 +30,11 @@ validate ──► lint + test ──► create-release (draft)
 ```
 
 - **validate** fails within seconds when the tag has the wrong form, the commit is not on `main`,
-  or the version is not newer than the latest published release.
+  the version is not newer than the latest published release, or the release that holds the
+  third-party sources of the shipped Qt, OpenCV and lxml is missing or incomplete (publish it first,
+  see *Third-party licenses* below).
+- Only the newest version ships, so the 0.5.x line gets no further releases: a tag older than the
+  latest release is refused, and so is one that is not on `main`.
 - The release stays a **draft**. Open it from the job summary, check the notes and the assets, and
   click *Publish*; for a final release also tick *Set as the latest release* (the job summary says
   whether to). The app's update check only sees published releases.
@@ -41,7 +45,9 @@ validate ──► lint + test ──► create-release (draft)
   gh release delete v1.2.3 --cleanup-tag
   ```
 
-Only the maintainer may create or delete `v*` tags (tag ruleset); a tag cannot be moved.
+Anyone with write access can push, move or delete a `v*` tag, so keep write access to the
+maintainer. A tag that was pushed by mistake is deleted with `git push --delete origin <tag>`
+before its release exists.
 
 ### CI workflows
 
@@ -64,19 +70,25 @@ gh run watch
 gh run download <run-id> -n teachers-teammate-linux   # or -windows, -macos
 ```
 
-The wheel is installed the way a teacher would, into a clean venv, and every console script has to
-start. Every bundle build runs the app's smoke test (`--_smoke_test`), installs and uses every
-add-on in it (`--_addon_smoke_test`, needs the network), asks the release feed once and looks for
-the banner it should show (`tests/e2e/update_banner.py`, needs the network), and walks a teacher's
-work through the app's own window (`tests/e2e/walkthrough.py`; see [testing.md](testing.md) → "The
-app walkthrough" and "The update banner"). It then installs the result on fresh systems
-(Ubuntu 24.04/26.04 and Debian 13 containers, macOS 15/26, Windows Server 2022/2025), including an
-update from the newest published release, after which the new copy walks through the data that
-release left behind. In the containers the walk runs twice when the bundle
-carries the Wayland platform plugin: on `xvfb` and under a headless `weston`, and the second result
-has to name Wayland as the platform. Not covered by CI, so checked by hand on a VM before a
-release: the installer's interactive pages, the UAC prompt, a real desktop (fonts, icons, a window
-manager), Gatekeeper, Windows 10 1809 and macOS 15.0.
+What CI checks on a build:
+
+- **Wheel:** installed into a clean venv; every console script must start.
+- **Bundle:** the smoke test (`--_smoke_test`), every add-on installed and used
+  (`--_addon_smoke_test`, needs the network), the update banner against the release feed
+  (`tests/e2e/update_banner.py`, needs the network), and the walkthrough ([testing.md](testing.md)
+  → "The app walkthrough" and "The update banner").
+- **System libraries (Linux):** the `.deb` does not ship the build image's libraries (X11, glib,
+  OpenSSL, libstdc++, ...) but depends on the distribution's packages for them, so Ubuntu and
+  Debian patch them and carry their sources. `teachers-teammate.spec` leaves out every host library
+  a Debian package owns, `check_linux_bundle.py --depends` names the packages, and `--host-libs`
+  fails the build when one is still in the bundle. Only the interpreter's own `libpython` stays
+  (`[host_rows]` in `tools/licenses/policy.toml`).
+- **Install:** on fresh Ubuntu 24.04/26.04 and Debian 13 containers, macOS 15/26 and Windows Server
+  2022/2025, including an update from the newest published release, after which the new copy walks
+  through the data that release left behind.
+
+**By hand on a VM before a release:** the installer's interactive pages, the UAC prompt, a real
+desktop (fonts, icons, window manager), Gatekeeper, Windows 10 1809 and macOS 15.0.
 
 ### Checksums and provenance
 
@@ -84,17 +96,8 @@ Every release carries a `SHA256SUMS` file and a build-provenance attestation per
 proves which workflow and commit produced the file:
 
 ```bash
-# Linux, in the folder that holds the download and SHA256SUMS
-sha256sum -c SHA256SUMS --ignore-missing
-```
-
-```bash
-# macOS
-shasum -a 256 -c SHA256SUMS --ignore-missing
-```
-
-```bash
-# Any system, with the GitHub CLI
+sha256sum -c SHA256SUMS --ignore-missing            # Linux, next to the download
+shasum -a 256 -c SHA256SUMS --ignore-missing        # macOS
 gh attestation verify teachers-teammate-<version>-w64-setup.exe --repo JoHoenk/teachers-teammate
 ```
 
@@ -108,10 +111,9 @@ gh attestation verify teachers-teammate-<version>-w64-setup.exe --repo JoHoenk/t
 | **Set by** | Qt 6.12 | the OpenCV wheel | the build image (`ubuntu-24.04`) |
 | **Guarded by** | the installer (exit code 15) | `tools/build/check_macos_bundle.py` | `tools/build/check_linux_bundle.py --max-glibc 2.39` |
 
-**When the floor moves.** A PySide6 bump that raises the macOS floor, or a newer Linux build
-image, fails the checks above. Windows has no such check: Qt 6.12 is the last Qt that supports
-Windows 10, so read the Qt release notes at every PySide6 minor bump. Users on Ubuntu 22.04, Mint 21
-or Debian 12 stay on v0.5.x.
+A PySide6 bump that raises the macOS floor, or a newer Linux build image, fails the checks above.
+Windows has no such check: Qt 6.12 is the last Qt for Windows 10, so read the Qt release notes at
+every PySide6 minor bump. Ubuntu 22.04, Mint 21 and Debian 12 are served by v0.5.x.
 
 ---
 
@@ -128,9 +130,9 @@ install the pinned versions and run the PyInstaller build, like CI:
 bash tools/build/build.sh
 ```
 
-The output is a folder (`dist/teachers-teammate/`) or, on macOS, `dist/teachers-teammate.app/`.
-Every version comes from `requirements_lock.txt` plus `tools/build/requirements_platform.txt`,
-so two builds of one commit give the same bundle. Check that it starts:
+Output: `dist/teachers-teammate/` (macOS: `dist/teachers-teammate.app/`). Versions come from
+`requirements_lock.txt` and `tools/build/requirements_platform.txt`, so one commit always gives the
+same bundle. Check that it starts:
 
 ```bash
 QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_smoke_test smoke.json
@@ -143,8 +145,8 @@ QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_addon_sm
 bazel build //teachers_teammate:teachers_teammate_wheel   # the development version
 ```
 
-A release build stamps the version into the wheel's metadata and file name; the file is in the
-`.dist` folder, because the name is fixed before the label is substituted:
+A release build stamps the version into the metadata and file name; the file lands in the `.dist`
+folder:
 
 ```bash
 bazel build --stamp --embed_label=1.2.3 //teachers_teammate:teachers_teammate_release_wheel.dist
@@ -156,15 +158,12 @@ Run these after the standalone build. Each takes the version as its argument.
 
 ```bash
 bash tools/packaging/make_deb.sh 1.2.3       # dist/teachers-teammate_1.2.3_amd64.deb
-```
-
-```bash
 bash tools/packaging/make_dmg.sh 1.2.3       # dist/teachers-teammate-1.2.3-macos.dmg
 ```
 
-The Windows installer needs [NSIS](https://nsis.sourceforge.io/). The script runs the two
-`makensis` passes (the uninstaller first, because it is a file of its own that is signed before the
-setup packs it); `-WinVersion` is the version without a pre-release suffix:
+The Windows installer needs [NSIS](https://nsis.sourceforge.io/). The script runs two `makensis`
+passes: the uninstaller first, so it can be signed before the setup packs it. `-WinVersion` is the
+version without a pre-release suffix:
 
 ```powershell
 pwsh tools/packaging/make_windows_installer.ps1 -Version 1.2.3 -WinVersion 1.2.3   # dist/teachers-teammate-1.2.3-w64-setup.exe
@@ -181,30 +180,20 @@ pwsh -File tools/packaging/test_windows_installer.ps1 -Setup dist\teachers-teamm
 (`python.toolchain`). Change both together, then relock:
 
 ```bash
-bazel run //:requirements.update
-```
-
-```bash
-bazel run //:requirements_dev.update
+bazel run //:requirements.update && bazel run //:requirements_dev.update
 ```
 
 ---
 
 ## Third-party licenses
 
-`third_party_licenses/inventory.csv` lists every third-party part the app ships or installs.
-`tools/licenses/inventory.py` writes it from the app's own lists and the locks — never edit it by
-hand. When the inventory test is red (a new or bumped dependency, add-on, model or spaCy
-language), run:
-
-```bash
-python tools/licenses/inventory.py
-```
-
-and commit the result; the diff shows any license change. A license the allow list in
-`tools/licenses/policy.toml` does not hold makes the tool fail, as does a copyleft family in a
-wheel's texts that `[vendored]` does not account for, and a Windows or macOS wheel whose license
-files differ from the Linux one without a `[variants]` entry.
+`third_party_licenses/inventory.csv` lists every third-party part the app ships or installs. It
+is written by `tools/licenses/inventory.py` from the app's lists and the locks, never by hand. When
+the inventory test is red (a new or bumped dependency, add-on, model or spaCy language), run
+`python tools/licenses/inventory.py` and commit the result; the diff shows any license change. The
+tool fails on a license the allow list in `tools/licenses/policy.toml` does not hold, on a copyleft
+family in a wheel's texts that `[vendored]` does not account for, and on a Windows or macOS wheel
+whose license files differ from the Linux one without a `[variants]` entry.
 
 | Path | Written by | Content |
 |---|---|---|
@@ -219,12 +208,14 @@ Our own source needs no mirror: each release page carries the tag's "Source code
 is the Corresponding Source of that release (`NOTICE` → "Written offer").
 
 The bundle carries Qt under the LGPL v3 as separate, replaceable files
-(`_internal/PySide6/Qt/lib`). The LGPL requires passing on the Qt, PySide6 and FFmpeg sources:
-every version we ship gets a release of its own, `third-party-sources-qt<version>`, and
-`tools/release/mirror_sources.py` builds and publishes it. The versions come from the inventory and
-`NOTICE`, never from an argument, and the file names from the authors' own directory listings, so a
-renamed archive fails here instead of on a teacher's download page. The set carries `SHA256SUMS`
-(a digest of every other file of it) and a `README.txt`:
+(`_internal/PySide6/Qt/lib`). The LGPL requires passing on the Qt, PySide6, FFmpeg and libiconv
+sources, so every shipped combination of Qt and of the packages that carry the rest (OpenCV with
+its FFmpeg, lxml with its libiconv) gets its own release,
+`third-party-sources-qt<qt>-<package>-<version>...`, built and published by
+`tools/release/mirror_sources.py` as an ordinary, public release of this repository (with a tag of
+the same name; it is not a `v*` tag, so no release runs). Versions come from the inventory and
+`NOTICE`; file names from the authors' directory listings, so a renamed archive fails here, not on
+a download page. The set carries `SHA256SUMS` and a `README.txt`:
 
 ```bash
 python tools/release/mirror_sources.py                                # fetch and check, discard
@@ -238,34 +229,32 @@ Which files are held to a published digest, and which are not:
 | File | Held to |
 |---|---|
 | the Qt submodule archives | `md5sums.txt` next to the tarballs; a folder that publishes none fails the run |
-| the PySide6 source | its folder's digest list; Qt for Python publishes none today, so this stops the run until it does |
+| the PySide6 source | its folder's digest list; a folder that publishes none stops the run |
 | the `opencv-python-headless` source | the sha256 PyPI publishes |
 | the `lxml` source | the sha256 PyPI publishes |
 | the FFmpeg tarball | nothing: FFmpeg publishes a signature and no digest. Its `.asc` travels in the set, unverified |
 | the libiconv tarball | nothing: GNU publishes a signature and no digest. Its `.sig` travels in the set, unverified |
 
-Without `--keep` the set goes to a temporary folder; `--keep` needs a folder that is empty, so an
-upload cannot publish an earlier run's tarballs. `--bundle` names a **Linux** folder build the set
-must cover: every `libQt6*.so*` module in it needs its submodule archive, and a folder without any
-of them is refused rather than read as covered. `--upload` needs `gh` and `GH_TOKEN`, never marks
-the release *Latest* — so the app's update check cannot see it — and makes an existing release hold
-this set and nothing else: the assets of an earlier run are deleted and the title and notes are
-rewritten.
+- `--keep` needs an empty folder (without it, a temporary one), so an upload never publishes an
+  earlier run's files.
+- `--bundle` names a **Linux** folder build: every `libQt6*.so*` in it needs its submodule archive;
+  a folder without any is refused. With `--no-fetch` it checks that and stops, without downloading
+  anything; `build_package.yml` runs it on every Linux build, so a Qt module that PySide6 gains
+  turns the build red.
+- `--upload` needs `gh` and `GH_TOKEN` (or a `gh auth login`), never marks the release *Latest* (the
+  update check must not see it), and refills a release of the same name (a failed run's) with this
+  set's assets, title and notes. Another version of Qt, OpenCV or lxml is another release; the older
+  one stays untouched.
+- **Publish the sources before the tag.** `release.yml`'s `validate` job fails when the sources
+  release of the current versions is missing or does not hold the whole set. Only
+  `release_dry_run.yml` passes `--skip-sources`.
+- Never delete a sources release while a download of its versions exists.
 
-Publish the sources **before** the tag: the `validate` job of the release workflow fails a download
-whose sources release does not hold the current sources — a release of the right name that still
-carries an older FFmpeg or OpenCV fails as well, which is what a bumped OpenCV (and with it a new
-FFmpeg) without a re-run of the mirror looks like. The rehearsal in `release_dry_run.yml` is the
-one run that passes `--skip-sources`.
-
-A sources release is never deleted while a download that carries its version exists; that download
-promises it.
-
-A bumped `pyside6-essentials`, `shiboken6`, `opencv-python-headless` or `lxml` is therefore three
-steps: re-run the mirror, name the new versions in the Qt/PySide6, FFmpeg and libiconv entries of
-`NOTICE`, then `python tools/licenses/inventory.py --compile`. Dependabot groups them, so they
-never hold up the weekly minor updates. `certifi` needs none of this: its entry names no version,
-because every certifi release on PyPI carries its own source.
+**Bumping `pyside6-essentials`, `shiboken6`, `opencv-python-headless` or `lxml`:** re-run the
+mirror, name the new versions and the new release name in the Qt/PySide6, FFmpeg and libiconv
+entries of `NOTICE`, then run `python tools/licenses/inventory.py --compile`. Dependabot groups
+them. `certifi` needs none of
+this: every certifi release on PyPI carries its own source.
 
 ---
 
@@ -278,8 +267,8 @@ For IT departments installing silently.
 | Only for me (default) | `%LOCALAPPDATA%\Programs\TeachersTeammate` | nothing |
 | All users | `%ProgramFiles%\TeachersTeammate` | administrator rights |
 
-Settings, models and add-ons are kept per Windows account in `%LOCALAPPDATA%\teachers_teammate`,
-whichever scope the program was installed in. An update keeps all of them.
+Settings, models and add-ons live per account in `%LOCALAPPDATA%\teachers_teammate`, in either
+scope, and survive an update.
 
 | Argument | Meaning |
 |---|---|

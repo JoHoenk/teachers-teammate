@@ -235,8 +235,8 @@ packages = [
     "setuptools",
 ]
 
-# Linux host libraries that must never be in the bundle: the build machine's own copies, which
-# would make us the distributor of a library we did not choose.
+# Linux host libraries the app must not need at all: the .deb neither ships them nor depends on
+# them, so a bundle that links one fails the build instead of the dependency hiding it.
 [host_deny]
 patterns = [
     "libreadline",

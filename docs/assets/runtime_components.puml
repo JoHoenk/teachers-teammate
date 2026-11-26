@@ -1,0 +1,82 @@
+@startuml Teacher's Teammate — What a run is made of
+top to bottom direction
+
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam packageBorderColor #888888
+skinparam arrowColor #333333
+skinparam interfaceBorderColor #336699
+
+package "gui/ · cli.py" {
+  [MainWindow and its controllers] as GUI
+  [OCRWorker (QThread)] as WORKER
+  [cli.py] as CLI
+}
+
+package "application/  (AppServices: one instance per process)" {
+  [RunService] as RUN
+  [DocumentQueries\n(reads)] as QUERY
+  [DocumentCommands\n(writes)] as CMD
+  [ProviderService · ReaderService · AddonService ·\nAnonymizationService · DataFlowService · ...] as OTHER
+  [BenchmarkApplicationService] as BENCH
+}
+
+package "infrastructure/workflow" {
+  [OCRPipeline\n(composition root of one run)] as PIPE
+  [run_files()] as COORD
+  [FileProcessor\none file, all stages] as FP
+  [CacheReconciliationService] as CACHE
+  [PreprocessService] as PREP
+  [OCRStageService] as OCRSVC
+  [run_ocr()\nbenchmark/runner.py] as BRUN
+}
+
+package "Stages" {
+  interface "Ports (core: interfaces.py)\nImagePreprocessor · OCRProcessor · Anonymizer ·\nCorrector · Evaluator · DocumentCreator" as PORTS
+  [Implementations (infrastructure/)\nStepPipeline · OllamaOCRProcessor · PpOcrProcessor ·\nSpacyAnonymizer · ChunkingCorrector → ExchangeCorrector → ModelPort ·\nPortEvaluator · DocxDocumentCreator] as IMPL
+}
+
+package "Stores" {
+  database "StateRepository\nthe cache: what the models made" as STATE
+  database "TeacherWorkStore\nwhat the teacher changed and decided\n(one writer: DocumentCommands)" as WORK
+  database "PreviewImageStore" as IMG
+  database "BenchmarkRunStore\n(append-only)" as BSTORE
+}
+
+GUI --> RUN
+GUI --> QUERY
+GUI --> CMD
+GUI --> BENCH : Benchmark
+WORKER --> RUN : run_selected()
+CLI --> RUN
+GUI ..> WORKER : starts
+
+RUN --> PIPE : run()
+PIPE --> COORD
+COORD --> FP : process(file)
+FP --> CACHE
+FP --> PREP
+FP --> OCRSVC
+CACHE --> STATE
+CACHE --> IMG
+CACHE ..> WORK : reads
+
+FP ..> PORTS : runs the stages
+PREP ..> PORTS
+OCRSVC ..> PORTS
+IMPL ..|> PORTS
+
+QUERY --> STATE : reads
+QUERY --> WORK : reads
+CMD --> WORK : writes
+CMD --> STATE : invalidates
+
+
+
+BENCH --> BSTORE
+BENCH --> BRUN : OCR only
+BRUN --> PREP
+BRUN --> OCRSVC
+
+@enduml

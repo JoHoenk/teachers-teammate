@@ -1621,6 +1621,17 @@ app_test(
     ],
 )
 
+# The diagrams name what the code has: the exception tree, and every diagram a page shows.
+app_test(
+    "tools/test_diagrams.py",
+    data = [
+        "//docs:diagrams",
+        "//docs:markdown",
+        "//teachers_teammate:all_sources",
+    ],
+    deps = _PKG_LIB,
+)
+
 # The repository explains itself: no source, document or record points into git-ignored notes.
 app_test(
     "tools/test_no_plan_references.py",

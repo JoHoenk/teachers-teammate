@@ -292,11 +292,13 @@ jobs:
           # build_standalone.py strips the debug information setup-python's libpython and
           # extension modules ship with (about 46 MB); this fails when a new file brings it back.
           python tools/build/check_linux_bundle.py --debug-info
-          # The libraries the bundle took from the runner image, with their Debian copyright
-          # files.  A denied one, or one no package owns, fails here; the file goes into
-          # _internal/ for the help dialog, and make_deb.sh copies it out.
-          python tools/build/check_linux_bundle.py --host-libs \
-            dist/teachers-teammate/_internal/third_party_host_libraries.txt
+          # The libraries of the runner image stay out of the bundle: the .deb depends on their
+          # Debian packages (the spec leaves them out, make_deb.sh measures Depends:).  One that is
+          # still in the bundle, a denied one, or one no package owns, fails here.
+          python tools/build/check_linux_bundle.py --host-libs
+          # Every Qt library of the bundle has its source archive in NOTICE and so in the sources
+          # release.  A module PySide6 gains fails here, not on a download page. Offline.
+          python tools/release/mirror_sources.py --bundle dist/teachers-teammate --no-fetch
 
       - name: Create .deb package (Linux)
         if: runner.os == 'Linux'

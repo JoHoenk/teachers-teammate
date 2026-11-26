@@ -37,9 +37,6 @@ _IMG_PATH = _ROOT / "teachers_teammate" / "assets" / "teachers_teammate.png"
 #: Our own license, written by ``tools/licenses/inventory.py`` from the repository's ``LICENSE``.
 _LICENSE_PATH = _ROOT / "teachers_teammate" / "assets" / "LICENSE.txt"
 _LICENSES_PATH = _ROOT / "teachers_teammate" / "assets" / "third_party_licenses.txt"
-#: The Linux build's host libraries, written into ``_internal/`` by the build.  No other platform
-#: has one: Windows and macOS take every library from a wheel.
-_HOST_LIBRARIES_PATH = _ROOT / "third_party_host_libraries.txt"
 
 _USER_GUIDE_PAGES: list[tuple[str, str]] = [
     (app_text.GUIDE_OVERVIEW, "index.md"),
@@ -187,10 +184,7 @@ class LicensesDialog(QDialog):
 
     @staticmethod
     def _third_party_text() -> str | None:
-        """Return the third-party page, with the host libraries, or ``None`` when it did not ship."""
+        """Return the third-party page, or ``None`` when it did not ship."""
         if not _LICENSES_PATH.exists():
             return None
-        text = _LICENSES_PATH.read_text(encoding="utf-8")
-        if _HOST_LIBRARIES_PATH.exists():
-            text += "\n" + _HOST_LIBRARIES_PATH.read_text(encoding="utf-8")
-        return text
+        return _LICENSES_PATH.read_text(encoding="utf-8")

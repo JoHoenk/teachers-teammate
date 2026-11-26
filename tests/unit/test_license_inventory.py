@@ -267,8 +267,8 @@ def _notice() -> str:
 #: What a bumped Qt, PySide6 or OpenCV needs. The failing test below carries it, because that is
 #: where a maintainer meets it.
 _BUMP_STEPS = (
-    "run //tools/release:mirror_sources, name the new versions in the Qt/PySide6 and FFmpeg "
-    "entries of NOTICE, then python tools/licenses/inventory.py --compile "
+    "run //tools/release:mirror_sources, name the new versions and the new release name in the "
+    "Qt/PySide6 and FFmpeg entries of NOTICE, then python tools/licenses/inventory.py --compile "
     "(docs/deployment.md, third-party sources)"
 )
 
@@ -277,8 +277,8 @@ def test_notice_names_the_locked_versions_in_its_source_section() -> None:
     """
     Given  NOTICE and the committed inventory
     When   the source section is read
-    Then   the Qt, PySide6 and OpenCV versions it names are the locked ones, and the sources
-           release tag names the Qt version — a bump without a new pointer is red
+    Then   the Qt, PySide6 and lxml versions it names are the locked ones, and the sources
+           release tag names the versions of Qt, lxml and OpenCV — a bump without a new pointer is red
     """
     versions = {row.component: row.version for row in _committed()}
     qt = versions["pyside6-essentials"]
@@ -290,7 +290,8 @@ def test_notice_names_the_locked_versions_in_its_source_section() -> None:
     assert f"PySide6 {qt}" in section, _BUMP_STEPS
     assert f"/archive/qt/{'.'.join(qt.split('.')[:2])}/{qt}/submodules/" in section, _BUMP_STEPS
     assert f"PySide6-{qt}-src" in section, _BUMP_STEPS
-    assert f"third-party-sources-qt{qt}" in section, _BUMP_STEPS
+    tag = mirror_sources.sources_release_tag(mirror_sources.tree_contents(_ROOT))
+    assert tag in section, _BUMP_STEPS
     assert f"inside lxml {lxml}" in section, _BUMP_STEPS
 
 

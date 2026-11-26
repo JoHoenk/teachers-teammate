@@ -11,6 +11,7 @@ QtGui, QtWidgets) and their plugins. ``collect_all("PySide6")`` would add about
 and Pdf — and with them the build machine's GTK3, cairo and pango libraries.
 """
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -294,6 +295,20 @@ if _FROM_TOOLS:
     raise SystemExit(f"modules of tools/ are in the bundle, they hide libraries: {_FROM_TOOLS}")
 a.binaries = [entry for entry in a.binaries if _keep(entry)]
 a.datas = [entry for entry in a.datas if _keep(entry)]
+
+# The .deb depends on the distribution's packages for the build machine's libraries (X11, glib,
+# OpenSSL, libstdc++, ...) instead of shipping them: the distribution patches them and carries
+# their sources.  `check_linux_bundle.py --depends` names the packages, and `--host-libs` fails
+# the build when one is still in the bundle.
+# Without dpkg (not a Debian-based machine) nothing is left out, and `--host-libs` fails on it.
+if sys.platform.startswith("linux") and shutil.which("dpkg-query"):
+    from tools.build import check_linux_bundle  # noqa: E402
+
+    _deny, _rows = check_linux_bundle.host_policy()
+    _system = check_linux_bundle.system_libraries(
+        [(entry[0], Path(entry[1])) for entry in a.binaries], _deny, _rows
+    )
+    a.binaries = [entry for entry in a.binaries if entry[0] not in _system]
 
 pyz = PYZ(a.pure)
 

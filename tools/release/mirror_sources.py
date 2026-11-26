@@ -509,6 +509,21 @@ def published_sums(
     )
 
 
+def sidecar_digest(read: Callable[[str], str], directory: str, name: str) -> str:
+    """Return the digest a folder publishes for *name* in ``<name>.sha256``, unlisted in its index.
+
+    Qt for Python publishes its digests this way and no list.
+
+    Raises:
+        ValueError: there is no such file, or it does not name *name*.
+    """
+    try:
+        text = read(f"{directory}/{name}.sha256")
+    except OSError as exc:
+        raise ValueError(f"{directory} publishes no digest for {name}") from exc
+    return published_digest(sums_entries(text), name, directory)
+
+
 def published_digest(sums: Mapping[str, str], name: str, where: str) -> str:
     """Return the digest *sums* holds for *name*.
 
@@ -573,9 +588,8 @@ def collect(
 
     pyside_dir = f"{PYSIDE6_SOURCES}/PySide6-{qt}-src"
     pyside_files = listing_files(read(f"{pyside_dir}/"))
-    pyside_sums = published_sums(read, pyside_dir, pyside_files)
     name = pyside_file(pyside_files, qt, pyside_dir)
-    digest = published_digest(pyside_sums, name, pyside_dir)
+    digest = sidecar_digest(read, pyside_dir, name)
     take(name, f"{pyside_dir}/{name}", qt, PYSIDE_RULE, digest)
 
     # FFmpeg and libiconv publish a signature and no digest, so those tarballs are the files of
@@ -717,10 +731,8 @@ def upload(
     )
     for command in commands:
         _run(command)
-    latest = _run(
-        ["gh", "release", "view", tag, "--repo", repo, "--json", "isLatest", "--jq", ".isLatest"]
-    )
-    if latest.stdout.strip() != "false":
+    latest = _run(["gh", "api", f"repos/{repo}/releases/latest", "--jq", ".tag_name"])
+    if latest.stdout.strip() == tag:
         raise SystemExit(f"{tag} is Latest; the app's update check would offer it as an update")
     with tempfile.TemporaryDirectory() as temporary:
         _run(

@@ -7,7 +7,7 @@ them is covered by `third_party_licenses/` (in the app: Help → Licenses).
 | --- | --- | --- |
 | Windows | `windows.nsi`, compiled by NSIS `makensis` into `teachers-teammate-<version>-w64-setup.exe` | the NSIS stub, plugins and LZMA compression module (below) |
 | macOS | `make_dmg.sh`, Apple's `hdiutil` | none |
-| Linux | `make_deb.sh`, `dpkg-deb` | none; the package declares no dependencies |
+| Linux | `make_deb.sh`, `dpkg-deb` | none; the system's libraries come from the distribution's packages named in `Depends:` |
 
 ## NSIS (Nullsoft Scriptable Install System)
 

@@ -652,9 +652,12 @@ def _fit_measure(args: argparse.Namespace, store: FitStore) -> int:
         print("--machine ID is required when measuring: a record without a machine is worthless")
         return 2
     try:
-        require_machine(args.store, args.machine)
+        machine = require_machine(args.store, args.machine)
     except (ValueError, FormatError) as error:
         print(error)
+        return 2
+    if problem := machine.device_problem(cpu_only=args.cpu_only):
+        print(problem)
         return 2
     if args.gpu_agent is None and not args.no_agent:
         print("no --gpu-agent: pass the agent's URL, or --no-agent to store Ollama's figures only")

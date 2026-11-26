@@ -21,6 +21,7 @@ from teachers_teammate.domain.model_catalog import (
     request_profile,
 )
 
+from ..core.constants import CARD_USED_TOLERANCE_BYTES, CPU_ONLY_OPTIONS
 from ..core.sizes import (
     GB,
     CardReading,
@@ -40,12 +41,6 @@ from ..core.sizes import (
     spilled,
     tokens_per_second,
 )
-
-CPU_ONLY_OPTIONS: dict[str, Any] = {"num_gpu": 0}
-"""The Ollama option that keeps the whole model on the processor: a CPU-only measurement."""
-
-CARD_USED_TOLERANCE_BYTES = 300_000_000
-"""A CPU-only run that raises the card's use by more than this did not stay off the card."""
 
 MEMORY_TOLERANCE = 0.10
 """How far ``size@8k`` may be from the catalog's ``memory_gb`` before the report flags it."""
@@ -664,8 +659,6 @@ def _ram_of(stats: Any, info: Any = None) -> RamReading | None:
 
 
 __all__ = [
-    "CARD_USED_TOLERANCE_BYTES",
-    "CPU_ONLY_OPTIONS",
     "DEFAULT_LIMITS",
     "LINEARITY_TOLERANCE",
     "MEMORY_TOLERANCE",

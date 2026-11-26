@@ -166,3 +166,26 @@ def test_the_devices_are_the_card_and_the_processor() -> None:
     Then   they are the card and the processor, the two a machine is measured on
     """
     assert DEVICES == ("gpu", "cpu")
+
+
+def test_a_machine_without_a_card_takes_only_a_processor_run(tmp_path: Path) -> None:
+    """
+    Given  a card machine and the same box registered without its card
+    When   each is asked whether it takes a processor-only run, and one that may use the card
+    Then   the card id takes only the second and the card-less id only the first
+    """
+    _write(tmp_path, "box.json", _machine(id="box"))
+    _write(
+        tmp_path,
+        "box-cpu.json",
+        _machine(id="box-cpu", gpu={"vendor": "none", "name": "none", "vram_mb": 0}),
+    )
+
+    card = require_machine(tmp_path, "box")
+    processor = require_machine(tmp_path, "box-cpu")
+
+    assert card.has_card and not processor.has_card
+    assert card.device_problem(cpu_only=False) is None
+    assert processor.device_problem(cpu_only=True) is None
+    assert "has a card" in (card.device_problem(cpu_only=True) or "")
+    assert "--cpu-only" in (processor.device_problem(cpu_only=False) or "")

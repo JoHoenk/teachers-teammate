@@ -2,7 +2,8 @@
 
 The other scripts in this folder run as programs (build_standalone.py);
 addon_constraints.py, addon_lock.py, check_addon_resolution.py, fetch_models.py,
-make_constraints.py, make_venv.py, check_pins.py, check_linux_bundle.py and check_macos_bundle.py
+install_nsis.py, make_constraints.py, make_venv.py, run_bundle.py, check_pins.py,
+check_linux_bundle.py and check_macos_bundle.py
 are also libraries, so a unit test can drive them.  The license inventory lives in
 //tools/licenses.
 """
@@ -35,10 +36,12 @@ py_library(
         "check_pins.py",
         "check_smoke.py",
         "fetch_models.py",
+        "install_nsis.py",
         "make_constraints.py",
         "make_venv.py",
         "make_version_resource.py",
         "platform_lock.py",
+        "run_bundle.py",
     ],
     visibility = ["//visibility:public"],
     deps = [

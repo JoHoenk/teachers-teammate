@@ -37,7 +37,7 @@ import urllib.request
 from teachers_teammate.domain.model_catalog import normalize_tag
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 
-from ..core.constants import OLLAMA
+from ..core.constants import CARD_USED_TOLERANCE_BYTES, CPU_ONLY_OPTIONS, OLLAMA
 from ..core.modes import Exchange, Step
 from ..core.performance import LoadedModel, Performance, RequestStats
 from ..core.records import Environment, Input, Protocol, RunHeader, RunSettings, Session
@@ -67,6 +67,10 @@ _SAMPLE_LAG_S = 1.5
 
 class ServerBusyError(RuntimeError):
     """The server will not become idle, so a speed run on it would measure something else."""
+
+
+class CardUsedError(RuntimeError):
+    """A processor-only run found the model on the card, so its speed would be the card's."""
 
 
 # ── the app's client, recording ───────────────────────────────────────────────
@@ -105,9 +109,17 @@ class RecordingClient(OllamaClient):
     keeps the seed, so a run stays repeatable.
     """
 
-    def __init__(self, url: str, *, seed: int | None = None, clock: Clock = time.monotonic) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        seed: int | None = None,
+        cpu_only: bool = False,
+        clock: Clock = time.monotonic,
+    ) -> None:
         super().__init__(url)
         self._seed = seed
+        self._cpu_only = cpu_only
         self._clock = clock
         self._requests: list[RequestStats] = []
         self._sent: dict[str, int] = {}
@@ -130,7 +142,12 @@ class RecordingClient(OllamaClient):
         system: str = "",
         total_timeout: float | None = None,
     ) -> tuple[str, ChatStats]:
-        """Send the request as the app does, with the seed added, and record how it went."""
+        """Send the request as the app does, with the seed added, and record how it went.
+
+        With *cpu_only* every request also carries ``num_gpu`` 0 (the model stays off the card).
+        """
+        if self._cpu_only:
+            options = {**(options or {}), **CPU_ONLY_OPTIONS}
         if self._seed is not None:
             repeat = self._repeat_of(model, prompt, system, format, options)
             options = {**(options or {}), "seed": self._seed + repeat}
@@ -705,10 +722,12 @@ class MeasuredRun:
         model: str,
         sampler: VramSampler | None = None,
         repeat: int = 1,
+        cpu_only: bool = False,
         clock: Clock = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._sleep = sleep
+        self._cpu_only = cpu_only
         self._client = client
         self._probe = probe
         self._model = model
@@ -732,7 +751,11 @@ class MeasuredRun:
         if self._sampler is not None:
             self._sampler.start()
             self._baseline = self._sampler.baseline_mb
+        loading = self._clock() if self._cpu_only else 0.0
         warm_up()
+        if self._cpu_only:
+            self._require_off_card(self._probe.loaded())
+            self._require_card_unmoved(loading)
         self._client.drain()  # the warm-up is not part of any text
         return Preparation(loaded_before=loaded_before, vram_baseline_mb=self._baseline)
 
@@ -747,6 +770,8 @@ class MeasuredRun:
         finished = self._clock()
         requests = self._client.drain()
         after = self._probe.loaded()
+        if self._cpu_only:
+            self._require_off_card(after)
         others = [m for m in (*self._before, *after) if not same_model(m.name, self._model)]
         peak = self._sampler.peak_mb(self._started, finished) if self._sampler is not None else None
         return Performance(
@@ -758,6 +783,30 @@ class MeasuredRun:
             seed=self._client.seed,
             repeat=self._repeat,
         )
+
+    def _require_off_card(self, loaded: Sequence[LoadedModel]) -> None:
+        """Raise :class:`CardUsedError` when the server holds any of the model on the card."""
+        for model in loaded:
+            if same_model(model.name, self._model) and model.size_vram_bytes > 0:
+                raise CardUsedError(
+                    f"{model.name} holds {model.size_vram_bytes // MIB} MiB on the card although "
+                    "the run asked for the processor only"
+                )
+
+    def _require_card_unmoved(self, since: float) -> None:
+        """Raise :class:`CardUsedError` when the card's use rose while the model loaded.
+
+        The server's own account of the card can be short of what the card holds, so the sampler
+        is the second witness.  A run without a sampler has only the server's account.
+        """
+        if self._sampler is None or self._baseline is None:
+            return
+        peak = self._sampler.peak_mb(since, self._clock())
+        if peak is not None and (peak - self._baseline) * MIB > CARD_USED_TOLERANCE_BYTES:
+            raise CardUsedError(
+                f"the card's use rose from {self._baseline} to {peak} MiB while {self._model} "
+                "loaded although the run asked for the processor only"
+            )
 
     def finish(self, *, unload: bool) -> None:
         """Stop the sampler and, if asked, drop the model from memory."""

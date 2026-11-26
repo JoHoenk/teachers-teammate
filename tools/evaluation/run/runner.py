@@ -82,6 +82,9 @@ class Matrix:
     gpu_sampler: str | dict | None
     """The vendor of a sampler on this machine, or the agent's record (:func:`.measure.sampler_record`)."""
     machine: str
+    cpu_only: bool = False
+    """Whether every request keeps the model off the card (``--cpu-only``); a machine without a
+    card is the one it is run for."""
     compact_json: str = "catalog"
     """``catalog`` (each model's own choice), ``on`` or ``off``; see ``--compact-json``."""
     options: tuple[tuple[str, float], ...] = ()
@@ -442,6 +445,14 @@ def run_matrix(  # noqa: PLR0913  # one callback per thing the command line says
             _run_session(matrix, item, records, current, done, seams, output)
             index = index.with_file(item.path, current)
             finished += 1
+    except measure.CardUsedError as error:
+        return RunResult(
+            refused=(str(error),),
+            sessions=finished,
+            rows=output.rows,
+            skipped=tuple(skipped),
+            planned=planned,
+        )
     except ServerUnavailableError as error:
         # Nothing was written for the text that met the outage, so a resume sends it again.
         return RunResult(
@@ -512,6 +523,7 @@ def _run_session(
         model=item.model,
         sampler=seams.new_sampler(),
         repeat=item.repeat,
+        cpu_only=matrix.cpu_only,
     )
     warm_up = factory(item.model, item.temperature)
     unreachable = False

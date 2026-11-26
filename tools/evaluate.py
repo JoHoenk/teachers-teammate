@@ -172,6 +172,7 @@ def _matrix(args: argparse.Namespace) -> runner.Matrix:
         isolate=args.isolate,
         gpu_sampler=args.gpu_agent_record or args.gpu_sampler,
         machine=args.machine,
+        cpu_only=args.cpu_only,
         compact_json=args.compact_json,
         options=tuple(args.option),
         prompt=args.prompt,
@@ -239,7 +240,9 @@ def _seams(args: argparse.Namespace) -> runner.Seams:
 
     return runner.Seams(
         probe=measure.ServerProbe(args.ollama_url),
-        new_client=lambda seed: measure.RecordingClient(args.ollama_url, seed=seed),
+        new_client=lambda seed: measure.RecordingClient(
+            args.ollama_url, seed=seed, cpu_only=args.cpu_only
+        ),
         new_factory=new_factory,
         new_sampler=new_sampler,
         smoke=None if args.no_smoke else smoke,
@@ -338,18 +341,28 @@ def _use_gpu_agent(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _machine_problem(args: argparse.Namespace) -> str | None:
+    """Return why ``--machine`` cannot take this run, or ``None``.
+
+    The machine is an id of the registry, so a typo is refused here and not found later as a
+    second machine that no report can compare with the first.  A card-less id takes only a
+    processor-only run, and a card id only a run that may use the card.
+    """
+    try:
+        machine = require_machine(args.store, args.machine)
+    except (ValueError, FormatError) as error:
+        return str(error)
+    return machine.device_problem(cpu_only=args.cpu_only)
+
+
 def _run(args: argparse.Namespace) -> int:
     """Run the matrix *args* describes, or say why it does not start."""
     # The request side is checked before anything is sent: a prompt, answer format or window that
     # changed since the current version needs a new version in protocol.json, not a new run.
     if problem := _option_problem(args):
         return _refuse(problem)
-    # The machine is an id of the registry, so a typo is refused here and not found later as a
-    # second machine that no report can compare with the first.
-    try:
-        require_machine(args.store, args.machine)
-    except (ValueError, FormatError) as error:
-        return _refuse(str(error))
+    if problem := _machine_problem(args):
+        return _refuse(problem)
     try:
         stamp = protocol.current_stamp()
     except protocol.ProtocolError as error:
@@ -711,6 +724,12 @@ def _run_command(sub) -> None:
         required=True,
         help="the id of the machine the server runs on, from the store's machines/, written into "
         "the run header; a report joins the runs and the size measurements of one machine by it",
+    )
+    run.add_argument(
+        "--cpu-only",
+        action="store_true",
+        help="keep the model off the card (num_gpu 0 with every request) and measure the "
+        "processor; needs a machine id without a card, and that id needs this flag",
     )
     run.add_argument(
         "--progress",

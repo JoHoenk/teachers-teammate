@@ -117,18 +117,4 @@ jobs:
       - name: Build the wheel and check its assets
         run: |
           python -m pip wheel --quiet --no-deps -w "$RUNNER_TEMP/setuptools-dist" .
-          python - "$RUNNER_TEMP/setuptools-dist" <<'PY'
-          import sys
-          import tomllib
-          import zipfile
-          from pathlib import Path
-
-          declared = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-          data = declared["tool"]["setuptools"]["package-data"]["teachers_teammate"]
-          wanted = {f"teachers_teammate/{name}" for name in data}
-          built = next(Path(sys.argv[1]).glob("*.whl"))
-          missing = wanted - set(zipfile.ZipFile(built).namelist())
-          if not wanted or missing:
-              sys.exit(f"{built.name} does not carry: {sorted(missing)}")
-          print(f"{built.name} carries the {len(wanted)} declared assets")
-          PY
+          python tools/ci/check_setuptools_wheel.py "$RUNNER_TEMP/setuptools-dist"

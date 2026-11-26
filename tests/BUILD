@@ -668,6 +668,16 @@ app_test(
 )
 
 app_test(
+    "unit/test_install_nsis.py",
+    deps = ["//tools/build:build_tools_lib"],
+)
+
+app_test(
+    "unit/test_run_bundle.py",
+    deps = ["//tools/build:build_tools_lib"],
+)
+
+app_test(
     "unit/test_check_desktop_entry.py",
     deps = ["//tools/packaging:packaging_tools_lib"],
 )
@@ -680,6 +690,11 @@ app_test(
 
 app_test(
     "unit/test_check_lint_coverage.py",
+    deps = ["//tools/ci:ci_tools_lib"],
+)
+
+app_test(
+    "unit/test_check_setuptools_wheel.py",
     deps = ["//tools/ci:ci_tools_lib"],
 )
 

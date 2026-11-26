@@ -24,6 +24,10 @@ on:
       version:
         required: true
         type: string
+    outputs:
+      packaged:
+        description: "'true' once the installer is uploaded: the install jobs have nothing to test before"
+        value: ${{ jobs.build.outputs.packaged }}
 
 # Read-only, and declared here rather than left to the caller: the build runs ~90 PyPI
 # packages and PyInstaller hooks, so a bad version of any of them must not be able to write
@@ -36,6 +40,8 @@ jobs:
     name: Build & Package (${{ inputs.os }})
     runs-on: ${{ inputs.os }}
     timeout-minutes: 40
+    outputs:
+      packaged: ${{ steps.packaged.outputs.done }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -121,101 +127,9 @@ jobs:
           # same product version as the setup and the uninstaller (make_version_resource.py).
           VERSION: ${{ steps.version.outputs.value }}
 
-      - name: Smoke-test the binary (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_smoke_test smoke.json
-
-      - name: Smoke-test the binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $process = Start-Process -FilePath dist/teachers-teammate/teachers-teammate.exe `
-            -ArgumentList '--_smoke_test', 'smoke.json' -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            throw "the smoke test exited with $($process.ExitCode)"
-          }
-
-      - name: Smoke-test the app (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate --_smoke_test smoke.json
-
-      # Installs every add-on from PyPI through the app's own pip and merge, then imports it and
-      # hides a name with spaCy.  The merge keeps the bundle's copy of a shared package
-      # (packaging, pydantic, ...); this is where a bundle that carries only part of one fails.
-      - name: Install and use the add-ons in the binary (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate \
-            --_addon_smoke_test addon_smoke.json || { cat addon_smoke.json; exit 1; }
-
-      - name: Install and use the add-ons in the binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $process = Start-Process -FilePath dist/teachers-teammate/teachers-teammate.exe `
-            -ArgumentList '--_addon_smoke_test', 'addon_smoke.json' -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            Get-Content addon_smoke.json
-            throw "the add-on smoke test exited with $($process.ExitCode)"
-          }
-
-      - name: Install and use the add-ons in the app (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate \
-            --_addon_smoke_test addon_smoke.json || { cat addon_smoke.json; exit 1; }
-
-      # The bundle asks the real release feed and shows the banner a teacher would see: the whole
-      # chain of the update check — the CA store of the frozen urllib, the request, the answer on
-      # the window's thread — which no unit test covers. GitHub's hourly limit for a shared runner
-      # address is not this check's failure: a 403 or 429 with the limit used up passes and says so
-      # in the job summary (tests/e2e/update_banner.py).
-      - name: Offer a newer release (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG=$(python tools/packaging/latest_release.py tag)
-          xvfb-run -a ./dist/teachers-teammate/teachers-teammate \
-            --_run_script tests/e2e/update_banner.py banner.json --tag "$TAG" \
-            || { cat banner.json; exit 1; }
-
-      - name: Offer a newer release (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $tag = python tools/packaging/latest_release.py tag
-          $process = Start-Process -FilePath dist/teachers-teammate/teachers-teammate.exe `
-            -ArgumentList '--_run_script', 'tests/e2e/update_banner.py', 'banner.json', `
-            '--tag', "$tag" -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            # A windowed build has no stderr: the result file is where the check says why.
-            if (Test-Path banner.json) {
-              Get-Content banner.json
-            } else {
-              Write-Host 'the update banner check wrote no result'
-            }
-            throw "the update banner check exited with $($process.ExitCode)"
-          }
-
-      - name: Offer a newer release (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG=$(python tools/packaging/latest_release.py tag)
-          ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate \
-            --_run_script tests/e2e/update_banner.py banner.json --tag "$TAG" \
-            || { cat banner.json; exit 1; }
-
+      # What the files of the bundle say, before anything runs it: these take seconds and need
+      # no display, so a bad bundle fails here and not after the add-on installs below.
+      #
       # PyInstaller bundles the libraries of the machine it builds on, so a newer macOS runner
       # silently raises the floor. The check reads the minimum macOS of every Mach-O file in
       # the .app, every architecture slice of a universal2 one included.
@@ -239,6 +153,50 @@ jobs:
           # after PyInstaller signed the bundle would break the signature.
           codesign --verify --deep --strict dist/teachers-teammate.app
 
+      - name: Check the Linux bundle
+        if: runner.os == 'Linux'
+        run: |
+          python tools/build/check_linux_bundle.py --max-glibc 2.39
+          python tools/build/check_linux_bundle.py --unused
+          # build_standalone.py strips the debug information setup-python's libpython and
+          # extension modules ship with (about 46 MB); this fails when a new file brings it back.
+          python tools/build/check_linux_bundle.py --debug-info
+          # The libraries of the runner image stay out of the bundle: the .deb depends on their
+          # Debian packages (the spec leaves them out, make_deb.sh measures Depends:).  One that is
+          # still in the bundle, a denied one, or one no package owns, fails here.
+          python tools/build/check_linux_bundle.py --host-libs
+          # Every Qt library of the bundle has its source archive in NOTICE and so in the sources
+          # release.  A module PySide6 gains fails here, not on a download page. Offline.
+          python tools/release/mirror_sources.py --bundle dist/teachers-teammate --no-fetch
+
+      # One script starts the bundle on every system (where the executable is, a display on Linux,
+      # the result file printed when it fails): tools/build/run_bundle.py.
+      - name: Smoke-test the bundle
+        shell: bash
+        run: python tools/build/run_bundle.py --result smoke.json -- --_smoke_test smoke.json
+
+      # Installs every add-on from PyPI through the app's own pip and merge, then imports it and
+      # hides a name with spaCy.  The merge keeps the bundle's copy of a shared package
+      # (packaging, pydantic, ...); this is where a bundle that carries only part of one fails.
+      - name: Install and use the add-ons in the bundle
+        shell: bash
+        run: |
+          python tools/build/run_bundle.py --result addon_smoke.json -- \
+            --_addon_smoke_test addon_smoke.json
+
+      # The bundle asks the real release feed and shows the banner a teacher would see: the whole
+      # chain of the update check — the CA store of the frozen urllib, the request, the answer on
+      # the window's thread — which no unit test covers. GitHub's hourly limit for a shared runner
+      # address is not this check's failure: a 403 or 429 with the limit used up passes and says so
+      # in the job summary (tests/e2e/update_banner.py).
+      - name: Offer a newer release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(python tools/packaging/latest_release.py tag | tr -d '\r')
+          python tools/build/run_bundle.py --result banner.json --display xvfb -- \
+            --_run_script tests/e2e/update_banner.py banner.json --tag "$TAG"
 
       # `.python-version` is the one place the Python version is written down: rules_python builds
       # the Bazel tests with it, setup-python installs it here, and the smoke test reports what
@@ -284,22 +242,6 @@ jobs:
           path: banner.json
           if-no-files-found: ignore
 
-      - name: Check the Linux bundle
-        if: runner.os == 'Linux'
-        run: |
-          python tools/build/check_linux_bundle.py --max-glibc 2.39
-          python tools/build/check_linux_bundle.py --unused
-          # build_standalone.py strips the debug information setup-python's libpython and
-          # extension modules ship with (about 46 MB); this fails when a new file brings it back.
-          python tools/build/check_linux_bundle.py --debug-info
-          # The libraries of the runner image stay out of the bundle: the .deb depends on their
-          # Debian packages (the spec leaves them out, make_deb.sh measures Depends:).  One that is
-          # still in the bundle, a denied one, or one no package owns, fails here.
-          python tools/build/check_linux_bundle.py --host-libs
-          # Every Qt library of the bundle has its source archive in NOTICE and so in the sources
-          # release.  A module PySide6 gains fails here, not on a download page. Offline.
-          python tools/release/mirror_sources.py --bundle dist/teachers-teammate --no-fetch
-
       - name: Create .deb package (Linux)
         if: runner.os == 'Linux'
         shell: bash
@@ -307,6 +249,8 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
         run: bash tools/packaging/make_deb.sh "$VERSION"
 
+      # The pinned NSIS release, checked against its SHA-256 (tools/build/install_nsis.py): not a
+      # package feed's newest.
       - name: Install NSIS and create installer (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -314,20 +258,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
           WIN_VERSION: ${{ steps.version.outputs.win }}
         run: |
-          # Pinned: Chocolatey's newest NSIS is a moving target, and the installer script is
-          # compiled by it. 3.13.0 is what the last green build installed.
-          # The feed has failed a download once. pwsh does not stop on a native command, so the
-          # loop reads $LASTEXITCODE and the step fails on the file itself, not on the exit code.
-          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
-          foreach ($attempt in 1..3) {
-            choco install nsis --version=3.13.0 --no-progress -y
-            if ($LASTEXITCODE -eq 0 -and (Test-Path $makensis)) { break }
-            Write-Host "choco install nsis failed (attempt $attempt of 3); retrying in 15 s"
-            Start-Sleep -Seconds 15
-          }
-          if (-not (Test-Path $makensis)) { throw "NSIS was not installed" }
-          # Chocolatey does not update the current process PATH — prepend NSIS manually
-          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+          $nsis = python tools/build/install_nsis.py "$env:RUNNER_TEMP/nsis" | Select-Object -Last 1
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$nsis/makensis.exe")) { throw "NSIS was not installed" }
+          $env:PATH = "$nsis;$env:PATH"
+          makensis /VERSION
           # The two makensis passes (uninstaller, then the setup that packs it) are the script's.
           pwsh -File tools/packaging/make_windows_installer.ps1 `
             -Version $env:VERSION -WinVersion $env:WIN_VERSION
@@ -367,6 +301,10 @@ jobs:
           retention-days: ${{ inputs.retention_days }}
           path: dist/teachers-teammate-*-macos.dmg
 
+      - name: Record that the installer is uploaded
+        id: packaged
+        run: echo "done=true" >> "$GITHUB_OUTPUT"
+
       # ── The app walkthrough ──────────────────────────────────────────────
       # tests/e2e/walkthrough.py is the only check that builds the real main window on the
       # system's own platform plugin — the smoke test runs offscreen — and that reads the three
@@ -378,43 +316,12 @@ jobs:
       # After the packages are uploaded, on purpose: a failed walk must not cost this platform
       # its installers (the release is blocked by the red job all the same), and nothing the app
       # writes while it runs can end up inside one of them.
-      - name: Walk through the app (Linux)
-        if: runner.os == 'Linux'
+      - name: Walk through the app
         timeout-minutes: 20
         shell: bash
         run: |
-          xvfb-run -a ./dist/teachers-teammate/teachers-teammate \
-            --_run_script tests/e2e/walkthrough.py e2e.json --screenshots e2e-shots \
-            || { cat e2e.json; exit 1; }
-
-      - name: Walk through the app (Windows)
-        if: runner.os == 'Windows'
-        timeout-minutes: 20
-        shell: pwsh
-        run: |
-          $process = Start-Process -FilePath dist/teachers-teammate/teachers-teammate.exe `
-            -ArgumentList '--_run_script', 'tests/e2e/walkthrough.py', 'e2e.json', `
-            '--screenshots', 'e2e-shots' `
-            -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            # A windowed build has no stderr; the result file is where a crash shows. It is
-            # missing altogether when Qt aborts before the script's first line.
-            if (Test-Path e2e.json) {
-              Get-Content e2e.json
-            } else {
-              Write-Host 'the walkthrough wrote no result'
-            }
-            throw "the app walkthrough exited with $($process.ExitCode)"
-          }
-
-      - name: Walk through the app (macOS)
-        if: runner.os == 'macOS'
-        timeout-minutes: 20
-        shell: bash
-        run: |
-          ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate \
-            --_run_script tests/e2e/walkthrough.py e2e.json --screenshots e2e-shots \
-            || { cat e2e.json; exit 1; }
+          python tools/build/run_bundle.py --result e2e.json --display xvfb -- \
+            --_run_script tests/e2e/walkthrough.py e2e.json --screenshots e2e-shots
 
       # The walk runs the app from outside the bundle, so the signature the build verified has
       # to be intact afterwards.

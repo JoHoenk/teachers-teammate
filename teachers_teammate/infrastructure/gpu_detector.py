@@ -23,6 +23,7 @@ NVML for NVIDIA, and the ``amdgpu`` driver's own sysfs files for AMD.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
@@ -548,6 +549,27 @@ def detect_gpus() -> list[GpuInfo]:
 # ── live load (System Monitor) ────────────────────────────────────────────────
 
 
+@dataclass
+class _NvmlFailure:
+    """The last answer NVML gave instead of a load: ``None`` once it answered again."""
+
+    reason: str | None = None
+
+
+#: What NVML answered last time it failed.  The System Monitor reads the load once a second, so
+#: only a changed answer is logged.
+_nvml_failure = _NvmlFailure()
+
+
+def _note_nvml_failure(reason: str | None) -> None:
+    """Log *reason* when it differs from the last one; ``None`` forgets it once NVML works."""
+    if reason == _nvml_failure.reason:
+        return
+    _nvml_failure.reason = reason
+    if reason is not None:
+        _logger.info("NVML could not read the GPU's load: %s", reason)
+
+
 def read_nvidia_usage() -> GpuUsage | None:
     """Return the live load of the first NVIDIA card through NVML, or ``None``.
 
@@ -567,8 +589,9 @@ def read_nvidia_usage() -> GpuUsage | None:
         finally:
             pynvml.nvmlShutdown()
     except Exception as exc:  # noqa: BLE001  # NVML raises its own error type per failure (no driver, no device); the gauge must degrade, not fail
-        _logger.info("NVML could not read the GPU's load: %s", exc)
+        _note_nvml_failure(f"{type(exc).__name__}: {exc}")
         return None
+    _note_nvml_failure(None)
     return GpuUsage(
         busy_percent=int(utilisation.gpu),
         vram_used_mb=_bytes_to_mb(int(memory.used)),

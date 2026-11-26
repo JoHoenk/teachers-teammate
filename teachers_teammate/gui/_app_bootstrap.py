@@ -5,7 +5,10 @@ benchmark window (:func:`teachers_teammate.gui.benchmark.main_benchmark`) need t
 same QApplication setup: application name/icon, the Linux desktop-file hint, and
 the qdarkstyle theme.  Centralising it keeps the two entry points consistent.
 
-The opt-in diagnostics are started through :mod:`teachers_teammate.application.composition`.
+Qt's own messages go into the log file rather than to a stderr the window lacks.
+
+The opt-in diagnostics and the Qt log are started through
+:mod:`teachers_teammate.application.composition`.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 import qdarkstyle
 
+from ..application.composition import install_qt_log
 from ..texts import app as app_text
 
 
@@ -35,6 +39,7 @@ def create_app(
     :class:`QIcon`/``QPixmap`` before that aborts with "Must construct a
     QGuiApplication before a QPixmap".
     """
+    install_qt_log()  # before the QApplication, so the messages of its own start are caught
     existing = QApplication.instance()
     # ``instance()`` is typed as the base class; the app is a QApplication by construction.
     app = cast("QApplication", existing) if existing is not None else QApplication(sys.argv)

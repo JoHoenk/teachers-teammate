@@ -379,20 +379,22 @@ def test_a_failed_check_is_said_and_logged_not_shown_as_no_suggestion(
     Given  a computer check that raises
     When   the selector resolves
     Then   the status line says the computer could not be checked (and that suggestions assume
-           8 GB), the error is logged with its traceback, and the result is None --
-           instead of the silent "no suggestion" the same line showed for a failure and for
-           "nothing to suggest"
+           8 GB), the background helper logged the failure with its frames and without its
+           message, and the result is None -- instead of the silent "no suggestion" the same
+           line showed for a failure and for "nothing to suggest"
     """
     import logging  # noqa: PLC0415
 
+    failure = "nvidia-smi exploded"
+
     class _Failing(_StubService):
         def detect_hardware(self, ollama_url: str, *, refresh: bool = False):
-            raise RuntimeError("nvidia-smi exploded")
+            raise RuntimeError(failure)
 
     widget = HardwareProfileSelector(app_service=services_of(_Failing(_GPU_DETECTED)))
     qtbot.addWidget(widget)
     with (
-        caplog.at_level(logging.WARNING),
+        caplog.at_level(logging.ERROR),
         qtbot.waitSignal(widget.resolved_changed, timeout=5000) as blocker,
     ):
         pass
@@ -401,9 +403,10 @@ def test_a_failed_check_is_said_and_logged_not_shown_as_no_suggestion(
     status = widget._status_lbl.text()
     assert "could not be checked" in status and "8 GB" in status
     assert status != "No suggestion available for this computer."
-    record = next(r for r in caplog.records if "Checking this computer failed" in r.message)
-    assert record.exc_info is not None
-    assert "nvidia-smi exploded" in str(record.exc_info[1])
+    record = next(r for r in caplog.records if "background task" in r.message)
+    assert record.levelno == logging.ERROR
+    assert "RuntimeError" in record.getMessage()
+    assert failure not in record.getMessage()
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")

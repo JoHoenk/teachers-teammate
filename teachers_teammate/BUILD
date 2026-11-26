@@ -151,6 +151,7 @@ _INFRASTRUCTURE_SRCS = [
     "infrastructure/performance_probe.py",
     "infrastructure/pipeline.py",
     "infrastructure/power.py",
+    "infrastructure/qt_log.py",
     "infrastructure/ppocr/__init__.py",
     "infrastructure/ppocr/detect.py",
     "infrastructure/ppocr/engine.py",

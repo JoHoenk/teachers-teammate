@@ -6,12 +6,12 @@ from collections.abc import Callable
 import logging
 from pathlib import Path
 import threading
-import traceback
 
 from ...domain.proofreading.review import align, review_summary
 from ...domain.run_summary import FileOutcome, FileStatus, RunSummary
 from ...exceptions import UNEXPECTED_ERROR_MESSAGE
 from ...interfaces import OnFileDoneFn, OnFileStartedFn, Reporter
+from ...messages import log_failure
 from ...texts import report as report_text
 from ..reporting import StdoutReporter
 from .file_processor import ProcessingResult
@@ -103,14 +103,7 @@ def _process_one(process_file: ProcessFileFn, file: Path) -> ProcessingResult:
     try:
         return process_file(file)
     except Exception as exc:  # noqa: BLE001  # the net of the run: any stage may raise anything
-        # The kind and the frames, not the message: an exception can quote the text it choked on,
-        # and the log leaves the computer.
-        _logger.error(
-            "Unexpected error while processing %s: %s\n%s",
-            file.name,
-            type(exc).__name__,
-            "".join(traceback.format_tb(exc.__traceback__)),
-        )
+        log_failure(_logger, f"Unexpected error while processing {file.name}", exc)
         return ProcessingResult.failure(UNEXPECTED_ERROR_MESSAGE)
 
 

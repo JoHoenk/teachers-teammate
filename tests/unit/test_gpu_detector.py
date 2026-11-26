@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -789,6 +790,36 @@ def test_read_nvidia_usage_is_none_without_a_driver(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "pynvml", fake)
 
     assert read_nvidia_usage() is None
+
+
+def test_a_failing_nvml_read_is_logged_once_per_changed_answer(monkeypatch, caplog) -> None:
+    """
+    Given  a system monitor that reads the load once a second, and NVML that fails the same way
+    When   the load is read again and again, then NVML fails differently, then works, then fails
+    Then   the log holds one line per changed answer, not one per read
+    """
+    fake = MagicMock()
+    fake.nvmlInit.side_effect = RuntimeError("no driver")
+    monkeypatch.setitem(sys.modules, "pynvml", fake)
+    monkeypatch.setattr(gpu_detector, "_nvml_failure", gpu_detector._NvmlFailure())
+
+    def reads(count: int) -> int:
+        """Read the load *count* times and return how many lines the log now holds."""
+        for _ in range(count):
+            read_nvidia_usage()
+        return len(caplog.records)
+
+    with caplog.at_level(logging.INFO, logger=gpu_detector.__name__):
+        assert reads(3) == 1
+        fake.nvmlInit.side_effect = RuntimeError("no device")
+        assert reads(1) == 2
+        fake.nvmlInit.side_effect = None
+        fake.nvmlDeviceGetHandleByIndex.return_value = object()
+        fake.nvmlDeviceGetUtilizationRates.return_value = SimpleNamespace(gpu=7)
+        fake.nvmlDeviceGetMemoryInfo.return_value = SimpleNamespace(used=2**30, total=2**30)
+        assert read_nvidia_usage() == GpuUsage(7, vram_used_mb=1024, vram_total_mb=1024)
+        fake.nvmlInit.side_effect = RuntimeError("no device")
+        assert reads(2) == 3
 
 
 def test_read_gpu_usage_prefers_nvml_and_falls_back_to_sysfs(monkeypatch) -> None:

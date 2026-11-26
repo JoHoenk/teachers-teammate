@@ -15,8 +15,6 @@ visible.
 
 from __future__ import annotations
 
-import logging
-
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
@@ -42,8 +40,6 @@ from ..texts.models import (
 )
 from . import _html
 from ._background import LatestTask
-
-_logger = logging.getLogger(__name__)
 
 _STATUS_STYLE = "color: #888; font-size: 11px;"
 #: How often the free memory is read again while the page is visible.
@@ -193,8 +189,7 @@ class HardwareProfileSelector(QWidget):
 
     def _on_memory_read(self, result: object, error: BaseException | None) -> None:
         if error is not None:
-            _logger.debug("Reading the free memory failed", exc_info=error)
-            return
+            return  # the background helper logged the failure
         self._available_memory_gb = result if isinstance(result, float) else None
         self._draw_status()
 
@@ -229,9 +224,9 @@ class HardwareProfileSelector(QWidget):
     def _on_resolved(self, result: object, error: BaseException | None) -> None:
         if error is not None or not isinstance(result, HardwareDetection):
             # Detection must never get in the way; the app falls back to 8 GB hints.  A
-            # failure is said and logged, so it is not mistaken for "nothing to suggest".
+            # failure is said, so it is not mistaken for "nothing to suggest"; the background
+            # helper logged it.
             if error is not None:
-                _logger.warning("Checking this computer failed", exc_info=error)
                 self._status_lbl.setText(CHECK_COMPUTER_FAILED)
             else:
                 self._status_lbl.setText(NO_SUGGESTION_FOR_COMPUTER)

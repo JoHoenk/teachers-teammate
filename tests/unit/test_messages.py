@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Callable
 import inspect
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,9 @@ from teachers_teammate.messages import Message, MessageKey
 from teachers_teammate.texts import messages as wording
 
 #: The public functions of ``messages.py`` that are not a factory for one key.
-_NOT_FACTORIES = frozenset({"message_of", "plain_text", "render_all", "set_renderer"})
+_NOT_FACTORIES = frozenset(
+    {"log_failure", "message_of", "plain_text", "render_all", "set_renderer"}
+)
 
 #: Factories ``messages.py`` itself calls, so no other module needs to.
 _BASE_CASES = frozenset({"detail"})
@@ -244,6 +247,153 @@ def test_the_message_an_error_carries_comes_back() -> None:
     assert messages.message_of(ValueError("plain words")) == Message(
         MessageKey.DETAIL, {"text": "plain words"}
     )
+
+
+def test_an_expected_error_is_a_warning_with_its_message(caplog) -> None:
+    """
+    Given  an error that carries a message, as infrastructure raises them
+    When   log_failure writes it
+    Then   the line is a WARNING holding that message and no traceback
+    """
+    logger = logging.getLogger("tests.messages")
+    with caplog.at_level(logging.WARNING, logger="tests.messages"):
+        messages.log_failure(logger, "Reading page 3", ValueError(messages.no_first_token(2.5)))
+
+    written = caplog.records[-1]
+    assert written.levelno == logging.WARNING
+    assert written.getMessage() == "Reading page 3: no_first_token: seconds=2.5"
+
+
+def test_a_bug_is_an_error_with_its_type_and_frames_but_not_its_message(caplog) -> None:
+    """
+    Given  an error that carries no message and quotes the text it choked on
+    When   log_failure writes it
+    Then   the line is an ERROR naming the type and the frames, and not the message
+    """
+
+    quoted = "the student wrote forty-two apples"
+
+    def read() -> None:
+        raise ValueError(quoted)
+
+    logger = logging.getLogger("tests.messages")
+    try:
+        read()
+    except ValueError as error:
+        with caplog.at_level(logging.ERROR, logger="tests.messages"):
+            messages.log_failure(logger, "Reading page 1", error)
+
+    written = caplog.records[-1].getMessage()
+    assert written.startswith("Reading page 1: ValueError")
+    assert "in read" in written
+    assert "forty-two apples" not in written
+
+
+def test_a_failed_operating_system_call_adds_its_code_and_reason(caplog) -> None:
+    """
+    Given  the error of a file that is not there
+    When   log_failure writes it
+    Then   the line holds the type, the errno and the system's reason
+    """
+    logger = logging.getLogger("tests.messages")
+    try:
+        Path("/nowhere/page.png").read_bytes()
+    except OSError as error:
+        reason = error.strerror or ""
+        with caplog.at_level(logging.ERROR, logger="tests.messages"):
+            messages.log_failure(logger, "Reading page 1", error)
+
+    written = caplog.records[-1].getMessage()
+    assert written.startswith("Reading page 1: FileNotFoundError (errno 2: ")
+    assert reason in written
+
+
+def test_an_expected_error_wrapping_a_foreign_one_logs_the_bare_key(caplog) -> None:
+    """
+    Given  an expected error whose message wraps a foreign error's own words, which quote a text
+    When   log_failure writes it
+    Then   the line holds the key of those words, not the words, and names the foreign kind
+    """
+    quoted = "Anna Mueller wrote this"
+    try:
+        try:
+            raise KeyError(quoted)
+        except KeyError as foreign:
+            raise ValueError(
+                messages.personal_info_restore_failed(messages.message_of(foreign))
+            ) from foreign
+    except ValueError as error:
+        logger = logging.getLogger("tests.messages")
+        with caplog.at_level(logging.WARNING, logger="tests.messages"):
+            messages.log_failure(logger, "Restoring", error)
+
+    written = caplog.records[-1]
+    assert written.levelno == logging.WARNING
+    assert written.getMessage() == (
+        "Restoring: personal_info_restore_failed: reason=detail (caused by KeyError)"
+    )
+    assert "Anna" not in written.getMessage()
+
+
+def test_the_plain_form_keeps_the_own_words_of_a_detail_unless_asked_not_to() -> None:
+    """
+    Given  a message wrapping a foreign error's own words, nested in another message
+    When   it is written plain, once as it is and once for the log
+    Then   the first holds the words, the second only their key
+    """
+    nested = messages.model_pull_failed(messages.detail("disk full"))
+
+    assert messages.plain_text(nested) == "model_pull_failed: reason=detail: text=disk full"
+    assert messages.plain_text(nested, own_words=False) == "model_pull_failed: reason=detail"
+
+
+def test_a_bug_names_the_errors_it_was_raised_from(caplog) -> None:
+    """
+    Given  a bug raised from another error, which was raised while handling a third
+    When   log_failure writes it
+    Then   the line names the kinds and the frames of each, and none of their words
+    """
+
+    quoted = "the student wrote forty-two apples"
+
+    def parse() -> None:
+        raise ValueError(quoted)
+
+    def read() -> None:
+        try:
+            parse()
+        except ValueError as cause:
+            raise RuntimeError(quoted) from cause
+
+    logger = logging.getLogger("tests.messages")
+    try:
+        read()
+    except RuntimeError as error:
+        with caplog.at_level(logging.ERROR, logger="tests.messages"):
+            messages.log_failure(logger, "Reading page 1", error)
+
+    written = caplog.records[-1].getMessage()
+    assert written.startswith("Reading page 1: RuntimeError")
+    assert "caused by ValueError" in written
+    assert "in parse" in written
+    assert "forty-two apples" not in written
+
+
+def test_a_chain_that_loops_back_ends_at_its_start(caplog) -> None:
+    """
+    Given  two errors that are each other's cause
+    When   log_failure writes one of them
+    Then   it returns, naming the other once
+    """
+    first, second = ValueError("a"), KeyError("b")
+    first.__cause__ = second
+    second.__cause__ = first
+
+    logger = logging.getLogger("tests.messages")
+    with caplog.at_level(logging.ERROR, logger="tests.messages"):
+        messages.log_failure(logger, "Looping", first)
+
+    assert caplog.records[-1].getMessage().count("caused by KeyError") == 1
 
 
 def _imported_names() -> set[str]:

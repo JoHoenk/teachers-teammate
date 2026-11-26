@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import teachers_teammate
 
-from ..infrastructure import logging_setup, power
+from ..infrastructure import logging_setup, power, qt_log
 from ..infrastructure.addon_manager import AddonPackages
 from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.file_discovery import FileDiscovery
@@ -397,9 +397,20 @@ def diagnostics_phase(line: str) -> None:
     phase(line)
 
 
-def start_logging() -> Path | None:
-    """Start the log of this process (idempotent); return its path, or ``None`` when unwritable."""
-    return logging_setup.start_logging()
+def start_logging(
+    on_unexpected: Callable[[BaseException], None] | None = None,
+) -> Path | None:
+    """Start the log of this process (idempotent); return its path, or ``None`` when unwritable.
+
+    *on_unexpected* is what the entry point shows a bug that reached no handler with; the log
+    line is written with or without it.
+    """
+    return logging_setup.start_logging(on_unexpected=on_unexpected)
+
+
+def install_qt_log() -> None:
+    """Send Qt's own messages to the log; before the first ``QApplication``, to catch its start."""
+    qt_log.install()
 
 
 def log_folder() -> Path:

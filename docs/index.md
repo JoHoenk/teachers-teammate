@@ -65,6 +65,7 @@ advanced_user_guide
 development
 gui
 extension_points
+error_handling
 deployment
 testing
 ```

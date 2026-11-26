@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -30,10 +31,13 @@ from ..domain.anonymization import (
     pattern_problem,
 )
 from ..domain.local_models import PRIVACY_ADDON_ID
+from ..messages import log_failure
 from ..texts import dialogs as dlg
 from ..texts import privacy
 from . import _dialogs
 from ._background import LatestTask
+
+_logger = logging.getLogger(__name__)
 
 _INVALID_BG = QColor("#ffd0d0")
 
@@ -457,6 +461,7 @@ class AnonymizerConfigWidget(QWidget):
             return
         except Exception as exc:  # noqa: BLE001
             # anonymization preview may raise anything; show the error in the panel
+            log_failure(_logger, "The anonymization preview failed", exc)
             self._preview_error.setText(privacy.preview_failed(str(exc)))
             self._preview_error.setVisible(True)
             return

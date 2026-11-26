@@ -11,12 +11,16 @@ A one-shot query or fetch belongs on the shared pool instead (``gui/_background.
 from __future__ import annotations
 
 import atexit
+import logging
 import threading
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 
 from ..exceptions import ModelDownloadCancelledError
+from ..messages import log_failure
+
+_logger = logging.getLogger(__name__)
 
 #: What ``finished_err`` says about a job the teacher stopped.
 ABORTED = "aborted"
@@ -81,6 +85,7 @@ class LongJobThread(QThread):
         except ModelDownloadCancelledError:
             self.finished_err.emit(ABORTED)
         except Exception as exc:  # noqa: BLE001  # any failure reaches the window as a sentence
+            log_failure(_logger, "A long job ended with an error", exc)
             self.finished_err.emit(self.error_text(exc))
         else:
             self.finished_ok.emit(self.result)

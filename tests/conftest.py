@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import faulthandler
 import importlib.util
+import logging
 import os
 from pathlib import Path
 import shutil
 import sys
+import threading
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -690,3 +694,36 @@ def fake_bundle(folder: Path, models) -> Path:
                 handle.truncate(file.size)
         (target / ".verified").write_text(json.dumps({}), encoding="utf-8")
     return folder
+
+
+# ── Process state ──────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def process_logging_untouched(monkeypatch: pytest.MonkeyPatch):
+    """Let a test start the app's logging and leave the process as it was.
+
+    The handlers it added, its hooks and its crash log go; ``faulthandler`` is replaced by a mock
+    (yielded), so the one pytest enabled stays as it is.
+    """
+    from teachers_teammate.infrastructure import logging_setup  # noqa: PLC0415
+
+    root = logging.getLogger()
+    handlers_before = list(root.handlers)
+    level_before = root.level
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    monkeypatch.setattr(sys, "unraisablehook", sys.unraisablehook)
+    enable = MagicMock()
+    monkeypatch.setattr(faulthandler, "enable", enable)
+    logging_setup._installed = logging_setup._Installed()
+    yield enable
+    installed = logging_setup._installed
+    if installed.crash_file is not None:
+        installed.crash_file.close()
+    for handler in list(root.handlers):
+        if handler not in handlers_before:
+            handler.close()
+            root.removeHandler(handler)
+    root.setLevel(level_before)
+    logging_setup._installed = logging_setup._Installed()

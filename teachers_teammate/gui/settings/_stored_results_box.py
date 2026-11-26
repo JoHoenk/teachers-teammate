@@ -13,7 +13,6 @@ Measuring and deleting touch every stored file, so both run off the GUI thread.
 from __future__ import annotations
 
 from collections.abc import Mapping
-import logging
 from typing import Any
 
 from PySide6.QtWidgets import (
@@ -34,8 +33,6 @@ from ...texts import privacy as priv
 from .. import _dialogs
 from .._background import LatestTask, run_in_background
 from ._page import SettingsContext
-
-_logger = logging.getLogger(__name__)
 
 #: How many days a teacher may keep the results of earlier runs; the schema takes the same range.
 KEEP_DAYS_MAX = 365
@@ -129,8 +126,7 @@ class StoredResultsBox(QGroupBox):
     def _show_size(self, result: object, error: BaseException | None) -> None:
         """Say how much is stored, as measured; a measurement that failed leaves the line."""
         if error is not None or not isinstance(result, StoredSummary):
-            _logger.warning("Measuring the stored results failed: %s", type(error).__name__)
-            return
+            return  # the background helper logged the failure
         self._size.setText(priv.stored_size(result.documents, result.bytes_taken))
 
     # ── internal ──────────────────────────────────────────────────────────────
@@ -150,6 +146,4 @@ class StoredResultsBox(QGroupBox):
         if isinstance(error, RunInProgressError):
             # A run started between the last refresh and this click; nothing was deleted.
             _dialogs.notify(self, dlg.busy_with_run())
-        elif error is not None:
-            _logger.warning("Deleting the stored results failed: %s", type(error).__name__)
         self.refresh()

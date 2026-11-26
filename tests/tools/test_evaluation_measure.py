@@ -18,6 +18,7 @@ from tools.evaluation.run import defaults, measure, protocol
 from tools.evaluation.run.agent_client import MIB, AgentClient, AgentError
 from tools.evaluation.run.measure import (
     AgentSampler,
+    CardUsedError,
     GpuSampler,
     MeasuredRun,
     Preparation,
@@ -67,6 +68,20 @@ def test_the_client_adds_its_seed_to_the_options_of_the_app() -> None:
     options = _recorded(client, options={"temperature": 0.2, "num_ctx": 8192})[0]
 
     assert options == {"temperature": 0.2, "num_ctx": 8192, "seed": 42}
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_processor_only_client_keeps_the_model_off_the_card_with_every_request() -> None:
+    """
+    Given  a recording client for a processor-only run, with a seed
+    When   a request is sent
+    Then   the options keep the app's values and gain the seed and ``num_gpu`` 0
+    """
+    client = RecordingClient("http://x:11434", seed=42, cpu_only=True)
+
+    options = _recorded(client, options={"temperature": 0.2})[0]
+
+    assert options == {"temperature": 0.2, "num_gpu": 0, "seed": 42}
 
 
 @pytest.mark.use_case("Model_Eval_Measure")
@@ -501,6 +516,75 @@ def test_a_text_that_ran_alone_is_comparable_and_carries_its_requests_and_memory
     assert (performance.vram_peak_mb, performance.vram_baseline_mb) == (6200, 700)
     assert performance.vram_used_mb == 5500
     assert sampler.window == (10.0, 20.0)
+
+
+def _cpu_run(server: _FakeServer, sampler: _FakeSampler | None = None) -> MeasuredRun:
+    """Return a processor-only measured run of ``m:1b`` on *server*."""
+    return MeasuredRun(
+        client=_FakeRecorder((_request(),)),
+        probe=ServerProbe("http://x", fetch=server),
+        model="m:1b",
+        sampler=sampler,
+        cpu_only=True,
+        clock=iter(range(100)).__next__,
+    )
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_processor_only_run_that_finds_the_model_off_the_card_goes_on() -> None:
+    """
+    Given  a server that holds the model with nothing on the card, and a card that did not move
+    When   a processor-only run is prepared and a text ends
+    Then   neither raises
+    """
+    run = _cpu_run(_FakeServer([_ps("m:1b", vram=0)]), _FakeSampler(700))
+
+    run.prepare(lambda: None, isolate=False)
+    run.begin()
+    run.end()
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_processor_only_run_refuses_a_model_the_server_put_on_the_card() -> None:
+    """
+    Given  a server that reports part of the model on the card after the warm-up
+    When   a processor-only run is prepared
+    Then   it raises, because its page time would be the card's
+    """
+    run = _cpu_run(_FakeServer([_ps("m:1b", vram=1_000_000_000)]))
+
+    with pytest.raises(CardUsedError, match="processor only"):
+        run.prepare(lambda: None, isolate=False)
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_processor_only_run_refuses_a_card_that_filled_while_the_model_loaded() -> None:
+    """
+    Given  a server that says nothing is on the card, and a sampler that saw the card rise 5.5 GB
+    When   a processor-only run is prepared
+    Then   it raises, because the server's own account is not the card's
+    """
+    run = _cpu_run(_FakeServer([_ps("m:1b", vram=0)]), _FakeSampler(6200))
+
+    with pytest.raises(CardUsedError, match="rose from 700 to 6200"):
+        run.prepare(lambda: None, isolate=False)
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_processor_only_run_refuses_a_text_that_met_the_model_on_the_card() -> None:
+    """
+    Given  a processor-only run whose model is moved onto the card after the warm-up
+    When   a text ends
+    Then   it raises instead of recording the text's speed
+    """
+    server = _FakeServer([_ps("m:1b", vram=0)])
+    run = _cpu_run(server)
+    run.prepare(lambda: None, isolate=False)
+    run.begin()
+    server.loaded = [_ps("m:1b", vram=1_000_000_000)]
+
+    with pytest.raises(CardUsedError):
+        run.end()
 
 
 @pytest.mark.use_case("Model_Eval_Measure")

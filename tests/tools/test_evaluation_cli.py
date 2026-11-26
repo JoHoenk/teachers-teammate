@@ -12,6 +12,8 @@ names the rule that broke and not a file on somebody's disk.
 
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 import sys
 
@@ -360,6 +362,62 @@ def test_a_run_without_a_machine_is_refused_by_the_parser(tmp_path: Path, capsys
     assert refused.value.code == 2
     assert printed.out == ""
     assert "--machine" in printed.err
+
+
+def _registry(root: Path) -> None:
+    """Write a card machine and the same box without its card into the store's registry."""
+    card = {
+        "format": 1,
+        "id": "box",
+        "gpu": {"vendor": "amd", "name": "AMD Radeon", "vram_mb": 16304},
+        "cpu": "Intel Core i5",
+        "ram_gib": 31,
+        "os": "Ubuntu 24",
+        "accelerator_stack": "ROCm",
+    }
+    processor = {**card, "id": "box-cpu", "gpu": {"vendor": "none", "name": "none", "vram_mb": 0}}
+    (root / "machines").mkdir(parents=True, exist_ok=True)
+    for machine in (card, processor):
+        (root / "machines" / f"{machine['id']}.json").write_text(
+            json.dumps(machine), encoding="utf-8"
+        )
+
+
+@pytest.mark.parametrize(
+    ("machine", "flags", "said"),
+    [
+        ("box-cpu", [], "run it with --cpu-only"),
+        ("box", ["--cpu-only"], "has a card"),
+    ],
+)
+def test_a_run_whose_device_does_not_fit_its_machine_is_refused(
+    tmp_path: Path, capsys, machine: str, flags: list[str], said: str
+) -> None:
+    """Given  a registry with a card machine and the same box without its card
+    When   a run names the box without a card and not --cpu-only, or the card machine and --cpu-only
+    Then   it refuses before the first request, so a page time never lands under the other id
+    """
+    store_root = _store(tmp_path / "store", _run(_record()))
+    _registry(store_root)
+
+    code = evaluate.main(
+        [
+            "run",
+            "--store",
+            str(store_root),
+            "--testset",
+            TESTSET,
+            "--model",
+            MODEL,
+            "--machine",
+            machine,
+            *flags,
+        ]
+    )
+
+    printed = capsys.readouterr()
+    assert code == 2
+    assert said in printed.err
 
 
 def test_an_option_for_another_exchange_is_refused_before_anything_is_sent(

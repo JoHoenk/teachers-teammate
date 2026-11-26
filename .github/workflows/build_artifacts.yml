@@ -80,10 +80,9 @@ jobs:
   install-linux:
     name: Install the .deb (${{ matrix.image }})
     needs: [build-linux]
-    # Waits for its own platform's build only. Not skipped when that build is red: the walk runs
-    # after the packages are uploaded, so the install can still run, and a missing artifact fails
-    # the download by itself.
-    if: ${{ !cancelled() }}
+    # Waits for its own platform's build only. Runs when that build is red after the upload
+    # (the walk comes later); skipped when there is no package to install.
+    if: ${{ !cancelled() && needs.build-linux.outputs.packaged == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -156,10 +155,9 @@ jobs:
   install-macos:
     name: Install the dmg (${{ matrix.os }})
     needs: [build-macos]
-    # Waits for its own platform's build only. Not skipped when that build is red: the walk runs
-    # after the packages are uploaded, so the install can still run, and a missing artifact fails
-    # the download by itself.
-    if: ${{ !cancelled() }}
+    # Waits for its own platform's build only. Runs when that build is red after the upload
+    # (the walk comes later); skipped when there is no package to install.
+    if: ${{ !cancelled() && needs.build-macos.outputs.packaged == 'true' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     permissions:
@@ -220,10 +218,9 @@ jobs:
   install-windows:
     name: Install the setup (${{ matrix.os }})
     needs: [build-windows]
-    # Waits for its own platform's build only. Not skipped when that build is red: the walk runs
-    # after the packages are uploaded, so the install can still run, and a missing artifact fails
-    # the download by itself.
-    if: ${{ !cancelled() }}
+    # Waits for its own platform's build only. Runs when that build is red after the upload
+    # (the walk comes later); skipped when there is no package to install.
+    if: ${{ !cancelled() && needs.build-windows.outputs.packaged == 'true' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:

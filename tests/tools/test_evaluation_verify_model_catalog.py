@@ -618,6 +618,9 @@ def _store(tmp_path: Path) -> Path:
     machines = root / MACHINES_DIR
     machines.mkdir()
     (machines / "rx9070xt-server.json").write_text(json.dumps(_machine()), encoding="utf-8")
+    processor = {**_machine(), "id": "rx9070xt-server-cpu"}
+    processor["gpu"] = {"vendor": "none", "name": "none", "vram_mb": 0}
+    (machines / "rx9070xt-server-cpu.json").write_text(json.dumps(processor), encoding="utf-8")
     return root
 
 
@@ -641,14 +644,18 @@ def _machine() -> dict:
     }
 
 
-def _fit_args(root: Path, *extra: str) -> list[str]:
+CPU_MACHINE = "rx9070xt-server-cpu"
+"""The registry id of the server with its card hidden."""
+
+
+def _fit_args(root: Path, *extra: str, machine: str = "rx9070xt-server") -> list[str]:
     """Return the arguments of a measuring run into the store at *root*."""
     return [
         "fit",
         "--ollama-url",
         "http://127.0.0.1:1",
         "--machine",
-        "rx9070xt-server",
+        machine,
         "--store",
         str(root),
         "--gpu-agent",
@@ -703,7 +710,9 @@ def test_a_cpu_only_run_asks_for_no_gpu_at_one_window(
     client, _probe = _fit(monkeypatch, agent=_FakeAgent(increase_gb=0.0))
     root = _store(tmp_path)
 
-    code, out = _run(capsys, *_fit_args(root, "--cpu-only", "--tag", CANDIDATE))
+    code, out = _run(
+        capsys, *_fit_args(root, "--cpu-only", "--tag", CANDIDATE, machine=CPU_MACHINE)
+    )
 
     assert code == 0
     records = FitStore(_sizes(root)).records()
@@ -727,13 +736,15 @@ def test_a_cpu_only_measurement_sits_beside_the_cards(
     root = _store(tmp_path)
     FitStore(_sizes(root)).append(_fit_record())
 
-    code, out = _run(capsys, *_fit_args(root, "--cpu-only", "--tag", CANDIDATE))
+    code, out = _run(
+        capsys, *_fit_args(root, "--cpu-only", "--tag", CANDIDATE, machine=CPU_MACHINE)
+    )
 
     assert code == 0
     assert client.asked == [CANDIDATE]
     assert {(record.machine, record.device) for record in FitStore(_sizes(root)).records()} == {
         ("rx9070xt-server", "gpu"),
-        ("rx9070xt-server", "cpu"),
+        ("rx9070xt-server-cpu", "cpu"),
     }
     assert "CPU only" in out
 
@@ -1478,3 +1489,33 @@ def test_the_answers_file_records_the_limit_the_setups_were_screened_under(
     assert code == 0
     header, _saved = gate1_answers.read_answers(next(answers.glob("*.jsonl")))
     assert header.fit_limit == "8gb"
+
+
+@pytest.mark.parametrize(
+    ("machine", "flags", "said"),
+    [
+        (CPU_MACHINE, [], "run it with --cpu-only"),
+        ("rx9070xt-server", ["--cpu-only"], "has a card"),
+    ],
+)
+def test_a_measurement_whose_device_does_not_fit_its_machine_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    machine: str,
+    flags: list[str],
+    said: str,
+) -> None:
+    """
+    Given  a registry with a card machine and the same server without its card
+    When   ``fit`` names the card-less id without --cpu-only, or the card id with it
+    Then   it refuses with exit code 2 and stores nothing
+    """
+    _fit(monkeypatch, agent=_FakeAgent(increase_gb=0.0))
+    root = _store(tmp_path)
+
+    code, out = _run(capsys, *_fit_args(root, *flags, "--tag", CANDIDATE, machine=machine))
+
+    assert code == 2
+    assert said in out
+    assert not _sizes(root).exists()

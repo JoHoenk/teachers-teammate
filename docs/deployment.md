@@ -139,6 +139,13 @@ QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_smoke_te
 QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_addon_smoke_test addon_smoke.json
 ```
 
+CI starts the bundle through `tools/build/run_bundle.py`, which finds the executable on each
+system, gives Linux a display and prints the result file when the app fails:
+
+```bash
+python tools/build/run_bundle.py --result smoke.json -- --_smoke_test smoke.json
+```
+
 ### Python wheel
 
 ```bash
@@ -161,9 +168,10 @@ bash tools/packaging/make_deb.sh 1.2.3       # dist/teachers-teammate_1.2.3_amd6
 bash tools/packaging/make_dmg.sh 1.2.3       # dist/teachers-teammate-1.2.3-macos.dmg
 ```
 
-The Windows installer needs [NSIS](https://nsis.sourceforge.io/). The script runs two `makensis`
-passes: the uninstaller first, so it can be signed before the setup packs it. `-WinVersion` is the
-version without a pre-release suffix:
+The Windows installer needs [NSIS](https://nsis.sourceforge.io/); `python tools/build/install_nsis.py <folder>`
+unpacks the pinned release (checked against its SHA-256) and prints the folder to put on the `PATH`.
+The script runs two `makensis` passes: the uninstaller first, so it can be signed before the setup
+packs it. `-WinVersion` is the version without a pre-release suffix:
 
 ```powershell
 pwsh tools/packaging/make_windows_installer.ps1 -Version 1.2.3 -WinVersion 1.2.3   # dist/teachers-teammate-1.2.3-w64-setup.exe

@@ -51,6 +51,28 @@ class Machine:
     """The labels the records used before the registry.  Documentation, not ids: a command line
     that names one is refused like any other unknown machine."""
 
+    @property
+    def has_card(self) -> bool:
+        """Whether the machine has a card a run could use; the processor ids of a box have none."""
+        return self.gpu_vendor != "none"
+
+    def device_problem(self, *, cpu_only: bool) -> str | None:
+        """Return why this machine id cannot take a run on that device, or ``None``.
+
+        A card id measures the card and a card-less id the processor, so a page time never lands
+        under the id of the other device.
+        """
+        if self.has_card and cpu_only:
+            return (
+                f"{self.id} has a card: a processor-only run belongs to the machine id without it"
+            )
+        if not self.has_card and not cpu_only:
+            return (
+                f"{self.id} has no card: run it with --cpu-only, "
+                "or its page time would be the card's"
+            )
+        return None
+
     def line(self) -> str:
         """Return the machine as one line: its id, its card and its processor."""
         return f"{self.id}: {self.gpu_name} ({self.vram_mb} MB), {self.cpu}"

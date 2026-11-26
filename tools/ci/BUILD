@@ -12,6 +12,7 @@ py_library(
     srcs = [
         "__init__.py",
         "check_lint_coverage.py",
+        "check_setuptools_wheel.py",
         "target_groups.py",
     ],
     visibility = ["//visibility:public"],

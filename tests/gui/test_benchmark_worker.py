@@ -37,7 +37,6 @@ class _OkService:
     def run_and_store(self, source, *, ocr, language, ollama_url, stop_event, on_progress):
         _ = (source, ocr, language, ollama_url, stop_event)
         on_progress("working")
-        print("engine log line")  # exercised via the QtStream bridge
         return _stored_run()
 
 
@@ -65,17 +64,17 @@ def test_worker_emits_finished_ok(qtbot) -> None:
     """
     Given  a service whose run_and_store succeeds
     When   the worker runs
-    Then   finished_ok fires with the StoredRun and stdout is bridged to log_line
+    Then   finished_ok fires with the StoredRun and the progress it reported is emitted
     """
     worker = _worker(_OkService())
-    logs: list[str] = []
-    worker.log_line.connect(logs.append)
+    lines: list[str] = []
+    worker.progress.connect(lines.append)
     with qtbot.waitSignal(worker.finished_ok, timeout=3000) as blocker:
         worker.start()
     worker.wait(3000)
 
     assert isinstance(blocker.args[0], StoredRun)
-    assert any("engine log line" in line for line in logs)
+    assert lines == ["working"]
 
 
 @pytest.mark.gui
@@ -83,7 +82,7 @@ def test_worker_emits_finished_err(qtbot) -> None:
     """
     Given  a service whose run_and_store raises BenchmarkRunError
     When   the worker runs
-    Then   finished_err fires with the error message and does not crash
+    Then   finished_err fires with the error's own words and does not crash
     """
     worker = _worker(_FailService())
     with qtbot.waitSignal(worker.finished_err, timeout=3000) as blocker:
@@ -94,17 +93,13 @@ def test_worker_emits_finished_err(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_worker_reports_a_stopped_run_with_the_stop_sentence(qtbot) -> None:
+def test_worker_reports_a_stopped_run_as_no_failure(qtbot) -> None:
     """
     Given  a service whose run_and_store raises BenchmarkRunStopped
     When   the worker runs
-    Then   finished_err fires with the sentence for a stop, not a failure text
+    Then   finished_stopped fires, so the window shows no failure notice
     """
-    from teachers_teammate.texts.run import STOPPED_BY_USER  # noqa: PLC0415
-
     worker = _worker(_StoppedService())
-    with qtbot.waitSignal(worker.finished_err, timeout=3000) as blocker:
+    with qtbot.waitSignal(worker.finished_stopped, timeout=3000):
         worker.start()
     worker.wait(3000)
-
-    assert blocker.args[0] == STOPPED_BY_USER

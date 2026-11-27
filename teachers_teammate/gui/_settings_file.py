@@ -21,14 +21,13 @@ from ..application.stored_results import RunInProgressError
 from ..config import broken_settings_copy, load_config_file, save_settings_file
 from ..domain.releases import version_tuple
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
-from ..messages import log_failure
+from ..messages import log_failure, message_of
 from ..settings_schema import DEFAULTS, log_detail_of
 from ..texts import dialogs as dlg
 from ..texts import main_window as win
 from ..texts._types import Notice
-from . import _dialogs
 from ._config_panel import ConfigPanel
-from ._log_widget import LogWidget
+from ._errors import show_failure, show_notice
 from ._window_geometry import maximize_without_saved_geometry, restore_geometry
 
 _logger = logging.getLogger(__name__)
@@ -60,7 +59,7 @@ class SettingsFile(QObject):
         services: AppServices,
         panel: ConfigPanel,
         splitter: QSplitter,
-        log: LogWidget,
+        say: Callable[[str], None],
         settings_store: Callable[[], QSettings],
         hooks: SettingsFileHooks,
     ) -> None:
@@ -69,7 +68,7 @@ class SettingsFile(QObject):
         self._services = services
         self._panel = panel
         self._splitter = splitter
-        self._log = log
+        self._say = say
         self._settings_store = settings_store
         self._hooks = hooks
         self._config_path: Path | None = None
@@ -139,14 +138,14 @@ class SettingsFile(QObject):
             # final refresh after the full config is loaded so cached state is
             # shown consistently on startup.
             self._hooks.queue_loaded()
-            self._log.append_text(win.log_settings_loaded(config_path))
+            self._say(win.settings_loaded(config_path))
             for notice in loaded.notices:
                 self.show_notice(notice)
             if self._remember_version():
                 QTimer.singleShot(0, self._hooks.ask_after_update)
         except Exception as exc:  # noqa: BLE001  # a file that does not load is kept, not written over
             log_failure(_logger, "The settings file could not be loaded", exc)
-            self._keep_unreadable_file(config_path, exc)
+            self._keep_unreadable_file(config_path)
 
     def _apply_log_detail(self) -> None:
         """Send the saved log detail to the log: the setting decides unless a flag did."""
@@ -174,12 +173,12 @@ class SettingsFile(QObject):
         try:
             removed = self._services.stored.expire(days)
         except RunInProgressError:
-            self._log.append_text(win.LOG_STORED_RESULTS_KEPT)
+            _logger.warning(win.stored_results_kept())
             return
         if removed:
-            self._log.append_text(win.log_stored_results_expired(removed))
+            self._say(win.stored_results_expired(removed))
 
-    def _keep_unreadable_file(self, path: Path, exc: BaseException) -> None:
+    def _keep_unreadable_file(self, path: Path) -> None:
         """Keep a settings file that cannot be read, say so, and hold the save back.
 
         A teacher's setup is worth more than the start-up that failed: a copy beside the file
@@ -187,7 +186,6 @@ class SettingsFile(QObject):
         exists.
         """
         self._load_failed = True
-        self._log.append_text(win.log_settings_not_loaded(path, exc))
         backup = self._copy_broken_file(path)
         if backup is not None:
             self._announce_once(lambda: dlg.settings_file_broken(path.name, backup.name))
@@ -197,11 +195,11 @@ class SettingsFile(QObject):
         try:
             backup = broken_settings_copy(path)
         except OSError as exc:
-            self._log.append_text(win.log_settings_backup_failed(path, exc))
+            log_failure(_logger, "A copy of the unreadable settings file was not kept", exc)
             return None
         if backup is not None:
             self._backup = backup
-            self._log.append_text(win.log_settings_backup(backup))
+            self._say(win.settings_backup(backup))
         return backup
 
     def _announce_once(self, notice: Callable[[], Notice], *, silent: bool = False) -> None:
@@ -209,7 +207,7 @@ class SettingsFile(QObject):
         if silent or self._notice_shown:
             return
         self._notice_shown = True
-        _dialogs.notify(self._window, notice())
+        show_failure(self._window, notice())
 
     def show_notice(self, setting_notice: SettingNotice) -> None:
         """Say what the app changed about a saved setting instead of changing it silently.
@@ -217,10 +215,10 @@ class SettingsFile(QObject):
         A replaced text-recognition engine changes what the next run does, so it interrupts
         the teacher; the other notices are in the log.
         """
-        notice = dlg.setting_notice(setting_notice)
-        self._log.append_text(win.log_notice(notice.body))
+        # The key, not the sentence: a value the teacher wrote is not a log line's business.
+        _logger.info(win.setting_notice(setting_notice.key, setting_notice.kind))
         if setting_notice.kind is SettingNoticeKind.ENGINE_REPLACED:
-            _dialogs.notify(self._window, notice)
+            show_notice(self._window, dlg.setting_notice(setting_notice))
 
     def save(self, *, notify: bool = True, silent_on_error: bool = False) -> None:
         """Write the settings file and remember the window geometry."""
@@ -235,7 +233,7 @@ class SettingsFile(QObject):
             else self._services.setup.default_config_path()
         )
         if not self._may_replace(out, silent=silent_on_error):
-            self._log.append_text(win.log_settings_save_refused(out))
+            _logger.warning(win.settings_save_refused(out))
             self._announce_once(
                 lambda: dlg.settings_file_not_replaced(out.name), silent=silent_on_error
             )
@@ -246,10 +244,11 @@ class SettingsFile(QObject):
             self._backup = None
             self._apply_log_detail()  # the teacher changed it, so it takes effect now
             if notify:
-                self._log.append_text(win.log_settings_saved(out.resolve()))
+                self._say(win.settings_saved(out.resolve()))
         except OSError as exc:
+            log_failure(_logger, "The settings file could not be written", exc)
             if not silent_on_error:
-                _dialogs.notify(self._window, dlg.save_failed(str(exc)))
+                show_failure(self._window, dlg.save_failed(str(message_of(exc))), exc)
 
     def _may_replace(self, out: Path, *, silent: bool = False) -> bool:
         """Return whether the settings may be written to *out*.

@@ -156,9 +156,10 @@ def test_run_uses_injected_worker(window, monkeypatch) -> None:
             class _Sig:
                 def connect(self, _fn) -> None: ...
 
-            self.log_line = _Sig()
+            self.progress = _Sig()
             self.finished_ok = _Sig()
             self.finished_err = _Sig()
+            self.finished_stopped = _Sig()
 
         def start(self) -> None:
             started["started"] = True
@@ -197,9 +198,10 @@ def test_benchmark_follows_the_saved_hardware_profile_and_ollama_url(qtbot) -> N
     class _FakeWorker:
         def __init__(self, source, ocr, language, *, ollama_url, app_service) -> None:
             started["ollama_url"] = ollama_url
-            self.log_line = self.finished_ok = self.finished_err = type(
+            self.progress = self.finished_ok = self.finished_err = type(
                 "_Sig", (), {"connect": lambda self, fn: None}
             )()
+            self.finished_stopped = self.progress
 
         def start(self) -> None: ...
 

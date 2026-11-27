@@ -62,7 +62,7 @@ OVERSIZED_FUNCTIONS: dict[str, int] = {
     "teachers_teammate/cli.py::_add_ocr_args": 85,
     "teachers_teammate/gui/_config_panel.py::ConfigPanel.__init__": 48,
     "teachers_teammate/gui/_fix_targets.py::fix_for": 73,
-    "teachers_teammate/gui/_main_window.py::main_gui": 80,
+    "teachers_teammate/gui/_main_window.py::main_gui": 62,
     "teachers_teammate/gui/settings/_ai_service_section.py::AiServiceSection._build": 88,
     (
         "teachers_teammate/gui/settings/addons/_ollama_models_tab.py"

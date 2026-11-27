@@ -46,6 +46,7 @@ from ...domain.model_catalog import profile_setting
 from ...texts import dialogs as dlg
 from ...texts import settings as st
 from .. import _dialogs
+from .._errors import show_notice
 from .._qsettings import app_settings
 from .._window_geometry import fit_to_screen, restore_geometry
 from ._addons_page import AddonsPage
@@ -432,7 +433,7 @@ class SettingsWindow(QDialog):
                 return
             reason = self._close_blocker()
             if reason:
-                _dialogs.notify(self, dlg.cannot_close(reason))
+                show_notice(self, dlg.cannot_close(reason))
                 return
             self._restore_all = True
             self.done(self.RESTORE_ALL_RESULT)
@@ -453,7 +454,7 @@ class SettingsWindow(QDialog):
         """Save what pages keep outside the settings (API keys, remembered answers), then close."""
         reason = self._close_blocker()
         if reason:
-            _dialogs.notify(self, dlg.cannot_close(reason))
+            show_notice(self, dlg.cannot_close(reason))
             return
         if not all(built.is_valid() for built in self._pages.values()):
             return
@@ -473,7 +474,7 @@ class SettingsWindow(QDialog):
         """
         reason = self._close_blocker()
         if reason:
-            _dialogs.notify(self, dlg.cannot_close(reason))
+            show_notice(self, dlg.cannot_close(reason))
             return
         for built in self._pages.values():
             built.shutdown()

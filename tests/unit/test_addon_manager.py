@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -273,6 +274,36 @@ def test_install_addon_subprocess_raises_on_nonzero_exit(tmp_path: Path) -> None
         with pytest.raises(AddonInstallError) as raised:
             install_addon_subprocess(PRIVACY_ADDON_ID, tmp_path / "pkg", lambda _: None)
     assert raised.value.reason is InstallFailure.INSTALL_FAILED
+
+
+def test_a_failed_pip_run_writes_its_last_lines_to_the_log(tmp_path: Path, caplog) -> None:
+    """
+    Given  pip that stops with a non-zero code after printing more lines than the log keeps
+    When   install_addon_subprocess() is called
+    Then   the log holds the command and the last twenty lines, since the installer's pane closes
+    """
+
+    class _FakeProc:
+        returncode = 1
+        stdout = iter([f"line {number}\n" for number in range(30)])
+
+        def wait(self) -> None:
+            pass
+
+        def __enter__(self) -> object:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+    with caplog.at_level(logging.WARNING, logger=addon_manager.__name__):
+        with patch("subprocess.Popen", return_value=_FakeProc()):
+            with pytest.raises(AddonInstallError):
+                install_addon_subprocess(PRIVACY_ADDON_ID, tmp_path / "pkg", lambda _: None)
+
+    written = [record.getMessage() for record in caplog.records]
+    assert written[0].startswith("pip failed: ")
+    assert written[1:] == [f"line {number}" for number in range(10, 30)]
 
 
 def test_install_addon_subprocess_raises_oserror_on_bad_target(tmp_path: Path) -> None:

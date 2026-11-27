@@ -24,7 +24,7 @@ from ...application.setup_plan import (
 )
 from ...texts import dialogs as dlg
 from ...texts import setup as words
-from .. import _dialogs
+from .._errors import show_notice
 from .._install_round import InstallRound
 from .._window_geometry import fit_to_screen
 from ..settings._credentials import ApiKeyDrafts, discard_key_drafts, store_key_drafts
@@ -187,7 +187,7 @@ class SetupAssistant(QWizard):
     def done(self, result: int) -> None:
         """Refuse while an install runs; otherwise stop the pages and put unused keys back."""
         if self._round.busy():
-            _dialogs.notify(self, dlg.installation_running())
+            show_notice(self, dlg.installation_running())
             return
         for page in self._pages.values():
             page.shutdown()

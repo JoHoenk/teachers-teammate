@@ -32,6 +32,7 @@ from ...texts import dialogs as dlg
 from ...texts import privacy as priv
 from .. import _dialogs
 from .._background import LatestTask, run_in_background
+from .._errors import show_notice
 from ._page import SettingsContext
 
 #: How many days a teacher may keep the results of earlier runs; the schema takes the same range.
@@ -145,5 +146,5 @@ class StoredResultsBox(QGroupBox):
         """Say what became of the deletion, then show how much is left."""
         if isinstance(error, RunInProgressError):
             # A run started between the last refresh and this click; nothing was deleted.
-            _dialogs.notify(self, dlg.busy_with_run())
+            show_notice(self, dlg.busy_with_run())
         self.refresh()

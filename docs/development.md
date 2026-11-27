@@ -247,6 +247,11 @@ Rules:
   `save_file`, the path it proposes); build it with that argument — `dlg.save_export_to_folder(label, start)` —
   or the picker opens wherever Qt last was. A test patches this module once instead of every window.
 
+- **A failure goes through `gui/_errors.py`**, the only module that shows one:
+  `show_failure(parent, notice, error)` writes the error down and shows the notice, and
+  `show_unexpected(parent, error)` is a bug's generic notice with "Open Log Folder". A failed file
+  gets no dialog at all: the row says why, and the end-of-run line counts it.
+
 **The ratchet test.** `tests/unit/test_user_text_centralised.py` parses `gui/`, `cli.py`,
 `application/`, `infrastructure/` and `domain/` with `ast` and fails on:
 
@@ -296,8 +301,8 @@ layering:
   this service.
 - **Presentation** `gui/benchmark/` — a thin window reusing shared widgets
   (`_ocr_config_selector.OcrConfigSelector`, `_image_view.ZoomableImageView`,
-  `_diff_widget.DiffWidget`, `_log_widget.LogWidget`, `_app_bootstrap.create_app`,
-  `_qt_stream.QtStream`). The main window's Check tab has its own views
+  `_diff_widget.DiffWidget`, `_app_bootstrap.create_app`). The main window's Check tab has its
+  own views
   (`gui/check/_text_views.py`, see *The window tabs and the Check page* below); plain
   `DiffWidget` is what the benchmark compare view and the privacy preview dialog show.
 
@@ -1879,8 +1884,8 @@ and its frames, not its message, which can quote the text it choked on
 sentence a teacher reads is not a log line: that is the `Reporter`'s, from `texts/`.
 
 `_logger.warning(…)` is non-fatal and the work goes on; `_logger.debug(…)` is a detail nobody
-acts on. The GUI worker redirects `sys.stderr` to a Qt signal, so a line reaches the in-app log
-panel as well.
+acts on. The GUI worker writes the run's own lines through `LoggingReporter`, into this file; the
+window shows the last of a run's successes in its status bar and keeps no pane of lines.
 
 A handler that swallows a failure — its body only `pass`, `continue` or a constant `return` —
 writes a line or carries a comment saying why nothing happens

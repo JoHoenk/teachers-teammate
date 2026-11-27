@@ -9,13 +9,8 @@ from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import (
-    QDesktopServices,
-    QDragEnterEvent,
-    QDropEvent,
-    QIcon,
-)
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QTimer, Signal
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -37,7 +32,6 @@ from ..application.composition import (
     AppServices,
     diagnostics_phase,
     inject_addon_packages_dir,
-    log_folder,
     start_diagnostics,
     start_logging,
 )
@@ -60,9 +54,9 @@ from ._background import LatestTask, wait_for_background_tasks
 from ._chart_widget import ChartWidget
 from ._check_controller import CheckController, CheckHooks
 from ._config_panel import ConfigPanel
+from ._errors import install_notices, open_log_folder, show_notice, show_unexpected_anywhere
 from ._export_controller import ExportController
 from ._image_utils import load_icon, load_pixmap
-from ._log_widget import LogWidget, install_run_log
 from ._menu_bar import MenuBar, MenuHooks
 from ._preprocess_preview import PreprocessPreview
 from ._privacy_settings import DISPLAY_ANONYMIZED_DEFAULT, FlowAcknowledgements
@@ -204,7 +198,6 @@ class MainWindow(QMainWindow):
         self._export_btn: QPushButton
         self._progress: QProgressBar
         self._tabs: QTabWidget
-        self._log: LogWidget
         self._results_table: ResultsTable
         self._chart: ChartWidget
         self._main_splitter: QSplitter
@@ -258,7 +251,7 @@ class MainWindow(QMainWindow):
             services=self._app_service,
             panel=self._config_panel,
             splitter=self._main_splitter,
-            log=self._log,
+            say=self._say,
             settings_store=self._settings_store,
             hooks=SettingsFileHooks(
                 ask_first_start=lambda: self._setup_launcher.open(first_start=True),
@@ -287,8 +280,6 @@ class MainWindow(QMainWindow):
         self._config_panel = ConfigPanel(self._app_service)
         self._results_table = ResultsTable()
         self._results_table.setObjectName(_handles.RESULTS_TABLE)
-        self._log = LogWidget()
-        self._run_log = install_run_log(self._log)
         # The tabs are filled once the controllers exist: the Check page is one of them.
         self._tabs = QTabWidget()
         self._tabs.setObjectName(_handles.MAIN_TABS)
@@ -316,7 +307,7 @@ class MainWindow(QMainWindow):
             save_settings=lambda **kwargs: self._save_settings(**kwargs),  # noqa: PLW0108
             show_documents=lambda: self._tabs.setCurrentIndex(0),
             enable_export=lambda: self._export_controller.set_enabled(True),
-            notify=self._show_run_message,
+            announce=self._show_run_message,
             worker_factory=lambda: self._worker_factory,
             preflight_running=lambda: self._run_start.preflight_running,
         )
@@ -330,7 +321,6 @@ class MainWindow(QMainWindow):
             save_settings=lambda **kwargs: self._save_settings(**kwargs),  # noqa: PLW0108
             queue_refresh=self._refresh_queue_from_inputs,
             provider_name=self._provider_display_name,
-            log_line=self._log.append_text,
         )
 
     def _check_hooks(self) -> CheckHooks:
@@ -390,7 +380,6 @@ class MainWindow(QMainWindow):
             services=self._app_service,
             table=self._results_table,
             session=self._run_session,
-            log=self._log,
             chart=self._chart,
             hooks=self._run_hooks(),
         )
@@ -402,8 +391,8 @@ class MainWindow(QMainWindow):
             services=self._app_service,
             panel=self._config_panel,
             table=self._results_table,
+            say=self._say,
         )
-        self._export_controller.log_line.connect(self._log.append_text)
         self._preprocess_preview = PreprocessPreview(
             self, services=self._app_service, panel=self._config_panel, table=self._results_table
         )
@@ -413,7 +402,6 @@ class MainWindow(QMainWindow):
             panel=self._config_panel,
             pull_manager=self._pull_manager,
             privacy=self._privacy_controller,
-            log=self._log,
             hooks=self._setup_hooks(),
         )
         self._settings_launcher = SettingsLauncher(
@@ -436,7 +424,7 @@ class MainWindow(QMainWindow):
                 config_panel=self._config_panel,
                 results_table=self._results_table,
                 run_button=self._run_btn,
-                log=self._log,
+                say=self._say,
             ),
             hooks=RunStartHooks(
                 run_controller=self._run_controller,
@@ -504,12 +492,7 @@ class MainWindow(QMainWindow):
 
     def _open_log_folder(self) -> None:
         """Help → Open Log Folder: show where the app writes down what went wrong."""
-        folder = log_folder()
-        try:
-            folder.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            pass  # nothing to show: the data folder cannot be written at all
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        open_log_folder()
 
     def _open_benchmark(self) -> None:
         """Show the Benchmark window; a second click brings the open one to the front.
@@ -566,12 +549,7 @@ class MainWindow(QMainWindow):
         return left
 
     def _build_right_panel(self) -> QWidget:
-        results_splitter = QSplitter(Qt.Orientation.Vertical)
-        results_splitter.addWidget(self._results_table)
-        results_splitter.addWidget(self._log)
-        results_splitter.setStretchFactor(0, 3)
-        results_splitter.setStretchFactor(1, 1)
-        return results_splitter
+        return self._results_table
 
     # ── Settings persistence ──────────────────────────────────────────────
 
@@ -624,7 +602,6 @@ class MainWindow(QMainWindow):
         self._monitor.close()
         self._setup_launcher.shutdown()
         self._readiness_controller.shutdown()
-        self._run_log.close()  # the pane it wrote into goes with this window
         # Let the window disappear before waiting: running background tasks are
         # given a moment to end, and the user should not see a frozen window.
         self.hide()
@@ -634,6 +611,10 @@ class MainWindow(QMainWindow):
         event.accept()
 
     # ── Run / Stop ────────────────────────────────────────────────────────
+
+    def _say(self, text: str) -> None:
+        """Say *text* in the status bar: the app's answer to what the teacher just did."""
+        self.statusBar().showMessage(text)
 
     def _show_run_message(self, text: str, warning: bool) -> None:
         """Say how the run ended in the notification area, with the icon that fits it."""
@@ -911,13 +892,13 @@ class MainWindow(QMainWindow):
     def _on_addon_installed(self, addon: str) -> None:
         if addon == PRIVACY_ADDON_ID:
             self.packages_changed.emit()  # spaCy may be available now
-            _dialogs.notify(self._dialog_parent(), dlg.privacy_addon_installed())
+            show_notice(self._dialog_parent(), dlg.privacy_addon_installed())
         elif addon == READER_ADDON_ID:
             # The built-in reader's models arrived: the readiness line turns green on the
             # check below; nothing else to tell.
-            self._log.append_text(win_text.LOG_READER_DOWNLOADED)
+            self._say(win_text.READER_DOWNLOADED)
         elif addon == PAGE_MODELS_ADDON_ID:
-            self._log.append_text(win_text.LOG_PAGE_MODELS_DOWNLOADED)
+            self._say(win_text.PAGE_MODELS_DOWNLOADED)
         self._readiness_controller.start_check()
 
 
@@ -929,6 +910,30 @@ def _default_window_factory() -> MainWindow:
     from .composition import build_main_window  # noqa: PLC0415  # imports this module
 
     return build_main_window()
+
+
+def _splash_to_show(early: QSplashScreen | None) -> QSplashScreen | None:
+    """Return the splash to keep up: *early*, or a new one made from the app's image now."""
+    if early is not None:
+        return early
+    image = Path(__file__).parent.parent / "assets" / "teachers_teammate.png"
+    if not image.exists():
+        return None
+    pix = load_pixmap(image)
+    if pix.isNull():
+        return None
+    # Scale down if the image is very large while preserving aspect ratio.
+    if pix.width() > 600 or pix.height() > 600:
+        pix = pix.scaled(
+            600,
+            600,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+    splash = QSplashScreen(pix)
+    splash.show()
+    QCoreApplication.processEvents()  # the splash must be on screen before the next phase
+    return splash
 
 
 def main_gui(
@@ -958,11 +963,13 @@ def main_gui(
     # Suppress Qt's D-Bus tray warning when org.kde.StatusNotifierWatcher is absent.
     os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.tray*=false")
     # Where a warning or an unexpected error goes: the log file, and stderr when there is one.
-    start_logging()
+    # A bug that reached no handler also gets the one notice the window shows for it.
+    start_logging(on_unexpected=show_unexpected_anywhere)
     # Theme is applied after the splash is shown (below) so startup feels fast.
     # _app_icon is passed as a factory: it builds a QPixmap, which must not run
     # before the QApplication exists.
     app = create_app(icon_factory=_app_icon, apply_theme=False)
+    install_notices()  # a bug may be shown from here on
     diagnostics_phase("QApplication created")
     if diagnostics is not None:
         # The GUI thread's heartbeat: the watching thread reports when it stays silent.
@@ -970,27 +977,7 @@ def main_gui(
         heartbeat.timeout.connect(diagnostics.beat)
         heartbeat.start(50)
 
-    # ── Splash screen ──────────────────────────────────────────────────────
-    # Reuse an early splash that was shown before the heavy imports when
-    # available; otherwise fall back to creating one now.
-    _splash: QSplashScreen | None = early_splash
-    if _splash is None:
-        _splash_img = Path(__file__).parent.parent / "assets" / "teachers_teammate.png"
-        if _splash_img.exists():
-            _pix = load_pixmap(_splash_img)
-            if not _pix.isNull():
-                # Scale down if the image is very large while preserving aspect ratio.
-                if _pix.width() > 600 or _pix.height() > 600:
-                    _pix = _pix.scaled(
-                        600,
-                        600,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
-                _splash = QSplashScreen(_pix)
-                _splash.show()
-                app.processEvents()
-
+    _splash = _splash_to_show(early_splash)
     app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api="pyside6"))
     diagnostics_phase("theme applied")
 

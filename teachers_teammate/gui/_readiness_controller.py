@@ -25,12 +25,13 @@ from ..domain.ollama_discovery import (
 )
 from ..domain.requirements import IssueKind, RequirementIssue
 from ..domain.stages import Stage
+from ..messages import message_of
 from ..settings_schema import normalize_saved_ollama_url
 from ..texts import dialogs as dlg
 from ..texts import main_window as txt
-from . import _dialogs
 from ._background import LatestTask, run_in_background
 from ._config_panel import ConfigPanel
+from ._errors import show_failure
 from ._fix_targets import (
     COMMAND_CHOOSE_FOLDER,
     COMMAND_GET_OLLAMA,
@@ -83,8 +84,6 @@ class ReadinessHooks:
     """Fill the queue again: a chosen server changes what a run over it says."""
     provider_name: Callable[[str], str]
     """The name a teacher knows a provider by."""
-    log_line: Callable[[str], None]
-    """Append a line to the log."""
 
 
 def _timer(parent: QObject, interval_ms: int, slot: Callable[[], None]) -> QTimer:
@@ -342,9 +341,14 @@ class ReadinessController(QObject):
         run_in_background(self._services.ollama.start_ollama, self._on_ollama_started)
 
     def _on_ollama_started(self, _result: object, error: BaseException | None) -> None:
-        """Look again in a few seconds, or say in the log why Ollama did not start."""
+        """Look again in a few seconds, or say why Ollama did not start.
+
+        The start is a task of the teacher's own, so its failure is one notice; the line about
+        it is in the log already (``gui/_background.py``), and the readiness line keeps naming
+        the server that does not answer.
+        """
         if error is not None:
-            self._hooks.log_line(f"NOTICE: Ollama could not be started: {error}\n")
+            show_failure(self._window, dlg.ollama_not_started(str(message_of(error))), error)
             return
         QTimer.singleShot(3000, lambda: self.start_check(fresh=True))
 
@@ -396,7 +400,7 @@ class ReadinessController(QObject):
     def model_download_failed(self, message: str) -> None:
         """A pull failed: say so, and hand the line back."""
         self.end_download()
-        _dialogs.notify(self._window, dlg.model_download_failed(message))
+        show_failure(self._window, dlg.model_download_failed(message))
 
     # ── Closing ───────────────────────────────────────────────────────────
 

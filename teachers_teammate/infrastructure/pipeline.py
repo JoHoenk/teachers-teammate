@@ -205,7 +205,7 @@ class OCRPipeline:
         per process) is required; the rest are the injection seam for tests and adapters.
         Notably carries ``reporter``: the sink for the run narrative and advisory warnings,
         defaulting to :class:`~teachers_teammate.infrastructure.reporting.StdoutReporter`
-        (CLI behaviour).  The GUI injects a reporter that feeds its log pane.
+        (CLI behaviour).  The GUI injects a reporter that writes the file.
     progress:
         Optional per-file progress hooks; see
         :class:`~teachers_teammate.interfaces.ProgressCallbacks`.

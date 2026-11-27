@@ -427,8 +427,7 @@ class Reporter(Protocol):
         """Report a line about something that went wrong."""
 
 
-#: The logger a run's own story is written to: the window reads it while the run goes, and the
-#: log file keeps it afterwards.
+#: The logger a run's own story is written to, and the only place it is kept.
 RUN_LOGGER = "teachers_teammate.run"
 
 
@@ -436,8 +435,8 @@ class LoggingReporter:
     """Writes the pipeline's narrative to the log: status at INFO, warning at WARNING.
 
     The log file is where a run's story is kept, so a run that stopped early can still be read
-    afterwards.  The window shows the same lines while it runs; the teacher hears about a
-    failure from the row and the end-of-run line, never from these.
+    afterwards.  The teacher hears about a failure from the row of the file and the end-of-run
+    line, never from these.
     """
 
     def __init__(self, logger: logging.Logger | None = None) -> None:

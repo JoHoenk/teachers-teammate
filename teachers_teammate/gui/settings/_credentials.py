@@ -35,7 +35,8 @@ from ...application.composition import AppServices
 from ...domain.credentials import KeyLocation
 from ...texts import credentials as keys_text
 from ...texts import dialogs as dlg
-from .. import _dialogs, _html
+from .. import _html
+from .._errors import show_notice
 
 #: How long after the last keystroke a typed key counts as entered.
 COMMIT_DELAY_MS = 800
@@ -191,7 +192,7 @@ def store_key_drafts(drafts: ApiKeyDrafts, parent: QWidget | None = None) -> Non
         return
     titles = drafts.titles()
     services = ", ".join(titles.get(env_key, env_key) for env_key in in_file)
-    _dialogs.notify(parent, dlg.key_not_in_keychain(services))
+    show_notice(parent, dlg.key_not_in_keychain(services))
 
 
 def discard_key_drafts(drafts: ApiKeyDrafts, app_service: AppServices) -> None:

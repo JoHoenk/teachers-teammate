@@ -22,7 +22,6 @@ from teachers_teammate.gui._chart_widget import ChartWidget
 from teachers_teammate.gui._collapsible_section import CollapsibleSection
 from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog
 from teachers_teammate.gui._help_dialog import AboutDialog, HelpDialog, LicensesDialog
-from teachers_teammate.gui._log_widget import LogWidget
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 from teachers_teammate.gui._diff_widget import DiffWidget
 from teachers_teammate.gui._image_view import ZoomableImageView
@@ -71,7 +70,6 @@ WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
     ("results_table", lambda: ResultsTable()),
     ("zoomable_image", lambda: ZoomableImageView()),
     ("diff_widget", lambda: DiffWidget()),
-    ("log_widget", lambda: LogWidget()),
     ("chart_widget", lambda: ChartWidget()),
     ("system_stats", lambda: SystemStatsWidget(lambda: None)),
     ("system_monitor", lambda: SystemMonitorWindow(lambda: None)),

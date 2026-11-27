@@ -24,11 +24,13 @@ from PySide6.QtWidgets import (
 from ..application.composition import AppServices
 from ..config import OcrConfig
 from ..interfaces import PreparedPreview
+from ..messages import message_of
 from ..texts import dialogs as dlg
 from ..texts.models import PREVIEW_ZOOM_HINT, preview_title
 from . import _dialogs
 from ._background import run_in_background
 from ._config_panel import ConfigPanel
+from ._errors import show_failure
 from ._image_utils import load_pixmap
 from ._image_view import ZoomableImageView
 from ._results_table import ResultsTable
@@ -110,7 +112,7 @@ class PreprocessPreview(QObject):
                 preview.original if preview else None,
                 preview.preprocessed if preview else None,
                 preview.steps if preview else None,
-                "" if error is None else str(error),
+                error,
                 ocr_config,
                 tmp_dir,
                 parent=owner,
@@ -126,7 +128,7 @@ class PreprocessPreview(QObject):
         orig_path: Path | None,
         proc_path: Path | None,
         steps: list[str] | None,
-        error: str,
+        error: BaseException | None,
         ocr_config: OcrConfig,
         tmp_dir: Path,
         *,
@@ -136,9 +138,9 @@ class PreprocessPreview(QObject):
         QApplication.restoreOverrideCursor()
         # The Settings window may have been closed while the preview was being made.
         owner = parent if parent is not None and _is_shown(parent) else self._window
-        if error:
+        if error is not None:
             shutil.rmtree(tmp_dir, ignore_errors=True)
-            _dialogs.notify(owner, dlg.preprocessing_preview_failed(error))
+            show_failure(owner, dlg.preprocessing_preview_failed(str(message_of(error))), error)
             return
         if orig_path is None or proc_path is None or steps is None:
             raise RuntimeError("a preview that did not fail has both pages and its steps")

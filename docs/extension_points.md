@@ -183,8 +183,9 @@ it with the `WHERE_*` constants in `texts/settings.py`, not a hard-coded menu pa
 Failures are logged where they are handled, once; a catch-all logs through `messages.log_failure`:
 an error that carries a `Message` is expected (WARNING, the message), everything else is a bug
 (ERROR, its type and frames, never its message). The hooks `start_logging()` installs catch what reaches no
-handler at all; a Qt slot, a `QThread.run` and a plain thread all end there. The GUI only decides
-what the teacher is shown. See {doc}`error_handling`
+handler at all; a Qt slot, a `QThread.run` and a plain thread all end there. The GUI shows a failure
+only through `gui/_errors.py`: one notice about the action that failed, a row for a file that did
+not work. See {doc}`error_handling`
 
 ## New user-facing text
 

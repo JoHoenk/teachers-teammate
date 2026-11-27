@@ -17,13 +17,14 @@ from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout, QWidget
 
 from ..application.composition import AppServices
 from ..application.sent_text import SentTexts
+from ..messages import message_of
 from ..texts import dialogs as dlg
 from ..texts import privacy
-from . import _dialogs
 from ._background import LatestTask
 from ._check_controller import CheckController
 from ._config_panel import ConfigPanel
 from ._error_text import spacy_problem
+from ._errors import show_failure, show_notice
 from ._privacy_settings import display_anonymized, set_display_anonymized
 from ._results_table import ResultsTable
 from ._what_is_sent_dialog import WhatIsSentDialog
@@ -170,7 +171,7 @@ class PrivacyViewController(QObject):
         row = self._table.row_for(source_id)
         name = row.name if row is not None else Path(source_id).name
         if not self._table.has_text(source_id):
-            _dialogs.notify(self._window, privacy.what_is_sent_without_text())
+            show_notice(self._window, privacy.what_is_sent_without_text())
             return
 
         config = self._panel.lookup_config()
@@ -191,12 +192,14 @@ class PrivacyViewController(QObject):
         def _on_done(result: object, error: BaseException | None) -> None:
             busy.accept()
             if error is not None:
-                _dialogs.notify(
-                    self._window, privacy.what_is_sent_failed(spacy_problem(error) or str(error))
+                show_failure(
+                    self._window,
+                    privacy.what_is_sent_failed(spacy_problem(error) or str(message_of(error))),
+                    error,
                 )
                 return
             if not isinstance(result, SentTexts):
-                _dialogs.notify(self._window, privacy.what_is_sent_unreadable())
+                show_notice(self._window, privacy.what_is_sent_unreadable())
                 return
             self.show_what_is_sent(result, name)
 

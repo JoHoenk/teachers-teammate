@@ -4,7 +4,7 @@
 
 The window has two tabs:
 
-- **Documents** — the workflow panel on the left, the results list and the log on the right.
+- **Documents** — the workflow panel on the left, the results list on the right.
 - **Check** — one document at a time: the scan on the left, the text in the middle, the
   corrections on the right. Double-click a row in the results list (or press Enter) to open it;
   **Esc** or **Ctrl+1** goes back to **Documents**, **Ctrl+2** returns to the open document.
@@ -26,6 +26,10 @@ green by itself once the problem is solved.
 
 **Menus:** **File** (open a folder or files, export, quit), **Settings** (opens the Settings window
 on a page), **Tools** (Setup Assistant, System Monitor, Benchmark) and **Help**.
+
+A line at the bottom of the window says what last happened: a document saved, results expired,
+models downloaded. It keeps the last line only; the log file (*What the app writes down*) keeps
+them all.
 
 ---
 

@@ -204,17 +204,17 @@ def readiness_downloading(model: str) -> str:
     return f"Downloading {model}"
 
 
-# ── The lines an export writes to the log ─────────────────────────────────────
+# ── What an export says in the status bar ─────────────────────────────────────
 
 
 def docx_saved(path: object) -> str:
-    """Return the log line for a Word document written to *path*."""
-    return f"DOCX saved: {path}\n"
+    """Return the line that says a Word document was written to *path*."""
+    return f"Word document saved: {path}"
 
 
 def text_saved(path: object) -> str:
-    """Return the log line for a text file written to *path*."""
-    return f"Text saved: {path}\n"
+    """Return the line that says a text file was written to *path*."""
+    return f"Text file saved: {path}"
 
 
 # ── The four steps' headers: a numbered title and what the step is for ────────
@@ -241,55 +241,49 @@ STEP_WHAT_TOOLTIP = (
 STEP_RESULTS_TITLE = "4  Results"
 STEP_RESULTS_TOOLTIP = "Where the results are saved, and which files a run creates there."
 
-# ── The lines the window writes to its log ────────────────────────────────────
+# ── What the window says in its status bar ────────────────────────────────────
+#
+# A line here answers the last thing the teacher did: a file written, a model arrived, the
+# settings saved.  A failure is a notice (``gui/_errors.py``), and a warning is in the log.
 
-LOG_READER_DOWNLOADED = "The built-in reader is downloaded.\n"
-LOG_PAGE_MODELS_DOWNLOADED = "The page models are downloaded.\n"
-
-
-def log_settings_loaded(path: object) -> str:
-    """Return the log line for the settings file that was read from *path*."""
-    return f"Loaded settings from {path}\n"
+READER_DOWNLOADED = "The built-in reader is downloaded."
+PAGE_MODELS_DOWNLOADED = "The page models are downloaded."
 
 
-def log_settings_not_loaded(path: object, reason: BaseException) -> str:
-    """Return the log line for a settings file at *path* that could not be read."""
-    return f"WARNING: Could not load {path}: {reason}\n"
+def settings_loaded(path: object) -> str:
+    """Return the line that says the settings were read from *path*."""
+    return f"Loaded settings from {path}"
 
 
-def log_notice(body: str) -> str:
-    """Return the log line for a notice about a saved setting."""
-    return f"NOTICE: {body}\n"
+def settings_saved(path: object) -> str:
+    """Return the line that says the settings were written to *path*."""
+    return f"Settings saved to {path}"
 
 
-def log_stored_results_expired(count: int) -> str:
-    """Return the log line for the stored results the retention dropped."""
+def settings_backup(path: object) -> str:
+    """Return the line that names the copy of a settings file that could not be read."""
+    return f"A copy of the unreadable settings file is at {path}"
+
+
+def stored_results_expired(count: int) -> str:
+    """Return the line that says the retention dropped the stored results of *count* files."""
     what = "1 document" if count == 1 else f"{count} documents"
-    return f"Deleted the stored results of {what} that were older than the retention\n"
+    return f"Deleted the stored results of {what} that were older than the retention"
 
 
-LOG_STORED_RESULTS_KEPT = "WARNING: A run is going, so the stored results were not expired\n"
-"""The log line for stored results the retention left alone."""
+def stored_results_kept() -> str:
+    """Return the log line for stored results the retention left alone."""
+    return "A run is going, so the stored results were not expired"
 
 
-def log_settings_saved(path: object) -> str:
-    """Return the log line for the settings file written to *path*."""
-    return f"Settings saved to {path}\n"
-
-
-def log_settings_backup(path: object) -> str:
-    """Return the log line naming the copy of a settings file that could not be read."""
-    return f"A copy of the unreadable settings file is at {path}\n"
-
-
-def log_settings_backup_failed(path: object, reason: BaseException) -> str:
-    """Return the log line for a settings file that could not be copied either."""
-    return f"WARNING: Could not keep a copy of {path}: {reason}\n"
-
-
-def log_settings_save_refused(path: object) -> str:
+def settings_save_refused(path: object) -> str:
     """Return the log line for a save refused because the file could not be read."""
-    return f"The settings were not saved over {path}, which could not be read\n"
+    return f"The settings were not saved over {path}, which could not be read"
+
+
+def setting_notice(key: str, kind: str) -> str:
+    """Return the log line for a saved setting the app did not use as written."""
+    return f"NOTICE: the saved setting {key!r} was not used as written ({kind})"
 
 
 def export_would_overwrite(source_name: str, out_name: str) -> str:

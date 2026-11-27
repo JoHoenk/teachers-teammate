@@ -21,17 +21,17 @@ from ..application.composition import AppServices
 from ..config import Config
 from ..domain.ollama_discovery import WaitDetail
 from ..domain.performance_estimate import TimeRange
-from ..domain.run_summary import FileStatus, KeepAwakeState, RunSummary
+from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..domain.stages import Stage
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts import main_window as txt
 from ..texts import run
 from ..texts.run import BATTERY_WARNING
-from . import _dialogs, _handles
+from . import _handles
 from ._background import LatestTask
 from ._chart_widget import ChartWidget
-from ._log_widget import LogWidget
+from ._errors import show_notice
 from ._qt import present
 from ._results_table import ResultsTable
 from ._run_session import (
@@ -52,7 +52,6 @@ CLOSE_GRACE_MS = 3000
 class WorkerLike(Protocol):
     """What the controller asks of the object that runs the batch (a test may pass its own)."""
 
-    log_line: Any
     file_started: Any
     stage_started: Any
     ocr_done: Any
@@ -97,8 +96,8 @@ class RunHooks:
     """Bring the Documents tab to the front."""
     enable_export: Callable[[], None]
     """Let the Export button be pressed: there is a result now."""
-    notify: Callable[[str, bool], None]
-    """Say how the run ended; the flag asks for the warning icon."""
+    announce: Callable[[str, bool], None]
+    """Say how the run ended in the tray; the flag asks for the warning icon."""
     worker_factory: Callable[[], Any]
     """The worker class to start, or ``None`` for the real one (a test may replace it)."""
     preflight_running: Callable[[], bool]
@@ -115,7 +114,6 @@ class RunController(QObject):
         services: AppServices,
         table: ResultsTable,
         session: RunSession,
-        log: LogWidget,
         chart: ChartWidget,
         hooks: RunHooks,
     ) -> None:
@@ -124,7 +122,6 @@ class RunController(QObject):
         self._services = services
         self._table = table
         self._session = session
-        self._log = log
         self._chart = chart
         self._hooks = hooks
         style = present(window.style(), "style")
@@ -202,7 +199,7 @@ class RunController(QObject):
 
     def warn_busy(self) -> None:
         """Say on the window that a run is already going."""
-        _dialogs.notify(self._window, dlg.busy_with_run())
+        show_notice(self._window, dlg.busy_with_run())
 
     def on_stop_clicked(self) -> None:
         """First click: finish the document being processed; second click: stop at once."""
@@ -228,7 +225,6 @@ class RunController(QObject):
             return
         worker.request_stop(now=True)
         for name in (
-            "log_line",
             "file_started",
             "stage_started",
             "ocr_done",
@@ -252,7 +248,6 @@ class RunController(QObject):
         """Start an OCR worker for *selected_source_ids*; *files* are their queued files."""
         if files is None:
             files = self._hooks.queued_files(selected_source_ids)
-        self._log.clear_log()
         self._hooks.save_settings(notify=False)
         self._table.set_output_dir(config.output_dir)
         self._chart.clear_data()
@@ -283,7 +278,6 @@ class RunController(QObject):
             files,
             app_service=self._services,
         )
-        self._worker.log_line.connect(self._log.append_text)
         self._worker.file_started.connect(self._on_file_started)
         self._worker.stage_started.connect(self._on_stage_started)
         self._worker.ocr_done.connect(self._on_ocr_done)
@@ -464,9 +458,8 @@ class RunController(QObject):
         source_id = outcome.source_id
         self._table.add_result(event)
         self._hooks.enable_export()
-        # A skipped or stopped file is not an error: its row says why, the final line counts it.
-        if outcome.status is FileStatus.FAILED and outcome.error:
-            _dialogs.notify(self._window, dlg.processing_error(outcome.name, outcome.error))
+        # A failed, skipped or stopped file is not a question: its row says why, and the final
+        # line and the tray count them.  One box per failed file would cover the window.
         self._session.file_done(event)
         self._set_steps_done(self._session.steps_done())
         self._set_progress_text(self._session.progress_base)
@@ -510,4 +503,4 @@ class RunController(QObject):
         else:
             self._hooks.apply_lock()
         self._hooks.update_check_tab()
-        self._hooks.notify(text.tray, text.tone is RunTone.WARNING)
+        self._hooks.announce(text.tray, text.tone is RunTone.WARNING)

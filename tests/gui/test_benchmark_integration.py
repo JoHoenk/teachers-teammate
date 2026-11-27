@@ -41,9 +41,10 @@ class _SyncWorker:
         self._source, self._ocr, self._language = source, ocr, language
         self._ollama_url = ollama_url
         self._service = app_service
-        self.log_line = _SyncSignal()
+        self.progress = _SyncSignal()
         self.finished_ok = _SyncSignal()
         self.finished_err = _SyncSignal()
+        self.finished_stopped = _SyncSignal()
         self.stop_event = threading.Event()
 
     def isRunning(self) -> bool:

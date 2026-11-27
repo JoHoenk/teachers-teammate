@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from pathlib import Path
 from teachers_teammate.domain.install_item import InstallItem, InstallKind
 from teachers_teammate.domain.stages import Stage
@@ -338,6 +339,37 @@ def test_a_stopped_file_opens_no_error_dialog_and_shows_where_it_stopped(
     assert main_window._results_table.item(0, 1).text() == "stopped"
     assert "Stopped before the text was read." in main_window._results_table.item(0, 1).toolTip()
     assert main_window._results_table.item(0, 0).background().color().name() == "#2b2b2b"
+
+
+@pytest.mark.gui
+def test_a_run_whose_files_failed_asks_nothing_and_counts_them(main_window, monkeypatch) -> None:
+    """
+    Given  three files of a run that each failed
+    When   the run reports them and ends
+    Then   no box opens for any of them, and the bar says how many failed
+    """
+    shown = record_notices(monkeypatch)
+    monkeypatch.setattr(main_window._app_service.documents, "load_view", lambda *_a, **_k: None)
+    failed = ("a.png", "b.png", "c.png")
+    main_window._results_table.set_queue([queue_row(f"/tmp/{name}", name) for name in failed])
+
+    for name in failed:
+        main_window._run_controller._on_file_done(
+            FileDoneEvent(
+                outcome=FileOutcome(
+                    source_id=f"/tmp/{name}",
+                    name=name,
+                    status=FileStatus.FAILED,
+                    error="OCR failed",
+                ),
+                ocr_s=1.0,
+                correction_s=0.0,
+            )
+        )
+    main_window._run_controller._on_run_finished(RunSummary(failed=failed))
+
+    assert shown == []
+    assert main_window._progress.format() == "Finished with errors — 3 failed"
 
 
 @pytest.mark.gui
@@ -871,7 +903,7 @@ def test_main_window_save_settings_logs_success(main_window, tmp_path, monkeypat
     """
     Given  a MainWindow with a config_path pointing to a writable location
     When   _save_settings() is called
-    Then   the log shows 'Settings saved'
+    Then   the status bar says the settings were saved
     """
     out = tmp_path / "ocr.toml"
     main_window._settings_file._config_path = out
@@ -879,7 +911,7 @@ def test_main_window_save_settings_logs_success(main_window, tmp_path, monkeypat
     main_window._save_settings()
 
     assert out.exists()
-    assert "Settings saved" in main_window._log.toPlainText()
+    assert "Settings saved" in main_window.statusBar().currentMessage()
 
 
 @pytest.mark.gui
@@ -1429,11 +1461,13 @@ def test_help_opens_the_folder_the_log_is_written_to(main_window, monkeypatch, t
     When   Help → Open Log Folder is triggered
     Then   the file manager is sent exactly that folder
     """
+    from teachers_teammate.gui import _errors  # noqa: PLC0415
+
     folder = tmp_path / "data" / "logs"
     opened: list[str] = []
-    monkeypatch.setattr(main_window_module, "log_folder", lambda: folder)
+    monkeypatch.setattr(_errors, "log_folder", lambda: folder)
     monkeypatch.setattr(
-        main_window_module.QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile())
+        _errors.QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile())
     )
 
     main_window._menu_bar.log_folder_action.trigger()
@@ -1936,7 +1970,13 @@ def test_the_preview_opens_on_top_of_the_settings_window(main_window, monkeypatc
     owner.show()
 
     main_window._preprocess_preview._on_done(
-        Path("a.png"), Path("b.png"), ["deskew"], "", OcrConfig(), Path("/tmp/none"), parent=owner
+        Path("a.png"),
+        Path("b.png"),
+        ["deskew"],
+        None,
+        OcrConfig(),
+        Path("/tmp/none"),
+        parent=owner,
     )
 
     assert created == [owner]
@@ -2503,18 +2543,16 @@ def test_first_start_selects_best_models_for_profile(qtbot, monkeypatch, tmp_pat
         gpu_name="RTX 4090",
         memory_gb=24.0,
     )
+    shown = record_notices(monkeypatch)
     win = _make_first_start_window(qtbot, monkeypatch, tmp_path, detection)
-    qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
+    qtbot.waitUntil(lambda: bool(shown), timeout=5000)
 
     settings = win._config_panel.get_settings_dict()
     best_16gb = RECOMMENDED["general"][HardwareProfile.CARD_16GB][0]  # not the default: 8 GB
     assert settings["ocr_model"] == DEFAULT_OCR_MODEL
     assert settings["correction_model"] == best_16gb
     assert settings["evaluate_model"] == best_16gb
-    assert (
-        f"chose reading model {DEFAULT_OCR_MODEL} and writing model {best_16gb}"
-        in win._log.toPlainText()
-    )
+    assert best_16gb in shown[0].body
     saved = (tmp_path / "ocr.toml").read_text(encoding="utf-8")
     assert f'ocr_model = "{DEFAULT_OCR_MODEL}"' in saved
 
@@ -2584,8 +2622,9 @@ def test_first_start_non_ollama_correction_provider_untouched(
         gpu_name="RTX 4090",
         memory_gb=24.0,
     )
+    shown = record_notices(monkeypatch)
     win = _make_first_start_window(qtbot, monkeypatch, tmp_path, detection)
-    qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
+    qtbot.waitUntil(lambda: bool(shown), timeout=5000)
     settings = win._config_panel.get_settings_dict()
     assert settings["correction_model"] == DEFAULTS["correction_model"]
     assert settings["ocr_model"] == DEFAULT_OCR_MODEL  # ocr provider still updated
@@ -2608,8 +2647,9 @@ def test_cancelling_the_assistant_on_a_first_start_keeps_todays_setup(
         gpu_name="RTX 4090",
         memory_gb=24.0,
     )
-    win = _make_first_start_window(qtbot, monkeypatch, tmp_path, detection)
-    qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
+    shown = record_notices(monkeypatch)
+    _make_first_start_window(qtbot, monkeypatch, tmp_path, detection)
+    qtbot.waitUntil(lambda: bool(shown), timeout=5000)
 
     saved = (tmp_path / "ocr.toml").read_text(encoding="utf-8")
     best_16gb = RECOMMENDED["general"][HardwareProfile.CARD_16GB][0]
@@ -3521,7 +3561,7 @@ def test_local_ocr_engine_in_saved_settings_is_not_announced(
 
 @pytest.mark.gui
 def test_an_unusable_saved_value_is_logged_not_shown_as_a_dialog(
-    qtbot, monkeypatch, tmp_path: Path
+    qtbot, monkeypatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """
     Given  a settings file with a usable setting and a value its key cannot take (a text for
@@ -3535,12 +3575,13 @@ def test_an_unusable_saved_value_is_logged_not_shown_as_a_dialog(
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, _: config_path)
 
-    win = MainWindow(app_service=real_service())
-    qtbot.addWidget(win)
+    with caplog.at_level(logging.INFO, logger="teachers_teammate.gui._settings_file"):
+        win = MainWindow(app_service=real_service())
+        qtbot.addWidget(win)
 
     assert shown == []
-    log = win._log.toPlainText()
-    assert "The saved setting “debug” has a value the app cannot use (false)" in log
+    log = "\n".join(record.getMessage() for record in caplog.records)
+    assert "the saved setting 'debug' was not used as written (value_ignored)" in log
     assert "Traceback" not in log and "ValueError" not in log
 
 
@@ -3733,6 +3774,26 @@ def test_export_text_writes_one_file_per_row_and_skips_rows_without_text(
     assert (out / "b.txt").read_text(encoding="utf-8") == "beta"
     assert not (out / "c.txt").exists()
     assert "c.png" in warnings[0].body
+
+
+@pytest.mark.gui
+def test_a_text_export_says_where_it_saved_in_the_status_bar(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  two rows with extracted text
+    When   the text export writes its files
+    Then   the status bar names the file that was written last
+    """
+    out = tmp_path / "out"
+    ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "alpha", "b.png": "beta"})
+    _pick_folder(monkeypatch, out)
+    record_notices(monkeypatch)
+
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
+    _wait_for(lambda: not main_window._export_controller.running and (out / "b.txt").exists())
+
+    assert str(out / "b.txt") in main_window.statusBar().currentMessage()
 
 
 @pytest.mark.gui

@@ -22,6 +22,7 @@ from ._types import (
     NoticeKind,
     Question,
     QuestionKind,
+    StandardButton,
     cancel,
     yes_no,
 )
@@ -259,11 +260,6 @@ def text_export_error(message: str, skipped: Sequence[str] = ()) -> Notice:
     return Notice("Export Text", message, NoticeKind.WARNING)
 
 
-def processing_error(name: str, message: str) -> Notice:
-    """Tell the teacher that one document could not be processed."""
-    return Notice("Processing error", f"{name}:\n\n{message}", NoticeKind.WARNING)
-
-
 def model_download_failed(message: str) -> Notice:
     """Tell the teacher that a model could not be downloaded."""
     return Notice("Model download failed", message, NoticeKind.WARNING)
@@ -381,6 +377,55 @@ def key_not_in_keychain(services: str) -> Notice:
 def no_document() -> Notice:
     """Tell the teacher that the Benchmark window has no document yet."""
     return Notice("No document", "Choose a document first.")
+
+
+def ollama_not_started(reason: str) -> Notice:
+    """Tell the teacher that Ollama did not start when they asked for it."""
+    return Notice(
+        "Ollama did not start",
+        f"The app tried to start Ollama, but that failed:\n\n{reason}\n\n"
+        "Start it yourself, then choose Check again.",
+        NoticeKind.WARNING,
+    )
+
+
+def benchmark_run_failed(reason: str) -> Notice:
+    """Tell the teacher that a benchmark run stopped without a stored result."""
+    return Notice("The benchmark could not run", reason, NoticeKind.WARNING)
+
+
+def first_start_models(reading_model: str, writing_model: str | None, profile: str) -> Notice:
+    """Tell the teacher which models the first start chose for this computer.
+
+    *writing_model* is ``None`` when the first start left the writing models alone.
+    """
+    chosen = f"reads with {reading_model}"
+    if writing_model:
+        chosen += f" and writes with {writing_model}"
+    return Notice(
+        "Your models are set",
+        f"This computer {chosen} ({profile}).\n\n"
+        f"{WHERE_ADDONS} shows what is installed and what can be downloaded.",
+    )
+
+
+#: The button of :func:`unexpected_error` that shows where the app wrote the failure down.
+OPEN_LOG_FOLDER_CHOICE = Choice(label="Open Log Folder", id="open_log_folder")
+
+
+def unexpected_error() -> Question:
+    """Tell the teacher that something went wrong in a way the app did not expect.
+
+    The failure itself is in the log file, worded for whoever helps; the teacher is offered the
+    folder it lies in, so they can send it on.
+    """
+    return Question(
+        "Something went wrong",
+        "The app ran into an error it did not expect. It wrote down what happened in its log "
+        "file — send that file to whoever helps you if this keeps happening.",
+        (Choice(standard=StandardButton.OK), OPEN_LOG_FOLDER_CHOICE),
+        kind=QuestionKind.WARNING,
+    )
 
 
 # ── Questions: what the app asks a teacher ────────────────────────────────────

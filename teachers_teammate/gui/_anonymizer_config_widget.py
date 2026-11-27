@@ -34,8 +34,8 @@ from ..domain.local_models import PRIVACY_ADDON_ID
 from ..messages import log_failure
 from ..texts import dialogs as dlg
 from ..texts import privacy
-from . import _dialogs
 from ._background import LatestTask
+from ._errors import show_notice
 
 _logger = logging.getLogger(__name__)
 
@@ -485,7 +485,7 @@ class AnonymizerConfigWidget(QWidget):
         from ._addon_installer_dialog import SpacyModelDownloadDialog  # noqa: PLC0415
 
         if not self._app_service.addons.is_addon_available(PRIVACY_ADDON_ID):
-            _dialogs.notify(self.window(), dlg.spacy_not_installed())
+            show_notice(self.window(), dlg.spacy_not_installed())
             return
 
         dialog = SpacyModelDownloadDialog(needed_model, self.window(), service=self._app_service)

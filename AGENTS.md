@@ -65,6 +65,9 @@ service per topic; the only entry for GUI and CLI; does not import `texts/`) →
 - Log once, where the error is handled; never log and re-raise. A catch-all and a failure shown to
   the teacher log through `messages.log_failure`. `docs/error_handling.md` has the rest: expected
   errors against bugs, and the process's nets.
+- The GUI shows a failure only through `gui/_errors.py`; a failed file gets its row and the
+  end-of-run line, never a dialog. A success line goes to the status bar: the window keeps no log
+  pane.
 
 **Results and caches**
 - `raw_text` / `correction_text` are plain or Markdown: use `TextFormatter.plain_text` / `.document`

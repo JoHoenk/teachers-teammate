@@ -10,7 +10,8 @@ everything.
 - **The log file** (`<data root>/logs/teachers-teammate.log`, rotated, four files) is the full
   record: what failed, where, and with which kind of error. It leaves the computer — a teacher
   sends it to whoever helps — so no line holds a document's text, a prompt or a key
-  (`tests/unit/test_log_lines_carry_no_text.py`).
+  (`tests/unit/test_log_lines_carry_no_text.py`). Help → Open Log Folder… opens the folder it
+  sits in.
 
 ## Log once, where it is handled
 
@@ -56,16 +57,43 @@ task, and `OCRWorker`, `BenchmarkWorker` and `LongJobThread` log a crashed run b
 report it. A catch-all that shows the teacher a failure (an export, the settings file, a
 preview) logs it as well. A caller therefore decides only what the teacher is shown.
 
+## One surface in the window
+
+`gui/_errors.py` is the only module that shows a failure, and it shows it through
+`gui/_dialogs.py`:
+
+- `show_failure(parent, notice, error=None)` writes *error* down and shows *notice*. The line goes
+  through `messages.log_once`, so a failure a catch point already wrote (a background task, a run's
+  per-file net) is not written twice.
+- `show_unexpected(parent, error)` shows `dlg.unexpected_error()`: a plain sentence about a bug and
+  the choice "Open Log Folder". The error's kind and frames are in the file already, and its own
+  words stay out of the window, since they can quote the document that choked it. One such notice
+  at a time, and the same kind of bug not again within ten seconds — a bug in a slot that fires with
+  every key press must not bury the teacher in boxes.
+- `show_unexpected_anywhere(error)` is what `start_logging` calls as `on_unexpected`: it queues the
+  bug from whichever thread it ended on to the GUI thread, through the bridge `install_notices()`
+  makes.
+- `show_notice(parent, notice)` carries a sentence that reports no failure.
+
+A failed file is never a dialog. The row says why (`_results_table._warning_text`), and the
+end-of-run line and the tray count the failures. A run with every file failed leaves the teacher
+one line, not thirty boxes.
+
+An installer and the Benchmark window keep a pane of their own, but it shows progress — pip's
+output, the steps of a benchmark run. When pip fails, the last twenty lines of it go to the log at
+WARNING (`addon_manager.PIP_FAILURE_LINES`), since the pane closes with the dialog. That is the
+child process's output, not the error: the handler still logs the error once.
+
 ## Where an event goes
 
 | Kind | Example | Teacher sees | Log |
 |---|---|---|---|
 | Expected, one file | a stage failed, a file was skipped | the row, the end-of-run line | the `Message` |
-| Expected, one action | save, export or settings load failed | a dialog | WARNING, the `Message` |
+| Expected, one action | save, export or settings load failed | one notice | WARNING, the `Message` |
 | Environment state | Ollama unreachable, model missing | the readiness line | WARNING once per change |
-| Bug | any other exception | — | ERROR, type and frames |
+| Bug | any other exception | one notice, with "Open Log Folder" | ERROR, type and frames |
 | Native crash | a segfault in a reader or in Qt | — | `logs/crash.log` |
-| Success, progress | DOCX saved, `[3/10] Processing` | status line, progress bar, row | INFO |
+| Success, progress | DOCX saved, `[3/10] Processing` | status bar, progress bar, row | INFO |
 
 ## How much the file holds
 
@@ -87,6 +115,11 @@ A start can decide the detail instead of the setting, which is what a support ca
 `--diagnose`, which means Detailed. The flag wins over the environment, the environment over the
 setting, and an override holds for the whole session. The General page offers Normal and Detailed;
 `errors` is reachable by the flag and the environment.
+
+The window keeps no pane of log lines: a run's story is kept in the file alone (logger
+`RUN_LOGGER`), where a `Reporter` line is status at INFO, warning at WARNING and error at ERROR.
+What the teacher watches of a run is the progress bar, the rows and the status bar, which shows
+the last success line — a document saved, a stored result expired.
 
 The first line of a start places the lines below it: version, operating system, whether this is the
 frozen build, the data root, and the detail in force. A path under the home folder is written as

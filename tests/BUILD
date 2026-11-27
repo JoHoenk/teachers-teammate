@@ -795,6 +795,12 @@ app_test(
     data = ["//teachers_teammate:all_sources"],
 )
 
+# The window keeps no log pane: the log file holds the record, the status bar the last line.
+app_test(
+    "unit/test_no_log_pane.py",
+    data = ["//teachers_teammate:all_sources"],
+)
+
 # A start-up failure is worded for a teacher: each entry point installs the wording first.
 app_test(
     "unit/test_wording_is_installed.py",
@@ -1800,6 +1806,12 @@ app_test(
 
 app_test(
     "gui/test_gui_error_hooks.py",
+    size = "medium",
+    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+app_test(
+    "gui/test_gui_errors.py",
     size = "medium",
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )

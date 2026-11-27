@@ -41,6 +41,7 @@ from .exceptions import ConfigFileParseError
 from .settings_schema import (
     DEFAULTS,
     LoadedSettings,
+    LogDetail,
     normalize_ocr_engine,
     normalize_ocr_model,
     normalize_preprocess_method,
@@ -170,6 +171,9 @@ class Config:
     # How many days the results of earlier runs are kept; 0 = no expiry.  The window applies it
     # once at start and no run reads it.
     results_keep_days: int = DEFAULTS["results_keep_days"]
+    # How much of what the app knows goes into its log file.  The log applies it; no pipeline
+    # step reads it, and it is in no fingerprint.
+    log_detail: LogDetail = DEFAULTS["log_detail"]
 
     # ── Anonymizer ───────────────────────────────────────────────────────────
     # None = derive the spaCy model from the document language ("Auto")
@@ -218,6 +222,7 @@ class Config:
             keep_awake=get("keep_awake"),
             check_for_updates=get("check_for_updates"),
             results_keep_days=get("results_keep_days"),
+            log_detail=get("log_detail"),
             correction_enabled=get("correction_enabled"),
             anonymization_enabled=get("anonymization_enabled"),
             correction_provider=get("correction_provider"),

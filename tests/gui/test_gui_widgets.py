@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QLabel
+
+from teachers_teammate.interfaces import RUN_LOGGER
 
 # ── CollapsibleSection ────────────────────────────────────────────────────
 
@@ -204,6 +207,63 @@ def test_log_widget_append_multiple_lines(qtbot) -> None:
     assert "WARNING" in text
     assert "ERROR" in text
     assert "Done" in text
+
+
+@pytest.mark.gui
+def test_install_run_log_shows_the_runs_own_lines(qtbot) -> None:
+    """
+    Given  a LogWidget the window installed as the view of the run's logger
+    When   the run writes a status line and a warning
+    Then   the pane holds both, the warning saying what it is
+    """
+    from teachers_teammate.gui._log_widget import LogWidget, install_run_log  # noqa: PLC0415
+
+    lw = LogWidget()
+    qtbot.addWidget(lw)
+    handler = install_run_log(lw)
+    run_logger = logging.getLogger(RUN_LOGGER)
+    was_level, was_propagate = run_logger.level, run_logger.propagate
+    run_logger.setLevel(logging.INFO)
+    run_logger.propagate = False
+    try:
+        run_logger.info("Processing [1/2] a.png")
+        run_logger.warning("a.png failed")
+    finally:
+        run_logger.setLevel(was_level)
+        run_logger.propagate = was_propagate
+        handler.close()
+
+    text = lw.toPlainText()
+    assert "Processing [1/2] a.png" in text
+    assert "WARNING: a.png failed" in text
+
+
+@pytest.mark.gui
+def test_closed_run_log_takes_no_more_lines(qtbot) -> None:
+    """
+    Given  a pane handler the window closed with itself
+    When   the run's logger writes again
+    Then   the pane stays as it was and the logger holds no handler
+    """
+    from teachers_teammate.gui._log_widget import LogWidget, install_run_log  # noqa: PLC0415
+
+    lw = LogWidget()
+    qtbot.addWidget(lw)
+    handler = install_run_log(lw)
+    run_logger = logging.getLogger(RUN_LOGGER)
+    was_level, was_propagate = run_logger.level, run_logger.propagate
+    run_logger.setLevel(logging.INFO)
+    run_logger.propagate = False
+    try:
+        run_logger.info("Processing [1/2] a.png")
+        handler.close()
+        run_logger.info("Processing [2/2] b.png")
+    finally:
+        run_logger.setLevel(was_level)
+        run_logger.propagate = was_propagate
+
+    assert "b.png" not in lw.toPlainText()
+    assert handler not in run_logger.handlers
 
 
 # ── DiffWidget ────────────────────────────────────────────────────────────

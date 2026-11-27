@@ -711,6 +711,7 @@ def process_logging_untouched(monkeypatch: pytest.MonkeyPatch):
     root = logging.getLogger()
     handlers_before = list(root.handlers)
     level_before = root.level
+    package_before = logging.getLogger("teachers_teammate").level
     monkeypatch.setattr(sys, "excepthook", sys.excepthook)
     monkeypatch.setattr(threading, "excepthook", threading.excepthook)
     monkeypatch.setattr(sys, "unraisablehook", sys.unraisablehook)
@@ -726,4 +727,5 @@ def process_logging_untouched(monkeypatch: pytest.MonkeyPatch):
             handler.close()
             root.removeHandler(handler)
     root.setLevel(level_before)
+    logging.getLogger("teachers_teammate").setLevel(package_before)
     logging_setup._installed = logging_setup._Installed()

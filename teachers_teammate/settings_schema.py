@@ -72,6 +72,23 @@ _DEFAULT_EVALUATE_PROMPT = (
 )
 
 
+class LogDetail(StrEnum):
+    """How much the app writes into its log file.
+
+    A teacher chooses the middle one in the window; the other two are for a start that has to be
+    read afterwards (``--log-level``, ``TEACHERS_TEAMMATE_LOG_LEVEL``, ``--diagnose``).
+    """
+
+    ERRORS = "errors"
+    """Only what went wrong: every warning and error, and nothing else."""
+
+    NORMAL = "normal"
+    """What a run did, in order, and every warning of the app; other libraries only warn."""
+
+    DETAILED = "detailed"
+    """Everything the app says, and what the libraries it uses say at INFO."""
+
+
 class SettingScope(StrEnum):
     """Who reads a setting, and therefore where it is stored."""
 
@@ -176,6 +193,18 @@ def _member_of[E: StrEnum](kind: type[E]) -> Callable[[object], E]:
             raise ValueError(f"'{value}' is not one of {allowed}") from None
 
     return normalize
+
+
+def log_detail_of(value: object) -> LogDetail:
+    """Return *value* as a log detail, the default for anything that is not one.
+
+    The window reads the level it applied back to show it; a value it cannot place is the
+    default rather than a failed start.
+    """
+    try:
+        return _member_of(LogDetail)(value)
+    except ValueError:
+        return LogDetail.NORMAL
 
 
 def _provider_of(task: Stage) -> Callable[[object], str]:
@@ -337,6 +366,10 @@ SETTINGS: tuple[Setting, ...] = (
     # How long the results of earlier runs stay, in days; 0 = keep them.  The window applies it
     # once at start, so turning it on never deletes anything mid-run.
     Setting("results_keep_days", 0, SettingScope.APP, _count_between(*RESULTS_KEEP_DAYS_RANGE)),
+    # How much of what the app knows goes into its log file, for whoever helps a teacher read it.
+    # The log applies it; a flag or the environment decides instead at start (--log-level,
+    # --diagnose, TEACHERS_TEAMMATE_LOG_LEVEL).
+    Setting("log_detail", LogDetail.NORMAL, SettingScope.APP, _member_of(LogDetail)),
     # ── Preprocessing (image preparation and PDF rendering) ───────────────────
     Setting("pdf_render_dpi", 300, SettingScope.RUN, _count_between(*PDF_RENDER_DPI_RANGE)),
     Setting("pdf_text_layer", "auto", SettingScope.RUN, _pdf_text_layer),

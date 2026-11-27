@@ -28,7 +28,8 @@ from teachers_teammate.gui.check._side_panel import (
     _BAR_WIDTH,
     _category_of,
     _column_rects,
-    _icon_of,
+    _filter_key,
+    _bullet_of,
     _legend_html,
     _row_font,
 )
@@ -175,7 +176,7 @@ def test_an_item_not_looked_at_has_the_bullet(qtbot) -> None:
     """
     panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
 
-    assert _icon_of(panel._rows[0], looked_at=frozenset()) == _style.TODO_DOT
+    assert _bullet_of(panel._rows[0], looked_at=frozenset()) == _style.TODO_DOT
 
 
 @pytest.mark.gui
@@ -190,8 +191,8 @@ def test_a_looked_at_item_has_neither_the_bullet_nor_the_bold(qtbot) -> None:
     panel = _panel(qtbot, doc)
 
     assert panel._delegate.looked_at == frozenset({"edit:1"})
-    assert _icon_of(panel._rows[0], looked_at=panel._delegate.looked_at) == ""
-    assert _row_font(panel._list.font(), looked_at=True).bold() is False
+    assert _bullet_of(panel._rows[0], looked_at=panel._delegate.looked_at) == ""
+    assert _row_font(panel._list.font(), panel._rows[0], looked_at=True).bold() is False
     assert panel._counts.text() == "1 correction \u00b7 1 of 1 looked at"
 
 
@@ -204,8 +205,9 @@ def test_a_row_not_looked_at_is_drawn_bold(qtbot) -> None:
     """
     panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
 
-    assert _row_font(panel._list.font(), looked_at=False).bold() is True
-    assert _row_font(panel._list.font(), looked_at=True).bold() is False
+    row = panel._rows[0]
+    assert _row_font(panel._list.font(), row, looked_at=False).bold() is True
+    assert _row_font(panel._list.font(), row, looked_at=True).bold() is False
 
 
 @pytest.mark.gui
@@ -213,12 +215,14 @@ def test_the_teachers_own_change_never_has_the_bullet(qtbot) -> None:
     """
     Given  a document whose only change is the teacher's own
     When   the side panel shows it
-    Then   the row has no bullet, since there is nothing for the teacher to look at
+    Then   the row has no bullet and is not bold, since there is nothing for the teacher to look at
     """
     panel = _panel(qtbot, _document(review=CorrectionReview(), machine=RAW))
 
-    assert panel._rows[0].kind is ItemKind.OWN
-    assert _icon_of(panel._rows[0], looked_at=frozenset()) == ""
+    own = panel._rows[0]
+    assert own.kind is ItemKind.OWN
+    assert _bullet_of(own, looked_at=frozenset()) == ""
+    assert _row_font(panel._list.font(), own, looked_at=False).bold() is False
 
 
 @pytest.mark.gui
@@ -1482,10 +1486,32 @@ def test_a_row_has_the_accent_of_its_kind_at_the_left_edge(qtbot, dark_theme) ->
     When   the list draws their rows
     Then   the bar at the left edge of each is the accent of its kind
     """
-    panel = _panel(qtbot, _walk_document(categories=("word_choice",) * 4))
-    green = QColor(_style.MARK_ACCENTS[ItemKind.CORRECTION])
+    review = CorrectionReview(
+        edits=(edit_note(edits(RAW, CORRECTED)[0], category="word_choice", explanation="Farbe."),),
+        unclear=(UnclearNote(22, 27, "Katze", "Unklar.", "Katze?"),),
+    )
+    panel = _panel(qtbot, _document(review=review))
+    assert [row.kind for row in panel._rows] == [ItemKind.CORRECTION, ItemKind.UNCLEAR]
 
-    assert _has_colour(_row_image(panel, 1), green)
+    for index, kind in enumerate((ItemKind.CORRECTION, ItemKind.UNCLEAR)):
+        image = _row_image(panel, index)
+        assert image.pixelColor(0, image.height() // 2) == QColor(_style.MARK_ACCENTS[kind])
+
+
+@pytest.mark.gui
+def test_the_bar_of_a_spelling_row_is_the_paler_accent(qtbot, dark_theme) -> None:
+    """
+    Given  a spelling change, which the text marks paler than other changes
+    When   the list draws its row
+    Then   its bar is the paler accent, so paler means the same in the list as in the text
+    """
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED, category="spelling")))
+    image = _row_image(panel, 0)
+
+    assert panel._rows[0].is_minor
+    assert image.pixelColor(0, image.height() // 2) == QColor(
+        _style.pale(_style.MARK_ACCENTS[ItemKind.CORRECTION])
+    )
 
 
 @pytest.mark.gui
@@ -1547,6 +1573,62 @@ def test_the_words_of_every_row_start_at_the_same_x(qtbot, dark_theme) -> None:
         return runs[1][0] if has_bullet else runs[0][0]
 
     assert words_start(bullet, has_bullet=True) == words_start(own, has_bullet=False)
+
+
+def _leftmost(image: QImage, colour: QColor) -> int:
+    """The x of the leftmost pixel of exactly *colour* in *image*, or -1."""
+    return next(
+        (
+            x
+            for x in range(image.width())
+            if any(image.pixel(x, y) == colour.rgb() for y in range(image.height()))
+        ),
+        -1,
+    )
+
+
+@pytest.mark.gui
+def test_looking_at_a_row_does_not_move_its_words_or_its_badge(qtbot, dark_theme) -> None:
+    """
+    Given  a correction not looked at, drawn bold with its bullet
+    When   the teacher looks at it, and it is drawn plain without the bullet
+    Then   the badge and the words stay where they were, so a row never jumps
+    """
+    panel = _panel(qtbot, _walk_document())
+    panel._list.setCurrentRow(-1)
+    qtbot.wait(10)
+    chip = QColor(_style.CHIP_BACKGROUND)
+
+    def drawn() -> tuple[list[tuple[int, int]], int]:
+        """The runs of ink right of the bar, and where the badge starts."""
+        image = _row_image(panel, 0)
+        background = image.pixelColor(_BAR_WIDTH + 1, 0)
+        return _ink_runs(image, background, after=_BAR_WIDTH + 1), _leftmost(image, chip)
+
+    (bullet, words), badge_before = drawn()[0][:2], drawn()[1]
+    panel.set_looked_at(frozenset({"edit:1"}), (1, 4))
+    qtbot.wait(10)
+    runs_after, badge_after = drawn()
+
+    assert bullet[1] < words[0]
+    assert badge_after == badge_before
+    assert runs_after[0][0] == words[0]
+
+
+@pytest.mark.gui
+def test_a_ticked_category_leaves_out_a_correction_the_teacher_took_out(qtbot) -> None:
+    """
+    Given  a document with two word choices, one of them taken out
+    When   the word choice box is ticked
+    Then   the box counts and shows the one that stands, since the other says *taken out*
+    """
+    panel = _panel(qtbot, _document(corrected=RAW, review=_note(RAW, CORRECTED)))
+    assert panel._rows[0].kind is ItemKind.TAKEN_OUT
+
+    assert _filter_key(panel._rows[0]) == ""
+    panel.set_filter("word_choice")
+
+    assert _shown_rows(panel) == []
 
 
 @pytest.mark.gui

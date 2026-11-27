@@ -32,7 +32,7 @@ from dataclasses import replace
 import html
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal, SignalInstance
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QBoxLayout,
@@ -136,8 +136,11 @@ def _filter_key(item: CheckItem) -> str:
     """Return the filter *item* answers to: its category, or the kind it has no category for.
 
     A change of the model without a category, or with one the boxes do not know, is filed under
-    ``"other"``; an item with neither — a change of the teacher's own — answers to no box at all.
+    ``"other"``; an item with neither — a change of the teacher's own — answers to no box at all,
+    and nor does a correction the teacher took out, which the list badges *taken out*.
     """
+    if item.kind is ItemKind.TAKEN_OUT:
+        return ""
     if item.kind in _KIND_FILTERS:
         return _KIND_FILTERS[item.kind]
     if item.category or item.kind in MODEL_KINDS:
@@ -156,7 +159,7 @@ def _columns_of(item: CheckItem) -> tuple[str, str]:
     return item.before, item.after
 
 
-def _icon_of(item: CheckItem, *, looked_at: frozenset[str]) -> str:
+def _bullet_of(item: CheckItem, *, looked_at: frozenset[str]) -> str:
     """Return the bullet in front of a row: there while the teacher has not looked at it."""
     return _style.todo_mark(item, looked_at=item.key in looked_at)
 
@@ -188,10 +191,13 @@ def _words_in_text(item: CheckItem, corrected_plain: str) -> str:
     return corrected_plain[start:end]
 
 
-def _row_font(font: QFont, *, looked_at: bool) -> QFont:
-    """Return the font a row is drawn in: bold until the teacher has looked at it."""
+def _row_font(font: QFont, item: CheckItem, *, looked_at: bool) -> QFont:
+    """Return the font the words of a row are drawn in: bold while the teacher has to look at it.
+
+    A row that does not count for looked-at, a change of the teacher's own, is never bold.
+    """
     drawn = QFont(font)
-    drawn.setBold(not looked_at)
+    drawn.setBold(counts_for_looked_at(item) and not looked_at)
     return drawn
 
 
@@ -200,7 +206,7 @@ def _bar_rect(rect: QRect) -> QRect:
     return QRect(rect.left(), rect.top(), _BAR_WIDTH, rect.height())
 
 
-def _bullet_rect(rect: QRect, metrics) -> QRect:
+def _bullet_rect(rect: QRect, metrics: QFontMetrics) -> QRect:
     """Return the column of the bullet, one bullet wide whether or not it holds one."""
     return QRect(rect.left(), rect.top(), metrics.horizontalAdvance(_style.TODO_DOT), rect.height())
 
@@ -251,29 +257,30 @@ class _ItemDelegate(QStyledItemDelegate):
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         looked_at = item.key in self.looked_at
         selected = bool(opt.state & QStyle.StateFlag.State_Selected)
-        font = _row_font(opt.font, looked_at=looked_at)
-        metrics = QFontMetrics(font)
+        # The columns are laid out with the regular font, so a row reads the same in bold or not.
+        metrics = QFontMetrics(opt.font)
+        words_font = _row_font(opt.font, item, looked_at=looked_at)
         painter.save()
-        painter.setFont(font)
+        painter.setFont(opt.font)
         painter.setPen(_style.row_text(opt.palette, looked_at=looked_at, selected=selected))
-        painter.fillRect(_bar_rect(opt.rect), QColor(_style.MARK_ACCENTS[item.kind]))
+        painter.fillRect(_bar_rect(opt.rect), QColor(_style.look(item).accent))
         rect = opt.rect.adjusted(_BAR_WIDTH + 6, 0, -6, 0)
-        bullet = _icon_of(item, looked_at=self.looked_at)
         painter.drawText(
             _bullet_rect(rect, metrics),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            bullet,
+            _bullet_of(item, looked_at=self.looked_at),
         )
         words = rect.adjusted(metrics.horizontalAdvance(_style.TODO_DOT) + 6, 0, 0, 0)
         words = self._draw_badge(painter, words, metrics, item)
-        self._draw_words(painter, words, metrics, item)
+        painter.setFont(words_font)
+        self._draw_words(painter, words, metrics, QFontMetrics(words_font), item)
         painter.restore()
 
     def _draw_badge(
         self,
         painter: QPainter,
         rect: QRect,
-        metrics,
+        metrics: QFontMetrics,
         item: CheckItem,
     ) -> QRect:
         """Draw the badge at the right of *rect*; return what is left for the words.
@@ -291,8 +298,19 @@ class _ItemDelegate(QStyledItemDelegate):
         painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, category)
         return rect.adjusted(0, 0, -(width + 6), 0)
 
-    def _draw_words(self, painter: QPainter, rect: QRect, metrics, item: CheckItem) -> None:
-        """Draw the student's words and the corrected ones in two columns of the same width."""
+    def _draw_words(
+        self,
+        painter: QPainter,
+        rect: QRect,
+        layout: QFontMetrics,
+        metrics: QFontMetrics,
+        item: CheckItem,
+    ) -> None:
+        """Draw the student's words and the corrected ones in two columns of the same width.
+
+        The columns are laid out with *layout*, the regular font; the words are elided with
+        *metrics*, the font they are drawn in.
+        """
         before, after = _columns_of(item)
         if not after:
             painter.drawText(
@@ -302,7 +320,7 @@ class _ItemDelegate(QStyledItemDelegate):
             )
             return
         arrow = " \u2192 "
-        before_rect, arrow_rect, after_rect = _column_rects(rect, metrics.horizontalAdvance(arrow))
+        before_rect, arrow_rect, after_rect = _column_rects(rect, layout.horizontalAdvance(arrow))
         for part, part_rect in ((before, before_rect), (arrow, arrow_rect), (after, after_rect)):
             painter.drawText(
                 part_rect,
@@ -928,12 +946,16 @@ class SidePanel(QWidget):
             self.set_chosen(key)
 
     def _show_legend(self) -> None:
-        """Show the legend at the button: a click asks for what the tooltip says."""
-        QToolTip.showText(
-            self._legend_button.mapToGlobal(QPoint(0, self._legend_button.height())),
-            self._legend,
-            self._legend_button,
-        )
+        """Show the legend where its tooltip would be: a click asks for what the tooltip says.
+
+        A click with the pointer on the button keeps the tooltip at the pointer; a key press
+        puts it under the button.
+        """
+        button = self._legend_button
+        pointer = QCursor.pos()
+        inside = button.rect().contains(button.mapFromGlobal(pointer))
+        at = pointer if inside else button.mapToGlobal(QPoint(0, button.height()))
+        QToolTip.showText(at, self._legend, button)
 
     def set_chosen(self, key: str) -> None:
         """Select the row of *key*, if the list has it, without telling the page back.

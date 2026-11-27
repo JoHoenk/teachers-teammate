@@ -27,7 +27,6 @@ from teachers_teammate.domain.teacher_work import TextEdit
 from teachers_teammate.gui._formatted_text import document_from_qt
 from teachers_teammate.gui.check import _style
 from teachers_teammate.gui.check._masking import Masking
-from teachers_teammate.texts import review as txt
 from teachers_teammate.gui.check._text_views import (
     MAX_POINT_SIZE,
     MIN_POINT_SIZE,
@@ -38,6 +37,7 @@ from teachers_teammate.gui.check._text_views import (
     ReadView,
     marks_of,
 )
+from teachers_teammate.texts import review as txt
 from teachers_teammate.application.document_view import DocumentStateView
 
 RAW = "Der bunte Hund bellt laut."

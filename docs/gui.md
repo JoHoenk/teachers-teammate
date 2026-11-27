@@ -295,7 +295,8 @@ A checkable button in the Check header (`CheckPage.checked_toggled`, `refresh_ch
 - **Tabs:** *Corrections · Content* (`show_corrections()` / `show_content()`, chosen by
   `CheckPage.set_view`). `setTabBarAutoHide(True)` hides the bar when there is no review.
 - **Filter row:** a `FlowLayout` (`gui/check/_flow.py`) with one `QCheckBox` per category plus
-  *Unclear* and *Not proofread*, each with its count; zero counts are hidden. Nothing ticked = all
+  *Unclear* and *Not proofread*, each with its count; zero counts are hidden. A taken-out
+  correction and a change of the teacher's own answer to no box. Nothing ticked = all
   rows; ticked boxes combine; *Not looked at* narrows the rest. `set_filter()` only re-applies row
   visibility and keeps the chosen row if visible, else chooses the first visible one.
 - **Card:** a fixed-height `QScrollArea` plus a fixed button row, so long explanations scroll and
@@ -306,16 +307,18 @@ A checkable button in the Check header (`CheckPage.checked_toggled`, `refresh_ch
   spelling or punctuation change also carries *Take out all N* (`minor_corrections()`), which
   excludes taken-out and own changes.
 - **List rows:** `_ItemDelegate` draws a bar in the kind's accent at the left edge, a fixed dot
-  column (`_icon_of()`, `todo_mark()`), two word columns (`_column_rects()`) and a neutral chip. A
-  row not looked at yet is bold with a *•*; a looked-at row is grey and has none. The chip is the
+  column (`_bullet_of()`, `todo_mark()`), two word columns (`_column_rects()`) and a neutral chip. A
+  row not looked at yet is bold with a *•*; a looked-at row is grey and has none; an own change is
+  neither. The columns are laid out in the regular font, so a row does not move when its weight
+  does. A spelling or punctuation row has the paler accent, as its mark in the text. The chip is the
   kind where the item has none of its own (*unclear*, *not proofread*, *your change*, *taken out*),
   else the category (*other* if there is none).
 - **Legend:** the info button between the counts and *Next* — `_legend_html()`, built from
   `MARK_ACCENTS` and `texts/check.py` — is its tooltip and what a click shows.
 - **Colours:** `gui/check/_style.py` says what happened to the text, the words say the category:
   `MARK_COLOURS` (a mark's background and text), `MARK_ACCENTS` (its underline, the row's bar, the
-  legend's swatch), and one neutral `CHIP_BACKGROUND` / `CHIP_TEXT` for every chip. The app always
-  uses the dark theme: dark tints with light text, the chosen item the one bright background.
+  legend's swatch; a minor mark takes `pale()` of it), and one neutral `CHIP_BACKGROUND` /
+  `CHIP_TEXT` for every chip. The app always uses the dark theme: dark tints with light text, the chosen item the one bright background.
 
 ### Looked at and *Next*
 

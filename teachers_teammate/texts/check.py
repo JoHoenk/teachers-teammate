@@ -140,7 +140,7 @@ LEGEND_UNDERLINE = (
 LEGEND_STRIKES = "With corrections"
 LEGEND_STRIKE_MODEL = "removed by the AI"
 LEGEND_STRIKE_STUDENT = "crossed out by the student"
-LEGEND_LIST = "In the list: \u2022 is there to look at, a grey row you have read"
+LEGEND_LIST = "In the list: \u2022 and bold, not looked at yet; grey, looked at"
 """The legend of the tab's marks, one line per colour and per mark of the text and the list."""
 
 

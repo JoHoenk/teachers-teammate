@@ -57,7 +57,7 @@ MARK_COLOURS: dict[ItemKind, tuple[str, str]] = {
     ItemKind.UNEXPLAINED: ("#1d4a2b", "#c6f7d0"),
     ItemKind.CHANGED: ("#22406b", "#cfe1ff"),
     ItemKind.OWN: ("#22406b", "#cfe1ff"),
-    ItemKind.TAKEN_OUT: ("#3a4048", "#dfe4e8"),
+    ItemKind.TAKEN_OUT: ("#4a5058", "#dfe4e8"),
     ItemKind.UNCLEAR: ("#4d3a12", "#ffdf9e"),
     ItemKind.LEFT_OUT: ("#4d3a12", "#ffdf9e"),
 }
@@ -144,10 +144,12 @@ def look(item: CheckItem) -> MarkLook:
 
     A kept correction is green, the teacher's own change blue, an unclear or not proofread
     passage amber and a taken-out correction grey.  A spelling or punctuation change is drawn
-    weaker, because it is a small thing to look at.  Every mark is underlined in its kind's
-    accent, so it reads without its colour.
+    weaker, background and underline alike, because it is a small thing to look at.  Every mark
+    is underlined in its kind's accent, so it reads without its colour.
     """
     background, text = MARK_COLOURS[item.kind]
+    accent = MARK_ACCENTS[item.kind]
     if item.is_minor:
         background = pale(background)
-    return MarkLook(background, text, MARK_ACCENTS[item.kind], _UNDERLINE.get(item.kind, _SOLID))
+        accent = pale(accent)
+    return MarkLook(background, text, accent, _UNDERLINE.get(item.kind, _SOLID))

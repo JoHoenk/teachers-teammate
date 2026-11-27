@@ -124,7 +124,7 @@ def test_no_chip_colour_is_a_mark_colour_or_an_accent() -> None:
     """
     Given  the grey of the badges and chips
     When   it is compared with the marks in the text and with their accents
-    Then   it is neither, so grey never means a kind of change
+    Then   it is neither and looks unlike the grey of a taken-out mark, so grey never means a kind of change
     """
     marks = {colour for pair in _style.MARK_COLOURS.values() for colour in pair}
     accents = set(_style.MARK_ACCENTS.values())
@@ -132,6 +132,8 @@ def test_no_chip_colour_is_a_mark_colour_or_an_accent() -> None:
 
     assert not chips & marks
     assert not chips & accents
+    taken_out = QColor(_style.MARK_COLOURS[ItemKind.TAKEN_OUT][0])
+    assert _contrast(QColor(_style.CHIP_BACKGROUND), taken_out) >= 1.3
 
 
 @pytest.mark.gui
@@ -155,12 +157,13 @@ def test_a_minor_mark_is_weaker_than_the_change_it_belongs_to() -> None:
     """
     Given  a punctuation change and the same change marked as minor
     When   both looks are made
-    Then   the minor one keeps the hue, drawn closer to the page
+    Then   the minor one keeps the hue, its background and its underline drawn closer to the page
     """
     plain = _style.look(_item(ItemKind.CORRECTION, category="punctuation"))
     minor = _style.look(_item(ItemKind.CORRECTION, category="punctuation", minor=True))
 
     assert minor.background != plain.background
+    assert minor.accent == _style.pale(plain.accent)
     assert minor.text == plain.text
     assert _contrast(QColor(minor.background), QColor(_style.BASE_BACKGROUND)) < _contrast(
         QColor(plain.background), QColor(_style.BASE_BACKGROUND)

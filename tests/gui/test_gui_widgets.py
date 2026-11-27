@@ -8,6 +8,8 @@ import pytest
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QLabel
 
+from teachers_teammate.domain.model_catalog import SystemUsage
+
 # ── CollapsibleSection ────────────────────────────────────────────────────
 
 
@@ -309,74 +311,105 @@ def test_zoomable_view_swap_pixmap_refits_when_fitted(qtbot) -> None:
 # ── SystemStatsWidget ─────────────────────────────────────────────────────
 
 
+def _system_usage(cpu: float = 25.0, ram: float = 50.0) -> SystemUsage:
+    """Return a reading of this computer with *cpu* and *ram* percent in use, of 16 GB."""
+    return SystemUsage(
+        cpu_percent=cpu, ram_percent=ram, ram_used_gb=16 * ram / 100, ram_total_gb=16
+    )
+
+
 @pytest.mark.gui
 @pytest.mark.use_case("System_Resource_Monitoring")
-def test_stats_widget_creates_without_error(qtbot) -> None:
+def test_stats_widget_shows_the_first_reading_at_once(qtbot) -> None:
     """
-    Given  the SystemStatsWidget class
-    When   an instance is created
-    Then   no exception is raised
+    Given  a computer at 25% processor load and half its memory used
+    When   a SystemStatsWidget is built
+    Then   the CPU and RAM gauges show those readings before the first tick
     """
     from teachers_teammate.gui._stats_widget import SystemStatsWidget  # noqa: PLC0415
 
-    w = SystemStatsWidget(lambda: None)
+    w = SystemStatsWidget(_system_usage, lambda: None)
     qtbot.addWidget(w)
-    assert w is not None
+
+    assert w._enabled is True
+    assert w._cpu_bar.value() == 25
+    assert w._ram_bar.value() == 50
 
 
 @pytest.mark.gui
-def test_stats_widget_refresh_does_not_crash(qtbot) -> None:
+def test_stats_widget_refresh_shows_the_new_reading(qtbot) -> None:
     """
-    Given  a SystemStatsWidget
-    When   _refresh() is called manually
-    Then   no exception is raised (psutil may or may not be installed)
+    Given  a SystemStatsWidget whose computer then gets busier
+    When   it refreshes
+    Then   the gauges show the new reading
     """
     from teachers_teammate.gui._stats_widget import SystemStatsWidget  # noqa: PLC0415
 
-    w = SystemStatsWidget(lambda: None)
+    readings = [_system_usage()]
+    w = SystemStatsWidget(lambda: readings[-1], lambda: None)
     qtbot.addWidget(w)
-    w._refresh()  # should not crash regardless of psutil availability
+
+    readings.append(_system_usage(cpu=80.0, ram=75.0))
+    w._refresh()
+
+    assert w._cpu_bar.value() == 80
+    assert w._ram_bar.value() == 75
+
+
+@pytest.mark.gui
+def test_stats_widget_keeps_the_last_system_reading_when_one_is_missing(qtbot) -> None:
+    """
+    Given  a SystemStatsWidget that had a reading and then gets none
+    When   it refreshes
+    Then   the last values stay on the gauges
+    """
+    from teachers_teammate.gui._stats_widget import SystemStatsWidget  # noqa: PLC0415
+
+    readings: list[SystemUsage | None] = [_system_usage()]
+    w = SystemStatsWidget(lambda: readings[-1], lambda: None)
+    qtbot.addWidget(w)
+
+    readings.append(None)
+    w._refresh()
+
+    assert w._cpu_bar.value() == 25
 
 
 @pytest.mark.gui
 def test_stats_widget_polls_only_while_shown(qtbot) -> None:
     """
-    Given  a SystemStatsWidget with psutil available
+    Given  a SystemStatsWidget with a readable computer
     When   the widget is shown and hidden again
     Then   the internal timer is idle at first, runs while shown and stops when hidden
-               (or the widget is disabled without psutil)
     """
-    from teachers_teammate.gui._stats_widget import SystemStatsWidget, _PSUTIL_AVAILABLE  # noqa: PLC0415
+    from teachers_teammate.gui._stats_widget import SystemStatsWidget  # noqa: PLC0415
 
-    w = SystemStatsWidget(lambda: None)
+    w = SystemStatsWidget(_system_usage, lambda: None)
     qtbot.addWidget(w)
 
-    if _PSUTIL_AVAILABLE:
-        assert w._enabled is True
-        assert not w._timer.isActive()
-        w.show()
-        assert w._timer.isActive()
-        w.hide()
-        assert not w._timer.isActive()
-    else:
-        assert w._enabled is False
+    assert not w._timer.isActive()
+    w.show()
+    assert w._timer.isActive()
+    w.hide()
+    assert not w._timer.isActive()
 
 
 @pytest.mark.gui
-def test_stats_widget_disabled_without_psutil(qtbot, monkeypatch) -> None:
+def test_stats_widget_shows_a_note_when_the_computer_gives_no_reading(qtbot) -> None:
     """
-    Given  psutil is unavailable
+    Given  a computer whose load cannot be read
     When   a SystemStatsWidget is created and refreshed
-    Then   it is disabled and _refresh() returns immediately without error
+    Then   it shows a note instead of gauges, and _refresh() returns without error
     """
-    from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
+    from teachers_teammate.gui._stats_widget import SystemStatsWidget  # noqa: PLC0415
+    from teachers_teammate.texts import main_window as txt  # noqa: PLC0415
 
-    monkeypatch.setattr(sw, "_PSUTIL_AVAILABLE", False)
-    w = sw.SystemStatsWidget(lambda: None)
+    w = SystemStatsWidget(lambda: None, lambda: None)
     qtbot.addWidget(w)
 
     assert w._enabled is False
-    w._refresh()  # early-return branch
+    assert [label.text() for label in w.findChildren(QLabel)] == [txt.STATS_UNREADABLE]
+    w._refresh()
 
 
 @pytest.mark.gui
@@ -390,7 +423,9 @@ def test_stats_widget_shows_the_gpu_rows_when_the_card_answers(qtbot, monkeypatc
     from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
     from teachers_teammate.domain.model_catalog import GpuUsage  # noqa: PLC0415
 
-    w = sw.SystemStatsWidget(lambda: GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192))
+    w = sw.SystemStatsWidget(
+        _system_usage, lambda: GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192)
+    )
     qtbot.addWidget(w)
     qtbot.waitUntil(lambda: w._gpu_bar is not None and w._gpu_bar.value() == 42)
 
@@ -407,7 +442,7 @@ def test_stats_widget_shows_only_cpu_and_ram_without_a_readable_card(qtbot, monk
     """
     from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
 
-    w = sw.SystemStatsWidget(lambda: None)
+    w = sw.SystemStatsWidget(_system_usage, lambda: None)
     qtbot.addWidget(w)
     qtbot.waitUntil(lambda: not w._gpu_read_pending)
 
@@ -430,7 +465,7 @@ def test_stats_widget_creates_the_gpu_rows_when_the_first_reading_failed(
 
     readings: list[GpuUsage] = []
 
-    w = sw.SystemStatsWidget(lambda: readings[0] if readings else None)
+    w = sw.SystemStatsWidget(_system_usage, lambda: readings[0] if readings else None)
     qtbot.addWidget(w)
     qtbot.waitUntil(lambda: not w._gpu_read_pending)
     assert w._gpu_bar is None
@@ -464,7 +499,7 @@ def test_stats_widget_reads_the_card_off_the_gui_thread(qtbot, monkeypatch) -> N
         release.wait(timeout=5)
         return GpuUsage(10, vram_used_mb=None, vram_total_mb=None)
 
-    w = sw.SystemStatsWidget(slow_read)
+    w = sw.SystemStatsWidget(_system_usage, slow_read)
     qtbot.addWidget(w)
     w._refresh()
     w._refresh()
@@ -488,7 +523,7 @@ def test_stats_widget_keeps_the_last_reading_when_the_driver_skips_one(qtbot, mo
 
     readings = [GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192)]
 
-    w = sw.SystemStatsWidget(lambda: readings[0] if readings else None)
+    w = sw.SystemStatsWidget(_system_usage, lambda: readings[0] if readings else None)
     qtbot.addWidget(w)
     qtbot.waitUntil(lambda: w._gpu_bar is not None and w._gpu_bar.value() == 42)
 

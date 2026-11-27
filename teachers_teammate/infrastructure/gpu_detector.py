@@ -33,7 +33,7 @@ import subprocess
 import sys
 from typing import Any
 
-from ..domain.model_catalog import GpuInfo, GpuUsage
+from ..domain.model_catalog import GpuInfo, GpuUsage, SystemUsage
 from .subprocess_utils import child_env, no_console_window_kwargs
 
 _logger = logging.getLogger(__name__)
@@ -299,6 +299,26 @@ def detect_available_memory_gb() -> float | None:
         return psutil.virtual_memory().available / 2**30
     except Exception:  # noqa: BLE001  # psutil may be missing in stripped environments; the check is advisory
         return None
+
+
+def read_system_usage() -> SystemUsage | None:
+    """Return the processor load and main memory in use, or ``None`` without ``psutil``.
+
+    The processor share is measured since the previous call, so the first call answers 0.
+    """
+    try:
+        import psutil  # noqa: PLC0415
+
+        cpu = psutil.cpu_percent(interval=None)
+        memory = psutil.virtual_memory()
+    except Exception:  # noqa: BLE001  # psutil may be missing in stripped environments; the gauges are advisory
+        return None
+    return SystemUsage(
+        cpu_percent=cpu,
+        ram_percent=memory.percent,
+        ram_used_gb=memory.used / 2**30,
+        ram_total_gb=memory.total / 2**30,
+    )
 
 
 def _windows_total_memory_bytes() -> int:
@@ -670,3 +690,7 @@ class SystemHardwareProbe:
     def gpu_usage(self) -> GpuUsage | None:
         """Return how busy the first graphics card is, or ``None`` when it cannot be read."""
         return read_gpu_usage()
+
+    def system_usage(self) -> SystemUsage | None:
+        """Return the processor load and main memory in use, or ``None`` when unreadable."""
+        return read_system_usage()

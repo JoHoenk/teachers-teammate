@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         ModelRating,
         ModelUses,
         ServerFacts,
+        SystemUsage,
     )
     from ..domain.ollama_discovery import WaitDetail
     from ..domain.performance_estimate import TimeRange
@@ -211,6 +212,10 @@ class HardwareProbe(Protocol):
 
     def gpu_usage(self) -> GpuUsage | None:
         """Return how busy the first graphics card is, or ``None`` when it cannot be read."""
+        ...
+
+    def system_usage(self) -> SystemUsage | None:
+        """Return the processor load and main memory in use, or ``None`` when unreadable."""
         ...
 
 

@@ -154,7 +154,7 @@ STATS_CPU = "CPU"
 STATS_RAM = "RAM"
 STATS_GPU = "GPU"
 STATS_VRAM = "VRAM"
-STATS_NEEDS_PSUTIL = "Install psutil for live system stats."
+STATS_UNREADABLE = "This computer gives no live system stats."
 STATS_NO_READING = "\u2013"
 
 

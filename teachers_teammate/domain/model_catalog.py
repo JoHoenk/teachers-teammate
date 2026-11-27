@@ -1437,6 +1437,18 @@ class GpuUsage:
 
 
 @dataclass(frozen=True)
+class SystemUsage:
+    """How busy this computer's processor is right now, and how much main memory is in use."""
+
+    #: Share of the processor in use since the previous reading, 0 to 100.
+    cpu_percent: float
+    #: Share of main memory in use, 0 to 100.
+    ram_percent: float
+    ram_used_gb: float
+    ram_total_gb: float
+
+
+@dataclass(frozen=True)
 class LoadedModel:
     """A model the server holds in memory, with how much of it sits on the graphics card."""
 

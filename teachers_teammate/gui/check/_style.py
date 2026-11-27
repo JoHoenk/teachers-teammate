@@ -1,14 +1,18 @@
-"""Colours, character formats and icons of the Check tab's marks.
+"""Colours, character formats and marks of the Check tab.
 
 One place for everything the three views and the side panel draw, so a mark means the same in
 the text, in the list and in the card.  The app always runs on the dark theme, so every colour
 here is a dark tint with light text on it: a pale background would need dark text, and the
 theme's own light text would be unreadable on it.
 
-:func:`look` is the only colour lookup for the text: a kept correction is green, the teacher's
-own change blue, an unclear or left-out passage amber and a taken-out correction grey, each
-underlined so a mark does not rest on its colour alone.  Which category a change belongs to is
-read from the badge in the list and the chip in the card, which keep a colour per category.
+The rule the tab follows: colour says what happened to the text, a word says the category.
+
+* ``CORRECTION`` and ``UNEXPLAINED`` are green, ``CHANGED`` and ``OWN`` blue, ``UNCLEAR`` and
+  ``LEFT_OUT`` amber, ``TAKEN_OUT`` grey, each with an accent (:data:`MARK_ACCENTS`) drawn as the
+  mark's underline, as the bar at the left of its row and as its swatch in the legend.
+* Paler means one thing: a spelling or punctuation change.
+* A badge or a chip is neutral grey and carries the name: the category, or what kind of thing an
+  item is where it has no category.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from dataclasses import dataclass
 
 from PySide6.QtGui import QColor, QPalette, QTextCharFormat
 
-from ...application.check_items import MODEL_KINDS, CheckItem, ItemKind
+from ...application.check_items import CheckItem, ItemKind, counts_for_looked_at
 
 STUDENT_STRIKE = "#999999"
 """The student's own crossed-out words: grey, so they read as the page's history."""
@@ -47,46 +51,35 @@ def _weaker(colour: str) -> str:
     ).name()
 
 
-def _badge_of_kind(kind: ItemKind) -> tuple[str, str]:
-    """Return the badge colours of *kind*: its mark's hue, weaker than any category's badge."""
-    background, text = MARK_COLOURS[kind]
-    return _weaker(background), text
-
-
-#: Background and text colour of a change category, in the list's badge and the card's chip.
-CATEGORY_COLOURS: dict[str, tuple[str, str]] = {
-    "grammar": ("#22406b", "#cfe1ff"),
-    "spelling": ("#1d4a2b", "#c6f7d0"),
-    "punctuation": ("#3b2a63", "#e3d3ff"),
-    "word_choice": ("#4d3a12", "#ffdf9e"),
-    "word_order": ("#14454b", "#b3f2f9"),
-    "other": ("#34393e", "#d3d8dc"),
-}
-
 #: Background and text colour of a mark in the text: what kind of thing the item is.
 MARK_COLOURS: dict[ItemKind, tuple[str, str]] = {
     ItemKind.CORRECTION: ("#1d4a2b", "#c6f7d0"),
     ItemKind.UNEXPLAINED: ("#1d4a2b", "#c6f7d0"),
     ItemKind.CHANGED: ("#22406b", "#cfe1ff"),
     ItemKind.OWN: ("#22406b", "#cfe1ff"),
-    ItemKind.TAKEN_OUT: ("#34393e", "#d3d8dc"),
+    ItemKind.TAKEN_OUT: ("#3a4048", "#dfe4e8"),
     ItemKind.UNCLEAR: ("#4d3a12", "#ffdf9e"),
     ItemKind.LEFT_OUT: ("#4d3a12", "#ffdf9e"),
 }
 
-#: Background and text colour of the badge of an item that is no change of the model: the hue of
-#: its mark in the text, drawn weaker so that no badge of a kind looks like one of a category.
-#: An unclear passage and a stretch the model left out share the amber, since both ask a question.
-KIND_BADGE_COLOURS: dict[ItemKind, tuple[str, str]] = {
-    ItemKind.UNCLEAR: _badge_of_kind(ItemKind.UNCLEAR),
-    ItemKind.LEFT_OUT: _badge_of_kind(ItemKind.UNCLEAR),
-    ItemKind.OWN: _badge_of_kind(ItemKind.OWN),
-    ItemKind.TAKEN_OUT: _badge_of_kind(ItemKind.TAKEN_OUT),
+#: The accent of a kind: its underline in the text, the bar at the left of its list row and its
+#: swatch in the legend.  Four colours for seven kinds, since four things happened to the text.
+MARK_ACCENTS: dict[ItemKind, str] = {
+    ItemKind.CORRECTION: "#4caf50",
+    ItemKind.UNEXPLAINED: "#4caf50",
+    ItemKind.CHANGED: "#4a90d9",
+    ItemKind.OWN: "#4a90d9",
+    ItemKind.UNCLEAR: "#e0a030",
+    ItemKind.LEFT_OUT: "#e0a030",
+    ItemKind.TAKEN_OUT: "#8c949b",
 }
 
-TAG_BACKGROUND = "#34393e"
-TAG_TEXT = "#d3d8dc"
-"""A note that is an attribute of the change rather than a sentence: *optional*, *AI not sure*."""
+CHIP_BACKGROUND = "#34393e"
+CHIP_TEXT = "#d3d8dc"
+"""A badge in the list and a chip in the card: neutral grey, whatever the category says."""
+
+#: The bullet in front of a row the teacher has not looked at yet.
+TODO_DOT = "\u2022"
 
 ICON_LOOKED_AT = "\u25cf"
 """An item the teacher has looked at."""
@@ -119,10 +112,11 @@ _SOLID = QTextCharFormat.UnderlineStyle.SingleUnderline
 
 @dataclass(frozen=True)
 class MarkLook:
-    """How one item is drawn: its background, its text colour and its underline."""
+    """How one item is drawn: its background, its text colour, its accent and its underline."""
 
     background: str
     text: str
+    accent: str
     underline: QTextCharFormat.UnderlineStyle | None = None
 
     def format(self, *, chosen: bool = False) -> QTextCharFormat:
@@ -136,8 +130,17 @@ class MarkLook:
         fmt.setForeground(QColor(self.text))
         if self.underline is not None:
             fmt.setUnderlineStyle(self.underline)
-            fmt.setUnderlineColor(QColor(self.text))
+            fmt.setUnderlineColor(QColor(self.accent))
         return fmt
+
+
+def todo_mark(item: CheckItem, *, looked_at: bool) -> str:
+    """The bullet in front of a row: one the teacher has not looked at yet and has to.
+
+    A row that does not count for looked-at — a change of the teacher's own — has no bullet, and
+    a row already looked at has none either; the row's colour says it was looked at.
+    """
+    return TODO_DOT if counts_for_looked_at(item) and not looked_at else ""
 
 
 def icon(kind: ItemKind, *, looked_at: bool) -> str:
@@ -149,7 +152,7 @@ def icon(kind: ItemKind, *, looked_at: bool) -> str:
 
 
 def row_text(palette: QPalette, *, looked_at: bool, selected: bool) -> QColor:
-    """Return the colour a row's icon and words are drawn in.
+    """Return the colour a row's bullet and words are drawn in.
 
     A selected row takes the theme's selection text, a looked-at one the theme's grey for text
     that is there but not the point, and every other row the ordinary text colour.  Nothing is
@@ -162,32 +165,15 @@ def row_text(palette: QPalette, *, looked_at: bool, selected: bool) -> QColor:
     return palette.color(QPalette.ColorRole.Text)
 
 
-def category_colours(category: str) -> tuple[str, str]:
-    """The background and text colour of *category*; grey for one without a colour."""
-    return CATEGORY_COLOURS.get(category, CATEGORY_COLOURS["other"])
-
-
 def look(item: CheckItem) -> MarkLook:
     """Return how *item* is drawn in the text and in the card's context line.
 
-    A kept correction is green, the teacher's own change blue, an unclear or left-out passage
-    amber and a taken-out correction grey.  A spelling or punctuation change is drawn weaker,
-    because it is a small thing to look at.  Every mark is underlined, so it reads without its
-    colour.
+    A kept correction is green, the teacher's own change blue, an unclear or not proofread
+    passage amber and a taken-out correction grey.  A spelling or punctuation change is drawn
+    weaker, because it is a small thing to look at.  Every mark is underlined in its kind's
+    accent, so it reads without its colour.
     """
     background, text = MARK_COLOURS[item.kind]
     if item.is_minor:
         background = _weaker(background)
-    return MarkLook(background, text, _UNDERLINE.get(item.kind, _SOLID))
-
-
-def badge_colours(item: CheckItem) -> tuple[str, str]:
-    """Return the background and text colour of the badge the list draws for *item*.
-
-    A model change shows its category's colour, so the badge says which kind of change it is; one
-    without a category is grey, like *other*.  Every other item shows its kind's colour, so every
-    row says what it is.
-    """
-    if item.category or item.kind in MODEL_KINDS:
-        return category_colours(item.category)
-    return KIND_BADGE_COLOURS[item.kind]
+    return MarkLook(background, text, MARK_ACCENTS[item.kind], _UNDERLINE.get(item.kind, _SOLID))

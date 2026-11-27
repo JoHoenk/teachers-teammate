@@ -1048,20 +1048,17 @@ def test_a_row_whose_words_are_not_in_the_text_has_no_context_line(qtbot) -> Non
 
 
 @pytest.mark.gui
-def test_the_card_shows_the_category_as_a_coloured_chip(qtbot) -> None:
+def test_the_card_shows_the_category_as_a_neutral_chip(qtbot) -> None:
     """
     Given  an explained correction of a known category
     When   the side panel shows it
-    Then   the card shows the category in the colour the list uses for it
+    Then   the card names the category in the grey every chip shares, not in a colour of its own
     """
     panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
-    item = panel._rows[0]
-    assert item is not None
-    background, text = _style.badge_colours(item)
     body = panel._card._body.text()
 
-    assert f"background-color:{background}" in body
-    assert f"color:{text}" in body
+    assert f"background-color:{_style.CHIP_BACKGROUND}" in body
+    assert f"color:{_style.CHIP_TEXT}" in body
     assert "Word choice" in body
 
 
@@ -1087,7 +1084,7 @@ def test_the_notes_of_a_change_are_tags(qtbot) -> None:
     panel = _panel(qtbot, _document(review=review))
     body = panel._card._body.text()
 
-    assert f"background-color:{_style.TAG_BACKGROUND}" in body
+    assert f"background-color:{_style.CHIP_BACKGROUND}" in body
     assert txt.OPTIONAL_CHANGE in body
     assert txt.AI_NOT_SURE in body
     assert "Farbe." in body
@@ -1418,12 +1415,10 @@ def test_the_badge_keeps_its_colour_on_a_looked_at_row(qtbot, dark_theme) -> Non
     """
     Given  a correction of a known category
     When   the list draws its row before and after the teacher looked at it
-    Then   the badge is the same colour in both, so the category still reads
+    Then   the badge is the same grey in both, so the category still reads
     """
     panel = _panel(qtbot, _walk_document())
-    item = panel._rows[0]
-    assert item is not None
-    badge = QColor(_style.badge_colours(item)[0])
+    badge = QColor(_style.CHIP_BACKGROUND)
     assert _has_colour(_row_image(panel, 0), badge)
 
     panel.set_looked_at(frozenset({"edit:1"}), (1, 3))
@@ -1433,17 +1428,16 @@ def test_the_badge_keeps_its_colour_on_a_looked_at_row(qtbot, dark_theme) -> Non
 
 
 @pytest.mark.gui
-def test_a_row_shows_its_category_as_a_coloured_badge(qtbot) -> None:
+def test_a_grammar_row_and_a_spelling_row_draw_the_same_badge(qtbot) -> None:
     """
-    Given  a correction of a known category
-    When   the list draws its row
-    Then   the category is a badge in the colour the card's chip uses
+    Given  a grammar change and a spelling change
+    When   the list draws their rows
+    Then   both badges are the same grey, so a badge never says a colour's meaning
     """
-    panel = _panel(qtbot, _walk_document())
-    item = panel._rows[0]
-    assert item is not None
+    panel = _panel(qtbot, _walk_document(categories=("grammar", "spelling", "spelling", "grammar")))
 
-    assert _has_colour(_row_image(panel, 0), QColor(_style.badge_colours(item)[0]))
+    assert _has_colour(_row_image(panel, 0), QColor(_style.CHIP_BACKGROUND))
+    assert _has_colour(_row_image(panel, 1), QColor(_style.CHIP_BACKGROUND))
 
 
 @pytest.mark.gui
@@ -1451,7 +1445,7 @@ def test_a_row_without_a_category_says_what_kind_it_is(qtbot) -> None:
     """
     Given  a document with an unclear passage and a stretch the model left out
     When   the list draws their rows
-    Then   each row names its kind, and both share the amber badge
+    Then   each row names its kind in the grey badge every row shares
     """
     review = CorrectionReview(
         unclear=(
@@ -1466,9 +1460,8 @@ def test_a_row_without_a_category_says_what_kind_it_is(qtbot) -> None:
         check_txt.BADGE_UNCLEAR,
         check_txt.BADGE_LEFT_OUT,
     ]
-    amber = QColor(_style.KIND_BADGE_COLOURS[ItemKind.UNCLEAR][0])
-    assert _has_colour(_row_image(panel, 0), amber)
-    assert _has_colour(_row_image(panel, 1), amber)
+    assert _has_colour(_row_image(panel, 0), QColor(_style.CHIP_BACKGROUND))
+    assert _has_colour(_row_image(panel, 1), QColor(_style.CHIP_BACKGROUND))
 
 
 @pytest.mark.gui

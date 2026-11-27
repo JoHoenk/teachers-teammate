@@ -247,9 +247,8 @@ class _ItemDelegate(QStyledItemDelegate):
             return rect
         width = metrics.horizontalAdvance(category) + 10
         badge = QRect(rect.right() - width + 1, rect.top() + 3, width, rect.height() - 6)
-        background, text = _style.badge_colours(item)
-        painter.fillRect(badge, QColor(background))
-        painter.setPen(QColor(text))
+        painter.fillRect(badge, QColor(_style.CHIP_BACKGROUND))
+        painter.setPen(QColor(_style.CHIP_TEXT))
         painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, category)
         return rect.adjusted(0, 0, -(width + 6), 0)
 
@@ -304,11 +303,11 @@ def _column(*labels: QLabel) -> QWidget:
     return column
 
 
-def _chip(text: str, colours: tuple[str, str]) -> str:
-    """Return *text* as a small coloured chip: a category, or a note about the change."""
-    background, foreground = colours
+def _chip(text: str) -> str:
+    """Return *text* as a small neutral chip: a category, or a note about the change."""
     return (
-        f'<span style="background-color:{background}; color:{foreground};">'
+        f'<span style="background-color:{_style.CHIP_BACKGROUND};'
+        f' color:{_style.CHIP_TEXT};">'
         f"&nbsp;{html.escape(text)}&nbsp;</span>"
     )
 
@@ -409,14 +408,14 @@ def _body_html(item: CheckItem, masking: Masking) -> str:
         return "<br>".join(lines)
     lines = []
     if item.category:
-        lines.append(_chip(txt.category_label(item.category), _style.badge_colours(item)))
+        lines.append(_chip(txt.category_label(item.category)))
     if item.explanation:
         lines.append(html.escape(masking.mask(item.explanation)))
     if item.kind is ItemKind.UNEXPLAINED:
         lines.append(f"<i>{html.escape(txt.NO_EXPLANATION_MADE)}</i>")
     tags = _tags_of(item)
     if tags:
-        lines.append(" ".join(_chip(tag, (_style.TAG_BACKGROUND, _style.TAG_TEXT)) for tag in tags))
+        lines.append(" ".join(_chip(tag) for tag in tags))
     return "<br>".join(lines)
 
 

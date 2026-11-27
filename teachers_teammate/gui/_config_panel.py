@@ -367,6 +367,7 @@ class ConfigPanel(QScrollArea):
             "keep_awake": DEFAULTS["keep_awake"],
             "check_for_updates": DEFAULTS["check_for_updates"],
             "results_keep_days": DEFAULTS["results_keep_days"],
+            "log_detail": DEFAULTS["log_detail"],
         }
         settings["anonymizer_primary_model"] = None
         # SECONDARY_MODEL_AUTO by default; SECONDARY_MODEL_NONE = the user chose "(none)".

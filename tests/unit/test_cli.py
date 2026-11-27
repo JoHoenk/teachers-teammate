@@ -1525,3 +1525,39 @@ def test_the_command_line_uses_the_key_saved_in_settings(monkeypatch) -> None:
         provider="openai", model="gpt-5", base_url="", temperature=0.0
     )
     assert built == {"provider": "openai", "key": "sk-stored"}
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+@pytest.mark.parametrize(("flags", "printed"), [((), False), (("-v",), True)])
+def test_the_command_line_writes_its_log_and_says_it_only_with_v(
+    tmp_path: Path,
+    monkeypatch,
+    capsys: pytest.CaptureFixture[str],
+    process_logging_untouched,
+    flags: tuple[str, ...],
+    printed: bool,
+) -> None:
+    """
+    Given  a data root of its own and a command line that will stop for a missing folder
+    When   run_cli() runs, without -v and then with it
+    Then   the log file is written either way, and stderr shows the log's lines only with -v
+    """
+    import os  # noqa: PLC0415
+
+    import teachers_teammate.infrastructure.storage_root as storage_module  # noqa: PLC0415
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.infrastructure import logging_setup  # noqa: PLC0415
+
+    monkeypatch.setattr(logging_setup, "resolve_data_root", lambda: tmp_path / "data")
+    monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        rc = run_cli(argv=[*flags, "-o", str(tmp_path)], app_service=services_of(_AppServiceStub()))
+    finally:
+        os.chdir(original_cwd)
+
+    assert rc == 1
+    header = (tmp_path / "data" / "logs" / logging_setup.LOG_NAME).read_text(encoding="utf-8")
+    assert "Session:" in header
+    assert ("Session:" in capsys.readouterr().err) is printed

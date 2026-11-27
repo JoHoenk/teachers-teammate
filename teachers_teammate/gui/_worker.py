@@ -14,7 +14,7 @@ from PySide6.QtCore import QThread, Signal
 from ..application.composition import AppServices
 from ..config import Config
 from ..domain.run_summary import FileOutcome, FileStatus, KeepAwakeState, RunSummary
-from ..interfaces import CallbackReporter, ProgressCallbacks
+from ..interfaces import LoggingReporter, ProgressCallbacks
 from ..messages import log_failure
 from ..texts.run import BATTERY_WARNING, fatal_error, stopped_message
 from ._types import FileDoneEvent
@@ -74,12 +74,10 @@ class OCRWorker(QThread):
             self.stop_event.set()
 
     def run(self) -> None:
-        # The pipeline narrative arrives through an explicit reporter (no stdout
-        # scraping); forward each line to the log pane, restoring the trailing
-        # newline the log widget splits on.
-        reporter = CallbackReporter(
-            lambda line: self.log_line.emit(line if line.endswith("\n") else line + "\n")
-        )
+        # The pipeline's story goes to the log, where a run that stopped early can be read
+        # afterwards.  The pane shows the same lines from a handler on that logger, so nothing
+        # is scraped from stdout.
+        reporter = LoggingReporter()
 
         # Per-file timing tracked via structured callbacks — no stdout parsing.
         file_start_times: dict[str, float] = {}

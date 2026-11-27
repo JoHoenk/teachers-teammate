@@ -62,7 +62,7 @@ from ._check_controller import CheckController, CheckHooks
 from ._config_panel import ConfigPanel
 from ._export_controller import ExportController
 from ._image_utils import load_icon, load_pixmap
-from ._log_widget import LogWidget
+from ._log_widget import LogWidget, install_run_log
 from ._menu_bar import MenuBar, MenuHooks
 from ._preprocess_preview import PreprocessPreview
 from ._privacy_settings import DISPLAY_ANONYMIZED_DEFAULT, FlowAcknowledgements
@@ -288,6 +288,7 @@ class MainWindow(QMainWindow):
         self._results_table = ResultsTable()
         self._results_table.setObjectName(_handles.RESULTS_TABLE)
         self._log = LogWidget()
+        self._run_log = install_run_log(self._log)
         # The tabs are filled once the controllers exist: the Check page is one of them.
         self._tabs = QTabWidget()
         self._tabs.setObjectName(_handles.MAIN_TABS)
@@ -623,6 +624,7 @@ class MainWindow(QMainWindow):
         self._monitor.close()
         self._setup_launcher.shutdown()
         self._readiness_controller.shutdown()
+        self._run_log.close()  # the pane it wrote into goes with this window
         # Let the window disappear before waiting: running background tasks are
         # given a moment to end, and the user should not see a frozen window.
         self.hide()

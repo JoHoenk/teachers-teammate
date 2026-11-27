@@ -105,6 +105,20 @@ CHECK_UPDATES_NOTE = (
     "GitHub; the change takes effect the next time the app starts."
 )
 
+LOG_GROUP = "If something goes wrong"
+LOG_DETAIL_LABEL = "Log detail"
+LOG_DETAIL_NORMAL = "Normal"
+LOG_DETAIL_DETAILED = "Detailed"
+LOG_DETAIL_TOOLTIP = (
+    "How much the app writes into its log file: what it did and anything that went wrong\n"
+    "(Normal), or the details a developer needs as well (Detailed)."
+)
+LOG_DETAIL_NOTE = (
+    "The app writes down what it did and what went wrong in a log file on this computer "
+    "(Help → Open Log Folder). Normal is enough to ask for help. Detailed adds the details a "
+    "developer needs and makes the file grow faster."
+)
+
 # ── Scan quality ──────────────────────────────────────────────────────────────
 
 PREPARING_GROUP = "Preparing scans and photos"

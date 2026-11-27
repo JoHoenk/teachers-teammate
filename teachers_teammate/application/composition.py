@@ -12,7 +12,7 @@ infrastructure classes, and the one place a service is constructed.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import functools
 from pathlib import Path
@@ -37,6 +37,7 @@ from ..infrastructure.stage_builder import LlmBuilderWithKeys, PipelineComponent
 from ..infrastructure.state_repository import StateRepository
 from ..infrastructure.teacher_work_store import TeacherWorkStore
 from ..interfaces import SleepBlocker
+from ..settings_schema import LogDetail
 from .addons import AddonService
 from .anonymization import AnonymizationService
 from .api_keys import ApiKeys
@@ -399,13 +400,35 @@ def diagnostics_phase(line: str) -> None:
 
 def start_logging(
     on_unexpected: Callable[[BaseException], None] | None = None,
+    *,
+    log_detail: LogDetail | None = None,
+    console: bool = True,
+    argv: Sequence[str] | None = None,
 ) -> Path | None:
     """Start the log of this process (idempotent); return its path, or ``None`` when unwritable.
 
     *on_unexpected* is what the entry point shows a bug that reached no handler with; the log
-    line is written with or without it.
+    line is written with or without it.  *log_detail* is how much goes into the file, *console*
+    whether a console this process has gets the lines too, and *argv* the command line the flag
+    deciding the detail is read from.
     """
-    return logging_setup.start_logging(on_unexpected=on_unexpected)
+    return logging_setup.start_logging(
+        on_unexpected=on_unexpected, log_detail=log_detail, console=console, argv=argv
+    )
+
+
+def set_log_detail(detail: LogDetail, *, from_setting: bool = False) -> LogDetail:
+    """Make the log hold *detail*; return the detail in effect.
+
+    The window hands its setting in with *from_setting*: a detail the command line or the
+    environment asked for wins over it.
+    """
+    return logging_setup.set_log_detail(detail, from_setting=from_setting)
+
+
+def console_wanted(argv: Sequence[str] | None = None) -> bool:
+    """Return whether the console of this process should get the log lines too (``-v``)."""
+    return logging_setup.console_wanted(argv)
 
 
 def install_qt_log() -> None:

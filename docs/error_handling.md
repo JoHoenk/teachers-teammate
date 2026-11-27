@@ -66,3 +66,34 @@ preview) logs it as well. A caller therefore decides only what the teacher is sh
 | Bug | any other exception | — | ERROR, type and frames |
 | Native crash | a segfault in a reader or in Qt | — | `logs/crash.log` |
 | Success, progress | DOCX saved, `[3/10] Processing` | status line, progress bar, row | INFO |
+
+## How much the file holds
+
+"Log detail" on the General page (`log_detail`, default Normal) sets the level of our package and
+of the libraries beside it:
+
+| Log detail | `teachers_teammate` | other libraries |
+|---|---|---|
+| Errors only | WARNING | WARNING |
+| Normal (default) | INFO | WARNING |
+| Detailed | DEBUG | INFO |
+
+The other libraries stay at WARNING until Detailed because a busy one says nothing useful at INFO:
+`httpx` writes every request, and the readiness check polls every ten seconds. Our own INFO lines
+are the run's narrative — what started, which file, what was saved.
+
+A start can decide the detail instead of the setting, which is what a support case needs: the flag
+`--log-level errors|normal|detailed`, the environment variable `TEACHERS_TEAMMATE_LOG_LEVEL`, and
+`--diagnose`, which means Detailed. The flag wins over the environment, the environment over the
+setting, and an override holds for the whole session. The General page offers Normal and Detailed;
+`errors` is reachable by the flag and the environment.
+
+The first line of a start places the lines below it: version, operating system, whether this is the
+frozen build, the data root, and the detail in force. A path under the home folder is written as
+`~/…` by one filter on the file handler, so a file can be sent on as it is.
+
+`logs/diagnostics.log` is not this file: it holds start-up timings and GUI-thread stalls, written
+only with `--diagnose`.
+
+On the command line the file is always written, and the lines also go to the console only with
+`-v` (`--verbose`).

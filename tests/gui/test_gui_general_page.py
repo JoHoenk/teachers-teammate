@@ -23,8 +23,12 @@ def test_defaults_are_on(qtbot) -> None:
     """
     page = _page(qtbot)
 
-    assert page.values() == {"keep_awake": True, "check_for_updates": True}
-    assert page.owned_keys() == frozenset({"keep_awake", "check_for_updates"})
+    assert page.values() == {
+        "keep_awake": True,
+        "check_for_updates": True,
+        "log_detail": "normal",
+    }
+    assert page.owned_keys() == frozenset({"keep_awake", "check_for_updates", "log_detail"})
 
 
 @pytest.mark.gui
@@ -71,3 +75,20 @@ def test_an_old_config_without_the_key_shows_the_check_on(qtbot) -> None:
     page = _page(qtbot, keep_awake=False)
 
     assert page.values()["check_for_updates"] is True
+
+
+@pytest.mark.gui
+def test_log_detail_offers_normal_and_detailed(qtbot) -> None:
+    """
+    Given  a page built from settings that ask for the detailed log
+    When   it is built, then loaded with the default, then shown a level no item stands for
+    Then   it shows detailed, then normal, and an errors-only level shows as normal
+    """
+    page = _page(qtbot, log_detail="detailed")
+    assert page.values()["log_detail"] == "detailed"
+
+    page.load({"log_detail": "normal"})
+    assert page.values()["log_detail"] == "normal"
+
+    page.load({"log_detail": "errors"})
+    assert page.values()["log_detail"] == "normal"

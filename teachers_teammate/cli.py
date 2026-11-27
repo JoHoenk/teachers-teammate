@@ -23,7 +23,12 @@ import sys
 
 from . import __version__
 from ._model_defaults import default_model_for_task
-from .application.composition import AppServices, inject_addon_packages_dir, start_logging
+from .application.composition import (
+    AppServices,
+    console_wanted,
+    inject_addon_packages_dir,
+    start_logging,
+)
 from .application.run import RunPreflight
 from .config import Config, load_config_file
 from .domain.data_location import LOCAL_OCR_ENGINES, PROVIDER_OLLAMA, DataFlow
@@ -38,6 +43,7 @@ from .settings_schema import (
     PDF_RENDER_DPI_RANGE,
     PREPROCESS_METHODS,
     LoadedSettings,
+    LogDetail,
 )
 from .texts import addons as addon_text
 from .texts import check as check_text
@@ -203,6 +209,19 @@ def _add_version_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--version", action=_VersionNotice, nargs=0, help=cli_text.HELP_VERSION)
 
 
+def _add_log_args(parser: argparse.ArgumentParser) -> None:
+    """Add what the log file holds, and whether the console gets the same lines."""
+    parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        default=None,
+        choices=[member.value for member in LogDetail],
+        metavar="LEVEL",
+        help=cli_text.HELP_LOG_LEVEL,
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help=cli_text.HELP_VERBOSE)
+
+
 def exit_on_version(argv: Sequence[str] | None) -> None:
     """Print the version notice and exit 0 when *argv* asks for it.
 
@@ -228,6 +247,7 @@ def _make_parser(providers: list[str] | None) -> argparse.ArgumentParser:
         help=cli_text.HELP_CONFIG,
     )
     _add_version_arg(parser)
+    _add_log_args(parser)
     _add_io_args(parser)
     _add_ocr_args(parser)
     _add_correction_args(parser, providers)
@@ -578,8 +598,8 @@ def run_cli(
     app_service: AppServices,
 ) -> int:
     """Parse args and execute the CLI flow, returning process exit code."""
-    # Where a warning or an unexpected error goes: the log file, and stderr for this command.
-    start_logging()
+    # Where a warning or an unexpected error goes: always the log file, and the console with -v.
+    start_logging(console=console_wanted(argv), argv=argv)
     service = app_service
     providers = service.providers.list_providers()
 

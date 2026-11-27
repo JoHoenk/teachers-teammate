@@ -16,13 +16,13 @@ from PySide6.QtCore import QObject, QSettings, QTimer
 from PySide6.QtWidgets import QMainWindow, QSplitter
 
 from .. import __version__
-from ..application.composition import AppServices
+from ..application.composition import AppServices, set_log_detail
 from ..application.stored_results import RunInProgressError
 from ..config import broken_settings_copy, load_config_file, save_settings_file
 from ..domain.releases import version_tuple
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..messages import log_failure
-from ..settings_schema import DEFAULTS
+from ..settings_schema import DEFAULTS, log_detail_of
 from ..texts import dialogs as dlg
 from ..texts import main_window as win
 from ..texts._types import Notice
@@ -130,6 +130,8 @@ class SettingsFile(QObject):
                     if not p.is_absolute():
                         values[key] = str((base / p).resolve())
             self._panel.load_from_dict(values)
+            # Before anything else is written down: how much this session puts into the log.
+            self._apply_log_detail()
             # Before the queue is shown: a row must never name a result this just deleted.
             self._expire_stored_results()
             # Signals fired during bulk field restoration can run queue refresh
@@ -145,6 +147,11 @@ class SettingsFile(QObject):
         except Exception as exc:  # noqa: BLE001  # a file that does not load is kept, not written over
             log_failure(_logger, "The settings file could not be loaded", exc)
             self._keep_unreadable_file(config_path, exc)
+
+    def _apply_log_detail(self) -> None:
+        """Send the saved log detail to the log: the setting decides unless a flag did."""
+        stored = self._panel.get_settings_dict().get("log_detail", DEFAULTS["log_detail"])
+        set_log_detail(log_detail_of(stored), from_setting=True)
 
     def _remember_version(self) -> bool:
         """Store the running app version; return whether it is newer than the one stored before."""
@@ -237,6 +244,7 @@ class SettingsFile(QObject):
             save_settings_file(out, values)
             self._load_failed = False
             self._backup = None
+            self._apply_log_detail()  # the teacher changed it, so it takes effect now
             if notify:
                 self._log.append_text(win.log_settings_saved(out.resolve()))
         except OSError as exc:

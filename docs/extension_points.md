@@ -256,11 +256,15 @@ model"
 `UnclearNote`s. Its offsets are in the **plain text of the stored `raw_text`**
 (`plain_text_of(raw_text, raw_text_format)`), so a producer that changes that text fixes them
 first: `ChunkingCorrector` merges the pieces (`merge_reviews`), `FileProcessor` restores the
-names (`restore_with_offsets`); both check `fits()`. Every reader goes through `align()` (CLI,
-queue, export, both Word layouts, evaluation tools). The sentence-based review lives only in
-`tools/evaluation/run/one_request/sentence_review.py`; no module of `teachers_teammate/` may import
-it (`tests/tools/test_no_sentence_review_in_the_app.py`). See {doc}`development` → "Correction
-review"
+names (`restore_with_offsets`); both check `fits()`. A teacher's fix of the reading goes through
+`domain/proofreading/carry.py`, which carries the review and the corrected text over the fix or
+gives `None` (`DocumentCommands.edit_transcription` then resets the stage). It moves offsets with
+`OffsetMap` (`word_diff.py`), which counts layout whitespace, and checks that the carried text
+differs from the new reading by the model's own changes, each where the review says. Every reader goes
+through `align()` (CLI, queue, export, both Word layouts, evaluation tools). The sentence-based
+review lives only in `tools/evaluation/run/one_request/sentence_review.py`; no module of
+`teachers_teammate/` may import it (`tests/tools/test_no_sentence_review_in_the_app.py`). See
+{doc}`development` → "Correction review"
 
 ## New evaluation corpus
 

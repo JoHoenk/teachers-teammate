@@ -490,8 +490,10 @@ class CheckController(QObject):
         if doc is None:
             return
         if kind == _RAW:
-            # The proofreading went with the transcription: the page falls back to it.
-            self._page.show_document(doc, *self.position(source_id), typed=True)
+            # The fix may have carried the proofreading over, or taken it: the page says which.
+            self._page.show_document(
+                doc, *self.position(source_id), typed=True, fix=view.reading_fix
+            )
             self.show_copy_state(doc.raw_text, doc.corrected_text)
         else:
             self._page.update_document(doc)

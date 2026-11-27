@@ -42,9 +42,10 @@ from PySide6.QtWidgets import (
 
 from ...application.check_document import CheckDocument
 from ...application.check_items import CheckItem, ItemKind, countable_keys, minor_corrections
+from ...domain.proofreading.carry import ReadingFix
 from ...domain.proofreading.review import AlignedReview
+from ...domain.proofreading.text_edits import TextEdit
 from ...domain.teacher_work import (
-    TextEdit,
     looked_at_progress,
     put_back,
     replace_words,
@@ -279,6 +280,8 @@ class CheckBody(QWidget):
         self._view = ViewKind.READ
         self._lock = ""
         self._edit_allowed = False
+        #: What a reading fix left behind, shown once by the banner.
+        self._notice = ""
         self._narrow = False
         self._scan_wanted: bool | None = None
         self._stored_split: tuple[int, ...] = ()
@@ -358,18 +361,27 @@ class CheckBody(QWidget):
 
     # ── What the page pushes ──────────────────────────────────────────────
 
-    def show_document(self, doc: CheckDocument, masking: Masking, *, typed: bool = False) -> None:
+    def show_document(
+        self,
+        doc: CheckDocument,
+        masking: Masking,
+        *,
+        typed: bool = False,
+        fix: ReadingFix = ReadingFix.NONE,
+    ) -> None:
         """Show *doc*: the scan, the text of the view in front, and the list of its items.
 
         Every text and the scan are filled from *doc*, also when it is the document that was
         open: a run may have read it again.  *typed* says *doc* is what the store made of the
         transcription the teacher just typed: that text is the one in the view and the scan
         has not changed, so neither is filled again — it would only move the cursor, decode
-        every page again and send the scan back to page one.
+        every page again and send the scan back to page one.  *fix* is what that typing did to the
+        proofreading, for the strip.
         """
         same = self._doc is not None and self._doc.source_id == doc.source_id
         if not same:
             self._edit_allowed = False
+        self._notice = self._reading_fix_notice(same and typed, doc, fix)
         self._doc = doc
         self._masking = masking
         if not (typed and same):
@@ -380,6 +392,23 @@ class CheckBody(QWidget):
         self.panel.set_document(doc, masking)
         self._refresh()
         self._request_placeholders(doc)
+
+    def _reading_fix_notice(self, typed_here: bool, doc: CheckDocument, fix: ReadingFix) -> str:
+        """Return what the strip says about the proofreading a reading fix took, or ``""``.
+
+        The command that stored the fix knows what became of the proofreading and why; the
+        document only says whether it is still there.  The notice stays while the teacher keeps
+        typing in a document that has none, so it does not flicker with every pause, and goes
+        with the document or with a proofreading that is there again.
+        """
+        if not typed_here or doc.has_proofreading:
+            return ""
+        lost = self._doc is not None and self._doc.has_proofreading
+        if lost and fix is ReadingFix.TOUCHED_CORRECTION:
+            return txt.READING_FIX_FELL_BACK
+        if lost and fix is ReadingFix.NOT_CARRIED:
+            return txt.READING_FIX_NOT_CARRIED
+        return self._notice
 
     def _request_placeholders(self, doc: CheckDocument) -> None:
         """Ask the window to hide the names of *doc* when they are to be hidden and are not yet."""
@@ -478,6 +507,7 @@ class CheckBody(QWidget):
         self._doc = None
         self._edit_allowed = False
         self._lock = ""
+        self._notice = ""
         self.scan.clear()
         self.panel.clear()
         self.banner.hide_message()
@@ -557,11 +587,13 @@ class CheckBody(QWidget):
         self._redo_action.setEnabled(editable and document.isRedoAvailable())
 
     def _refresh_banner(self) -> None:
-        """Show the one strip that matters most: the lock, a failed hide, the reading fix, a warning.
+        """Show the one strip that matters most: the lock, a failed hide, a lost proofreading, a
+        warning.
 
         Hiding the names is not a reason of its own: the 👁 toggle shows it, and a strip that
         came and went with it moved the texts.  A hide that failed is one, because the names
-        then stand in the text while the toggle says they are hidden.
+        then stand in the text while the toggle says they are hidden.  The notice is what a
+        reading fix left behind: it is shown once, until the next document or the next fix.
         """
         doc = self._doc
         if doc is None:
@@ -572,6 +604,9 @@ class CheckBody(QWidget):
             return
         if self._masking.error:
             self.banner.show_message(self._masking.note(), action=txt.SHOW_NAMES)
+            return
+        if self._notice:
+            self.banner.show_message(self._notice)
             return
         if doc.has_proofreading and not self._edit_allowed:
             self.banner.show_message(
@@ -1010,12 +1045,18 @@ class CheckPage(QWidget):
         self._next_btn.setEnabled(0 < position < total)
 
     def show_document(
-        self, doc: CheckDocument, position: int, total: int, *, typed: bool = False
+        self,
+        doc: CheckDocument,
+        position: int,
+        total: int,
+        *,
+        typed: bool = False,
+        fix: ReadingFix = ReadingFix.NONE,
     ) -> None:
         """Show one document: the header that names it, and the body that shows it.
 
-        *typed* is passed on to :meth:`CheckBody.show_document`: the transcription in the view
-        is the one the teacher just typed.
+        *typed* and *fix* are passed on to :meth:`CheckBody.show_document`: the transcription in
+        the view is the one the teacher just typed, and *fix* is what that did to the proofreading.
         """
         if self._doc is None or self._doc.source_id != doc.source_id:
             # The placeholders belong to the text of the document that was open.
@@ -1027,7 +1068,7 @@ class CheckPage(QWidget):
         self._show_again(doc)
         self._source_action.setEnabled(bool(doc.raw_text.strip()))
         self._refresh_checked()
-        self.body.show_document(doc, self._masking, typed=typed)
+        self.body.show_document(doc, self._masking, typed=typed, fix=fix)
         self._put_in_front(self._view_for(doc))
 
     def update_document(self, doc: CheckDocument) -> None:

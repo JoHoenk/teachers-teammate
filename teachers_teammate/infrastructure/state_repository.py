@@ -349,6 +349,34 @@ class StateRepository:
         self.save(input_file, new_state)
         return new_state
 
+    def carry_correction(
+        self,
+        input_file: Path,
+        state: DocumentState,
+        *,
+        corrected: str,
+        review: dict | None,
+        source_hash: str,
+    ) -> DocumentState:
+        """Persist a proofreading that a reading fix carried over to the new transcription.
+
+        *corrected* and *review* are the answered text and its explanations with the fix made, and
+        *source_hash* is the ``text_identity`` of the transcription they were carried into, so the
+        proofreading is current again.  The settings, the text that was sent and the warning stay:
+        they describe this answer.  The content review was made from the old text, so it is one
+        model call to redo and is cleared.
+        """
+        new_state = dataclasses.replace(
+            state,
+            correction_done=bool(corrected),
+            correction_text=corrected,
+            correction_review=review,
+            correction_source_hash=source_hash,
+            **cleared_fields(Stage.EVALUATION),
+        )
+        self.save(input_file, new_state)
+        return new_state
+
     def record_evaluation_result(
         self,
         input_file: Path,

@@ -32,7 +32,7 @@ from ...application.check_items import CheckItem, ItemKind
 from ...application.formatting import TextFormatter
 from ...domain.formatted_text import FormattedDocument, TextFormat
 from ...domain.proofreading.quotes import map_forward
-from ...domain.teacher_work import TextEdit
+from ...domain.proofreading.text_edits import TextEdit
 from ...texts import check as check_text
 from ...texts import review as txt
 from .._formatted_text import (

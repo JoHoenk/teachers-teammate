@@ -373,6 +373,11 @@ app_test(
     deps = _DOMAIN_LIB,
 )
 
+app_test(
+    "unit/test_carry_reading_fix.py",
+    deps = _DOMAIN_LIB,
+)
+
 # The catalogue of messages: one factory per key in ``messages.py``, one renderer per key
 # in ``texts/messages.py``, and a golden list of the key values a stored result keeps.
 app_test(

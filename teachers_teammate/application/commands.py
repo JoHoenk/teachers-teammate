@@ -9,6 +9,7 @@ reader merges the two (:func:`~teachers_teammate.application.merged_view.merged_
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass, replace
 import logging
 from pathlib import Path
 
@@ -16,15 +17,27 @@ from ..cache_keys import correction_key, expected_hashes
 from ..config import Config
 from ..domain.context_budget import RunWindows
 from ..domain.document_state import machine_texts
-from ..domain.formatted_text import normalize_text_format
+from ..domain.formatted_text import PLAIN, TextFormat, normalize_text_format
 from ..domain.freshness import ExpectedHashes
 from ..domain.key_facts import KeyFacts
+from ..domain.proofreading.carry import (
+    CarriedFix,
+    ReadingFix,
+    carry_reading_fix,
+    retarget_words,
+    touches_a_correction,
+)
+from ..domain.proofreading.review import CorrectionReview
 from ..domain.stages import Stage, normalize_stage
 from ..domain.teacher_work import (
+    CarriedAnswer,
+    MachineTexts,
     TeacherWork,
     WorkTooNewError,
     current_texts,
     kept_over,
+    proofreading_id,
+    text_identity,
     with_checked,
     with_corrected,
     with_looked_at,
@@ -39,6 +52,17 @@ from .document_view import DocumentStateView
 from .merged_view import reconciled_view
 
 _logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _Carry:
+    """What one reading fix does to the proofreading, decided before anything is stored."""
+
+    outcome: ReadingFix
+    fix: CarriedFix | None = None
+    answer: CarriedAnswer | None = None
+    review: dict | None = None
+    """The review as it is stored with the carried proofreading; ``None`` when it had none."""
 
 
 class WorkNotSavedError(Exception):
@@ -88,10 +112,13 @@ class DocumentCommands:
     ) -> DocumentStateView | None:
         """Store *text* as the teacher's transcription of *source*.
 
-        A proofreading is made from the transcription, so storing a new one resets the cache's
-        correction stage: the answer no longer applies to the text the document has.  The work
-        is stored first: if that fails nothing is reset, and if the reset fails the stored
-        proofreading is still not taken for current (it was made from another text).
+        A proofreading is made from the transcription.  A fix that touches no word the proofreading
+        changed is carried over to it (:func:`~teachers_teammate.domain.proofreading.carry.
+        carry_reading_fix`), and the proofreading, the review and the teacher's decisions stay;
+        any other fix resets the correction stage, because the answer no longer applies to the text
+        the document has.  The work is stored first: if that fails nothing is reset, and if the
+        reset fails the stored proofreading is still not taken for current (it was made from
+        another text).
 
         Returns:
             The document as it is now, or ``None`` when it has no state.
@@ -104,19 +131,37 @@ class DocumentCommands:
         if state is None:
             return None
         machine = machine_texts(state)
-        work = self._update(
-            state.source_hash,
-            source.name,
-            lambda work: with_transcription(
-                work, text, normalize_text_format(text_format), machine
-            ),
-        )
-        if state.correction_done:
+        format_ = normalize_text_format(text_format)
+        decided: list[_Carry] = []
+
+        def change(work: TeacherWork) -> TeacherWork:
+            # Decided on the work the store holds under its lock, so the carry and the part it
+            # rebinds are of one state.
+            decided.append(self._carried_fix(machine, work, text, format_))
+            return with_transcription(work, text, format_, machine, carried=decided[-1].answer)
+
+        work = self._update(state.source_hash, source.name, change)
+        carry = decided[-1]
+        outcome = carry.outcome
+        if carry.fix is not None:
+            try:
+                state = store.carry_correction(
+                    source,
+                    state,
+                    corrected=carry.fix.corrected,
+                    review=carry.review,
+                    source_hash=text_identity(text),
+                )
+            except OSError as exc:
+                _logger.warning("Could not carry the proofreading of %s: %s", source.name, exc)
+                outcome = ReadingFix.NOT_CARRIED
+        elif state.correction_done:
             try:
                 state = store.reset_from_stage(source, state, Stage.CORRECTION)
             except OSError as exc:
                 _logger.warning("Could not reset the proofreading of %s: %s", source.name, exc)
-        return reconciled_view(source, state, work, self._expected(config, source))
+        view = reconciled_view(source, state, work, self._expected(config, source))
+        return replace(view, reading_fix=outcome)
 
     def edit_corrected_text(
         self, config: Config, *, source: Path, text: str
@@ -291,6 +336,44 @@ class DocumentCommands:
         except OSError as exc:
             _logger.warning("Could not save the teacher's work for %s: %s", name, exc)
             raise WorkNotSavedError(name, too_new=False) from exc
+
+    @staticmethod
+    def _carried_fix(
+        machine: MachineTexts, work: TeacherWork, text: str, text_format: TextFormat
+    ) -> _Carry:
+        """Return what the fix does to the proofreading, and what the work binds to.
+
+        The proofreading falls back when the document has no current proofreading, its text is
+        Markdown (whose plain offsets are mapped through the marks, which the carry does not
+        do), a word change touches a correction, or it cannot be placed in the teacher's own
+        corrected text.
+        """
+        texts = current_texts(machine, work)
+        if not texts.proofreading_id:
+            return _Carry(ReadingFix.NONE)
+        if texts.transcription_format != PLAIN or text_format != PLAIN:
+            return _Carry(ReadingFix.NOT_CARRIED)
+        parsed = CorrectionReview.from_dict(machine.review)
+        review = parsed or CorrectionReview()
+        carried = carry_reading_fix(texts.transcription, text, texts.machine_corrected, review)
+        if carried is None:
+            touched = touches_a_correction(
+                texts.transcription, text, texts.machine_corrected, review
+            )
+            return _Carry(ReadingFix.TOUCHED_CORRECTION if touched else ReadingFix.NOT_CARRIED)
+        teacher_corrected: str | None = None
+        part = texts.corrections_work
+        if part is not None and part.text is not None:
+            teacher_corrected = retarget_words(part.text, carried.fixes)
+            if teacher_corrected is None:
+                return _Carry(ReadingFix.NOT_CARRIED)
+        stored = carried.review.to_dict() if parsed is not None else None
+        answer = CarriedAnswer(
+            bound_to=proofreading_id(text_identity(text), carried.corrected, stored),
+            was_bound_to=texts.proofreading_id,
+            teacher_corrected=teacher_corrected,
+        )
+        return _Carry(ReadingFix.CARRIED, carried, answer, stored)
 
     def _expected(self, config: Config, source: Path) -> ExpectedHashes:
         """Return the stage hashes the settings of *config* ask for, for *source*."""

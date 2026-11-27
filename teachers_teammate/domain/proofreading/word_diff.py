@@ -188,6 +188,63 @@ def word_diff(raw: str, corrected: str) -> tuple[Hunk, ...]:
     return tuple(hunks)
 
 
+@dataclass(frozen=True)
+class _Segment:
+    """A stretch of the first text and the stretch of the second it became."""
+
+    start: int
+    end: int
+    other_start: int
+    other_end: int
+    exact: bool
+    """Both stretches are the same tokens, so an offset in one is one to one in the other."""
+
+
+class OffsetMap:
+    """Where an offset of one text stands in another text it was diffed against.
+
+    Unlike the hunks, it knows the layout whitespace: two texts that differ only in the spaces or
+    line breaks between words have offsets that no sum of hunk lengths gets right, because the
+    word diff counts such a difference as equal.  An offset in a stretch both texts share maps
+    one to one; one inside a changed or re-spaced stretch is widened to the stretch the other text
+    has there.  Both texts must be plain.
+    """
+
+    def __init__(self, text: str, other: str) -> None:
+        tokens, other_tokens = tokenize(text), tokenize(other)
+        at, other_at = token_offsets(tokens), token_offsets(other_tokens)
+        self._segments = tuple(
+            _Segment(
+                start=at[i1],
+                end=at[i2],
+                other_start=other_at[j1],
+                other_end=other_at[j2],
+                exact=tokens[i1:i2] == other_tokens[j1:j2],
+            )
+            for _, i1, i2, j1, j2 in diff_opcodes(tokens, other_tokens)
+        )
+
+    def forward(self, offset: int, *, end: bool = False) -> int:
+        """Return where *offset* of the first text stands in the other.
+
+        *end* says the offset closes a span, so a stretch that changed puts it after what
+        replaced the words, not before.
+        """
+        chosen: _Segment | None = None
+        for segment in self._segments:
+            if not segment.start <= offset <= segment.end:
+                continue
+            if segment.exact:
+                return segment.other_start + offset - segment.start
+            closes_here = segment.end == offset and end
+            opens_here = segment.start == offset and not end
+            if chosen is None or closes_here or opens_here:
+                chosen = segment
+        if chosen is None:
+            return offset
+        return chosen.other_end if end else chosen.other_start
+
+
 def _trim_layout(
     old: Sequence[str], new: Sequence[str]
 ) -> tuple[str, str, tuple[int, int], tuple[int, int]]:

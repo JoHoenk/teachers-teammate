@@ -7,9 +7,12 @@ an edit of the final text.
 
 *Next* on the card walks the rows the teacher has not looked at yet, in list order and from the top
 at the end; a document opens at the first of them.  The walk keeps no state of its own: choosing a
-row is what marks it looked at, so the icons and the footer say how far it got.  The boxes above
-the list narrow both the list and the walk: nothing ticked shows every row, and *Not looked at*
-narrows whatever else is ticked, while the counts keep covering the whole document.
+row is what marks it looked at, so the bullet in the list and the footer say how far it got.  The
+boxes above the list narrow both the list and the walk: nothing ticked shows every row, and *Not
+looked at* narrows whatever else is ticked, while the counts keep covering the whole document.
+
+A row says its kind with the colour of the bar at its left edge — colour says what happened to the
+text, a word says the category — and the info button beside *Next* spells the colours out.
 
 The card says what the change is on one side and why it was made on the other, side by side once
 the panel is wide enough for both.  Its height is the teacher's — a splitter against the list, so
@@ -17,7 +20,7 @@ a long explanation is read whole — and its text scrolls inside it, so neither 
 *Next* move while the teacher steps through a document.  The content review has a tab of its own
 next to the list.
 
-All wording comes from :mod:`...texts.review` and :mod:`...texts.check`; the colours and icons from
+All wording comes from :mod:`...texts.review` and :mod:`...texts.check`; the colours from
 :mod:`._style`.
 """
 
@@ -28,8 +31,8 @@ from collections.abc import Sequence
 from dataclasses import replace
 import html
 
-from PySide6.QtCore import QRect, QSize, Qt, Signal, SignalInstance
-from PySide6.QtGui import QColor, QFont, QPainter
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal, SignalInstance
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QBoxLayout,
@@ -48,6 +51,8 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QTabWidget,
     QTextBrowser,
+    QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -82,6 +87,9 @@ FILTER_LEFT_OUT = "left_out"
 _ROW_ROLE = Qt.ItemDataRole.UserRole + 1
 
 _ROW_HEIGHT = 24
+
+#: How wide the bar at the left of a row is: the accent of its kind.
+_BAR_WIDTH = 3
 
 #: How many rows of the list stay visible whatever the card's height is.
 _LIST_MIN_ROWS = 3
@@ -128,8 +136,11 @@ def _filter_key(item: CheckItem) -> str:
     """Return the filter *item* answers to: its category, or the kind it has no category for.
 
     A change of the model without a category, or with one the boxes do not know, is filed under
-    ``"other"``; an item with neither — a change of the teacher's own — answers to no box at all.
+    ``"other"``; an item with neither — a change of the teacher's own — answers to no box at all,
+    and nor does a correction the teacher took out, which the list badges *taken out*.
     """
+    if item.kind is ItemKind.TAKEN_OUT:
+        return ""
     if item.kind in _KIND_FILTERS:
         return _KIND_FILTERS[item.kind]
     if item.category or item.kind in MODEL_KINDS:
@@ -148,16 +159,21 @@ def _columns_of(item: CheckItem) -> tuple[str, str]:
     return item.before, item.after
 
 
-def _icon_of(item: CheckItem, *, looked_at: frozenset[str]) -> str:
-    """Return the character in front of a row: whether the item was looked at."""
-    return _style.icon(item.kind, looked_at=item.key in looked_at)
+def _bullet_of(item: CheckItem, *, looked_at: frozenset[str]) -> str:
+    """Return the bullet in front of a row: there while the teacher has not looked at it."""
+    return _style.todo_mark(item, looked_at=item.key in looked_at)
 
 
 def _category_of(item: CheckItem) -> str:
-    """Return the badge a row shows on the right: its category, or what kind of thing it is."""
-    if item.category or item.kind in MODEL_KINDS:
-        return txt.category_label(item.category)
-    return _KIND_BADGES.get(item.kind, "")
+    """Return the badge a row shows on the right: what kind of thing it is, else its category.
+
+    The kind comes first, so a correction the teacher took out says *taken out* rather than its
+    category; the category of that correction stays on its card.
+    """
+    kind = _KIND_BADGES.get(item.kind)
+    if kind is not None:
+        return kind
+    return txt.category_label(item.category)
 
 
 def _words_in_text(item: CheckItem, corrected_plain: str) -> str:
@@ -173,6 +189,26 @@ def _words_in_text(item: CheckItem, corrected_plain: str) -> str:
     if not 0 <= start <= end <= len(corrected_plain):
         return item.after
     return corrected_plain[start:end]
+
+
+def _row_font(font: QFont, item: CheckItem, *, looked_at: bool) -> QFont:
+    """Return the font the words of a row are drawn in: bold while the teacher has to look at it.
+
+    A row that does not count for looked-at, a change of the teacher's own, is never bold.
+    """
+    drawn = QFont(font)
+    drawn.setBold(counts_for_looked_at(item) and not looked_at)
+    return drawn
+
+
+def _bar_rect(rect: QRect) -> QRect:
+    """Return the bar at the left edge of a row: the accent of the item's kind."""
+    return QRect(rect.left(), rect.top(), _BAR_WIDTH, rect.height())
+
+
+def _bullet_rect(rect: QRect, metrics: QFontMetrics) -> QRect:
+    """Return the column of the bullet, one bullet wide whether or not it holds one."""
+    return QRect(rect.left(), rect.top(), metrics.horizontalAdvance(_style.TODO_DOT), rect.height())
 
 
 def _column_rects(rect: QRect, arrow_width: int) -> tuple[QRect, QRect, QRect]:
@@ -193,17 +229,20 @@ def _column_rects(rect: QRect, arrow_width: int) -> tuple[QRect, QRect, QRect]:
 
 
 class _ItemDelegate(QStyledItemDelegate):
-    """Draws one row: its icon, the student's words, the corrected ones, and the category badge.
+    """Draws one row: its kind's bar, its bullet, the two sorts of words, and the badge.
 
-    The two word columns are the same width in every row, so the student's words and the
-    correction line up down the list.  A row the teacher has looked at is drawn in the theme's
-    secondary grey, and the chosen row in the theme's selection text, so both stay readable.
+    The bar at the left edge is the accent of the item's kind, so a row says what happened to the
+    text without a word.  The bullet column is one bullet wide whether or not it holds one, so the
+    words of all rows start at the same place.  The two word columns are the same width in every
+    row, so the student's words and the correction line up down the list.  A row the teacher has
+    not looked at is bold, a looked-at one is drawn in the theme's secondary grey, and the chosen
+    row in the theme's selection text, so all three stay readable.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.looked_at: frozenset[str] = frozenset()
-        """The keys the teacher has looked at, which decides the icon and the colour."""
+        """The keys the teacher has looked at, which decides the bullet and the colour."""
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         """Draw the row of *index*; a row without one falls back to the plain text."""
@@ -216,45 +255,62 @@ class _ItemDelegate(QStyledItemDelegate):
         opt.text = ""
         style = opt.widget.style() if opt.widget is not None else QApplication.style()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
-        rect = opt.rect.adjusted(6, 0, -6, 0)
-        metrics = opt.fontMetrics
         looked_at = item.key in self.looked_at
         selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        # The columns are laid out with the regular font, so a row reads the same in bold or not.
+        metrics = QFontMetrics(opt.font)
+        words_font = _row_font(opt.font, item, looked_at=looked_at)
         painter.save()
-        painter.setFont(QFont(opt.font))
+        painter.setFont(opt.font)
         painter.setPen(_style.row_text(opt.palette, looked_at=looked_at, selected=selected))
-        icon = _icon_of(item, looked_at=self.looked_at)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, icon)
-        words = rect.adjusted(metrics.horizontalAdvance(icon) + 6, 0, 0, 0)
+        painter.fillRect(_bar_rect(opt.rect), QColor(_style.look(item).accent))
+        rect = opt.rect.adjusted(_BAR_WIDTH + 6, 0, -6, 0)
+        painter.drawText(
+            _bullet_rect(rect, metrics),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            _bullet_of(item, looked_at=self.looked_at),
+        )
+        words = rect.adjusted(metrics.horizontalAdvance(_style.TODO_DOT) + 6, 0, 0, 0)
         words = self._draw_badge(painter, words, metrics, item)
-        self._draw_words(painter, words, metrics, item)
+        painter.setFont(words_font)
+        self._draw_words(painter, words, metrics, QFontMetrics(words_font), item)
         painter.restore()
 
     def _draw_badge(
         self,
         painter: QPainter,
         rect: QRect,
-        metrics,
+        metrics: QFontMetrics,
         item: CheckItem,
     ) -> QRect:
         """Draw the badge at the right of *rect*; return what is left for the words.
 
-        The badge keeps its own two colours, also on the chosen row: they are chosen to read
-        together, and the row's colour would not read on the badge's background.
+        The badge keeps its neutral grey, also on the chosen row: it is chosen to read together
+        with its own text, and the row's colour would not read on it.
         """
         category = _category_of(item)
         if not category:
             return rect
         width = metrics.horizontalAdvance(category) + 10
         badge = QRect(rect.right() - width + 1, rect.top() + 3, width, rect.height() - 6)
-        background, text = _style.badge_colours(item)
-        painter.fillRect(badge, QColor(background))
-        painter.setPen(QColor(text))
+        painter.fillRect(badge, QColor(_style.CHIP_BACKGROUND))
+        painter.setPen(QColor(_style.CHIP_TEXT))
         painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, category)
         return rect.adjusted(0, 0, -(width + 6), 0)
 
-    def _draw_words(self, painter: QPainter, rect: QRect, metrics, item: CheckItem) -> None:
-        """Draw the student's words and the corrected ones in two columns of the same width."""
+    def _draw_words(
+        self,
+        painter: QPainter,
+        rect: QRect,
+        layout: QFontMetrics,
+        metrics: QFontMetrics,
+        item: CheckItem,
+    ) -> None:
+        """Draw the student's words and the corrected ones in two columns of the same width.
+
+        The columns are laid out with *layout*, the regular font; the words are elided with
+        *metrics*, the font they are drawn in.
+        """
         before, after = _columns_of(item)
         if not after:
             painter.drawText(
@@ -264,7 +320,7 @@ class _ItemDelegate(QStyledItemDelegate):
             )
             return
         arrow = " \u2192 "
-        before_rect, arrow_rect, after_rect = _column_rects(rect, metrics.horizontalAdvance(arrow))
+        before_rect, arrow_rect, after_rect = _column_rects(rect, layout.horizontalAdvance(arrow))
         for part, part_rect in ((before, before_rect), (arrow, arrow_rect), (after, after_rect)):
             painter.drawText(
                 part_rect,
@@ -304,13 +360,51 @@ def _column(*labels: QLabel) -> QWidget:
     return column
 
 
-def _chip(text: str, colours: tuple[str, str]) -> str:
-    """Return *text* as a small coloured chip: a category, or a note about the change."""
-    background, foreground = colours
+def _chip(text: str) -> str:
+    """Return *text* as a small neutral chip: a category, or a note about the change."""
     return (
-        f'<span style="background-color:{background}; color:{foreground};">'
+        f'<span style="background-color:{_style.CHIP_BACKGROUND};'
+        f' color:{_style.CHIP_TEXT};">'
         f"&nbsp;{html.escape(text)}&nbsp;</span>"
     )
+
+
+def _escaped(text: str) -> str:
+    """Return *text* fit for rich text, with its apostrophes kept as themselves."""
+    return html.escape(text, quote=False)
+
+
+def _swatch(colour: str) -> str:
+    """Return a small square of *colour*: what one line of the legend is about."""
+    return f'<span style="background-color:{colour};">&nbsp;&nbsp;&nbsp;&nbsp;</span>'
+
+
+def _struck(text: str, colour: str) -> str:
+    """Return *text* struck through in *colour*: words a correction took out."""
+    return f'<span style="color:{colour};"><s>{_escaped(text)}</s></span>'
+
+
+def _legend_html() -> str:
+    """Return the legend of the tab's marks: one line per colour, per mark and per strike."""
+    accents = _style.MARK_ACCENTS
+    lines = [
+        f"{_swatch(colour)} {_escaped(text)}"
+        for colour, text in (
+            (accents[ItemKind.CORRECTION], check_txt.LEGEND_CORRECTION),
+            (accents[ItemKind.OWN], check_txt.LEGEND_OWN),
+            (accents[ItemKind.UNCLEAR], check_txt.LEGEND_UNCLEAR),
+            (accents[ItemKind.TAKEN_OUT], check_txt.LEGEND_TAKEN_OUT),
+            (_style.pale(accents[ItemKind.CORRECTION]), check_txt.LEGEND_PALER),
+        )
+    ]
+    lines.append(_escaped(check_txt.LEGEND_UNDERLINE))
+    lines.append(
+        f"{_escaped(check_txt.LEGEND_STRIKES)}: "
+        f"{_struck(check_txt.LEGEND_STRIKE_MODEL, _style.MODEL_STRIKE)}, "
+        f"{_struck(check_txt.LEGEND_STRIKE_STUDENT, _style.STUDENT_STRIKE)}"
+    )
+    lines.append(_escaped(check_txt.LEGEND_LIST))
+    return "<br>".join(lines)
 
 
 def _title_html(item: CheckItem, masking: Masking) -> str:
@@ -395,7 +489,7 @@ def _tags_of(item: CheckItem) -> tuple[str, ...]:
 def _body_html(item: CheckItem, masking: Masking) -> str:
     """Return what the card says under the words: the category, the explanation and the notes."""
     if item.kind is ItemKind.LEFT_OUT:
-        return html.escape(masking.mask(item.why))
+        return html.escape(txt.NOT_PROOFREAD_WHY)
     if item.kind is ItemKind.UNCLEAR:
         lines: list[str] = []
         if item.why:
@@ -403,20 +497,17 @@ def _body_html(item: CheckItem, masking: Masking) -> str:
         if item.suggestion:
             caption = txt.recommendation_caption(item.suggestion_uncertain)
             lines.append(f"{html.escape(caption)} {html.escape(masking.mask(item.suggestion))}")
-        note = txt.suggestion_note(item.suggestion_uncertain)
-        if note:
-            lines.append(f"<i>{html.escape(note)}</i>")
         return "<br>".join(lines)
     lines = []
     if item.category:
-        lines.append(_chip(txt.category_label(item.category), _style.badge_colours(item)))
+        lines.append(_chip(txt.category_label(item.category)))
     if item.explanation:
         lines.append(html.escape(masking.mask(item.explanation)))
     if item.kind is ItemKind.UNEXPLAINED:
         lines.append(f"<i>{html.escape(txt.NO_EXPLANATION_MADE)}</i>")
     tags = _tags_of(item)
     if tags:
-        lines.append(" ".join(_chip(tag, (_style.TAG_BACKGROUND, _style.TAG_TEXT)) for tag in tags))
+        lines.append(" ".join(_chip(tag) for tag in tags))
     return "<br>".join(lines)
 
 
@@ -711,9 +802,19 @@ class SidePanel(QWidget):
         self._next_button.setMinimumWidth(self._next_button.sizeHint().width())
         self._next_button.setText(txt.NEXT)
         self._next_button.setToolTip(txt.NEXT_TOOLTIP)
+        self._legend = _legend_html()
+        self._legend_button = QToolButton()
+        self._legend_button.setAutoRaise(True)
+        self._legend_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation)
+        )
+        self._legend_button.setAccessibleName(check_txt.LEGEND_TIP)
+        self._legend_button.setToolTip(self._legend)
+        self._legend_button.clicked.connect(self._show_legend)
         top = QHBoxLayout()
         top.setSpacing(4)
         top.addWidget(self._counts, 1)
+        top.addWidget(self._legend_button)
         top.addWidget(self._next_button)
         layout.addLayout(top)
 
@@ -843,6 +944,18 @@ class SidePanel(QWidget):
         key = next_unseen(self._walk_keys(), self._looked_at, self.chosen)
         if key:
             self.set_chosen(key)
+
+    def _show_legend(self) -> None:
+        """Show the legend where its tooltip would be: a click asks for what the tooltip says.
+
+        A click with the pointer on the button keeps the tooltip at the pointer; a key press
+        puts it under the button.
+        """
+        button = self._legend_button
+        pointer = QCursor.pos()
+        inside = button.rect().contains(button.mapFromGlobal(pointer))
+        at = pointer if inside else button.mapToGlobal(QPoint(0, button.height()))
+        QToolTip.showText(at, self._legend, button)
 
     def set_chosen(self, key: str) -> None:
         """Select the row of *key*, if the list has it, without telling the page back.

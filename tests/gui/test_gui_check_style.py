@@ -50,19 +50,17 @@ def _contrast(first: QColor, second: QColor) -> float:
 
 @pytest.mark.gui
 @pytest.mark.parametrize("kind", list(ItemKind), ids=lambda kind: kind.value)
-def test_every_kind_has_an_icon_and_a_look(kind: ItemKind) -> None:
+def test_every_kind_has_a_look_whose_text_reads(kind: ItemKind) -> None:
     """
     Given  a kind of item the list can show
-    When   its icon and its look are asked for
-    Then   both exist, and the look's text reads on its own background
+    When   its look is asked for
+    Then   it has a background, a text colour and an accent, and the text reads on its background
     """
-    assert _style.icon(kind, looked_at=False)
-    assert _style.icon(kind, looked_at=True)
-
     look = _style.look(_item(kind, category="grammar"))
 
     assert QColor(look.background).isValid()
     assert QColor(look.text).isValid()
+    assert QColor(look.accent).isValid()
     assert _contrast(QColor(look.text), QColor(look.background)) >= 4.5
 
 
@@ -95,32 +93,47 @@ def test_a_mark_is_a_dark_tint_that_stands_off_the_text() -> None:
 
 
 @pytest.mark.gui
-def test_the_badge_of_a_model_change_takes_the_colour_of_its_category() -> None:
+def test_the_four_accents_are_four_colours_that_read_on_the_page() -> None:
     """
-    Given  a grammar change and a word choice change
-    When   their badges are compared with the category colours
-    Then   each is drawn in its own category's colour, so the list says which change it is
+    Given  the accents the four kinds of mark are drawn in
+    When   they are compared with each other and with the page
+    Then   no two are the same, so a colour names one kind of thing, and each reads on the page
     """
-    grammar = _style.badge_colours(_item(ItemKind.CORRECTION, category="grammar"))
-    word_choice = _style.badge_colours(_item(ItemKind.CHANGED, category="word_choice"))
+    accents = {_style.MARK_ACCENTS[kind] for kind in _style.MARK_ACCENTS}
 
-    assert grammar == _style.CATEGORY_COLOURS["grammar"]
-    assert word_choice == _style.CATEGORY_COLOURS["word_choice"]
+    assert len(accents) == 4
+    for colour in accents:
+        assert _contrast(QColor(colour), QColor(_style.BASE_BACKGROUND)) >= 3
 
 
 @pytest.mark.gui
-def test_no_two_categories_share_a_badge_colour() -> None:
+@pytest.mark.parametrize("kind", list(ItemKind), ids=lambda kind: kind.value)
+def test_a_marks_underline_is_the_accent_of_its_kind(kind: ItemKind) -> None:
     """
-    Given  every change category
-    When   their badge colours are compared
-    Then   no two share a background, so a badge names one category
+    Given  a mark of any kind
+    When   its character format is made
+    Then   the underline is drawn in the accent of that kind, not in its text colour
     """
-    backgrounds = [
-        _style.badge_colours(_item(ItemKind.CORRECTION, category=category))[0]
-        for category in CHANGE_CATEGORIES
-    ]
+    mark = _style.look(_item(kind)).format()
 
-    assert len(set(backgrounds)) == len(backgrounds)
+    assert mark.underlineColor() == QColor(_style.MARK_ACCENTS[kind])
+
+
+@pytest.mark.gui
+def test_no_chip_colour_is_a_mark_colour_or_an_accent() -> None:
+    """
+    Given  the grey of the badges and chips
+    When   it is compared with the marks in the text and with their accents
+    Then   it is neither and looks unlike the grey of a taken-out mark, so grey never means a kind of change
+    """
+    marks = {colour for pair in _style.MARK_COLOURS.values() for colour in pair}
+    accents = set(_style.MARK_ACCENTS.values())
+    chips = {_style.CHIP_BACKGROUND, _style.CHIP_TEXT}
+
+    assert not chips & marks
+    assert not chips & accents
+    taken_out = QColor(_style.MARK_COLOURS[ItemKind.TAKEN_OUT][0])
+    assert _contrast(QColor(_style.CHIP_BACKGROUND), taken_out) >= 1.3
 
 
 @pytest.mark.gui
@@ -140,40 +153,17 @@ def test_the_chosen_mark_has_the_one_bright_background() -> None:
 
 
 @pytest.mark.gui
-def test_no_badge_of_a_kind_looks_like_the_badge_of_a_category() -> None:
-    """
-    Given  the badges of the kinds that are no change of the model, and of every category
-    When   their backgrounds are compared
-    Then   none is shared, so *your change* is never mistaken for *grammar*
-    """
-    categories = {colours[0] for colours in _style.CATEGORY_COLOURS.values()}
-    kinds = {colours[0] for colours in _style.KIND_BADGE_COLOURS.values()}
-
-    assert not categories & kinds
-
-
-@pytest.mark.gui
-def test_a_model_change_without_a_category_has_the_badge_of_other() -> None:
-    """
-    Given  a correction, a changed correction and an unexplained change, none with a category
-    When   their badges are made
-    Then   each is the grey of *other*, and none fails for the missing category
-    """
-    for kind in (ItemKind.CORRECTION, ItemKind.CHANGED, ItemKind.UNEXPLAINED):
-        assert _style.badge_colours(_item(kind)) == _style.CATEGORY_COLOURS["other"]
-
-
-@pytest.mark.gui
 def test_a_minor_mark_is_weaker_than_the_change_it_belongs_to() -> None:
     """
     Given  a punctuation change and the same change marked as minor
     When   both looks are made
-    Then   the minor one keeps the hue, drawn closer to the page
+    Then   the minor one keeps the hue, its background and its underline drawn closer to the page
     """
     plain = _style.look(_item(ItemKind.CORRECTION, category="punctuation"))
     minor = _style.look(_item(ItemKind.CORRECTION, category="punctuation", minor=True))
 
     assert minor.background != plain.background
+    assert minor.accent == _style.pale(plain.accent)
     assert minor.text == plain.text
     assert _contrast(QColor(minor.background), QColor(_style.BASE_BACKGROUND)) < _contrast(
         QColor(plain.background), QColor(_style.BASE_BACKGROUND)

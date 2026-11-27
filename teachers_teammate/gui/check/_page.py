@@ -461,7 +461,7 @@ class CheckBody(QWidget):
     def mark_looked_at(self, key: str) -> bool:
         """Record that the teacher looked at *key*; return whether it was new.
 
-        The document is updated in place — the list icons and the footer say so — and nothing is
+        The document is updated in place — the list and the footer say so — and nothing is
         reloaded: the teacher is reading, not waiting for the disk.
         """
         doc = self._doc

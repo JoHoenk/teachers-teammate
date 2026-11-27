@@ -71,7 +71,6 @@ from ....texts.review import (
     CORRECT_FAILED,
     EXPLANATIONS_MISSING,
     FRAMING_WARNING,
-    LEFT_OUT_WHY,
     LOST_TEXT_WARNING,
     UNCLEAR_FAILED,
     UNSTYLED_WARNING,
@@ -548,7 +547,8 @@ def _left_out_notes(left_out: Sequence[LeftOut], raw_plain: str) -> list[Unclear
     The stretch is looked up in *raw_plain* rather than carried over by offset: the text that was
     sent may differ from it (a Markdown text is sent without its marks), and a note on the wrong
     words is worse than none.  A stretch that cannot be found keeps no note; the warning still
-    counts it.
+    counts it.  The note carries no reason of its own: Check words it, so an older result never
+    keeps older words.
     """
     spans = find_spans(raw_plain, [part.text for part in left_out], ordered=True)
     return [
@@ -556,7 +556,7 @@ def _left_out_notes(left_out: Sequence[LeftOut], raw_plain: str) -> list[Unclear
             raw_start=span[0],
             raw_end=span[1],
             expression=raw_plain[span[0] : span[1]],
-            why=LEFT_OUT_WHY,
+            why="",
             recommendation="",
             left_out=True,
         )

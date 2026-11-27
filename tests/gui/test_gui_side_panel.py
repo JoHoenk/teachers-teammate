@@ -25,9 +25,13 @@ from teachers_teammate.gui.check._side_panel import (
     FILTER_UNCLEAR,
     FILTER_UNSEEN,
     SidePanel,
+    _BAR_WIDTH,
     _category_of,
     _column_rects,
-    _icon_of,
+    _filter_key,
+    _bullet_of,
+    _legend_html,
+    _row_font,
 )
 from teachers_teammate.application.document_view import DocumentStateView
 from teachers_teammate.texts import check as check_txt
@@ -164,31 +168,61 @@ def test_the_first_item_is_reported_as_shown_when_the_list_opens(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_a_looked_at_item_has_a_filled_icon(qtbot) -> None:
+def test_an_item_not_looked_at_has_the_bullet(qtbot) -> None:
+    """
+    Given  a document nothing was looked at yet
+    When   the side panel shows it
+    Then   its row has the bullet in front of it
+    """
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
+
+    assert _bullet_of(panel._rows[0], looked_at=frozenset()) == _style.TODO_DOT
+
+
+@pytest.mark.gui
+def test_a_looked_at_item_has_neither_the_bullet_nor_the_bold(qtbot) -> None:
     """
     Given  a document whose correction was looked at
     When   the side panel shows it
-    Then   its row has the filled icon and the footer counts it
+    Then   its row has no bullet, is drawn plain rather than bold, and the footer counts it
     """
     doc = _document(review=_note(RAW, CORRECTED), work=WorkStatus(looked_at=frozenset({"edit:1"})))
 
     panel = _panel(qtbot, doc)
 
     assert panel._delegate.looked_at == frozenset({"edit:1"})
-    assert _icon_of(panel._rows[0], looked_at=panel._delegate.looked_at) == "\u25cf"
+    assert _bullet_of(panel._rows[0], looked_at=panel._delegate.looked_at) == ""
+    assert _row_font(panel._list.font(), panel._rows[0], looked_at=True).bold() is False
     assert panel._counts.text() == "1 correction \u00b7 1 of 1 looked at"
 
 
 @pytest.mark.gui
-def test_an_item_not_looked_at_has_an_open_icon(qtbot) -> None:
+def test_a_row_not_looked_at_is_drawn_bold(qtbot) -> None:
     """
-    Given  a document nothing was looked at yet
-    When   the side panel shows it
-    Then   its row has the open icon
+    Given  a correction nobody looked at yet
+    When   its row is drawn
+    Then   the words are bold, so a row left to look at stands out from the rows already read
     """
     panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
 
-    assert _icon_of(panel._rows[0], looked_at=frozenset()) == "\u25cb"
+    row = panel._rows[0]
+    assert _row_font(panel._list.font(), row, looked_at=False).bold() is True
+    assert _row_font(panel._list.font(), row, looked_at=True).bold() is False
+
+
+@pytest.mark.gui
+def test_the_teachers_own_change_never_has_the_bullet(qtbot) -> None:
+    """
+    Given  a document whose only change is the teacher's own
+    When   the side panel shows it
+    Then   the row has no bullet and is not bold, since there is nothing for the teacher to look at
+    """
+    panel = _panel(qtbot, _document(review=CorrectionReview(), machine=RAW))
+
+    own = panel._rows[0]
+    assert own.kind is ItemKind.OWN
+    assert _bullet_of(own, looked_at=frozenset()) == ""
+    assert _row_font(panel._list.font(), own, looked_at=False).bold() is False
 
 
 @pytest.mark.gui
@@ -419,7 +453,6 @@ def test_the_card_of_an_unclear_passage_offers_the_suggestion(qtbot) -> None:
     assert panel._rows[0].kind is ItemKind.UNCLEAR
     assert "Farbe unklar." in _card_text(panel)
     assert f"{txt.SUGGESTION_PREFIX} bunte Farbe" in _card_text(panel)
-    assert txt.MEANING_NOT_CERTAIN in _card_text(panel)
     assert _buttons(panel) == [txt.USE_SUGGESTION]
 
 
@@ -909,12 +942,12 @@ def test_a_stored_edit_does_not_move_the_choice(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_the_card_of_a_stretch_the_ai_left_out_says_so_and_offers_no_wording(qtbot) -> None:
+def test_the_card_of_a_stretch_that_was_not_proofread_says_so_and_offers_no_wording(qtbot) -> None:
     """
-    Given  a document with one stretch the model left out of its answer
+    Given  a document with one stretch the model did not proofread, with a reason stored with it
     When   the side panel shows it, with an unclear passage beside it
-    Then   the list has a row for it, the card names the stretch and says why it is listed, there
-           is no suggestion to use but Change leads to the words, and the footer counts it apart
+    Then   the list has a row for it, the card names the stretch and says it was not proofread in
+           the words of this app, there is no suggestion to use, and the footer counts it apart
     """
     review = CorrectionReview(
         unclear=(
@@ -935,10 +968,11 @@ def test_the_card_of_a_stretch_the_ai_left_out_says_so_and_offers_no_wording(qtb
     kinds = [row.kind for row in panel._rows]
     assert kinds == [ItemKind.LEFT_OUT, ItemKind.UNCLEAR]
     panel.set_chosen(panel._rows[0].key)
-    assert "Die KI hat diese Stelle ausgelassen." in _card_text(panel)
+    assert txt.NOT_PROOFREAD_WHY in _card_text(panel)
+    assert "Die KI hat diese Stelle ausgelassen." not in _card_text(panel)
     assert _buttons(panel) == []
     assert _replace_field(panel) == ""
-    assert panel._counts.text() == "1 unclear · 1 left out by the AI · 0 of 2 looked at"
+    assert panel._counts.text() == "1 unclear · 1 not proofread · 0 of 2 looked at"
 
 
 # ── The card keeps its place ──────────────────────────────────────────────
@@ -1048,20 +1082,17 @@ def test_a_row_whose_words_are_not_in_the_text_has_no_context_line(qtbot) -> Non
 
 
 @pytest.mark.gui
-def test_the_card_shows_the_category_as_a_coloured_chip(qtbot) -> None:
+def test_the_card_shows_the_category_as_a_neutral_chip(qtbot) -> None:
     """
     Given  an explained correction of a known category
     When   the side panel shows it
-    Then   the card shows the category in the colour the list uses for it
+    Then   the card names the category in the grey every chip shares, not in a colour of its own
     """
     panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
-    item = panel._rows[0]
-    assert item is not None
-    background, text = _style.badge_colours(item)
     body = panel._card._body.text()
 
-    assert f"background-color:{background}" in body
-    assert f"color:{text}" in body
+    assert f"background-color:{_style.CHIP_BACKGROUND}" in body
+    assert f"color:{_style.CHIP_TEXT}" in body
     assert "Word choice" in body
 
 
@@ -1087,7 +1118,7 @@ def test_the_notes_of_a_change_are_tags(qtbot) -> None:
     panel = _panel(qtbot, _document(review=review))
     body = panel._card._body.text()
 
-    assert f"background-color:{_style.TAG_BACKGROUND}" in body
+    assert f"background-color:{_style.CHIP_BACKGROUND}" in body
     assert txt.OPTIONAL_CHANGE in body
     assert txt.AI_NOT_SURE in body
     assert "Farbe." in body
@@ -1351,6 +1382,25 @@ def _has_colour(image: QImage, colour: QColor) -> bool:
     )
 
 
+def _has_colour_like(image: QImage, colour: QColor, *, tolerance: int = 24) -> bool:
+    """Whether *image* has a pixel close to *colour*.
+
+    The words of a row are thin strokes that antialiasing blends with the background, so a row of
+    words holds few pixels of the exact colour; a badge or a bar fills whole pixels.
+    """
+    wanted = (colour.red(), colour.green(), colour.blue())
+
+    def close(pixel: int) -> bool:
+        found = ((pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF)
+        return all(
+            abs(value - want) <= tolerance for value, want in zip(found, wanted, strict=True)
+        )
+
+    return any(
+        close(image.pixel(x, y)) for x in range(image.width()) for y in range(image.height())
+    )
+
+
 def _luminance(colour: QColor) -> float:
     """The relative luminance of *colour*, as WCAG defines it."""
 
@@ -1392,7 +1442,7 @@ def test_a_looked_at_row_stays_readable(qtbot, dark_theme) -> None:
     palette = panel._list.palette()
     colour = _style.row_text(palette, looked_at=True, selected=False)
 
-    assert _has_colour(_row_image(panel, 0), colour)
+    assert _has_colour_like(_row_image(panel, 0), colour)
     assert _contrast(colour, palette.color(QPalette.ColorRole.Base)) >= 4.5
 
 
@@ -1409,8 +1459,176 @@ def test_the_chosen_row_is_drawn_in_the_selection_colours(qtbot, dark_theme) -> 
     panel._list.setCurrentRow(0)
     qtbot.wait(10)
 
-    assert _has_colour(_row_image(panel, 0), colour)
+    assert _has_colour_like(_row_image(panel, 0), colour)
     assert _contrast(colour, palette.color(QPalette.ColorRole.Highlight)) >= 4.5
+
+
+def _ink_runs(image: QImage, background: QColor, *, after: int) -> list[tuple[int, int]]:
+    """The runs of columns of *image* right of *after* that hold a pixel unlike *background*."""
+    columns = [
+        x
+        for x in range(after, image.width())
+        if any(image.pixel(x, y) != background.rgb() for y in range(image.height()))
+    ]
+    runs: list[tuple[int, int]] = []
+    for x in columns:
+        if runs and x == runs[-1][1] + 1:
+            runs[-1] = (runs[-1][0], x)
+        else:
+            runs.append((x, x))
+    return runs
+
+
+@pytest.mark.gui
+def test_a_row_has_the_accent_of_its_kind_at_the_left_edge(qtbot, dark_theme) -> None:
+    """
+    Given  a correction and an unclear passage
+    When   the list draws their rows
+    Then   the bar at the left edge of each is the accent of its kind
+    """
+    review = CorrectionReview(
+        edits=(edit_note(edits(RAW, CORRECTED)[0], category="word_choice", explanation="Farbe."),),
+        unclear=(UnclearNote(22, 27, "Katze", "Unklar.", "Katze?"),),
+    )
+    panel = _panel(qtbot, _document(review=review))
+    assert [row.kind for row in panel._rows] == [ItemKind.CORRECTION, ItemKind.UNCLEAR]
+
+    for index, kind in enumerate((ItemKind.CORRECTION, ItemKind.UNCLEAR)):
+        image = _row_image(panel, index)
+        assert image.pixelColor(0, image.height() // 2) == QColor(_style.MARK_ACCENTS[kind])
+
+
+@pytest.mark.gui
+def test_the_bar_of_a_spelling_row_is_the_paler_accent(qtbot, dark_theme) -> None:
+    """
+    Given  a spelling change, which the text marks paler than other changes
+    When   the list draws its row
+    Then   its bar is the paler accent, so paler means the same in the list as in the text
+    """
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED, category="spelling")))
+    image = _row_image(panel, 0)
+
+    assert panel._rows[0].is_minor
+    assert image.pixelColor(0, image.height() // 2) == QColor(
+        _style.pale(_style.MARK_ACCENTS[ItemKind.CORRECTION])
+    )
+
+
+@pytest.mark.gui
+def test_the_accent_bar_stays_on_the_chosen_row(qtbot, dark_theme) -> None:
+    """
+    Given  a correction, which is the chosen row
+    When   the list draws it on the selection background
+    Then   the bar at its left edge is still the accent of its kind
+    """
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
+    image = _row_image(panel, 0)
+    accent = QColor(_style.MARK_ACCENTS[ItemKind.CORRECTION])
+
+    assert panel._list.currentRow() == 0
+    assert image.pixelColor(0, image.height() // 2) == accent
+
+
+@pytest.mark.gui
+def test_a_taken_out_correction_says_taken_out_rather_than_its_category(qtbot) -> None:
+    """
+    Given  a word choice correction the teacher took out
+    When   the list draws its row
+    Then   the badge says *taken out*, so it is not read as a category still standing
+    """
+    panel = _panel(qtbot, _document(corrected=RAW, review=_note(RAW, CORRECTED)))
+
+    assert panel._rows[0].kind is ItemKind.TAKEN_OUT
+    assert panel._rows[0].category == "word_choice"
+    assert _category_of(panel._rows[0]) == txt.TAKEN_OUT
+
+
+def _one_row_with_a_bullet_and_one_without() -> CheckDocument:
+    """Return a document whose two rows hold the same words, one the teacher's own change."""
+    raw = "Der bunte Hund bellt. Der bunte Hund bellt."
+    corrected = "Der braune Hund bellt. Der braune Hund bellt."
+    review = CorrectionReview(
+        edits=(edit_note(edits(raw, corrected)[0], category="word_choice", explanation="Farbe."),)
+    )
+    return _document(raw=raw, corrected=corrected, machine=raw, review=review)
+
+
+@pytest.mark.gui
+def test_the_words_of_every_row_start_at_the_same_x(qtbot, dark_theme) -> None:
+    """
+    Given  a row with the bullet and one without, holding the same words
+    When   the list draws both
+    Then   the words start at the same x, so a bullet never shifts the words of a row
+    """
+    panel = _panel(qtbot, _one_row_with_a_bullet_and_one_without())
+    panel._list.setCurrentRow(-1)
+    qtbot.wait(10)
+    bullet, own = _row_image(panel, 0), _row_image(panel, 1)
+    assert [row.kind for row in panel._rows] == [ItemKind.CORRECTION, ItemKind.OWN]
+
+    def words_start(image: QImage, *, has_bullet: bool) -> int:
+        """The x of the first letter of the words; the bullet, where there is one, is not a word."""
+        background = image.pixelColor(_BAR_WIDTH + 1, 0)
+        runs = _ink_runs(image, background, after=_BAR_WIDTH + 1)
+        return runs[1][0] if has_bullet else runs[0][0]
+
+    assert words_start(bullet, has_bullet=True) == words_start(own, has_bullet=False)
+
+
+def _leftmost(image: QImage, colour: QColor) -> int:
+    """The x of the leftmost pixel of exactly *colour* in *image*, or -1."""
+    return next(
+        (
+            x
+            for x in range(image.width())
+            if any(image.pixel(x, y) == colour.rgb() for y in range(image.height()))
+        ),
+        -1,
+    )
+
+
+@pytest.mark.gui
+def test_looking_at_a_row_does_not_move_its_words_or_its_badge(qtbot, dark_theme) -> None:
+    """
+    Given  a correction not looked at, drawn bold with its bullet
+    When   the teacher looks at it, and it is drawn plain without the bullet
+    Then   the badge and the words stay where they were, so a row never jumps
+    """
+    panel = _panel(qtbot, _walk_document())
+    panel._list.setCurrentRow(-1)
+    qtbot.wait(10)
+    chip = QColor(_style.CHIP_BACKGROUND)
+
+    def drawn() -> tuple[list[tuple[int, int]], int]:
+        """The runs of ink right of the bar, and where the badge starts."""
+        image = _row_image(panel, 0)
+        background = image.pixelColor(_BAR_WIDTH + 1, 0)
+        return _ink_runs(image, background, after=_BAR_WIDTH + 1), _leftmost(image, chip)
+
+    (bullet, words), badge_before = drawn()[0][:2], drawn()[1]
+    panel.set_looked_at(frozenset({"edit:1"}), (1, 4))
+    qtbot.wait(10)
+    runs_after, badge_after = drawn()
+
+    assert bullet[1] < words[0]
+    assert badge_after == badge_before
+    assert runs_after[0][0] == words[0]
+
+
+@pytest.mark.gui
+def test_a_ticked_category_leaves_out_a_correction_the_teacher_took_out(qtbot) -> None:
+    """
+    Given  a document with two word choices, one of them taken out
+    When   the word choice box is ticked
+    Then   the box counts and shows the one that stands, since the other says *taken out*
+    """
+    panel = _panel(qtbot, _document(corrected=RAW, review=_note(RAW, CORRECTED)))
+    assert panel._rows[0].kind is ItemKind.TAKEN_OUT
+
+    assert _filter_key(panel._rows[0]) == ""
+    panel.set_filter("word_choice")
+
+    assert _shown_rows(panel) == []
 
 
 @pytest.mark.gui
@@ -1418,12 +1636,10 @@ def test_the_badge_keeps_its_colour_on_a_looked_at_row(qtbot, dark_theme) -> Non
     """
     Given  a correction of a known category
     When   the list draws its row before and after the teacher looked at it
-    Then   the badge is the same colour in both, so the category still reads
+    Then   the badge is the same grey in both, so the category still reads
     """
     panel = _panel(qtbot, _walk_document())
-    item = panel._rows[0]
-    assert item is not None
-    badge = QColor(_style.badge_colours(item)[0])
+    badge = QColor(_style.CHIP_BACKGROUND)
     assert _has_colour(_row_image(panel, 0), badge)
 
     panel.set_looked_at(frozenset({"edit:1"}), (1, 3))
@@ -1433,17 +1649,16 @@ def test_the_badge_keeps_its_colour_on_a_looked_at_row(qtbot, dark_theme) -> Non
 
 
 @pytest.mark.gui
-def test_a_row_shows_its_category_as_a_coloured_badge(qtbot) -> None:
+def test_a_grammar_row_and_a_spelling_row_draw_the_same_badge(qtbot) -> None:
     """
-    Given  a correction of a known category
-    When   the list draws its row
-    Then   the category is a badge in the colour the card's chip uses
+    Given  a grammar change and a spelling change
+    When   the list draws their rows
+    Then   both badges are the same grey, so a badge never says a colour's meaning
     """
-    panel = _panel(qtbot, _walk_document())
-    item = panel._rows[0]
-    assert item is not None
+    panel = _panel(qtbot, _walk_document(categories=("grammar", "spelling", "spelling", "grammar")))
 
-    assert _has_colour(_row_image(panel, 0), QColor(_style.badge_colours(item)[0]))
+    assert _has_colour(_row_image(panel, 0), QColor(_style.CHIP_BACKGROUND))
+    assert _has_colour(_row_image(panel, 1), QColor(_style.CHIP_BACKGROUND))
 
 
 @pytest.mark.gui
@@ -1451,7 +1666,7 @@ def test_a_row_without_a_category_says_what_kind_it_is(qtbot) -> None:
     """
     Given  a document with an unclear passage and a stretch the model left out
     When   the list draws their rows
-    Then   each row names its kind, and both share the amber badge
+    Then   each row names its kind in the grey badge every row shares
     """
     review = CorrectionReview(
         unclear=(
@@ -1466,9 +1681,8 @@ def test_a_row_without_a_category_says_what_kind_it_is(qtbot) -> None:
         check_txt.BADGE_UNCLEAR,
         check_txt.BADGE_LEFT_OUT,
     ]
-    amber = QColor(_style.KIND_BADGE_COLOURS[ItemKind.UNCLEAR][0])
-    assert _has_colour(_row_image(panel, 0), amber)
-    assert _has_colour(_row_image(panel, 1), amber)
+    assert _has_colour(_row_image(panel, 0), QColor(_style.CHIP_BACKGROUND))
+    assert _has_colour(_row_image(panel, 1), QColor(_style.CHIP_BACKGROUND))
 
 
 @pytest.mark.gui
@@ -1669,3 +1883,50 @@ def test_dragging_the_card_tells_the_window_its_height(qtbot) -> None:
     panel._split.moveSplitter(panel._card.height() + 40, 1)
 
     assert told == [panel.card_split]
+
+
+# ── The legend ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_the_legend_says_what_every_colour_and_mark_of_the_tab_means(qtbot) -> None:
+    """
+    Given  the marks the Check tab draws in the text, in the list and in the card
+    When   the legend of the marks is built
+    Then   it holds every kind's accent, both strikes, and a line for each mark
+    """
+    legend = _legend_html()
+
+    for accent in set(_style.MARK_ACCENTS.values()):
+        assert accent in legend
+    assert _style.pale(_style.MARK_ACCENTS[ItemKind.CORRECTION]) in legend
+    assert _style.MODEL_STRIKE in legend
+    assert _style.STUDENT_STRIKE in legend
+    for line in (
+        check_txt.LEGEND_CORRECTION,
+        check_txt.LEGEND_OWN,
+        check_txt.LEGEND_UNCLEAR,
+        check_txt.LEGEND_TAKEN_OUT,
+        check_txt.LEGEND_PALER,
+        check_txt.LEGEND_UNDERLINE,
+        check_txt.LEGEND_STRIKES,
+        check_txt.LEGEND_STRIKE_MODEL,
+        check_txt.LEGEND_STRIKE_STUDENT,
+        check_txt.LEGEND_LIST,
+    ):
+        assert line in legend
+
+
+@pytest.mark.gui
+def test_the_info_button_beside_next_hands_out_the_legend(qtbot) -> None:
+    """
+    Given  a side panel that shows a document
+    When   the teacher points at the info button beside *Next*
+    Then   its tooltip is the legend, and its accessible name says what it holds
+    """
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
+    button = panel._legend_button
+
+    assert button.toolTip() == _legend_html()
+    assert button.accessibleName() == check_txt.LEGEND_TIP
+    assert button.autoRaise()

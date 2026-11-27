@@ -102,28 +102,41 @@ switches between the pages as fixed for reading and as scanned (shown only when 
 changed something).
 
 **The list of corrections** on the right numbers what the text marks. Pick a row and the text
-scrolls to it; click a mark in the text and its row is picked. ● marks what you have already looked
-at, ○ what you have not; rows you have looked at are drawn dimmed. **Next ›** goes to the next
-correction you have not looked at yet; a document opens at the first one, so coming back to an essay
-continues where you stopped.
+scrolls to it; click a mark in the text and its row is picked. A row you have not looked at yet
+carries a **•** and is drawn bold; a row you have looked at is grey and has no dot. **Next ›** goes
+to the next correction you have not looked at yet; a document opens at the first one, so coming back
+to an essay continues where you stopped.
 
-**The filter row** above the list narrows it: **All**, **Not looked at**, and one chip per kind of
-change with its count (**Grammar 4**). **Next ›** stays inside the filter, while the counts above
-the list keep covering the whole document.
+**The filter row** above the list narrows it: **Not looked at** and one chip per kind of change with
+its count (**Grammar 4**). Nothing ticked shows every row. **Next ›** stays inside the filter, while
+the counts above the list keep covering the whole document.
 
 The card above the list explains the chosen item. Drag the handle under it to give a long
 explanation more room, and the handle beside the list to widen the panel; both are remembered.
 
 - A **correction** shows what was replaced (`have → has`), the sentence it stands in with the
-  student's words highlighted, its kind as a coloured chip, and one sentence saying why.
+  student's words highlighted, its kind as a chip, and one sentence saying why.
   **Take out** restores the student's words; **Replace with** writes your own version in their
   place, without leaving the view you are reading.
-- **Spelling and punctuation** corrections are grouped in one row; **Take out all** restores them.
+- Each **spelling and punctuation** correction is a row of its own; its card offers **Take out all
+  4**, which restores them all at once.
 - An **unclear expression** shows the words, why they are unclear, and a recommended version.
   When the meaning cannot be told from the text it is marked **Suggestion**; **Use suggestion**
   writes it into the text.
-- A correction you took out moves to the end of the list with **Put back**; a change you typed
-  yourself appears as `your change`.
+- A correction you took out stays where it is, marked `taken out`, and its card offers **Put back**;
+  a change you typed yourself appears as `your change`.
+- A passage the AI did not proofread is listed as `not proofread`: it stands as the student wrote
+  it, so read it yourself.
+
+**What the marks mean** — the info button beside **Next ›** shows the whole legend:
+
+- green a correction by the AI, blue your own change, amber something unclear or not proofread to
+  read yourself, grey a correction you took out, with the student's words back.
+- paler than the rest: a spelling or punctuation change.
+- a solid underline is a change, a dotted one something unclear or not proofread, a dashed one what
+  you took out.
+- under **With corrections**, red struck-through words are what the AI removed, grey struck-through
+  words what the student crossed out.
 
 **Content** beside **Corrections** shows the content review of the document, where there is one;
 *What was read* opens it.
@@ -131,7 +144,7 @@ explanation more room, and the handle beside the list to widen the panel; both a
 Read an explanation before you pass it on to a student: the AI can be wrong.
 
 If the AI leaves part of the text out, the app puts your student's words back, says so, and lists
-each such stretch in the list to read with the rest.
+each such passage as `not proofread` to read with the rest.
 
 **Typing** is saved automatically. **Ctrl+Z** undoes one action at a time wherever the focus is on
 the page (Ctrl+Shift+Z or Ctrl+Y redoes). While a run works on a document, that document is

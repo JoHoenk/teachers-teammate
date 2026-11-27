@@ -113,15 +113,35 @@ FILTER_NOT_LOOKED_AT_TIP = "Narrow the list to the corrections you have not look
 FILTER_CATEGORY_TIP = "Show the {category} corrections"
 FILTER_UNCLEAR = "Unclear"
 FILTER_UNCLEAR_TIP = "Show the passages whose meaning is unclear"
-FILTER_LEFT_OUT = "Left out"
-FILTER_LEFT_OUT_TIP = "Show the passages the model left out of the correction"
+FILTER_LEFT_OUT = "Not proofread"
+FILTER_LEFT_OUT_TIP = "Show the passages the AI did not proofread"
 """The boxes above the list: what is left, one per category, and the two kinds without one."""
 
 BADGE_UNCLEAR = "unclear"
-BADGE_LEFT_OUT = "left out"
+BADGE_LEFT_OUT = "not proofread"
 BADGE_OWN = "your change"
 BADGE_TAKEN_OUT = "taken out"
 """The badge of an item the list has no category for: what kind of thing it is."""
+
+# ── The legend of the marks ──────────────────────────────────────────────
+
+LEGEND_TIP = "What the marks mean"
+"""The info button beside *Next*: its accessible name, and what its legend is."""
+
+LEGEND_CORRECTION = "Correction by the AI"
+LEGEND_OWN = "Your change"
+LEGEND_UNCLEAR = "Unclear or not proofread: read it yourself"
+LEGEND_TAKEN_OUT = "Taken out: the student's words are back"
+LEGEND_PALER = "Paler: a spelling or punctuation change"
+LEGEND_UNDERLINE = (
+    "Underlined solid for a change, dotted for something unclear or not proofread, dashed for "
+    "what you took out"
+)
+LEGEND_STRIKES = "With corrections"
+LEGEND_STRIKE_MODEL = "removed by the AI"
+LEGEND_STRIKE_STUDENT = "crossed out by the student"
+LEGEND_LIST = "In the list: \u2022 and bold, not looked at yet; grey, looked at"
+"""The legend of the tab's marks, one line per colour and per mark of the text and the list."""
 
 
 def filter_label(label: str, count: int) -> str:

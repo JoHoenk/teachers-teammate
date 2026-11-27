@@ -49,6 +49,45 @@ py_binary(
     ],
 )
 
+# Developer probe (needs the built-in reader's models and the developer's own pages; not run in
+# CI) that asks whether the reader's rows line up with the written lines of a page, and how many
+# rows a confidence threshold would have to mark to catch the reading errors.
+py_binary(
+    name = "page_lines",
+    srcs = ["page_lines.py"],
+    main = "page_lines.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//teachers_teammate:application_lib",
+        "@ocr_test_dependencies//numpy:pkg",
+        "@ocr_test_dependencies//opencv_python_headless:pkg",
+        "@ocr_test_dependencies//pillow:pkg",
+        "@ocr_test_dependencies//platformdirs:pkg",
+        "@ocr_test_dependencies//pypdfium2:pkg",
+        "@ocr_test_dependencies//pyyaml:pkg",
+    ],
+)
+
+# Developer probe (not run in CI) that writes the reference transcriptions the probe above
+# measures against, from a Chandra OCR run of the same pages: one line per written line, named and
+# placed where the line measure looks for it.
+py_binary(
+    name = "chandra_gt",
+    srcs = ["chandra_gt.py"],
+    main = "chandra_gt.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//teachers_teammate:application_lib",
+        "//tools/dev:page_lines",
+        "@ocr_test_dependencies//numpy:pkg",
+        "@ocr_test_dependencies//opencv_python_headless:pkg",
+        "@ocr_test_dependencies//pillow:pkg",
+        "@ocr_test_dependencies//platformdirs:pkg",
+        "@ocr_test_dependencies//pypdfium2:pkg",
+        "@ocr_test_dependencies//pyyaml:pkg",
+    ],
+)
+
 # Every probe's source, for the tests that scan the tools' sources (//tools:all_sources does not
 # reach into this package). Not added to any wheel.
 filegroup(
@@ -71,5 +110,6 @@ py_library(
         "@ocr_test_dependencies//opencv_python_headless:pkg",
         "@ocr_test_dependencies//pillow:pkg",
         "@ocr_test_dependencies//platformdirs:pkg",
+        "@ocr_test_dependencies//pypdfium2:pkg",
     ] + _APP_RUNTIME,
 )

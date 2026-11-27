@@ -37,6 +37,7 @@ from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import document_stem, resolve_artifact_dir
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
 from tests.conftest import make_config, pipeline_dependencies
+from tests.fakes.fake_reader import mock_reader
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -82,7 +83,7 @@ def test_pipeline_run_processes_image_and_persists_ocr_state(tmp_path: Path) -> 
     )
     _place_image(cfg.input_dir)
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "hello world"
 
     with patch(
@@ -150,7 +151,7 @@ def test_pipeline_run_returns_1_on_ocr_failure(tmp_path: Path) -> None:
     )
     _place_image(cfg.input_dir)
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.side_effect = OCRError("model crashed")
 
     with patch(
@@ -187,7 +188,7 @@ def test_pipeline_run_processes_multiple_files(tmp_path: Path) -> None:
     for name in ("a.png", "b.png", "c.png"):
         _place_image(cfg.input_dir, name)
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "text"
 
     with patch(
@@ -228,7 +229,7 @@ def test_pipeline_run_processes_selected_sources_only(tmp_path: Path) -> None:
     for name in ("a.png", "b.png", "c.png"):
         _place_image(cfg.input_dir, name)
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "text"
     selected_path = str((cfg.input_dir / "b.png").resolve())
 
@@ -271,7 +272,7 @@ def test_pipeline_selected_sources_disambiguate_duplicate_basenames(tmp_path: Pa
     left_page = _place_image(left, "page.png")
     right_page = _place_image(right, "page.png")
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "text"
 
     with patch(
@@ -308,7 +309,7 @@ def test_pipeline_run_returns_1_when_any_file_fails(tmp_path: Path) -> None:
     _place_image(cfg.input_dir, "first.png")
     _place_image(cfg.input_dir, "second.png")
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.side_effect = ["success text", OCRError("fail")]
 
     with patch(
@@ -349,7 +350,7 @@ def test_each_failing_stage_fails_its_own_file_and_the_run_goes_on(tmp_path: Pat
     _place_image(cfg.input_dir, "proofread.png")
     _place_image(cfg.input_dir, "read.png")
 
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.side_effect = ["names here", "prose", OCRError("model crashed")]
 
     class _FailingCorrector(Corrector):
@@ -415,7 +416,7 @@ def test_pipeline_cache_reuses_ocr_when_input_hash_unchanged(tmp_path: Path) -> 
     )
     _place_image(cfg.input_dir, "page.png")
 
-    first_ocr = MagicMock()
+    first_ocr = mock_reader()
     first_ocr.process_image.return_value = "first-run"
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
@@ -433,7 +434,7 @@ def test_pipeline_cache_reuses_ocr_when_input_hash_unchanged(tmp_path: Path) -> 
 
     assert first_rc == 0
 
-    second_ocr = MagicMock()
+    second_ocr = mock_reader()
     second_ocr.process_image.side_effect = OCRError("should not be called")
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
@@ -469,7 +470,7 @@ def test_pipeline_persists_preview_artifact_for_none_preprocess(tmp_path: Path) 
     )
     _place_image(cfg.input_dir, "page.png")
 
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "text"
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
@@ -520,7 +521,7 @@ def test_pipeline_reports_progress_and_keeps_original_for_the_automatic_preparat
     reporter.status.side_effect = lambda line: lines.append(line.strip())
     stages: list[tuple[str, str]] = []
 
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "text"
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
@@ -578,7 +579,7 @@ def test_pipeline_reruns_ocr_when_preprocess_method_changes(tmp_path: Path) -> N
     )
     _place_image(cfg.input_dir, "page.png")
 
-    first_ocr = MagicMock()
+    first_ocr = mock_reader()
     first_ocr.process_image.return_value = "first"
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
@@ -597,7 +598,7 @@ def test_pipeline_reruns_ocr_when_preprocess_method_changes(tmp_path: Path) -> N
     assert first_rc == 0
 
     cfg = dataclasses.replace(cfg, ocr=dataclasses.replace(cfg.ocr, preprocess_method="auto"))
-    second_ocr = MagicMock()
+    second_ocr = mock_reader()
     second_ocr.process_image.return_value = "second"
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
@@ -633,7 +634,7 @@ def test_pipeline_keeps_output_dir_docx_only(tmp_path: Path) -> None:
     )
     _place_image(cfg.input_dir, "page.png")
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "hello world"
 
     with patch(
@@ -675,7 +676,7 @@ def test_pipeline_callbacks_are_invoked(tmp_path: Path) -> None:
 
     started, ocr_done, file_done = [], [], []
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "extracted"
 
     with patch(
@@ -720,7 +721,7 @@ def test_pipeline_stops_when_stop_event_is_set_before_first_file(tmp_path: Path)
     stop = threading.Event()
     stop.set()
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "text"
 
     with patch(
@@ -778,7 +779,7 @@ def test_pipeline_stop_after_file_finishes_the_first_image_and_reports_the_rest(
         stop_after.set()
         return "text of the first page"
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.side_effect = read
 
     with patch(
@@ -826,7 +827,7 @@ def test_pipeline_stop_now_during_ocr_keeps_nothing_half_done(tmp_path: Path) ->
         stop.set()
         raise RunStoppedError
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.side_effect = read
 
     with patch(
@@ -882,7 +883,7 @@ def test_pipeline_run_with_correction_persists_correction_state(tmp_path: Path) 
     )
     _place_image(cfg.input_dir)
 
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "raw text"
 
     mock_corrector = MagicMock()
@@ -935,7 +936,7 @@ def test_pipeline_run_with_docx_creates_docx_file(tmp_path: Path) -> None:
     )
     _place_image(cfg.input_dir, "page.png")
 
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "extracted text"
 
     with patch(
@@ -1053,7 +1054,7 @@ def test_pipeline_run_proceeds_when_ollama_model_found(tmp_path: Path) -> None:
 
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "text"
 
     with (
@@ -1259,7 +1260,7 @@ def test_the_run_header_names_the_built_in_reader(tmp_path: Path, capsys) -> Non
         preprocess_method="none",
     )
     _place_image(cfg.input_dir)
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "text"
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor", return_value=mock_proc
@@ -1290,7 +1291,7 @@ def test_the_runs_stop_event_reaches_the_built_in_reader(tmp_path: Path) -> None
         preprocess_method="none",
     )
     _place_image(cfg.input_dir)
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "text"
     stop = threading.Event()
 
@@ -1326,7 +1327,7 @@ def test_setup_services_evaluation_with_no_correction_warns(
         preprocess_method="none",
     )
     _place_image(cfg.input_dir)
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "text"
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
@@ -1368,7 +1369,7 @@ def test_cleanup_tmp_preserves_files_in_debug_mode(
     step_file = resolve_artifact_dir(cfg.output_dir) / "page_step0.jpg"
     step_file.write_bytes(b"\xff\xd8\xff")  # dummy JPEG header
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "text"
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
@@ -1425,7 +1426,7 @@ def test_check_ollama_prints_warning_for_non_vision_model(
     mock_ollama_mod = MagicMock()
     mock_ollama_mod.Client.return_value = mock_client
 
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "text"
 
     with (
@@ -1486,7 +1487,7 @@ def test_check_ollama_warns_when_model_not_loaded(
     mock_ollama_mod = MagicMock()
     mock_ollama_mod.Client.return_value = mock_client
 
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "text"
 
     with (
@@ -1547,7 +1548,7 @@ def test_check_ollama_no_warning_when_model_already_running(
     mock_ollama_mod = MagicMock()
     mock_ollama_mod.Client.return_value = mock_client
 
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "text"
 
     with (
@@ -1611,7 +1612,7 @@ def test_pipeline_banner_printed_with_config_file_path(
         preprocess_method="none",
     )
     _place_image(cfg.input_dir)
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "text"
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
@@ -1711,7 +1712,7 @@ def test_check_ollama_request_exception_is_silent(tmp_path: Path) -> None:
     mock_ollama_mod = MagicMock()
     mock_ollama_mod.Client.return_value = mock_client
 
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "text"
 
     with (
@@ -1778,7 +1779,7 @@ def test_pipeline_batch_mixed_types_all_processed(tmp_path: Path) -> None:
     _place_image(cfg.input_dir, "page.png")
     (cfg.input_dir / "note.txt").write_text("plain text content", encoding="utf-8")
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "ocr text"
 
     with patch(
@@ -1822,7 +1823,7 @@ def test_pipeline_batch_failure_does_not_stop_remaining_files(tmp_path: Path) ->
     _place_image(cfg.input_dir, "first.png")
     _place_image(cfg.input_dir, "second.png")
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.side_effect = [OCRError("fail on first"), "success text"]
 
     with patch(
@@ -1866,7 +1867,7 @@ def test_a_run_given_a_missing_file_skips_it_and_reads_nothing(tmp_path: Path) -
     _place_image(cfg.input_dir, "page.png")
     outside_path = (tmp_path / "elsewhere" / "other.png").resolve()
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
 
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
@@ -1903,7 +1904,7 @@ def test_a_run_given_two_of_three_files_processes_exactly_those_two(tmp_path: Pa
     sub.mkdir(parents=True, exist_ok=True)
     third = _place_image(sub, "c.png")
 
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = "text"
 
     with patch(
@@ -1948,7 +1949,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
     )
     _place_image(cfg.input_dir)
 
-    first_ocr = MagicMock()
+    first_ocr = mock_reader()
     first_ocr.process_image.return_value = "raw text"
     first_corrector = MagicMock()
     first_corrector.pieces.return_value = None
@@ -1981,7 +1982,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
     assert first_rc == 0
 
     cfg = dataclasses.replace(cfg, evaluate_prompt="prompt-v2")
-    second_ocr = MagicMock()
+    second_ocr = mock_reader()
     second_ocr.process_image.side_effect = OCRError("OCR should be reused from cache")
     second_corrector = MagicMock()
     second_corrector.pieces.return_value = None
@@ -2041,7 +2042,7 @@ def test_pipeline_run_with_different_providers_per_stage_produces_full_state(
     )
     _place_image(cfg.input_dir)
 
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "raw text"
     mock_corrector = MagicMock()
     mock_corrector.pieces.return_value = None
@@ -2098,7 +2099,7 @@ def _run_with_ocr_output(tmp_path: Path, output: str, **config_overrides):
         **{"correction_enabled": False, "docx_enabled": False, **config_overrides},
     )
     _place_image(cfg.input_dir)
-    mock_proc = MagicMock()
+    mock_proc = mock_reader()
     mock_proc.process_image.return_value = output
     return cfg, mock_proc
 
@@ -2229,7 +2230,7 @@ def test_pipeline_keeps_plain_reader_text_verbatim(tmp_path: Path) -> None:
 
 def _run_scanned_pdf(cfg, *, pages: int = 3) -> None:
     """Run the pipeline over a scanned PDF of *pages* pages with a stubbed reader."""
-    mock_ocr = MagicMock()
+    mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "text"
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
@@ -2292,7 +2293,7 @@ def test_a_second_run_keeps_the_pages_of_the_first(tmp_path: Path, sample_multip
     pdf.rename(cfg.input_dir / pdf.name)
     _run_scanned_pdf(cfg)
 
-    second_ocr = MagicMock()
+    second_ocr = mock_reader()
     second_ocr.process_image.side_effect = OCRError("should not be called")
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",

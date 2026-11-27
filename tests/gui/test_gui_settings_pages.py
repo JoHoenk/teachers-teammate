@@ -590,6 +590,23 @@ def test_scan_quality_round_trips_saved_values(scan_page) -> None:
 
 
 @pytest.mark.gui
+def test_the_scan_marks_are_on_by_default_and_follow_load(scan_page) -> None:
+    """
+    Given  the Scan quality page, which owns the scan's marks
+    When   it is created, loaded with them off, and restored to the defaults
+    Then   they are on, then off, then on again
+    """
+    assert "scan_marks" in scan_page.owned_keys()
+    assert scan_page.values()["scan_marks"] is True
+
+    scan_page.load({"scan_marks": False})
+    assert scan_page.values()["scan_marks"] is False
+
+    scan_page.restore_defaults()
+    assert scan_page.values()["scan_marks"] is True
+
+
+@pytest.mark.gui
 def test_a_method_of_the_old_preparation_loads_as_automatic(scan_page) -> None:
     """
     Given  saved settings from before the automatic preparation (method clahe, old switch keys)

@@ -18,6 +18,7 @@ from ...domain.output_files import (
     feeds_inputs,
     output_path,
 )
+from ...domain.page_layout import ScanBox
 from ...domain.performance_estimate import SpeedStep
 from ...domain.proofreading.review import CorrectionReview, fitted_review
 from ...domain.stages import ProgressStage, Stage
@@ -77,6 +78,7 @@ from .proofread_text import (
     names_left_hidden,
     restore_personal_info,
 )
+from .scan_places import ScanPlaces
 
 if TYPE_CHECKING:
     from ..ocr_formats import OcrOutputPostprocessor
@@ -205,6 +207,9 @@ class FileProcessorDeps:
     evaluation: Evaluator | None
     doc_creator: DocumentCreator | None
     anonymizer: Anonymizer | None = None
+    scan_places: ScanPlaces | None = None
+    """Makes where the lines of a scan stand in the text read from it; ``None`` when the run
+    keeps no places (switched off, or the built-in reader's models are not there)."""
     input_dir: Path | None = None
     """Root of the inputs; outputs keep the subfolders below it (``None`` = flat output)."""
     recursive: bool = True
@@ -319,6 +324,7 @@ class FileProcessor:
         self._cache_service = config.cache_service
         self._preprocess_service = config.preprocess_service
         self._ocr_stage_service = config.ocr_stage_service
+        self._scan_places = config.scan_places
         self._correction = config.correction
         self._anonymizer = config.anonymizer
         self._postprocessor = config.postprocessor
@@ -559,6 +565,7 @@ class FileProcessor:
         raw_text_hint = prepared.raw_text_hint
         page_count = 0
         raw_text_format: TextFormat = "plain"
+        layout: tuple[ScanBox, ...] = ()
         if raw_text_hint is not None:
             raw_text = raw_text_hint
             if reading is not None:
@@ -569,29 +576,9 @@ class FileProcessor:
             else:
                 self._reporter.status(report_text.USED_TEXT_INPUT)
         else:
-            if prepared.text_layer_note:
-                self._reporter.status(report_text.pdf_text_layer_note(prepared.text_layer_note))
-            self._reporter.status(report_text.RUNNING_OCR)
-            self._notify_stage(file, ProgressStage.OCR)
-
-            def page_started(page: int, total: int) -> None:
-                if total > 1:
-                    self._report_ocr_page(page, total)
-                self._sampler.begin_sample(SpeedStep.READING)
-
-            def page_done(text: str) -> None:
-                self._sampler.finish_sample(words=len(text.split()))
-
-            page_texts = self._ocr_stage_service.run_pages(
-                ocr_inputs, self._language, on_page=page_started, on_page_done=page_done
+            raw_text, raw_text_format, page_count, layout = self._read_pages(
+                file, ocr_inputs, prepared
             )
-            page_count = len(page_texts)
-            if self._postprocessor is not None:
-                processed = self._postprocessor.process_pages(page_texts)
-                raw_text = processed.text
-                raw_text_format = processed.text_format
-            else:
-                raw_text = join_labelled_pages(page_texts)
 
         if not raw_text:
             raise StageError(empty_ocr_answer(), kind=StageErrorKind.ENGINE, stage=Stage.OCR)
@@ -604,6 +591,7 @@ class FileProcessor:
                 preview_img=preview_img,
                 source_image=preview_img or (str(source_image) if source_image else ""),
                 raw_text_format=raw_text_format,
+                layout=layout,
             )
         except OSError as exc:
             raise _stage_error(cache_save_failed, exc, StageErrorKind.STORAGE) from exc
@@ -614,6 +602,54 @@ class FileProcessor:
                 self._on_ocr_done(str(file.resolve()), file.name)
 
         return raw_text, ctx
+
+    def _read_pages(
+        self, file: Path, ocr_inputs: list[Path], prepared: PreparedInput
+    ) -> tuple[str, TextFormat, int, tuple[ScanBox, ...]]:
+        """Read the pages with the run's engine; return the text, its format, the page count and
+        where the lines of the pages stand in that text."""
+        if prepared.text_layer_note:
+            self._reporter.status(report_text.pdf_text_layer_note(prepared.text_layer_note))
+        self._reporter.status(report_text.RUNNING_OCR)
+        self._notify_stage(file, ProgressStage.OCR)
+
+        def page_started(page: int, total: int) -> None:
+            if total > 1:
+                self._report_ocr_page(page, total)
+            self._sampler.begin_sample(SpeedStep.READING)
+
+        def page_done(text: str) -> None:
+            self._sampler.finish_sample(words=len(text.split()))
+
+        pending = (
+            self._scan_places.begin(ocr_inputs, self._language)
+            if self._scan_places is not None
+            else None
+        )
+        try:
+            readings = self._ocr_stage_service.read_pages(
+                ocr_inputs, self._language, on_page=page_started, on_page_done=page_done
+            )
+            page_texts = [page.text for page in readings]
+            raw_text_format: TextFormat = "plain"
+            if self._postprocessor is not None:
+                processed = self._postprocessor.process_pages(page_texts)
+                raw_text, raw_text_format = processed.text, processed.text_format
+            else:
+                raw_text = join_labelled_pages(page_texts)
+            layout: tuple[ScanBox, ...] = ()
+            if pending is not None and raw_text:
+                layout = pending.places(
+                    readings,
+                    raw_text,
+                    raw_text_format,
+                    name=file.name,
+                    on_wait=lambda: self._reporter.status(report_text.PLACING_LINES),
+                )
+        finally:
+            if pending is not None:
+                pending.close()
+        return raw_text, raw_text_format, len(page_texts), layout
 
     def _lazy_personal_info_removal(self, text: str) -> _LazyAnonymization:
         """Return a callable that hides personal data in the extracted *text* once.

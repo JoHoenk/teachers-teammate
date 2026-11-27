@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 import threading
 
+from ...domain.page_layout import PageReading
 from ...domain.stages import Stage
 from ...exceptions import OCRError, RunStoppedError, StageError, stop_requested
 from ...interfaces import OCRProcessor
@@ -25,18 +26,18 @@ class OCRStageService:
         self._processor = processor
         self._stop_event = stop_event
 
-    def run_pages(
+    def read_pages(
         self,
         ocr_inputs: list[Path],
         language: str,
         on_page: Callable[[int, int], None] | None = None,
         on_page_done: Callable[[str], None] | None = None,
-    ) -> list[str]:
-        """Run OCR on each input path and return the text of every page.
+    ) -> list[PageReading]:
+        """Run OCR on each input path and return what every page gave: its text, and its lines.
 
-        *on_page* is called as ``on_page(page_number, total_pages)`` (1-based) right
-        before each page is sent to the OCR engine, *on_page_done* with the page's text right
-        after it was read.
+        The lines are empty for an engine that has no layout to give.  *on_page* is called as
+        ``on_page(page_number, total_pages)`` (1-based) right before each page is sent to the OCR
+        engine, *on_page_done* with the page's text right after it was read.
 
         Raises:
             :exc:`~teachers_teammate.exceptions.StageError`: when the engine could not read a
@@ -45,14 +46,14 @@ class OCRStageService:
             :exc:`~teachers_teammate.exceptions.RunStoppedError`: when the run is stopped
                 before or while a page is read.  Not an error of the engine.
         """
-        page_texts: list[str] = []
+        readings: list[PageReading] = []
         for i, ocr_path in enumerate(ocr_inputs):
             if stop_requested(self._stop_event):
                 raise RunStoppedError
             if on_page is not None:
                 on_page(i + 1, len(ocr_inputs))
             try:
-                result = self._processor.process_image(ocr_path, language=language)
+                result = self._processor.read_page(ocr_path, language=language)
             except OCRError as exc:
                 if stop_requested(self._stop_event):
                     # The request was cut off by the stop (or failed while stopping): not the
@@ -62,8 +63,8 @@ class OCRStageService:
                 raise StageError(
                     ocr_failed(page, message_of(exc)), kind=exc.kind, stage=Stage.OCR
                 ) from exc
-            page_text = clean_ocr_text(result)
-            page_texts.append(page_text)
+            reading = PageReading(text=clean_ocr_text(result.text), lines=result.lines)
+            readings.append(reading)
             if on_page_done is not None:
-                on_page_done(page_text)
-        return page_texts
+                on_page_done(reading.text)
+        return readings

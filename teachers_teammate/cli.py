@@ -250,6 +250,7 @@ def _make_parser(providers: list[str] | None) -> argparse.ArgumentParser:
     _add_log_args(parser)
     _add_io_args(parser)
     _add_ocr_args(parser)
+    _add_scan_marks_args(parser)
     _add_correction_args(parser, providers)
     _add_evaluation_args(parser, providers)
     _add_output_args(parser)
@@ -308,6 +309,24 @@ def _add_io_args(parser: argparse.ArgumentParser) -> None:
         dest="keep_awake",
         action="store_false",
         help=cli_text.HELP_ALLOW_SLEEP,
+    )
+
+
+def _add_scan_marks_args(parser: argparse.ArgumentParser) -> None:
+    """Add the switch of the scan's marks: what a run keeps for the window's Check tab."""
+    group = parser.add_argument_group("scan marks")
+    group.add_argument(
+        "--scan-marks",
+        dest="scan_marks",
+        action="store_true",
+        default=DEFAULTS["scan_marks"],
+        help=cli_text.HELP_SCAN_MARKS,
+    )
+    group.add_argument(
+        "--no-scan-marks",
+        dest="scan_marks",
+        action="store_false",
+        help=cli_text.HELP_NO_SCAN_MARKS,
     )
 
 

@@ -54,20 +54,29 @@ class _FakeDetector:
 class _FakeRecogniser:
     """Answers with the next of *words* (one class id each), for every call."""
 
-    def __init__(self, words: list[int], *, classes: int = 5, on_call: Any = None) -> None:
+    def __init__(
+        self,
+        words: list[int],
+        *,
+        classes: int = 5,
+        on_call: Any = None,
+        peaks: list[float] | None = None,
+    ) -> None:
         self._words = list(words)
         self._classes = classes
         self._on_call = on_call
+        self._peaks = peaks
         self.calls = 0
 
     def run(self, blob: np.ndarray) -> np.ndarray:
         """Return three steps that read as one letter."""
         letter = self._words[self.calls % len(self._words)]
+        peak = 0.9 if self._peaks is None else self._peaks[self.calls % len(self._peaks)]
         self.calls += 1
         if self._on_call:
             self._on_call(self.calls)
         out = np.zeros((1, 3, self._classes), np.float32)
-        out[0, :, letter] = 0.9
+        out[0, :, letter] = peak
         return out
 
 
@@ -144,6 +153,51 @@ def test_empty_lines_are_dropped(tmp_path: Path) -> None:
     reader = _reader(tmp_path, _FakeRecogniser([0, 2]))
 
     assert reader.process_image(_page(tmp_path)) == "b"
+
+
+def test_read_page_gives_a_line_per_row_with_its_text(tmp_path: Path) -> None:
+    """
+    Given  a fake detector with two lines
+    When   the page is read with read_page
+    Then   there is one line per row, in order, and their texts make the page's text
+    """
+    reader = _reader(tmp_path, _FakeRecogniser([1, 2]))
+
+    reading = reader.read_page(_page(tmp_path))
+
+    assert [line.text for line in reading.lines] == ["a", "b"]
+    assert reading.text == "a\nb"
+
+
+def test_a_line_carries_its_boxes_as_fractions_of_the_page(tmp_path: Path) -> None:
+    """
+    Given  a page of 640 x 320 and a bar from x 40 to 300 around y 75
+    When   the page is read
+    Then   each box has four corners inside [0, 1] and the first line sits on the bar
+    """
+    page = _page(tmp_path)  # 320 rows x 640 columns
+
+    reading = _reader(tmp_path, _FakeRecogniser([1, 2])).read_page(page)
+
+    corners = [corner for box in reading.lines[0].boxes for corner in box]
+    assert len(reading.lines[0].boxes[0]) == 4
+    assert all(0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 for x, y in corners)
+    assert sum(x for x, _ in corners) / len(corners) == pytest.approx(170 / 640, abs=0.02)
+    assert sum(y for _, y in corners) / len(corners) == pytest.approx(75 / 320, abs=0.02)
+
+
+def test_a_lines_confidence_is_the_lowest_of_its_boxes(tmp_path: Path) -> None:
+    """
+    Given  two boxes in one row, read with confidence 0.8 and 0.5
+    When   the page is read
+    Then   the line carries 0.5, the confidence of the box it is least sure about
+    """
+    bars = [(60, 90, 40, 200), (60, 90, 300, 500)]
+    reader = _reader(tmp_path, _FakeRecogniser([1, 3], peaks=[0.8, 0.5]), bars)
+
+    reading = reader.read_page(_page(tmp_path))
+
+    assert reading.lines[0].confidence == pytest.approx(0.5)
 
 
 def test_stop_after_the_first_line_raises_run_stopped(tmp_path: Path) -> None:

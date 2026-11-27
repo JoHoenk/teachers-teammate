@@ -25,6 +25,7 @@ from ...domain.freshness import (
 )
 from ...domain.key_facts import KeyFacts
 from ...domain.ocr_prompt import get_ocr_prompt
+from ...domain.page_layout import ScanBox
 from ...domain.stages import Stage
 from ...domain.teacher_work import TeacherWork, text_identity
 from ..preview_image_store import PreviewImageStore
@@ -223,8 +224,13 @@ class CacheReconciliationService:
         preview_img: str,
         source_image: str,
         raw_text_format: str = "plain",
+        layout: Sequence[ScanBox] = (),
     ) -> CacheContext:
-        """Persist OCR result and return updated context."""
+        """Persist OCR result and return updated context.
+
+        *layout* is where the lines of the reading stand in it, for the scan's marks; empty when
+        none could be placed, which costs the marks and nothing else.
+        """
         new_state = self._repo.record_ocr_result(
             file,
             ctx.state,
@@ -236,6 +242,7 @@ class CacheReconciliationService:
                 ocr_config_hash=ctx.ocr_config_hash,
                 preview_config_hash=ctx.preview_config_hash,
                 raw_text_format=raw_text_format,
+                layout=tuple(layout),
             ),
         )
         return dataclasses.replace(ctx, state=new_state)

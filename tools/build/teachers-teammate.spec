@@ -260,6 +260,10 @@ hiddenimports += collect_submodules("keyring")
 # copy; spaCy imports packaging.requirements, which nothing in the app does.  All of it, then.
 hiddenimports += collect_submodules("packaging")
 
+# RapidFuzz picks its compiled implementation at run time through importlib, which the analysis
+# does not follow; the smoke test's "scan places" check proves it arrived.
+hiddenimports += collect_submodules("rapidfuzz")
+
 # The smoke test (``frozen_modes._check_addon_constraints``) reads the version of these four
 # through ``importlib.metadata`` and compares it with the add-on constraints. PyInstaller only
 # bundles a package's metadata when a hook asks for it (numpy and pydantic happen to have one;

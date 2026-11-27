@@ -28,6 +28,9 @@ dependencies = [
     "pydantic>=2",
     # The built-in reader reads its recogniser's character list from the model's inference.yml.
     "PyYAML>=6",
+    # Character alignment of a page's lines against the text that was read from it, once per
+    # document: the one step where the two texts are not both clean.
+    "rapidfuzz>=3.9",
     # API keys of the online AI services: the system keychain (macOS Keychain, Windows
     # Credential Manager, Linux Secret Service); without one the keys stay in the settings file.
     "keyring>=24",

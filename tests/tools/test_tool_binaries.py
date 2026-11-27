@@ -18,10 +18,12 @@ WORKSPACE = "_main"
 """The workspace directory inside the runfiles tree."""
 
 BINARIES: dict[str, tuple[str, ...]] = {
+    "tools/dev/chandra_gt": (),
     "tools/dev/compare_mistral_regions": (),
     "tools/evaluate": ("run",),
     "tools/extract_test_specs": (),
     "tools/dev/ocr_page_tokens": (),
+    "tools/dev/page_lines": (),
     "tools/prepare_gec_testset": (),
     "tools/report": ("table", "compare", "gate", "passes", "sheet", "page"),
     "tools/store": (

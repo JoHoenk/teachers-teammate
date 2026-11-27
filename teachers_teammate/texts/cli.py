@@ -66,6 +66,11 @@ HELP_DEBUG = "Keep preprocessed temp files after the run (useful for inspecting 
 HELP_NO_DEBUG = "Do not keep preprocessing temp files after the run."
 HELP_KEEP_AWAKE = "Keep the computer from going to sleep during the run (default)."
 HELP_ALLOW_SLEEP = "Let the computer go to sleep during the run (by default it is kept awake)."
+HELP_SCAN_MARKS = (
+    "Keep where each line of a scan sits, so the window marks the sentence under the cursor on "
+    "the page (default). Needs the built-in reader's models."
+)
+HELP_NO_SCAN_MARKS = "Do not keep where the lines of a scan sit; the window then marks nothing."
 
 HELP_OCR_MODEL = "Ollama OCR vision model."
 HELP_OCR_ENGINE = (

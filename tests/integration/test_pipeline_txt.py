@@ -268,7 +268,7 @@ def test_pipeline_with_recognition_off_uses_text_files_and_skips_scans(
     ocr = MagicMock()
 
     with patch("teachers_teammate.infrastructure.pipeline.OCRStageService") as stage:
-        stage.return_value.run_pages = ocr
+        stage.return_value.read_pages = ocr
         rc = (
             OCRPipeline(
                 cfg,

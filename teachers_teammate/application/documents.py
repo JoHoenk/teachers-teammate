@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import functools
 import logging
 from pathlib import Path
@@ -163,11 +163,14 @@ class DocumentQueries:
 
         One query for the whole tab: the texts, the review aligned with them, the items the list
         numbers, the pages of the scan and how the results were sent.  The window asks for it
-        once per document and once per stored edit, so nothing else assembles that state.
+        once per document and once per stored edit, so nothing else assembles that state.  With
+        ``scan_marks`` off the scan marks nothing, whatever places the reading kept.
         """
         view = self.load_view(config, source)
         if view is None:
             return None
+        if not config.scan_marks:
+            view = replace(view, raw_layout=())
         return check_document_of(view)
 
     def recognised_files(self, config: Config, files: Collection[Path]) -> set[Path]:

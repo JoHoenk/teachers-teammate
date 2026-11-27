@@ -96,6 +96,7 @@ pywin32-ctypes,0.2.3,BSD-3-Clause,bundle,package
 pyyaml,6.0.4,MIT,bundle,package
 qdarkstyle,3.2.3,MIT,bundle,package
 qtpy,2.4.3,MIT,bundle,package
+rapidfuzz,3.14.6,MIT,bundle,package
 regex,2026.11.25,Apache-2.0 AND CNRI-Python,addon,package
 requests,2.34.2,Apache-2.0,bundle,package
 requests-toolbelt,1.0.0,Apache-2.0,addon,package

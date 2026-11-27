@@ -47,6 +47,7 @@ docs/test_specs.rst
 /output*/
 /previews/
 /pdfs/
+/my_pages/
 
 # Working notes and research plans (not part of the source tree)
 plans/

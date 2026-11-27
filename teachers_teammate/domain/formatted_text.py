@@ -12,6 +12,7 @@ from collections.abc import Iterable, Iterator, Sequence
 import dataclasses
 from dataclasses import dataclass, field
 import enum
+import re
 from typing import Literal
 
 TextFormat = Literal["plain", "markdown"]
@@ -25,6 +26,10 @@ MARKDOWN: TextFormat = "markdown"
 def normalize_text_format(value: str | None) -> TextFormat:
     """Return *value* as a :data:`TextFormat`, falling back to ``"plain"`` when unknown."""
     return MARKDOWN if value == MARKDOWN else PLAIN
+
+
+#: The line :func:`join_labelled_pages` puts before every page of a longer document.
+PAGE_LABEL = re.compile(r"Page \d+:")
 
 
 def join_labelled_pages(pages: Sequence[str], *, markdown: bool = False) -> str:

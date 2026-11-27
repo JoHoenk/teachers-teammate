@@ -42,6 +42,20 @@ def _yml(store, model) -> dict:
         return yaml.safe_load(handle)
 
 
+def _drawn_page(tmp_path: Path) -> Path:
+    """Return a 300 DPI page with the 8 lines of :data:`_LINES` drawn on it, and its path."""
+    from PIL import Image, ImageDraw, ImageFont  # noqa: PLC0415
+
+    page = Image.new("RGB", (2480, 3508), "white")
+    draw = ImageDraw.Draw(page)
+    font = ImageFont.load_default(size=42)
+    for i, text in enumerate(_LINES):
+        draw.text((200, 300 + i * 160), text, font=font, fill="black")
+    path = tmp_path / "page.png"
+    page.save(path)
+    return path
+
+
 def test_constants_match_the_pinned_inference_yml(tmp_path: Path) -> None:
     """
     Given  the pinned detector and recogniser configuration files
@@ -109,19 +123,25 @@ def test_a_drawn_page_is_read_exactly(tmp_path: Path) -> None:
     When   the built-in reader reads it
     Then   the text is exactly the 8 lines
     """
-    from PIL import Image, ImageDraw, ImageFont  # noqa: PLC0415
-
-    page = Image.new("RGB", (2480, 3508), "white")
-    draw = ImageDraw.Draw(page)
-    font = ImageFont.load_default(size=42)
-    for i, text in enumerate(_LINES):
-        draw.text((200, 300 + i * 160), text, font=font, fill="black")
-    path = tmp_path / "page.png"
-    page.save(path)
-
-    text = PpOcrProcessor(reader_store(tmp_path)).process_image(path)
+    text = PpOcrProcessor(reader_store(tmp_path)).process_image(_drawn_page(tmp_path))
 
     assert text.split("\n") == _LINES
+
+
+def test_a_drawn_page_gives_the_lines_it_was_read_as(tmp_path: Path) -> None:
+    """
+    Given  a page drawn with Pillow: 8 lines of black text, about 10 pt at 300 DPI
+    When   the page is read with read_page
+    Then   the lines' texts make the page's text, and their corners and confidence are the page's
+    """
+    reading = PpOcrProcessor(reader_store(tmp_path)).read_page(_drawn_page(tmp_path))
+
+    assert [line.text for line in reading.lines] == _LINES
+    assert "\n".join(line.text for line in reading.lines) == reading.text
+    corners = [corner for line in reading.lines for box in line.boxes for corner in box]
+    assert len(corners) == 4 * sum(len(line.boxes) for line in reading.lines)
+    assert all(0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 for x, y in corners)
+    assert all(0.0 <= line.confidence <= 1.0 for line in reading.lines)
 
 
 def test_umlauts_and_sharp_s_are_decoded(tmp_path: Path) -> None:

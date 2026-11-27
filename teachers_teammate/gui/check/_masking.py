@@ -107,6 +107,16 @@ class Masking:
         offset_map = self._masked_text(text)[1]
         return offset_map.start(span[0]), offset_map.end(span[1])
 
+    def back(self, offset: int, text: str) -> int:
+        """Return where *offset* of the masked *text* stands in *text* itself (unchanged when off).
+
+        The teacher's cursor stands in the placeholders where a name stands in the text: the
+        sentence it belongs to is the one the name is in.
+        """
+        if not self._enabled:
+            return offset
+        return self._masked_text(text)[1].back(offset)
+
     # ── what the window pushes ────────────────────────────────────────────
 
     def set_available(self, available: bool) -> None:

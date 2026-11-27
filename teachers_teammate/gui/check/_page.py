@@ -47,6 +47,7 @@ from ...application.check_document import (
     sent_view_of,
 )
 from ...application.check_items import CheckItem, ItemKind, countable_keys, minor_corrections
+from ...domain.page_layout import Mark
 from ...domain.proofreading.carry import ReadingFix
 from ...domain.proofreading.review import AlignedReview
 from ...domain.proofreading.text_edits import TextEdit
@@ -71,6 +72,7 @@ from .._handles import (
 from .._qt import present
 from ._masking import Masking
 from ._run_strip import PRIMARY_STYLE, NextStepStrip, RunState, RunStrip
+from ._scan_link import mark_in_corrected, mark_in_transcription
 from ._scan_view import ScanPane
 from ._side_panel import SidePanel
 from ._text_views import CheckTextView, FinalView, MarkedView, ReadView, marks_of
@@ -385,6 +387,7 @@ class CheckBody(QWidget):
         for view in (self.read_view, self.marked_view, self.final_view):
             view.item_clicked.connect(self._on_item_clicked)
             view.zoom_changed.connect(self._on_zoomed)
+            view.cursorPositionChanged.connect(self._on_cursor_moved)
         self.panel.item_chosen.connect(self._on_item_chosen)
         self.panel.item_shown.connect(self.item_shown)
         self.panel.take_out_requested.connect(self._on_take_out)
@@ -610,6 +613,7 @@ class CheckBody(QWidget):
     def _refresh(self) -> None:
         """Bring the marks, the editability, the banners and the widths in line with the state."""
         self._refresh_marks()
+        self._refresh_scan_mark()
         self._refresh_sent_caption()
         self._refresh_hiding_rules()
         self._refresh_editability()
@@ -628,6 +632,33 @@ class CheckBody(QWidget):
         self.final_view.set_marks(marks, plain=plain, chosen=chosen)
         self.marked_view.show_document(doc, self._masking, chosen=chosen)
         self.panel.set_note("" if self.final_view.mapped else txt.COULD_NOT_MARK)
+
+    def _on_cursor_moved(self) -> None:
+        """The cursor moved in one of the texts: the scan follows the view that is in front."""
+        self._refresh_scan_mark()
+
+    def _refresh_scan_mark(self) -> None:
+        """Mark on the scan where the sentence under the cursor of the view in front was read."""
+        doc = self._doc
+        self.scan.view.mark(None if doc is None else self._mark_at_cursor(doc))
+
+    def _mark_at_cursor(self, doc: CheckDocument) -> Mark | None:
+        """Return what the scan draws for the sentence the cursor of the view in front is in.
+
+        The two views of the corrected text stand on the words at the same place in the
+        transcription; *What was read* stands on a text of its own, which is diffed against the
+        transcription once and then remembered.  ``None`` where the place is not sure.
+        """
+        view = self._widget_of(self._view)
+        if self._view is ViewKind.READ:
+            offset = view.plain_offset()
+            if offset is None:
+                return None
+            return mark_in_transcription(doc, offset, view.plain)
+        offset = view.corrected_offset()
+        if offset is None:
+            return None
+        return mark_in_corrected(doc, offset, self._masking)
 
     def _refresh_sent_caption(self) -> None:
         """Say above the box what it holds: how the text was sent, or why the names stand in it.

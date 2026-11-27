@@ -14,9 +14,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from .formatted_text import normalize_text_format
+from .page_layout import LAYOUT_VERSION, ScanBox, layout_from
 from .proofreading.review import CorrectionReview
 from .stages import Stage, normalize_stage
-from .teacher_work import MachineTexts
+from .teacher_work import MachineTexts, text_identity
 
 
 def machine_texts(state: DocumentState) -> MachineTexts:
@@ -32,6 +33,20 @@ def machine_texts(state: DocumentState) -> MachineTexts:
         review=state.correction_review,
         correction_source_hash=state.correction_source_hash,
     )
+
+
+def stored_layout(state: DocumentState) -> tuple[ScanBox, ...]:
+    """Return the places of *state*'s reading, or none when they are stale or of another version.
+
+    A layout belongs to the reading it was made from: the text it was aligned with, and the
+    version of the placing.  Places are made only while a page is read: a reading without them
+    gets them when it is read again.
+    """
+    if state.layout_version != LAYOUT_VERSION or not state.raw_layout:
+        return ()
+    if state.layout_source != text_identity(state.raw_text):
+        return ()
+    return layout_from(state.raw_layout)
 
 
 @dataclass(frozen=True)
@@ -69,6 +84,14 @@ class DocumentState:
     # it was given): "plain" (verbatim) or "markdown".  The default keeps state written
     # before this field existed rendering as plain text.
     raw_text_format: str = "plain"
+    # The lines of the reading, each with its range in the plain text of ``raw_text``
+    # (``ScanBox.to_dict``): what the Check tab marks on the page.  Made while the pages are read,
+    # never afterwards.
+    raw_layout: list[dict] = field(default_factory=list)
+    # The version the places were made with, and the identity of the ``raw_text`` they were made
+    # from.  A layout of another version, or of a text the document no longer has, is stale.
+    layout_version: int = 0
+    layout_source: str = ""
     ocr_done: bool = False
     correction_done: bool = False
     evaluation_done: bool = False
@@ -175,6 +198,9 @@ _CLEARED: Mapping[Stage, Mapping[str, object]] = {
         "ocr_config_hash": "",
         "raw_text": "",
         "raw_text_format": "plain",
+        "raw_layout": (),
+        "layout_version": 0,
+        "layout_source": "",
     },
     Stage.CORRECTION: {
         "correction_done": False,

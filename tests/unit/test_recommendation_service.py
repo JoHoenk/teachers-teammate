@@ -336,21 +336,24 @@ def test_the_local_hardware_is_served_from_the_shared_probe(monkeypatch) -> None
 
 
 @pytest.mark.unit
-def test_the_free_memory_and_the_gpu_load_are_read_on_demand(monkeypatch) -> None:
+def test_the_free_memory_and_the_live_load_are_read_on_demand(monkeypatch) -> None:
     """
-    Given  a computer whose free memory and graphics load the probe can read
+    Given  a computer whose free memory, graphics load and processor load the probe can read
     When   the "My computer" line and the System Monitor ask for them
-    Then   the two figures are read fresh, never taken from the detection cache
+    Then   the figures are read fresh, never taken from the detection cache
     """
-    from teachers_teammate.domain.model_catalog import GpuUsage  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import GpuUsage, SystemUsage  # noqa: PLC0415
     from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
 
+    system = SystemUsage(cpu_percent=12.0, ram_percent=50.0, ram_used_gb=8.0, ram_total_gb=16.0)
     monkeypatch.setattr(gpu_detector, "detect_available_memory_gb", lambda: 6.5)
     monkeypatch.setattr(gpu_detector, "read_gpu_usage", lambda: GpuUsage(37))
+    monkeypatch.setattr(gpu_detector, "read_system_usage", lambda: system)
     service = _service()
 
     assert service.available_memory_gb() == 6.5
     assert service.read_gpu_usage() == GpuUsage(37)
+    assert service.read_system_usage() == system
 
 
 # ── classification and ratings ──────────────────────────────────────────────

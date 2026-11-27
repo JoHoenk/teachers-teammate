@@ -38,6 +38,7 @@ from ..domain.model_catalog import (
     ModelRating,
     ModelUses,
     OllamaModelSpec,
+    SystemUsage,
     active_profile,
     best_model,
     catalog_uses,
@@ -159,6 +160,13 @@ class ModelRecommendationService:
     def read_gpu_usage(self) -> GpuUsage | None:
         """Return how busy the first graphics card is right now, or ``None`` when unreadable."""
         return self._hardware.gpu_usage()
+
+    def read_system_usage(self) -> SystemUsage | None:
+        """Return the processor load and main memory in use right now, or ``None`` when unreadable.
+
+        Quick enough for the GUI thread; the processor share is measured since the previous call.
+        """
+        return self._hardware.system_usage()
 
     def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection:
         """Return the hardware detection for the machine that runs Ollama.

@@ -190,6 +190,9 @@ class DummyAppService(RecommendationServiceStub):
     def read_gpu_usage(self):
         return None
 
+    def read_system_usage(self):
+        return None
+
 
 class CachingDummyAppService(DummyAppService):
     def __init__(self) -> None:

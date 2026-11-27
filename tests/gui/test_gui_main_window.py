@@ -1697,13 +1697,13 @@ def test_the_monitor_remembers_its_geometry(qtbot, main_window, monkeypatch) -> 
         "restoreGeometry",
         lambda self, data: restored.append(data) or True,
     )
-    monitor = _system_monitor.SystemMonitorWindow(lambda: None)
+    monitor = _system_monitor.SystemMonitorWindow(lambda: None, lambda: None)
     qtbot.addWidget(monitor)
     monitor.show()
     monitor.hide()
     assert _system_monitor.GEOMETRY_KEY in stored
 
-    other = _system_monitor.SystemMonitorWindow(lambda: None)
+    other = _system_monitor.SystemMonitorWindow(lambda: None, lambda: None)
     qtbot.addWidget(other)
 
     assert restored == [stored[_system_monitor.GEOMETRY_KEY]]

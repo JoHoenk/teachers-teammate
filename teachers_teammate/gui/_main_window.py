@@ -286,7 +286,10 @@ class MainWindow(QMainWindow):
         self._tabs.tabBar().setFont(_tab_bar_font)
         # Built now and kept hidden, so the chart collects the data of every run.  Parentless on
         # purpose (see SystemMonitorWindow): closeEvent closes it with this window.
-        self._monitor = SystemMonitorWindow(self._app_service.recommendations.read_gpu_usage)
+        recommendations = self._app_service.recommendations
+        self._monitor = SystemMonitorWindow(
+            recommendations.read_system_usage, recommendations.read_gpu_usage
+        )
         self._chart = self._monitor.chart
         self._stats = self._monitor.stats
         self._compare = CompareLauncher(

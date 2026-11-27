@@ -537,7 +537,7 @@ and `report --performance --catalog-lines` prints the `answer_length` lines for 
 | Piece | Where | Rule |
 |---|---|---|
 | Decisions (best model, suitability, hardware profile, `rate_model`) | `domain/model_catalog.py` | Pure functions, no I/O — table-test them. |
-| Caches (local hardware probe, model classification) | `application/model_recommendations.py` | One owner. Call `on_ollama_models_changed(url)` after every pull; it evicts the model list, the classifications and the server's speed facts. Only definite classifications are cached. The memory and GPU readers and the context choice live here too (`available_memory_gb`, `read_gpu_usage`, `context_choice`). |
+| Caches (local hardware probe, model classification) | `application/model_recommendations.py` | One owner. Call `on_ollama_models_changed(url)` after every pull; it evicts the model list, the classifications and the server's speed facts. Only definite classifications are cached. The memory and GPU readers and the context choice live here too (`available_memory_gb`, `read_gpu_usage`, `read_system_usage`, `context_choice`). |
 | Texts a teacher reads | `teachers_teammate/texts/` | Qt-free; widgets never build these sentences themselves. See "Where text lives" above. |
 | Widgets | `gui/_hardware_profile_selector.py`, `gui/_model_guidance.py`, `gui/settings/_addons_page.py` | Presentation only. They rate models through `rate_for(..., cached_only=True)` — never contacting Ollama on the GUI thread. |
 
@@ -2036,7 +2036,8 @@ The System Monitor's GPU and VRAM gauges need no add-on.  `nvidia-ml-py` (the `p
 BSD) is a runtime dependency in `pyproject.toml`, so it is in the bundle; AMD needs no
 package at all — `gpu_detector.read_amd_usage()` reads the `amdgpu` driver's sysfs files
 (`gpu_busy_percent`, `mem_info_vram_used`, `mem_info_vram_total`).  `read_gpu_usage()` answers
-`None` when neither source does, and `_stats_widget.py` then shows CPU and RAM only.
+`None` when neither source does, and `_stats_widget.py` then shows CPU and RAM only.  CPU and RAM
+come from `read_system_usage()` (psutil); without a first reading the widget shows a note instead.
 
 `nvidia-ml-py` and `pyamdgpuinfo` are in `addon_manager._RETIRED_PACKAGES`, so a copy of them
 in the add-on folder is removed at start.

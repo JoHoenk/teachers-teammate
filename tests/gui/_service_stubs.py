@@ -162,6 +162,10 @@ class LocalDataFlowStub:
         """No graphics card in a test."""
         return None
 
+    def read_system_usage(self):
+        """No live system stats in a test."""
+        return None
+
     def describe_data_flow(self, config) -> DataFlow:
         _ = config
         here = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")

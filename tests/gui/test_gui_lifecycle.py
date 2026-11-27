@@ -67,8 +67,8 @@ WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
     ("zoomable_image", lambda: ZoomableImageView()),
     ("diff_widget", lambda: DiffWidget()),
     ("chart_widget", lambda: ChartWidget()),
-    ("system_stats", lambda: SystemStatsWidget(lambda: None)),
-    ("system_monitor", lambda: SystemMonitorWindow(lambda: None)),
+    ("system_stats", lambda: SystemStatsWidget(lambda: None, lambda: None)),
+    ("system_monitor", lambda: SystemMonitorWindow(lambda: None, lambda: None)),
     ("collapsible", lambda: CollapsibleSection("Section")),
     ("ocr_config_selector", lambda: OcrConfigSelector(app_service=services_of(_FAKE))),
 ]

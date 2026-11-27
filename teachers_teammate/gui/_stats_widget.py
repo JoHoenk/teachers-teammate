@@ -15,16 +15,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..domain.model_catalog import GpuUsage
+from ..domain.model_catalog import GpuUsage, SystemUsage
 from ..texts import main_window as txt
 from ._background import run_in_background
-
-try:
-    import psutil as _psutil
-
-    _PSUTIL_AVAILABLE = True
-except ImportError:
-    _PSUTIL_AVAILABLE = False
 
 
 class SystemStatsWidget(QGroupBox):
@@ -33,15 +26,21 @@ class SystemStatsWidget(QGroupBox):
     The timer runs only while the widget is visible: the System Monitor window is hidden
     most of the time, and nobody reads a gauge that is not on screen.
 
-    The GPU and VRAM rows appear when the graphics card answers: NVML for NVIDIA
-    (``nvidia-ml-py`` is bundled) and the ``amdgpu`` driver's sysfs files for AMD.  A
-    computer without a card the app can read simply shows CPU and RAM.
+    CPU and RAM are read on the GUI thread (a quick query); a computer that gives no first
+    reading shows a note instead of the gauges.  The GPU and VRAM rows appear when the
+    graphics card answers: NVML for NVIDIA (``nvidia-ml-py`` is bundled) and the ``amdgpu``
+    driver's sysfs files for AMD.  A computer without a card the app can read simply shows
+    CPU and RAM.
     """
 
     def __init__(
-        self, read_gpu_usage: Callable[[], GpuUsage | None], parent: QWidget | None = None
+        self,
+        read_system_usage: Callable[[], SystemUsage | None],
+        read_gpu_usage: Callable[[], GpuUsage | None],
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(txt.STATS_GROUP, parent)
+        self._read_system_usage = read_system_usage
         self._read_gpu_usage = read_gpu_usage
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(6, 8, 6, 6)
@@ -51,8 +50,9 @@ class SystemStatsWidget(QGroupBox):
         self._vram_bar: QProgressBar | None = None
         self._vram_val: QLabel | None = None
 
-        if not _PSUTIL_AVAILABLE:
-            self._layout.addWidget(QLabel(txt.STATS_NEEDS_PSUTIL))
+        first = read_system_usage()
+        if first is None:
+            self._layout.addWidget(QLabel(txt.STATS_UNREADABLE))
             self._enabled = False
             return
 
@@ -66,7 +66,8 @@ class SystemStatsWidget(QGroupBox):
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._refresh)
-        self._refresh()
+        self._show_system_usage(first)
+        self._request_gpu_usage()
 
     def showEvent(self, event: QShowEvent) -> None:  # Qt override
         """Start polling, with one reading at once so the gauges are not stale."""
@@ -107,16 +108,16 @@ class SystemStatsWidget(QGroupBox):
     def _refresh(self) -> None:
         if not self._enabled:
             return
-
-        cpu = _psutil.cpu_percent(interval=None)
-        self._cpu_bar.setValue(int(cpu))
-        self._cpu_val.setText(txt.percent(cpu))
-
-        mem = _psutil.virtual_memory()
-        self._ram_bar.setValue(int(mem.percent))
-        self._ram_val.setText(txt.memory_use(mem.used / 2**30, mem.total / 2**30))
-
+        usage = self._read_system_usage()
+        if usage is not None:
+            self._show_system_usage(usage)
         self._request_gpu_usage()
+
+    def _show_system_usage(self, usage: SystemUsage) -> None:
+        self._cpu_bar.setValue(int(usage.cpu_percent))
+        self._cpu_val.setText(txt.percent(usage.cpu_percent))
+        self._ram_bar.setValue(int(usage.ram_percent))
+        self._ram_val.setText(txt.memory_use(usage.ram_used_gb, usage.ram_total_gb))
 
     def _request_gpu_usage(self) -> None:
         """Ask the card for its load without blocking the GUI; skip when a read is under way."""

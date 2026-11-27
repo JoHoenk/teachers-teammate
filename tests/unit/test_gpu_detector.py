@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.domain.model_catalog import GpuInfo
+from teachers_teammate.domain.model_catalog import GpuInfo, SystemUsage
 from teachers_teammate.infrastructure import gpu_detector
 from teachers_teammate.infrastructure.gpu_detector import (
     GpuUsage,
@@ -263,6 +263,35 @@ def test_nvml_failing_leaves_the_result_empty(monkeypatch) -> None:
 
 
 # ── detect_system_memory_gb ────────────────────────────────────────────────
+
+
+@pytest.mark.use_case("System_Resource_Monitoring")
+def test_system_usage_is_read_through_psutil() -> None:
+    """
+    Given  psutil reporting 30% processor load and 8 of 32 GiB of memory in use
+    When   read_system_usage is called
+    Then   the reading carries those figures in percent and GB
+    """
+    fake = SimpleNamespace(
+        cpu_percent=lambda interval: 30.0,
+        virtual_memory=lambda: SimpleNamespace(percent=25.0, used=8 * 2**30, total=32 * 2**30),
+    )
+    with patch.dict(sys.modules, {"psutil": fake}):
+        usage = gpu_detector.read_system_usage()
+
+    assert usage == SystemUsage(
+        cpu_percent=30.0, ram_percent=25.0, ram_used_gb=8.0, ram_total_gb=32.0
+    )
+
+
+def test_system_usage_is_none_without_psutil() -> None:
+    """
+    Given  psutil is not installed
+    When   read_system_usage is called
+    Then   None is returned, so the System Monitor shows a note instead of gauges
+    """
+    with patch.dict(sys.modules, {"psutil": None}):
+        assert gpu_detector.read_system_usage() is None
 
 
 def test_system_memory_is_read_through_psutil() -> None:

@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QHideEvent
 from PySide6.QtWidgets import QSplitter, QVBoxLayout, QWidget
 
-from ..domain.model_catalog import GpuUsage
+from ..domain.model_catalog import GpuUsage, SystemUsage
 from ..texts import menus
 from ._chart_widget import ChartWidget
 from ._handles import MONITOR_WINDOW
@@ -32,13 +32,16 @@ class SystemMonitorWindow(QWidget):
     """
 
     def __init__(
-        self, read_gpu_usage: Callable[[], GpuUsage | None], parent: QWidget | None = None
+        self,
+        read_system_usage: Callable[[], SystemUsage | None],
+        read_gpu_usage: Callable[[], GpuUsage | None],
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle(menus.SYSTEM_MONITOR)
         self.setObjectName(MONITOR_WINDOW)
         self.chart = ChartWidget()
-        self.stats = SystemStatsWidget(read_gpu_usage)
+        self.stats = SystemStatsWidget(read_system_usage, read_gpu_usage)
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self.chart)
         splitter.addWidget(self.stats)

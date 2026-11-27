@@ -75,6 +75,8 @@ _SAMPLES: dict[str, object] = {
     "anonymizer_primary_model": "de_core_news_sm",
     "anonymizer_secondary_model": "en_core_web_sm",
     "anonymizer_patterns": [("EMAIL", r"\S+@\S+")],
+    "anonymizer_hide": ["Anna"],
+    "anonymizer_keep": ["Anna Müller"],
     "hardware_profile": "16gb",
     "proofreading_context": "16384",
 }
@@ -185,6 +187,19 @@ def test_every_default_is_taken_as_it_is() -> None:
     }
 
 
+@pytest.mark.parametrize("key", ["anonymizer_hide", "anonymizer_keep"])
+def test_a_blank_hidden_or_kept_text_is_dropped(key: str) -> None:
+    """
+    Given  a hide or keep list with an entry of nothing but spaces
+    When   the settings are normalised
+    Then   the list holds the texts only, and a list of nothing at all is no list
+    """
+    loaded = normalize_settings({key: ["Anna Müller", "   "]})
+
+    assert loaded.values[key] == ["Anna Müller"]
+    assert normalize_settings({key: [" "]}).values[key] is None
+
+
 def test_a_saved_ollama_address_of_blanks_is_the_default_server() -> None:
     """
     Given  a saved Ollama address of nothing but spaces
@@ -232,6 +247,11 @@ def test_the_defaults_cannot_be_changed_by_a_caller() -> None:
         ("anonymizer_patterns", [["1X", "a@b"]]),
         ("anonymizer_patterns", [["SCHÜLER_ID", "a@b"]]),
         ("anonymizer_patterns", [["PLZ-ORT", "a@b"]]),
+        # A text where a list belongs: the anonymizer would keep nothing it was meant to keep.
+        ("anonymizer_hide", "Anna"),
+        ("anonymizer_hide", [1]),
+        ("anonymizer_keep", "Anna Müller"),
+        ("anonymizer_keep", [1]),
     ],
 )
 def test_a_value_a_key_does_not_accept_is_left_out_and_reported_as_written(

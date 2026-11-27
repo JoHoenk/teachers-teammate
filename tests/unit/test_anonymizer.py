@@ -6,6 +6,7 @@ offline without any ML dependencies.
 
 from __future__ import annotations
 
+import re
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +16,8 @@ from teachers_teammate.domain.anonymization import (
     _LEGACY_DEFAULT_PATTERNS,
     AnonymizerConfig,
     DEFAULT_PATTERNS,
+    config_hiding,
+    config_keeping,
     resolve_patterns,
 )
 from teachers_teammate.exceptions import AnonymizerError
@@ -1105,3 +1108,243 @@ def test_a_person_name_wins_the_overlap_with_a_pattern() -> None:
 
     assert mapping == {"[PERSON_1]": "Anna Müller", "[STREET_1]": "Straße 5"}
     assert result == "[PERSON_1] [STREET_1]"
+
+
+# ── the keep list: what a run sends as it is ───────────────────────────────
+
+
+def test_a_kept_person_name_is_sent_as_written() -> None:
+    """
+    Given  the NER model finds the person name 'Anna Müller'
+    When   the keep list holds that name
+    Then   the text goes out unchanged and no placeholder stands in for it
+    """
+    anon = _make_anonymizer(
+        [(0, 11, "Anna Müller", "PER")], config=AnonymizerConfig(keep=("Anna Müller",))
+    )
+    result, mapping = anon.anonymize("Anna Müller kam zu spät.")
+
+    assert result == "Anna Müller kam zu spät."
+    assert mapping == {}
+
+
+def test_a_kept_pattern_match_is_sent_as_written() -> None:
+    """
+    Given  the email pattern finds an address
+    When   the keep list holds that address
+    Then   the address stays in the text and nothing is replaced
+    """
+    anon = _make_anonymizer(config=AnonymizerConfig(keep=("a@b.de",)))
+    result, mapping = anon.anonymize("Schreib an a@b.de bis Freitag.")
+
+    assert "a@b.de" in result
+    assert mapping == {}
+
+
+def test_a_kept_name_is_kept_where_a_pass_missed_it() -> None:
+    """
+    Given  a text that names 'Anna Müller' twice, with the second mention caught by no pass
+    When   the keep list holds the name
+    Then   neither mention is replaced, while the name beside it still is
+    """
+    text = "Anna Müller kam. Später ging Anna Müller mit Ben."
+    anon = _make_anonymizer(
+        [(0, 11, "Anna Müller", "PER"), (45, 48, "Ben", "PER")],
+        config=AnonymizerConfig(keep=("Anna Müller",)),
+    )
+    result, mapping = anon.anonymize(text)
+
+    assert result == "Anna Müller kam. Später ging Anna Müller mit [PERSON_1]."
+    assert mapping == {"[PERSON_1]": "Ben"}
+
+
+def test_the_keep_list_takes_the_case_and_the_form_of_the_text_lightly() -> None:
+    """
+    Given  a keep list that spells the name in capitals, and text that spells it mixed
+    When   anonymize() is called
+    Then   the name is still kept: whole, case-folded and NFC like the rest of the module
+    """
+    anon = _make_anonymizer(
+        [(0, 11, "Anna Müller", "PER")], config=AnonymizerConfig(keep=("ANNA MU\u0308LLER",))
+    )
+    result, _mapping = anon.anonymize("Anna Müller kam.")
+
+    assert result == "Anna Müller kam."
+
+
+def test_a_kept_name_leaves_the_word_beside_it_hidden() -> None:
+    """
+    Given  a kept name and the word behind it in the same sentence
+    When   anonymize() is called
+    Then   the kept name stands as written and the rest is replaced as usual
+    """
+    text = "Anna Müller, Telefon 030 1234567"
+    config = AnonymizerConfig(patterns=(("PHONE", r"\d{3} \d+"),), keep=("Anna Müller",))
+    anon = _make_anonymizer([(0, 11, "Anna Müller", "PER")], config=config)
+    result, mapping = anon.anonymize(text)
+
+    assert result == "Anna Müller, Telefon [PHONE_1]"
+    assert mapping == {"[PHONE_1]": "030 1234567"}
+
+
+def test_a_kept_text_protects_the_names_inside_it() -> None:
+    """
+    Given  a pass that finds 'Anna' on its own twice, and a kept 'Anna Müller' where the first
+           one stands
+    When   anonymize() is called
+    Then   the 'Anna' inside the kept name stays, and the one outside is replaced
+    """
+    text = "Anna Müller kam. Anna ging."
+    anon = _make_anonymizer(
+        [(0, 4, "Anna", "PER"), (17, 21, "Anna", "PER")],
+        config=AnonymizerConfig(keep=("Anna Müller",)),
+    )
+    result, mapping = anon.anonymize(text)
+
+    assert result == "Anna Müller kam. [PERSON_1] ging."
+    assert mapping == {"[PERSON_1]": "Anna"}
+
+
+# ── the hide list: what a run hides wherever it stands ─────────────────────
+
+
+def test_a_hidden_text_is_replaced_where_no_pass_found_it() -> None:
+    """
+    Given  a text no pass finds a name in, and a hide list holding 'Pfeffer'
+    When   anonymize() is called
+    Then   every occurrence is replaced by one placeholder of the NAME tag
+    """
+    anon = _make_anonymizer(config=AnonymizerConfig(hide=("Pfeffer",)))
+    result, mapping = anon.anonymize("Pfeffer kam, dann ging Pfeffer wieder.")
+
+    assert result == "[NAME_1] kam, dann ging [NAME_1] wieder."
+    assert mapping == {"[NAME_1]": "Pfeffer"}
+
+
+def test_a_hidden_text_is_a_word_of_its_own_and_ignores_the_case() -> None:
+    """
+    Given  a hide list holding 'Anna'
+    When   a text has 'Annabel' and 'ANNA'
+    Then   only 'ANNA' is replaced: whole words, whatever the capitals
+    """
+    anon = _make_anonymizer(config=AnonymizerConfig(hide=("Anna",)))
+    result, mapping = anon.anonymize("Annabel und ANNA")
+
+    assert result == "Annabel und [NAME_1]"
+    assert mapping == {"[NAME_1]": "ANNA"}
+
+
+def test_a_hidden_text_wins_the_overlap_with_a_found_name() -> None:
+    """
+    Given  the NER model finds 'Anna' and the hide list holds 'Anna Müller'
+    When   anonymize() is called
+    Then   the whole name is one placeholder, not a name and a remainder
+    """
+    anon = _make_anonymizer([(0, 4, "Anna", "PER")], config=AnonymizerConfig(hide=("Anna Müller",)))
+    result, mapping = anon.anonymize("Anna Müller kam.")
+
+    assert result == "[NAME_1] kam."
+    assert mapping == {"[NAME_1]": "Anna Müller"}
+
+
+def test_a_text_in_both_lists_is_kept() -> None:
+    """
+    Given  a text on the hide list and on the keep list
+    When   anonymize() is called
+    Then   it is sent as written: the keep list wins
+    """
+    anon = _make_anonymizer(config=AnonymizerConfig(hide=("Anna",), keep=("anna",)))
+    result, mapping = anon.anonymize("Anna kam.")
+
+    assert result == "Anna kam."
+    assert mapping == {}
+
+
+# ── Hide this / Don't hide this, as the settings say it ────────────────────
+
+
+def test_hiding_a_literal_adds_it_to_the_hide_list() -> None:
+    """
+    Given  the default settings of the anonymizer
+    When   a literal is hidden
+    Then   it joins the hide list and the patterns are the ones they were
+    """
+    changed = config_hiding(AnonymizerConfig(), "  Anna Müller ")
+
+    assert changed.hide == ("Anna Müller",)
+    assert changed.patterns == tuple(DEFAULT_PATTERNS)
+
+
+def test_hiding_a_literal_the_list_already_holds_changes_nothing() -> None:
+    """
+    Given  settings that already hide a literal
+    When   the same literal is hidden again in other capitals
+    Then   the settings are the ones they were
+    """
+    once = config_hiding(AnonymizerConfig(), "Anna")
+
+    assert config_hiding(once, "anna") == once
+
+
+def test_hiding_a_literal_takes_it_out_of_the_keep_list() -> None:
+    """
+    Given  a keep list that holds a literal
+    When   that literal is hidden
+    Then   it leaves the keep list and joins the hide list, so the newer rule is the one that
+           holds
+    """
+    config = AnonymizerConfig(keep=("Anna Müller", "Ben"))
+
+    changed = config_hiding(config, "anna müller")
+
+    assert changed.keep == ("Ben",)
+    assert changed.hide == ("anna müller",)
+
+
+def test_hiding_a_literal_on_both_lists_leaves_the_hide_list_only() -> None:
+    """
+    Given  a literal that is on both lists of a hand-edited file
+    When   it is hidden
+    Then   the keep entry goes although the hide list already holds it
+    """
+    config = AnonymizerConfig(hide=("Anna",), keep=("Anna",))
+
+    assert config_hiding(config, "Anna") == AnonymizerConfig(hide=("Anna",))
+
+
+def test_keeping_a_literal_adds_it_and_takes_it_off_the_hide_list() -> None:
+    """
+    Given  settings that hide a literal
+    When   that literal is kept
+    Then   it joins the keep list and leaves the hide list
+    """
+    hidden = config_hiding(AnonymizerConfig(), "Anna Müller")
+
+    kept = config_keeping(hidden, "Anna Müller")
+
+    assert kept.keep == ("Anna Müller",)
+    assert kept.hide == ()
+
+
+def test_a_literal_kept_twice_is_one_entry() -> None:
+    """
+    Given  settings that keep a literal
+    When   the same literal is kept again in other capitals
+    Then   the keep list holds one entry
+    """
+    config = AnonymizerConfig(keep=("Anna",))
+
+    assert config_keeping(config, "anna").keep == ("Anna",)
+
+
+@pytest.mark.parametrize("literal", ["", "   "])
+def test_a_blank_literal_changes_nothing(literal: str) -> None:
+    """
+    Given  settings and a literal of nothing but spaces
+    When   it is hidden, or kept
+    Then   both settings are the ones they were: a blank is no rule
+    """
+    config = AnonymizerConfig()
+
+    assert config_hiding(config, literal) is config
+    assert config_keeping(config, literal) is config

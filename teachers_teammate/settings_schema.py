@@ -249,6 +249,20 @@ def _anonymizer_patterns(value: object) -> list[tuple[str, str]] | None:
     return pairs
 
 
+def _anonymizer_texts(value: object) -> list[str] | None:
+    """Return *value* as a list of texts the anonymizer hides or keeps, or ``None``.
+
+    ``None`` (and an empty list) say "no such text".  Blank entries are dropped: a row the
+    teacher emptied on the Privacy page is not a rule.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
+        raise ValueError("it must be a list of texts")
+    texts = [entry.strip() for entry in value if entry.strip()]
+    return texts or None
+
+
 def _evaluate_prompt(value: object) -> str:
     """Return the content review's instructions; a saved copy of the default means "built-in".
 
@@ -403,6 +417,10 @@ SETTINGS: tuple[Setting, ...] = (
     # None (or the earlier built-in list) = the current DEFAULT_PATTERNS of the anonymizer;
     # [] = no regex patterns.
     Setting("anonymizer_patterns", None, SettingScope.RUN, _anonymizer_patterns),
+    # Texts a run hides wherever they stand (*Hide this* writes one) and texts it must leave as
+    # they are, whatever the models and patterns find (*Don't hide this*).  Empty or None = none.
+    Setting("anonymizer_hide", None, SettingScope.RUN, _anonymizer_texts),
+    Setting("anonymizer_keep", None, SettingScope.RUN, _anonymizer_texts),
     # ── Hardware recommendations ──────────────────────────────────────────────
     # Detect this computer, or pin one of the three tiers.  The pipeline never reads it, but
     # the run-start memory warning does: a hand-picked profile decides how much of a model has

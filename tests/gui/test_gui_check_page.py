@@ -486,15 +486,15 @@ def test_hide_names_shows_unticked_while_names_cannot_be_hidden(qtbot, wish_firs
 
     if wish_first:
         page.set_display_anonymized(True)
-        page.set_display_anonymized_available(False)
+        page.set_display_anonymized_available(False, run_hides=True)
     else:
-        page.set_display_anonymized_available(False)
+        page.set_display_anonymized_available(False, run_hides=True)
         page.set_display_anonymized(True)
 
     assert not page._hide_names_box.isEnabled()
     assert not page._hide_names_box.isChecked()
 
-    page.set_display_anonymized_available(True)
+    page.set_display_anonymized_available(True, run_hides=True)
 
     assert page._hide_names_box.isEnabled()
     assert page._hide_names_box.isChecked()

@@ -373,6 +373,8 @@ class ConfigPanel(QScrollArea):
         # SECONDARY_MODEL_AUTO by default; SECONDARY_MODEL_NONE = the user chose "(none)".
         settings["anonymizer_secondary_model"] = DEFAULTS["anonymizer_secondary_model"]
         settings["anonymizer_patterns"] = None
+        settings["anonymizer_hide"] = None
+        settings["anonymizer_keep"] = None
         return settings
 
     # ── hooks ─────────────────────────────────────────────────────────────────────

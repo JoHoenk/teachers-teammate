@@ -56,7 +56,13 @@ from ._stored_results_box import StoredResultsBox
 _TAB_INDEX = {FOCUS_SENDING: 0, FOCUS_DETECTION: 1, FOCUS_PATTERNS: 2}
 
 #: The settings keys behind the anonymizer rules (written through ``AnonymizerConfig``).
-ANONYMIZER_KEYS = ("anonymizer_primary_model", "anonymizer_secondary_model", "anonymizer_patterns")
+ANONYMIZER_KEYS = (
+    "anonymizer_primary_model",
+    "anonymizer_secondary_model",
+    "anonymizer_patterns",
+    "anonymizer_hide",
+    "anonymizer_keep",
+)
 
 #: The one other setting on this page: how long the results of earlier runs stay.
 STORED_KEYS = ("results_keep_days",)

@@ -25,6 +25,8 @@ def build(settings: Mapping[str, Any]) -> AnonymizerConfig:
         # "auto:system" and "none" are meaningful values, not "not set"
         secondary_model=settings.get("anonymizer_secondary_model") or SECONDARY_MODEL_NONE,
         patterns=resolve_patterns(settings.get("anonymizer_patterns")),
+        hide=tuple(settings.get("anonymizer_hide") or ()),
+        keep=tuple(settings.get("anonymizer_keep") or ()),
     )
 
 
@@ -37,3 +39,6 @@ def store(settings: MutableMapping[str, Any], config: AnonymizerConfig) -> None:
     settings["anonymizer_patterns"] = (
         None if config.patterns == tuple(DEFAULT_PATTERNS) else list(config.patterns)
     )
+    # No list is an empty file entry, not an empty list.
+    settings["anonymizer_hide"] = list(config.hide) or None
+    settings["anonymizer_keep"] = list(config.keep) or None

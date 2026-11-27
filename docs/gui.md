@@ -554,8 +554,8 @@ text they belong to. The page keeps texts *unmasked* in its `CheckDocument` and 
   (`CheckTextView.keyPressEvent`) and on the card's buttons (`txt.SHOW_NAMES_TO_CHANGE`).
 - **A failed hide** gets a strip; its button emits `display_anonymized_changed(False)`, the same
   route as the **Hide names** box.
-- **Placeholders** are chips (`gui/_formatted_text.py:chip_placeholders()`, skipping markup). No
-  tooltip names the original.
+- **Placeholders** are chips (`gui/_formatted_text.py:chip_placeholders()`, skipping markup).
+  Hovering one in *What was read* shows the original from the map; the other views name nothing.
 - **Marks** move to the masked text with `Masking.carry(span, text)` via the `OffsetMap` of
   `mask_with_offsets()`, the same map the notes use.
 - **Requests:** `Masking.needs_request(raw_text)`, once per text; `PrivacyViewController` answers
@@ -569,6 +569,74 @@ Personal info: detection*) and the eye button both call
 (`DISPLAY_ANONYMIZED_DEFAULT`). The checkbox is enabled only while
 `AnonymizationService.anonymizer_available(language)` (spaCy and the language's model installed),
 cached per language and refreshed on `data_flow_changed` and after an install.
+
+### What the box of *What was read* holds
+
+`application/check_document.py:sent_view_of()` is the one rule behind the box, and it answers with a
+`SentView`: the text, the placeholders inside it, the map behind them, why (`SentKind`), and whether
+the text has words the student crossed out.
+
+| Situation | `SentKind` | The box holds |
+|---|---|---|
+| proofreading sent with names hidden | `SENT` | `correction_sent_text` as stored (the transcription for a result an older version stored) |
+| that proofreading, with the names shown again | `NAMES_SHOWN` | the transcription |
+| proofreading sent as written | `AS_WRITTEN` | the transcription |
+| no proofreading, the run hides names, the eye is on, answer arrived | `WILL_BE_SENT` | the anonymizer's text of the transcription |
+| no proofreading, the run does not hide names, the eye is on, answer arrived | `HIDDEN_HERE` | the same text: only this screen hides the names |
+| no proofreading, the eye is on, answer still out or failed | `WORKING` | the transcription |
+| no proofreading, the run hides names, the eye is off | `NAMES_SHOWN` | the transcription |
+| no proofreading, the run does not hide names, the eye is off | `AS_WRITTEN` | the transcription |
+| no proofreading, the run hides names, no add-on | `UNAVAILABLE` | the transcription |
+
+The run's setting (*Remove personal info*, `Config.anonymization_enabled`) reaches the tab through
+`CheckPage.set_display_anonymized_available(run_hides=)`, which `PrivacyViewController.refresh_availability()`
+calls on every data-flow change. A stored proofreading is answered from its own record
+(`SentRecord.hiding_on`), never from today's setting.
+
+The sent text is the string the request was made from, so a name the model spelled differently is
+hidden there while `mask()` cannot find it in the transcription. *Final text*, *With corrections*
+and the side panel keep `mask()`: they show the corrected text, which was restored and has no sent
+string. Their placeholders come from today's map, so after a rule changed they can be numbered
+differently from the box of a stored proofreading; hovering a chip names the original.
+
+`CheckBody._sent_caption` words the line above the box from `texts/check.py`, and adds that
+crossed-out words stay on this computer when the sent text has them.
+
+A `SENT`, `WILL_BE_SENT`, `HIDDEN_HERE` or `WORKING` box is read-only: typing there would store placeholders in
+what the teacher writes. `AS_WRITTEN` holds the transcription itself, so it stays editable once the
+teacher accepts a reading fix.
+
+### Hiding more, or less, from now on
+
+The box's context menu offers two entries on a selection, and the rule they write is the
+anonymizer's own settings — no text changes and no stored result is invalidated. They are offered
+only while the next send would obey them: the run hides names and the Privacy add-on is there
+(`CheckBody._refresh_hiding_rules()`).
+
+- **Hide this** — on a selected word or name that is no placeholder and no line break. The text
+  joins `AnonymizerConfig.hide` (`domain/anonymization.py:config_hiding()`) and leaves `keep`.
+- **Don't hide this** — on a selection that is or touches a placeholder: the name behind it from
+  the map joins `AnonymizerConfig.keep` (`config_keeping()`) and leaves `hide`.
+
+`gui/check/_text_views.py:ReadView` decides which entry fits and emits `hide_requested` /
+`keep_requested` with the words, or with the name behind the placeholder; positions come from the
+view's `PlainMap`. `PrivacyViewController.on_hide_requested()` applies the rule through
+`AnonymizationService.with_hiding()`, stores the settings, drops the placeholders
+(`forget_anonymization()`, so they are worked out again with the new rule) and says the rule in the
+status bar, and asks the window to look again at what the queue says about stored results
+(`PrivacyHooks.rules_changed`). A request for placeholders is keyed by the rules too, so one made
+with older rules is not taken for the new one. With a proofreading stored (`SentKind.SENT`) the line adds that it applies to the next
+one: the box keeps showing what was sent, and the stored result reads *made with other privacy
+settings*.
+
+Both lists are matched the way the rest of the module matches — whole words, NFC, case-folded
+(`keep_key()`). `hide` is found where it stands, as `[NAME_n]`, before the NER names and the
+patterns (`SpacyAnonymizer._hidden_spans()`). `keep` wins over everything: a span a pass found is
+dropped when it is a kept text or lies inside the occurrence of one (`_Keep`), so a person name, a
+pattern and the further occurrences of a name all obey, and the spans around it are still hidden.
+A text in both lists is kept. The lists are edited on Settings → Privacy, under the patterns
+(`AnonymizerConfigWidget`, keys `anonymizer_hide` and `anonymizer_keep`), and are part of the
+privacy fingerprint (`cache_keys.anonymization_fingerprint()`).
 
 ## Remembered "don't ask again" answers
 

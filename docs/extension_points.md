@@ -45,6 +45,12 @@ per-settings `SpacyAnonymizer` in a `CachedAnonymizer`; `run_selected()` puts it
 Never build a `SpacyAnonymizer` per file or per run: a second spaCy pass makes a run disagree
 with the previews.
 
+What is hidden is settings only: `AnonymizerConfig.patterns`, `.hide` and `.keep`. The GUI writes
+a rule through `AnonymizationService.with_hiding()` — `domain/anonymization.py:config_hiding()` /
+`config_keeping()` — and never decides itself what a rule looks like. All three are part of the
+settings' fingerprint (`cache_keys.anonymization_fingerprint()`), so a stored result made under
+other rules says so.
+
 ## Where a step runs / what leaves the computer
 
 Rules in `domain/data_location.py` (`StageLocation`, `DataRegion`, `PrivacyLevel`, `DataFlow`),

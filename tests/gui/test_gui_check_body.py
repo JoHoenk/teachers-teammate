@@ -7,10 +7,11 @@ import dataclasses
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QTextCursor
-from PySide6.QtWidgets import QToolTip
+from PySide6.QtWidgets import QMenu, QToolTip
 
 from teachers_teammate.application.check_document import CheckDocument, check_document_of
 from teachers_teammate.application.check_items import ItemKind
+from teachers_teammate.domain.data_location import SentRecord, SentStatus
 from teachers_teammate.domain.proofreading.carry import ReadingFix
 from teachers_teammate.domain.proofreading.edits import edits
 from teachers_teammate.domain.proofreading.review import (
@@ -18,6 +19,8 @@ from teachers_teammate.domain.proofreading.review import (
     UnclearNote,
     edit_note,
 )
+from teachers_teammate.domain.stages import Stage
+from teachers_teammate.texts import check as check_text
 from teachers_teammate.texts import review as txt
 from teachers_teammate.gui.check._masking import Masking
 from teachers_teammate.gui.check._side_panel import _SIDE_BY_SIDE_WIDTH
@@ -45,6 +48,7 @@ def _document(
     warning: str = "",
     content_review: str = "",
     machine: str = "",
+    text_format: str = "plain",
 ) -> CheckDocument:
     """Return the Check tab's data for a stored document."""
     return check_document_of(
@@ -60,7 +64,7 @@ def _document(
             evaluation_done=bool(content_review),
             original_img="",
             preprocess_steps=(),
-            raw_text_format="plain",
+            raw_text_format=text_format,
             correction_review=review,
             machine_correction_text=machine,
             correction_warning=warning,
@@ -69,6 +73,32 @@ def _document(
             original_images=(),
         )
     )
+
+
+def _sent_document(
+    *,
+    raw: str = RAW,
+    corrected: str = CORRECTED,
+    review: CorrectionReview | None = None,
+    hiding_on: bool = False,
+    sent_text: str = "",
+    sent_map: dict[str, str] | None = None,
+    text_format: str = "plain",
+) -> CheckDocument:
+    """Return the Check tab's data for a document whose proofreading was sent like this."""
+    doc = _document(raw=raw, corrected=corrected, review=review, text_format=text_format)
+    return dataclasses.replace(
+        doc,
+        sent=_sent_status(hiding_on) if corrected.strip() else {},
+        sent_text=sent_text,
+        sent_map=dict(sent_map or {}),
+    )
+
+
+def _sent_status(hiding_on: bool) -> dict[str, SentStatus]:
+    """Return how a stored proofreading that hid (or did not hide) names was sent."""
+    record = SentRecord(provider="ollama", names_hidden=1 if hiding_on else 0, hiding_on=hiding_on)
+    return {Stage.CORRECTION: SentStatus(record)}
 
 
 def _retyped(
@@ -1056,3 +1086,378 @@ def test_dragging_a_pane_tells_the_window_the_new_layout(qtbot) -> None:
 
     assert told[-1].split == tuple(body._splitter.sizes())
     assert told[-1].card_split == body.panel.card_split
+
+
+# ── What the box of *What was read* holds ─────────────────────────────────
+
+SENT = "Der <PERSON_1> bellt. Die <PERSON_2> mauzt."
+"""What a request of :data:`RAW` was made from, as the anonymizer wrote it."""
+SENT_MAP = {"<PERSON_1>": "bunten Hunde", "<PERSON_2>": "Katze"}
+"""The map of :data:`SENT`: the model read the first name differently than the scan says."""
+
+
+def _sent_masking(*, text: str = SENT, mapping: dict[str, str] | None = None) -> Masking:
+    """Return a masking that hides names and holds the anonymizer's answer."""
+    masking = Masking()
+    masking.set_available(True)
+    masking.set_run_hides(True)
+    masking.set_enabled(True)
+    masking.set_result(SENT_MAP if mapping is None else mapping, text=text)
+    return masking
+
+
+@pytest.mark.gui
+def test_the_box_shows_the_string_the_proofreading_was_sent_as(qtbot) -> None:
+    """
+    Given  a stored proofreading whose request carried placeholders
+    When   the Check tab shows it with the names hidden
+    Then   the box holds that stored string, and not what masking the transcription gives
+    """
+    masking = _sent_masking()
+    doc = _sent_document(
+        review=_review(RAW, CORRECTED), hiding_on=True, sent_text=SENT, sent_map=SENT_MAP
+    )
+
+    body = _body(qtbot, doc, masking)
+    body.set_view(ViewKind.READ)
+
+    shown = body.read_view.toPlainText()
+    # A name the model spelled differently is the one masking the transcription cannot find.
+    assert "bunte Hund" in masking.mask(RAW)
+    assert "bunte Hund" not in shown
+    assert shown == SENT
+    assert body.read_view.isReadOnly()
+    assert body._sent_caption.text() == check_text.SENT_CAPTION
+
+
+@pytest.mark.gui
+def test_each_placeholder_of_the_box_is_a_chip_with_its_name_behind_it(qtbot) -> None:
+    """
+    Given  a stored sent text with two placeholders
+    When   the teacher hovers the first one
+    Then   it is one chip, from its first to its last character, and the tip is its name
+    """
+    doc = _sent_document(
+        review=_review(RAW, CORRECTED), hiding_on=True, sent_text=SENT, sent_map=SENT_MAP
+    )
+    body = _body(qtbot, doc, _sent_masking())
+    body.set_view(ViewKind.READ)
+    qtbot.wait(30)
+    view = body.read_view
+    plain = view.toPlainText()
+    start = plain.index("<PERSON_1>")
+    end = start + len("<PERSON_1>")
+
+    first, _last = view._map.span(start, end)
+    cursor = QTextCursor(view.document())
+    cursor.setPosition(first)
+    point = view.cursorRect(cursor).center()
+
+    assert view.chip_at_offset(start) == "<PERSON_1>"
+    assert view.chip_at_offset(end - 1) == "<PERSON_1>"
+    assert view.chip_at_offset(end) == ""
+    assert view.chip_at(point) == "<PERSON_1>"
+    assert view._tip_at(point) == "bunten Hunde"
+
+
+@pytest.mark.gui
+def test_a_proofreading_sent_as_written_shows_the_transcription_and_can_be_typed_in(qtbot) -> None:
+    """
+    Given  a stored proofreading whose request carried the names as written
+    When   the Check tab shows it with the names hidden
+    Then   the box holds the transcription, which the teacher may fix like any other
+    """
+    doc = _sent_document(review=_review(RAW, CORRECTED), hiding_on=False)
+
+    body = _body(qtbot, doc, _sent_masking())
+    body.set_view(ViewKind.READ)
+    body._on_banner_action()  # *Edit anyway*: the box holds no placeholder, so it may be typed in
+
+    assert body.read_view.toPlainText() == RAW
+    assert body.read_view.isReadOnly() is False
+    assert body._sent_caption.text() == check_text.NAMES_SENT_AS_WRITTEN
+
+
+@pytest.mark.gui
+def test_the_names_come_back_when_hiding_is_switched_off(qtbot) -> None:
+    """
+    Given  a proofreading stored with its names replaced
+    When   the teacher shows the names again
+    Then   the box holds the transcription again, and the line above it says why
+    """
+    doc = _sent_document(
+        review=_review(RAW, CORRECTED), hiding_on=True, sent_text=SENT, sent_map=SENT_MAP
+    )
+
+    body = _body(qtbot, doc, _sent_masking())
+    body.set_view(ViewKind.READ)
+    masking = Masking()
+    masking.set_available(True)
+    masking.set_result(SENT_MAP, text=SENT)
+    body.show_document(doc, masking)
+
+    assert body.read_view.toPlainText() == RAW
+    assert body._sent_caption.text() == check_text.NAMES_SHOWN_CAPTION
+
+
+@pytest.mark.gui
+def test_without_the_add_on_the_line_says_the_names_cannot_be_hidden(qtbot) -> None:
+    """
+    Given  a window whose Privacy add-on is missing
+    When   it shows a text with the names hidden asked for
+    Then   the box holds the transcription and the line names what is missing
+    """
+    doc = _document(raw=RAW, corrected="")
+    masking = Masking()
+    masking.set_run_hides(True)
+    masking.set_result({})
+
+    body = _body(qtbot, doc, masking)
+
+    assert body.read_view.toPlainText() == RAW
+    assert body._sent_caption.text() == check_text.NAMES_NOT_HIDDEN_CAPTION
+
+
+@pytest.mark.gui
+def test_what_will_be_sent_is_shown_before_the_proofreading_runs(qtbot) -> None:
+    """
+    Given  a text that is not proofread yet, with the names hidden
+    When   the anonymizer's answer arrives
+    Then   the box holds what the request will be made from, and says so
+    """
+    doc = _document(raw=RAW, corrected="")
+
+    body = _body(qtbot, doc, _sent_masking())
+
+    assert body.read_view.toPlainText() == SENT
+    assert body.read_view.isReadOnly()
+    assert body._sent_caption.text() == check_text.WILL_BE_SENT_CAPTION
+
+
+@pytest.mark.gui
+def test_a_run_that_sends_the_names_does_not_claim_to_send_placeholders(qtbot) -> None:
+    """
+    Given  a text that is not proofread yet, a run that sends names as written, and names
+           hidden on this screen
+    When   the anonymizer's answer arrives
+    Then   the box keeps the names off the screen, says that only this screen hides them, and
+           cannot be typed in
+    """
+    doc = _document(raw=RAW, corrected="")
+    masking = _sent_masking()
+    masking.set_run_hides(False)
+
+    body = _body(qtbot, doc, masking)
+
+    assert body.read_view.toPlainText() == SENT
+    assert body.read_view.isReadOnly()
+    assert body._sent_caption.text() == check_text.NAMES_HIDDEN_HERE_CAPTION
+
+
+@pytest.mark.gui
+def test_a_run_that_sends_the_names_shows_them_when_the_screen_does(qtbot) -> None:
+    """
+    Given  a text that is not proofread yet, a run that sends names as written, and the names
+           shown on this screen
+    When   the Check tab shows it
+    Then   the box holds the transcription, which may be fixed, and says the names go out as
+           written
+    """
+    doc = _document(raw=RAW, corrected="")
+    masking = Masking()
+    masking.set_available(True)
+    masking.set_result(SENT_MAP, text=SENT)
+
+    body = _body(qtbot, doc, masking)
+
+    assert body.read_view.toPlainText() == RAW
+    assert body._sent_caption.text() == check_text.NAMES_SENT_AS_WRITTEN
+
+
+def test_a_preview_made_from_another_text_is_none_until_the_new_one_arrives() -> None:
+    """
+    Given  a masking that holds the anonymizer's answer for one text
+    When   the placeholders of another text are asked for
+    Then   no preview stands in for it until its own answer arrives
+    """
+    masking = _sent_masking()
+    masking.mark_requested(RAW)
+    masking.set_result(SENT_MAP, text=SENT)
+    assert masking.preview == (SENT, SENT_MAP)
+
+    masking.mark_requested(RAW + " Neu.")
+
+    assert masking.preview is None
+    masking.set_result(SENT_MAP, text=SENT + " Neu.")
+    assert masking.preview == (SENT + " Neu.", SENT_MAP)
+
+
+@pytest.mark.gui
+def test_a_sent_text_with_crossed_out_words_says_they_are_not_sent(qtbot) -> None:
+    """
+    Given  a stored proofreading of a Markdown text whose sent string crosses out a word
+    When   the box shows it
+    Then   the line above it says that crossed-out words do not leave this computer
+    """
+    doc = _sent_document(
+        raw="Der ~~bunte~~ <PERSON_1> bellt.",
+        corrected="Der braune <PERSON_1> bellt.",
+        review=_review("Der bunte Hund bellt.", "Der braune Hund bellt."),
+        hiding_on=True,
+        sent_text="Der ~~bunte~~ <PERSON_1> bellt.",
+        sent_map={"<PERSON_1>": "Hund"},
+        text_format="markdown",
+    )
+
+    body = _body(qtbot, doc, _sent_masking(text="Der ~~bunte~~ <PERSON_1> bellt."))
+    body.set_view(ViewKind.READ)
+
+    assert body._sent_caption.text() == "\n".join(
+        (check_text.SENT_CAPTION, check_text.CROSSED_OUT_NOT_SENT)
+    )
+
+
+# ── Hide this / Don't hide this ───────────────────────────────────────────
+
+
+def _select(view, words: str) -> None:
+    """Select the first occurrence of *words* in *view*, through its plain map."""
+    plain = view.toPlainText()
+    start = plain.index(words)
+    first, last = view._map.span(start, start + len(words))
+    cursor = QTextCursor(view.document())
+    cursor.setPosition(first)
+    cursor.setPosition(last, QTextCursor.MoveMode.KeepAnchor)
+    view.setTextCursor(cursor)
+
+
+def _menu_of(view) -> QMenu:
+    """Return the context menu *view* builds for its current selection, without showing it."""
+    menu = QMenu()
+    view._add_menu_entries(menu)
+    return menu
+
+
+@pytest.mark.gui
+def test_the_menu_hides_a_selected_word(qtbot) -> None:
+    """
+    Given  the box shows the string a proofreading was sent as
+    When   a word no placeholder stands for is selected, and *Hide this* is chosen
+    Then   the view asks for exactly those words to be hidden from now on
+    """
+    doc = _sent_document(
+        review=_review(RAW, CORRECTED), hiding_on=True, sent_text=SENT, sent_map=SENT_MAP
+    )
+    body = _body(qtbot, doc, _sent_masking())
+    body.set_view(ViewKind.READ)
+    asked: list[str] = []
+    body.read_view.hide_requested.connect(asked.append)
+
+    _select(body.read_view, "bellt")
+    menu = _menu_of(body.read_view)
+    labels = [action.text() for action in menu.actions()]
+    next(action for action in menu.actions() if action.text() == check_text.HIDE_THIS).trigger()
+
+    assert check_text.HIDE_THIS in labels
+    assert check_text.KEEP_THIS not in labels
+    assert asked == ["bellt"]
+
+
+@pytest.mark.gui
+def test_the_menu_keeps_the_name_a_placeholder_stands_for(qtbot) -> None:
+    """
+    Given  the box shows a placeholder that stands for a name
+    When   the teacher selects it and chooses *Don't hide this*
+    Then   the view asks for the name behind the placeholder, not for the token
+    """
+    doc = _sent_document(
+        review=_review(RAW, CORRECTED), hiding_on=True, sent_text=SENT, sent_map=SENT_MAP
+    )
+    body = _body(qtbot, doc, _sent_masking())
+    body.set_view(ViewKind.READ)
+    kept: list[str] = []
+    body.read_view.keep_requested.connect(kept.append)
+
+    _select(body.read_view, "<PERSON_1>")
+    menu = _menu_of(body.read_view)
+    labels = [action.text() for action in menu.actions()]
+    next(action for action in menu.actions() if action.text() == check_text.KEEP_THIS).trigger()
+
+    assert check_text.KEEP_THIS in labels
+    assert check_text.HIDE_THIS not in labels
+    assert kept == ["bunten Hunde"]
+
+
+@pytest.mark.gui
+def test_the_menu_says_nothing_about_hiding_without_a_selection(qtbot) -> None:
+    """
+    Given  the box shows a text with the names hidden and nothing is selected
+    When   its menu is built
+    Then   neither entry is offered: no word was chosen to hide or to keep
+    """
+    doc = _sent_document(
+        review=_review(RAW, CORRECTED), hiding_on=True, sent_text=SENT, sent_map=SENT_MAP
+    )
+    body = _body(qtbot, doc, _sent_masking())
+    body.set_view(ViewKind.READ)
+
+    menu = _menu_of(body.read_view)
+    labels = [action.text() for action in menu.actions()]
+
+    assert check_text.HIDE_THIS not in labels
+    assert check_text.KEEP_THIS not in labels
+
+
+@pytest.mark.gui
+def test_the_menu_does_not_hide_a_selection_of_two_lines(qtbot) -> None:
+    """
+    Given  a box whose text runs over two blocks
+    When   a selection is made across the block break, touching no placeholder
+    Then   no word is offered to hide: a rule is one line, a word of its own
+    """
+    text = "Der <PERSON_1> bellt.\n\nDie <PERSON_2> mauzt."
+    doc = _sent_document(raw=RAW, corrected="", sent_text=text, sent_map=SENT_MAP)
+    body = _body(qtbot, doc, _sent_masking(text=text))
+    plain = body.read_view.toPlainText()
+    first, last = body.read_view._map.span(plain.index("bellt"), plain.index("Die") + 3)
+    cursor = QTextCursor(body.read_view.document())
+    cursor.setPosition(first)
+    cursor.setPosition(last, QTextCursor.MoveMode.KeepAnchor)
+    body.read_view.setTextCursor(cursor)
+
+    menu = _menu_of(body.read_view)
+    labels = [action.text() for action in menu.actions()]
+
+    assert check_text.HIDE_THIS not in labels
+    assert check_text.KEEP_THIS not in labels
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("available", "run_hides"), [(True, False), (False, True)], ids=["run-sends-names", "no-add-on"]
+)
+def test_the_menu_offers_no_rule_the_next_send_would_not_obey(
+    qtbot, available: bool, run_hides: bool
+) -> None:
+    """
+    Given  a box with a placeholder and a word, in a window where a rule could not take effect:
+           the run sends the names as written, or the Privacy add-on is missing
+    When   each is selected and the menu is built
+    Then   neither *Hide this* nor *Don't hide this* is offered
+    """
+    doc = _sent_document(
+        review=_review(RAW, CORRECTED), hiding_on=True, sent_text=SENT, sent_map=SENT_MAP
+    )
+    masking = _sent_masking()
+    masking.set_available(available)
+    masking.set_run_hides(run_hides)
+    masking.set_enabled(True)
+    body = _body(qtbot, doc, masking)
+    body.set_view(ViewKind.READ)
+    # With the add-on gone the eye is off and the box holds the transcription.
+    for words in ("bellt", "<PERSON_1>" if available else "Katze"):
+        _select(body.read_view, words)
+        labels = [action.text() for action in _menu_of(body.read_view).actions()]
+
+        assert check_text.HIDE_THIS not in labels
+        assert check_text.KEEP_THIS not in labels

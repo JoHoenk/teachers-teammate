@@ -183,6 +183,10 @@ class Config:
     # None (or the earlier built-in list) = current DEFAULT_PATTERNS from the anonymizer module;
     # [] = no regex patterns
     anonymizer_patterns: list[tuple[str, str]] | None = None
+    # Texts the anonymizer hides wherever they stand, and texts it leaves as they are, whatever
+    # the models and patterns find.
+    anonymizer_hide: list[str] | None = None
+    anonymizer_keep: list[str] | None = None
 
     # ── Internal ─────────────────────────────────────────────────────────────
     ocr_timeout: int = DEFAULTS["ocr_timeout"]
@@ -242,6 +246,8 @@ class Config:
             anonymizer_primary_model=get("anonymizer_primary_model"),
             anonymizer_secondary_model=get("anonymizer_secondary_model"),
             anonymizer_patterns=get("anonymizer_patterns"),
+            anonymizer_hide=get("anonymizer_hide"),
+            anonymizer_keep=get("anonymizer_keep"),
             hardware_profile=get("hardware_profile"),
             proofreading_context=get("proofreading_context"),
         )
@@ -311,6 +317,8 @@ class Config:
             primary_model=self.anonymizer_primary_model,
             secondary_model=self.anonymizer_secondary_model,
             patterns=resolve_patterns(self.anonymizer_patterns),
+            hide=tuple(self.anonymizer_hide or ()),
+            keep=tuple(self.anonymizer_keep or ()),
         )
 
 

@@ -124,6 +124,21 @@ PATTERNS_RESTORE_TOOLTIP = (
     "(IBAN, email, phone, dates, and German street and postcode formats)."
 )
 
+HIDE_LABEL = "Always hidden, wherever they stand:"
+HIDE_INTRO = (
+    "A text listed here is replaced by a placeholder wherever it stands, even when no model or "
+    "pattern finds it; the Check tab adds one when you choose Hide this."
+)
+HIDE_PLACEHOLDER = "e.g. Anna"
+KEEP_LABEL = "Never hidden, whatever is found:"
+KEEP_INTRO = (
+    "A text listed here is sent as written, even when a model or a pattern finds it, and wins "
+    "over the list above; the Check tab adds one when you choose Don't hide this."
+)
+KEEP_PLACEHOLDER = "e.g. Anna Müller"
+TEXT_LIST_ADD = "Add text"
+TEXT_LIST_REMOVE_SELECTED = "Remove selected"
+
 PREVIEW_INTRO = "<b>Preview</b> — paste sample OCR text to test all active patterns:"
 PREVIEW_SAMPLE_LABEL = "Sample text:"
 PREVIEW_SAMPLE_PLACEHOLDER = (

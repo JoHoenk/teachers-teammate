@@ -75,4 +75,6 @@ class SettingsDict(TypedDict, total=False):
     anonymizer_primary_model: str | None
     anonymizer_secondary_model: str | None
     anonymizer_patterns: list | None
+    anonymizer_hide: list | None
+    anonymizer_keep: list | None
     debug: bool

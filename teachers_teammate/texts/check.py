@@ -30,6 +30,50 @@ READ_TIP = (
 )
 """Says what typing into *What was read* costs, next to the banner that says it again."""
 
+SENT_CAPTION = "As it was sent"
+WILL_BE_SENT_CAPTION = "As it will be sent"
+"""What the line above *What was read* says while names are hidden: the box holds the string a
+request is made from, not a re-masked copy of the transcription."""
+
+NAMES_SENT_AS_WRITTEN = "Names are sent as written"
+"""The box holds the transcription because nothing is hidden in what goes out."""
+
+NAMES_HIDDEN_HERE_CAPTION = "Names are hidden here only: a run sends them as written"
+"""The teacher hides names on this screen while the run does not: the box says so."""
+
+NAMES_SHOWN_CAPTION = "Names are shown here: hiding is off"
+"""Hiding is off, so the box holds the transcription with the names in it."""
+
+NAMES_NOT_HIDDEN_CAPTION = (
+    "Names are not hidden: the Privacy add-on or its model for this language is missing"
+)
+"""Hiding is asked for but impossible, so what goes out would carry the names."""
+
+CROSSED_OUT_NOT_SENT = "Words crossed out are not sent"
+"""Said under the caption when the text holds words the student crossed out: they stay here."""
+
+HIDE_THIS = "Hide this"
+"""The menu entry of a selected word of *What was read*: hide it in every later send."""
+
+KEEP_THIS = "Don't hide this"
+"""The menu entry of a placeholder: send its name as written from now on."""
+
+HIDE_THIS_TIP = "Hide exactly these words, whole, in the texts of later runs too."
+KEEP_THIS_TIP = "Leave this name as it is in the texts of later runs too."
+
+NEXT_PROOFREADING_ONLY = "It applies to the next proofreading."
+
+
+def hiding_from_now_on(literal: str) -> str:
+    """Return what the status bar says after *Hide this* was chosen for *literal*."""
+    return f"From now on '{literal}' is hidden."
+
+
+def keeping_from_now_on(literal: str) -> str:
+    """Return what the status bar says after *Don't hide this* was chosen for *literal*."""
+    return f"From now on '{literal}' is sent as written."
+
+
 SCAN_PREPARED = "Prepared"
 SCAN_PREPARED_TIP = "Show the pages as they were fixed for reading"
 SCAN_ORIGINAL = "Original"

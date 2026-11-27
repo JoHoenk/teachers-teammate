@@ -8,11 +8,15 @@ import sys
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
@@ -28,6 +32,7 @@ from ..domain.anonymization import (
     SECONDARY_MODEL_AUTO,
     SECONDARY_MODEL_NONE,
     AnonymizerConfig,
+    keep_key,
     pattern_problem,
 )
 from ..domain.local_models import PRIVACY_ADDON_ID
@@ -42,6 +47,68 @@ _logger = logging.getLogger(__name__)
 _INVALID_BG = QColor("#ffd0d0")
 
 
+class _TextListBox(QWidget):
+    """A list of texts the teacher edits: its label, a note, the entries and the buttons."""
+
+    def __init__(
+        self, label: str, intro: str, placeholder: str, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(3)
+        title = QLabel(label)
+        title.setWordWrap(True)
+        layout.addWidget(title)
+        note = QLabel(intro)
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(note)
+
+        self._list = QListWidget()
+        self._list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._list.setMaximumHeight(90)
+        layout.addWidget(self._list)
+
+        row = QHBoxLayout()
+        self._input = QLineEdit()
+        self._input.setPlaceholderText(placeholder)
+        self._input.returnPressed.connect(self._add)
+        add_btn = QPushButton(privacy.TEXT_LIST_ADD)
+        add_btn.clicked.connect(self._add)
+        remove_btn = QPushButton(privacy.TEXT_LIST_REMOVE_SELECTED)
+        remove_btn.clicked.connect(self._remove_selected)
+        row.addWidget(self._input, stretch=1)
+        row.addWidget(add_btn)
+        row.addWidget(remove_btn)
+        layout.addLayout(row)
+
+    def texts(self) -> list[str]:
+        """Return the texts of the list, without blanks."""
+        items = (self._list.item(row) for row in range(self._list.count()))
+        return [text for item in items if item is not None and (text := item.text().strip())]
+
+    def set_texts(self, texts: tuple[str, ...]) -> None:
+        """Replace the list with *texts*."""
+        self._list.clear()
+        for text in texts:
+            self._list.addItem(QListWidgetItem(text))
+
+    def _add(self) -> None:
+        """Add the text in the field to the list, unless it is already there."""
+        text = self._input.text().strip()
+        known = {keep_key(entry) for entry in self.texts()}
+        if text and keep_key(text) not in known:
+            self._list.addItem(text)
+        self._input.clear()
+
+    def _remove_selected(self) -> None:
+        """Take the selected texts out of the list."""
+        rows = {index.row() for index in self._list.selectedIndexes()}
+        for row in sorted(rows, reverse=True):
+            self._list.takeItem(row)
+
+
 class AnonymizerConfigWidget(QWidget):
     """Configure the anonymizer's NER passes and regex patterns.
 
@@ -52,6 +119,10 @@ class AnonymizerConfigWidget(QWidget):
       primary model misses.  Leave as ``(none)`` to skip.
     * **Regex patterns** — applied after NER (customise the built-in patterns or add
       your own).
+    * **Always hidden** — texts hidden wherever they stand; *Hide this* in the Check tab adds
+      one.
+    * **Never hidden** — texts that go out as written, whatever a model or a pattern finds;
+      *Don't hide this* in the Check tab adds one.
 
     Invalid patterns cannot be saved: :attr:`validity_changed` tells the owner (the
     Settings window disables its OK button meanwhile).
@@ -126,8 +197,10 @@ class AnonymizerConfigWidget(QWidget):
         self._tabs.addTab(detection_tab, privacy.DETECTION_TAB)
         self._tabs.addTab(self._build_regex_tab(), privacy.PATTERNS_TAB)
 
-        # Populate patterns table from config
+        # Populate patterns table and the hide and keep lists from config
         self._set_patterns(config.patterns)
+        self._hide_box.set_texts(config.hide)
+        self._keep_box.set_texts(config.keep)
 
         if sample_text:
             self._sample_input.setPlainText(sample_text)
@@ -219,6 +292,15 @@ class AnonymizerConfigWidget(QWidget):
         self._error_label.setStyleSheet("color: #c0392b; font-size: 11px;")
         self._error_label.setVisible(False)
         regex_layout.addWidget(self._error_label)
+
+        self._hide_box = _TextListBox(
+            privacy.HIDE_LABEL, privacy.HIDE_INTRO, privacy.HIDE_PLACEHOLDER, self
+        )
+        self._keep_box = _TextListBox(
+            privacy.KEEP_LABEL, privacy.KEEP_INTRO, privacy.KEEP_PLACEHOLDER, self
+        )
+        regex_layout.addWidget(self._hide_box)
+        regex_layout.addWidget(self._keep_box)
         return regex_tab
 
     def _build_preview(self, layout: QVBoxLayout) -> None:
@@ -544,6 +626,8 @@ class AnonymizerConfigWidget(QWidget):
         self._configured_primary = config.primary_model
         self._configured_secondary = config.secondary_model
         self._set_patterns(config.patterns)
+        self._hide_box.set_texts(config.hide)
+        self._keep_box.set_texts(config.keep)
         if self._primary_model.isEnabled():
             # The models are known already: select the new choices among them.
             models = [
@@ -589,7 +673,19 @@ class AnonymizerConfigWidget(QWidget):
             primary_model=primary,
             secondary_model=secondary,
             patterns=tuple(self.patterns),
+            hide=tuple(self.hidden),
+            keep=tuple(self.kept),
         )
+
+    @property
+    def hidden(self) -> list[str]:
+        """Return the texts the anonymizer hides wherever they stand."""
+        return self._hide_box.texts()
+
+    @property
+    def kept(self) -> list[str]:
+        """Return the texts the anonymizer leaves as they are."""
+        return self._keep_box.texts()
 
     @property
     def patterns(self) -> list[tuple[str, str]]:

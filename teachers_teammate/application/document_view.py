@@ -52,6 +52,15 @@ class DocumentStateView:
 
     Empty for a record written before the app kept this, and for a file with no result."""
 
+    sent_text: str = ""
+    """The text the stored proofreading was sent as, in the notation of the document.
+
+    Empty when names were not hidden (the transcription went as written) and for a result an
+    older version stored; :attr:`sent` tells names hidden from names as written."""
+
+    sent_map: dict[str, str] = field(default_factory=dict)
+    """The placeholder map of :attr:`sent_text`: placeholder → the original the model found."""
+
     page_images: tuple[str, ...] = ()
     """Every prepared page in page order (the first is ``preview_img``); one page when the
     document was recognized before the app kept all of them."""
@@ -93,6 +102,8 @@ def to_view(input_file: Path, state: DocumentState) -> DocumentStateView:
         correction_review=state.review,
         correction_warning=state.correction_warning,
         sent=sent_statuses(state),
+        sent_text=state.correction_sent_text,
+        sent_map=dict(state.correction_sent_map or {}),
         page_images=state.pages,
         original_images=state.originals,
     )

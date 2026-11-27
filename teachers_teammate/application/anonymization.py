@@ -17,6 +17,8 @@ from ..config import Config
 from ..domain.anonymization import (
     AnonymizerConfig,
     AnonymizerNotice,
+    config_hiding,
+    config_keeping,
     resolve_anonymizer_config,
 )
 from ..domain.name_models import FALLBACK_SPACY_MODEL, SPACY_MODELS, spacy_model_for
@@ -121,6 +123,16 @@ class AnonymizationService:
                 self._anonymizer_lock,
             )
             return cached.anonymize(text)
+
+    def with_hiding(
+        self, config: AnonymizerConfig, literal: str, *, hide: bool
+    ) -> AnonymizerConfig:
+        """Return *config* with *literal* hidden from now on, or with *literal* left as written.
+
+        *Hide this* and *Don't hide this* of the Check tab change no text and no plan: they
+        write one rule of the anonymizer's settings, so the next send obeys them.
+        """
+        return config_hiding(config, literal) if hide else config_keeping(config, literal)
 
     def clear_anonymizer_cache(self) -> None:
         """Evict the cached anonymizers and with them every anonymized text."""

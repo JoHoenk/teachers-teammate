@@ -1,23 +1,27 @@
 """The privacy view of the Check tab: names hidden in the texts, and what a file sent.
 
 The window lays the tab out; this controller owns the eye setting and whether it may be
-offered at all, the hiding job that runs behind the preview, and the "What is sent for this
-file" report.  It talks to the Check tab through :class:`CheckController` and reaches into
-no widget of the window.
+offered at all, the hiding job that runs behind the preview, the rules *Hide this* and
+*Don't hide this* write, and the "What is sent for this file" report.  It talks to the Check
+tab through :class:`CheckController` and reaches into no widget of the window.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout, QWidget
 
+from ..application.check_document import SentKind
 from ..application.composition import AppServices
 from ..application.sent_text import SentTexts
+from ..domain.anonymization import AnonymizerConfig
 from ..messages import message_of
+from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts import privacy
 from ._background import LatestTask
@@ -28,6 +32,18 @@ from ._errors import show_failure, show_notice
 from ._privacy_settings import display_anonymized, set_display_anonymized
 from ._results_table import ResultsTable
 from ._what_is_sent_dialog import WhatIsSentDialog
+
+
+@dataclass(frozen=True)
+class PrivacyHooks:
+    """What the privacy view asks of the window it belongs to, as the window hands it over."""
+
+    say: Callable[[str], None]
+    """Say a line in the status bar."""
+    save_settings: Callable[[], None]
+    """Write the settings file quietly, so a rule written here survives the next start."""
+    rules_changed: Callable[[], None]
+    """A rule of the anonymizer changed: what the queue says about stored results may too."""
 
 
 class PrivacyViewController(QObject):
@@ -42,6 +58,7 @@ class PrivacyViewController(QObject):
         table: ResultsTable,
         check: CheckController,
         settings_store: Callable[[], Any],
+        hooks: PrivacyHooks,
     ) -> None:
         super().__init__(window)
         self._window = window
@@ -51,12 +68,13 @@ class PrivacyViewController(QObject):
         self._check = check
         self._page = check.page
         self._settings_store = settings_store
+        self._hooks = hooks
         #: The "Hide personal information in texts" view setting (not part of Config).
         self._display_anonymized = display_anonymized(settings_store)
         #: Whether the texts can be hidden for the current document language.
         self._available = True
         #: The text and language of the running hiding job, to not start it twice.
-        self._anonymize_key: tuple[str, str] | None = None
+        self._anonymize_key: tuple[str, str, AnonymizerConfig | None] | None = None
         self._anonymize_running = False
         self._anonymize_task = LatestTask(self)
         self._sent_texts_task = LatestTask(self)
@@ -65,6 +83,8 @@ class PrivacyViewController(QObject):
         # The eye button and the texts the preview asks about are this controller's own.
         self._page.display_anonymized_changed.connect(self.apply_display_anonymized)
         self._page.anonymization_needed.connect(self.on_anonymization_needed)
+        self._page.hide_requested.connect(self.on_hide_requested)
+        self._page.keep_requested.connect(self.on_keep_requested)
 
     @property
     def display_anonymized(self) -> bool:
@@ -114,7 +134,9 @@ class PrivacyViewController(QObject):
             self._panel.lookup_language(), self._panel.build_anonymizer_config()
         )
         self._available = available
-        self._page.set_display_anonymized_available(available)
+        self._page.set_display_anonymized_available(
+            available, run_hides=self._panel.lookup_config().anonymization_enabled
+        )
         if available:
             # The wish wins over the answer: it was read from the settings before the first
             # check, and a missing add-on must not lose it.
@@ -129,12 +151,13 @@ class PrivacyViewController(QObject):
             self._page.set_anonymization({})
             return
         language = self._panel.lookup_language()
-        if self._anonymize_running and self._anonymize_key == (raw_text, language):
-            return  # already being worked out
-        self._anonymize_key = (raw_text, language)
+        anon_config = self._panel.build_anonymizer_config()
+        key = (raw_text, language, anon_config)
+        if self._anonymize_running and self._anonymize_key == key:
+            return  # already being worked out, with these rules
+        self._anonymize_key = key
         self._anonymize_running = True
         service = self._services
-        anon_config = self._panel.build_anonymizer_config()
 
         def _anonymize() -> object:
             return service.anonymization.anonymize_text(raw_text, language, anon_config)
@@ -156,13 +179,54 @@ class PrivacyViewController(QObject):
             )
             self._page.set_anonymization({}, error=reason)
             return
-        _anonymized, raw_mapping = payload
+        anonymized, raw_mapping = payload
         mapping = (
             {str(key): str(value) for key, value in raw_mapping.items()}
             if isinstance(raw_mapping, dict)
             else {}
         )
-        self._page.set_anonymization(mapping)
+        # The text goes with the map: it is the string a request is built from, not a re-masked
+        # copy of the transcription, which would miss a name the model spelled differently.
+        self._page.set_anonymization(mapping, text=str(anonymized or ""))
+
+    # ── what is hidden from now on ───────────────────────────────────────
+
+    def on_hide_requested(self, literal: str) -> None:
+        """Hide *literal* in what later runs send, and say so."""
+        self._change_hiding(literal, hide=True)
+
+    def on_keep_requested(self, literal: str) -> None:
+        """Send *literal* as written from now on, and say so."""
+        self._change_hiding(literal, hide=False)
+
+    def _change_hiding(self, literal: str, *, hide: bool) -> None:
+        """Write one rule of the anonymizer's settings, then ask for the placeholders again.
+
+        No text and no stored result changes: the rule says what the next send does, and a
+        result stored under other privacy settings keeps saying that it was
+        (:class:`~..domain.teacher_work.SentRecord`).
+        """
+        literal = literal.strip()
+        before = self._panel.build_anonymizer_config()
+        if not literal or before is None:
+            return
+        sent = self._page.sent_kind is SentKind.SENT
+        changed = self._services.anonymization.with_hiding(before, literal, hide=hide)
+        if changed != before:
+            self._panel.update_anonymizer_config(changed)
+            self._hooks.save_settings()
+            self._hooks.rules_changed()
+            self._page.forget_anonymization()
+        self._hooks.say(self._said(literal, hide=hide, sent=sent))
+
+    def _said(self, literal: str, *, hide: bool, sent: bool) -> str:
+        """Return the status-bar line for a rule just written, *sent* while a proofreading stands."""
+        line = (
+            check_text.hiding_from_now_on(literal)
+            if hide
+            else check_text.keeping_from_now_on(literal)
+        )
+        return f"{line} {check_text.NEXT_PROOFREADING_ONLY}" if sent else line
 
     # ── what is sent for one file ────────────────────────────────────────
 

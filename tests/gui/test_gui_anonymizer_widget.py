@@ -912,3 +912,57 @@ def test_empty_pattern_list_survives_save_and_reload(qtbot, tmp_path) -> None:
 
     assert reloaded.build_anonymizer_config().patterns == ()
     assert reloaded.to_config().anonymizer_patterns == []
+
+
+# ── The hide and keep lists ───────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_the_lists_show_the_texts_the_settings_hold(qtbot) -> None:
+    """
+    Given  a config that hides one text and sends two texts as written
+    When   the rules widget is built
+    Then   the boxes list them and report them back in the settings it hands out
+    """
+    dlg = _make_dialog(qtbot, config=AnonymizerConfig(hide=("Anna",), keep=("Anna Müller", "Ben")))
+
+    assert dlg.hidden == ["Anna"]
+    assert dlg.kept == ["Anna Müller", "Ben"]
+    assert dlg.anonymizer_config.hide == ("Anna",)
+    assert dlg.anonymizer_config.keep == ("Anna Müller", "Ben")
+
+
+@pytest.mark.gui
+def test_a_text_typed_into_a_box_joins_its_list_once(qtbot) -> None:
+    """
+    Given  a rules widget whose keep list holds one name
+    When   the teacher types the same name again, in other capitals, and another name
+    Then   the list keeps one entry of the first and gains the second, and the hide list is
+           not touched
+    """
+    dlg = _make_dialog(qtbot, config=AnonymizerConfig(keep=("Anna Müller",)))
+
+    dlg._keep_box._input.setText("  anna müller ")
+    dlg._keep_box._add()
+    dlg._keep_box._input.setText("Ben")
+    dlg._keep_box._add()
+
+    assert dlg.kept == ["Anna Müller", "Ben"]
+    assert dlg.anonymizer_config.keep == ("Anna Müller", "Ben")
+    assert dlg.hidden == []
+
+
+@pytest.mark.gui
+def test_removing_a_hidden_text_takes_it_out_of_the_settings(qtbot) -> None:
+    """
+    Given  a rules widget whose hide list holds two names
+    When   the teacher selects the first one and removes it
+    Then   only the second one is left, in the list and in the settings
+    """
+    dlg = _make_dialog(qtbot, config=AnonymizerConfig(hide=("Anna", "Ben")))
+
+    dlg._hide_box._list.setCurrentRow(0)
+    dlg._hide_box._remove_selected()
+
+    assert dlg.hidden == ["Ben"]
+    assert dlg.anonymizer_config.hide == ("Ben",)

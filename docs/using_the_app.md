@@ -92,7 +92,11 @@ The arrows in the header of the **Check** tab move to the previous and next docu
 
 **Three views of the text:**
 
-- **What was read** — the transcription. Fix reading mistakes here.
+- **What was read** — the transcription. Fix reading mistakes here. With names hidden it shows
+  the text as it was sent to the proofreading, or as it will be sent, and a line above it says
+  which. A word you select can be hidden from now on (**Hide this**), and a stand-in can be sent
+  as the name it stands for (**Don't hide this**): right-click the selection. The choice applies
+  to the next proofreading and is listed under **Settings → Privacy…**.
 - **With corrections** — the student's words struck through, the corrections marked. Read-only.
 - **Final text** — the corrected text alone. This is what is exported; change a correction here.
 

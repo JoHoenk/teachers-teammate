@@ -831,9 +831,10 @@ class FileProcessor:
                 correction_review=review.to_dict() if review is not None else None,
                 correction_warning=warning,
                 # The text the proofreading was made from, stored with its result so the window
-                # can show what really went out.  With hiding off it is the extracted text
-                # itself, so nothing is duplicated.
-                sent_text=sent.text if sent.mask else "",
+                # can show what really went out, also when nothing was found to hide and the
+                # transcription changes later.  With hiding off it is the extracted text itself,
+                # so nothing is duplicated.
+                sent_text=sent.text if self._anonymizer is not None else "",
                 sent_map=dict(sent.mask) if sent.mask else None,
                 # The transcription the answer was made from, so a proofreading made from a
                 # text the document no longer has is stale.

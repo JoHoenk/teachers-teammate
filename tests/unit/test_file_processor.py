@@ -1198,6 +1198,31 @@ def test_the_text_that_was_sent_is_stored_with_the_proofreading(tmp_path: Path) 
     assert kwargs["sent_map"] == {"[PERSON_1]": "Anna Weber"}
 
 
+def test_the_sent_text_is_stored_when_hiding_found_nothing(tmp_path: Path) -> None:
+    """
+    Given  anonymization is on and the extracted text holds no name
+    When   process() runs the proofreading
+    Then   the text that was sent is stored without a map, so the window can show it after the
+           transcription changes
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("It was fine.")
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = lambda text: (text, {})
+    fp, cache, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=["It was fine."]),
+        corrector=corrector,
+        anonymizer=anonymizer,
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    kwargs = cache.record_correction.call_args.kwargs
+    assert kwargs["sent_text"] == "It was fine."
+    assert kwargs["sent_map"] is None
+
+
 def test_nothing_is_copied_when_names_went_as_written(tmp_path: Path) -> None:
     """
     Given  no anonymizer is configured

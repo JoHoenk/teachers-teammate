@@ -243,7 +243,7 @@ class RunService:
         """Return whether a run is going in this process.
 
         The stored results and the settings that delete them ask this: a run is writing the
-        files they would remove.  A Benchmark run counts too (:meth:`running`).
+        files they would remove.  A comparison counts too (:meth:`running`).
         """
         with self._runs_lock:
             return self._runs_going > 0
@@ -252,8 +252,8 @@ class RunService:
     def running(self) -> Iterator[None]:
         """Count the caller as a run for as long as the block lasts.
 
-        Whatever writes the stored results counts, not only :meth:`run_selected`: the Benchmark's
-        runs write into the same folders.
+        Whatever writes the stored results counts, not only :meth:`run_selected`: a
+        comparison writes into the same folders.
         """
         with self._runs_lock:
             self._runs_going += 1

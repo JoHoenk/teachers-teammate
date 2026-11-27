@@ -83,6 +83,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMenu,
+    QPushButton,
+    QTableWidget,
     QTabWidget,
     QTextEdit,
     QWidget,
@@ -95,7 +97,9 @@ from teachers_teammate.application.composition import AppServices, build_app_ser
 from teachers_teammate.application.queue import StageState
 from teachers_teammate.application.run import state_store_for
 from teachers_teammate.config import Config, load_config_file, save_settings_file
+from teachers_teammate.domain.data_location import PROVIDER_OLLAMA
 from teachers_teammate.domain.output_files import DOCX_SUFFIX, output_path
+from teachers_teammate.domain.proofreading.option_marks import Verdict
 from teachers_teammate.domain.proofreading.review import CorrectionReview
 from teachers_teammate.domain.requirements import IssueKind
 from teachers_teammate.domain.run_summary import FileStatus, RunStatus, RunSummary
@@ -112,9 +116,12 @@ from teachers_teammate.gui._settings_file import APP_VERSION_KEY
 from teachers_teammate.gui._worker import OCRWorker, detached_workers_running
 from teachers_teammate.gui.composition import build_main_window
 from teachers_teammate.gui.settings import SettingsPage, SettingsWindow
+from teachers_teammate.infrastructure.option_mark_store import default_marks_root
 from teachers_teammate.infrastructure.proofreading.schemas import Category
 from teachers_teammate.infrastructure.state_repository import StateRepository
+from teachers_teammate.infrastructure.storage_root import compare_root
 from teachers_teammate.settings_schema import SETTINGS
+from teachers_teammate.texts import compare as compare_text
 from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts import main_window as win
 from teachers_teammate.texts._types import Answer, StandardButton
@@ -177,6 +184,9 @@ PROOFREADING_EXPLANATION = "The student chose the wrong word."
 #: The category the stand-in files its change under; ``word_choice`` is not a minor one, so the
 #: list counts the item on its own.
 PROOFREADING_CATEGORY: Category = "word_choice"
+#: What the second model of the comparison writes in place of the same last word, so the two
+#: models disagree at exactly one place.
+COMPARE_WORD = "Vergleichswort"
 
 #: The steps, in order; the first failure ends the walk.
 STEPS: tuple[tuple[str, str], ...] = (
@@ -199,6 +209,7 @@ STEPS: tuple[tuple[str, str], ...] = (
 PROOFREADING_STEPS: tuple[tuple[str, str, str], ...] = (
     ("proofreading-items", "open", "_step_proofreading_items"),
     ("proofreading-checked", "correct", "_step_proofreading_checked"),
+    ("compare-models", "proofreading-checked", "_step_compare_models"),
     ("review-dropped", "restart", "_step_review_dropped"),
 )
 
@@ -262,9 +273,12 @@ class ProofreadingSetup:
 
     url: str
     model: str
+    compare_model: str
+    """A second model on the same server, which the compare window asks beside :attr:`model`."""
     word: str = PROOFREADING_WORD
     explanation: str = PROOFREADING_EXPLANATION
     category: Category = PROOFREADING_CATEGORY
+    compare_word: str = COMPARE_WORD
 
 
 class _Failed(Exception):
@@ -377,6 +391,17 @@ def _shifted(review: CorrectionReview) -> CorrectionReview:
             for note in review.unclear
         ),
     )
+
+
+def _model_rows(table: QTableWidget) -> dict[str, tuple[int, str]]:
+    """Return the compare window's model rows: each model's row number and the state it says."""
+    state = table.columnCount() - 1
+    rows: dict[str, tuple[int, str]] = {}
+    for row in range(table.rowCount()):
+        name, said = table.item(row, 0), table.item(row, state)
+        if name is not None:
+            rows[name.text()] = (row, said.text() if said is not None else "")
+    return rows
 
 
 def docx_text(path: Path) -> str:
@@ -1772,6 +1797,147 @@ class Walk:
             raise _Failed(f"no warning about the dropped review of {PDF_NAME}: {said}")
         self._screenshot("dropped-review")
 
+    def _step_compare_models(self) -> None:
+        """Compare the walk's model with a second one on the open document, judge, keep, go back.
+
+        The window opens with the model list forgotten, so it has to fetch it.  The document's own
+        proofreading is the first model's answer, so only the second one is asked.  Its answer goes into the cache, the teacher's verdict into the data root, and
+        keeping a model writes the settings file.  The walk keeps its own model again at the end,
+        so the steps after this one proofread as before.
+        """
+        setup = self._proofreading
+        if setup is None:  # pragma: no cover - the step only runs with one
+            raise _Failed("the walk runs no proofreading")
+        image = Path(self._source(PNG_NAME))
+        # The app forgets a model list after a while; the window has to ask for it again, as it
+        # does for a teacher who opens it long after the run listed the models.
+        self._service.providers.invalidate_model_cache(PROVIDER_OLLAMA, setup.url)
+        opener = self._button(_handles.CHECK_COMPARE_BUTTON)
+        self._settle(opener.isVisible, "Compare models… over the proofread document", UI_S)
+        opener.click()
+        self._settle(
+            lambda: self._shown(_handles.COMPARE_WINDOW) is not None, "the compare window", UI_S
+        )
+        window = self._shown(_handles.COMPARE_WINDOW)
+        if window is None:  # pragma: no cover - the wait above raises first
+            raise _Failed("the compare window is not shown")
+        models = self._compare_table(window, _handles.COMPARE_MODELS_LIST)
+        self._settle(
+            lambda: {setup.model, setup.compare_model} <= set(_model_rows(models)),
+            f"{setup.model} and {setup.compare_model} in the compare window",
+            UI_S,
+        )
+        rows = _model_rows(models)
+        if rows[setup.model][1] != compare_text.YOUR_PROOFREADING:
+            raise _Failed(f"{setup.model} is not the document's own proofreading: {rows}")
+        if rows[setup.compare_model][1] != compare_text.NOT_RUN:
+            raise _Failed(f"{setup.compare_model} says it answered already: {rows}")
+
+        answer = self._compare_answer_file(image, setup.compare_model)
+        self._compare_button(window, _handles.COMPARE_RUN_BUTTON).click()
+        self._settle(
+            lambda: (
+                answer.is_file()
+                and self._compare_button(window, _handles.COMPARE_RUN_BUTTON).isEnabled()
+            ),
+            f"the answer of {setup.compare_model}",
+            RUN_S,
+        )
+        stored = json.loads(answer.read_text(encoding="utf-8"))
+        if stored.get("model") != setup.compare_model or setup.compare_word not in stored["text"]:
+            raise _Failed(f"the stored answer is {stored.get('model')}: {stored['text']!r}")
+        state = _model_rows(models)[setup.compare_model][1]
+        if state != compare_text.done_in(stored["seconds"]):
+            raise _Failed(f"the row of {setup.compare_model} says {state!r}")
+
+        changes = self._compare_table(window, _handles.COMPARE_CHANGES_TABLE)
+        self._settle(
+            lambda: changes.rowCount() == 1 and changes.columnCount() == 4,
+            "one place where the two models disagree",
+            UI_S,
+        )
+        cells = [changes.item(0, column).text() for column in (1, 2)]
+        if not (
+            any(setup.word in cell for cell in cells)
+            and any(setup.compare_word in cell for cell in cells)
+        ):
+            raise _Failed(f"the Changes tab shows {cells}")
+
+        source = self._service.comparison.source(self._config(), image)
+        if source is None:
+            raise _Failed(f"the comparison has no text for {PNG_NAME}")
+        changes.setCurrentCell(0, 0)
+        self._settle(
+            lambda: len(window.findChildren(QPushButton, _handles.COMPARE_MARK_RIGHT)) == 2,
+            "a verdict for each of the two wordings",
+            UI_S,
+        )
+        window.findChildren(QPushButton, _handles.COMPARE_MARK_RIGHT)[0].click()
+        marks = default_marks_root() / f"{source.text_sha}.json"
+        self._settle(
+            lambda: (
+                marks.is_file()
+                and [mark.verdict for mark in self._service.comparison.marks(source)]
+                == [Verdict.RIGHT]
+            ),
+            "the teacher's verdict in the data root",
+            UI_S,
+        )
+        self._save_picture(window.grab(), "compare")
+
+        for model in (setup.compare_model, setup.model):
+            models.setCurrentCell(_model_rows(models)[model][0], 0)
+            self._answers.expect(
+                "choose", title=dlg.use_compared_model(model).title, choice=dlg.USE_MODEL
+            )
+            self._compare_button(window, _handles.COMPARE_USE_BUTTON).click()
+            self._settle(
+                lambda model=model: self._config().correction_model == model,
+                f"the settings to proofread with {model}",
+                UI_S,
+            )
+        window.close()
+        self._settle(
+            lambda: self._shown(_handles.COMPARE_WINDOW) is None,
+            "the compare window to close",
+            UI_S,
+        )
+
+    def _compare_table(self, window: QWidget, name: str) -> QTableWidget:
+        """Return the table named *name* in the compare window, or the table inside that widget."""
+        found = window.findChild(QWidget, name)
+        if found is not None and not isinstance(found, QTableWidget):
+            found = found.findChild(QTableWidget)
+        if not isinstance(found, QTableWidget):
+            raise _Failed(f"the compare window has no table {name}")
+        return found
+
+    @staticmethod
+    def _compare_button(window: QWidget, name: str) -> QAbstractButton:
+        """Return the button named *name* in the compare window."""
+        found = window.findChild(QAbstractButton, name)
+        if found is None:
+            raise _Failed(f"the compare window has no {name}")
+        return found
+
+    def _compare_answer_file(self, image: Path, model: str) -> Path:
+        """Return where the first answer of *model* about *image* is stored in the cache."""
+        config = self._config()
+        source = self._service.comparison.source(config, image)
+        if source is None:
+            raise _Failed(f"the comparison has no text for {PNG_NAME}")
+        candidate = next(
+            (
+                one
+                for one in self._service.compare_candidates.candidates(config, source)
+                if one.model == model
+            ),
+            None,
+        )
+        if candidate is None:
+            raise _Failed(f"the comparison does not list {model}")
+        return compare_root() / source.text_sha / f"{candidate.key}.json"
+
     def _docx_export_action(self) -> QAction:
         """Return the Word entry of the Export button's menu, or fail the step naming it."""
         menu = self._button(_handles.EXPORT_BUTTON).menu()
@@ -2099,14 +2265,14 @@ class Walk:
 
         self._in_modal(self._action(_handles.ALL_SETTINGS).trigger, in_settings)
         for action_name, window_name in (
-            (_handles.BENCHMARK, _handles.BENCHMARK_WINDOW),
             (_handles.SYSTEM_MONITOR, _handles.MONITOR_WINDOW),
+            (_handles.COMPARE_MODELS, _handles.COMPARE_WINDOW),
         ):
             self._action(action_name).trigger()
             self._settle(
                 lambda name=window_name: self._shown(name) is not None,
                 f"the window {window_name}",
-                UI_S * 3,  # the Benchmark window builds a whole app of its own
+                UI_S,
             )
             window = self._shown(window_name)
             if window is not None:

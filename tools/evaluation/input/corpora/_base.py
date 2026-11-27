@@ -20,9 +20,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, TypeVar
 
+from teachers_teammate.domain.proofreading.sentences import Span
+
 from ...core.labels import ReferenceLabel
 from ...metrics.offsets import char_spans_to_tokens
-from ...metrics.quality import Span, untouched_spans
+from ...metrics.quality import untouched_spans
 
 T = TypeVar("T")
 
@@ -70,7 +72,7 @@ class ResolvedItem:
     """Indices into :attr:`sentence_spans` of the sentences the reference leaves alone.
 
     A sentence counts when the corpus says it is unchanged *and* the word diff of source and
-    reference does not touch it (:func:`~tools.evaluation.metrics.quality.
+    reference does not touch it (:func:`~teachers_teammate.domain.proofreading.edit_agreement.
     untouched_spans`).
     """
 

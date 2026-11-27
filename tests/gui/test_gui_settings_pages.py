@@ -459,7 +459,7 @@ def test_the_ai_models_page_has_no_temperature(qtbot) -> None:
 @pytest.mark.gui
 def test_ocr_selector_temperature_is_collapsed_but_still_saved(qtbot) -> None:
     """
-    Given  the shared OCR selector (the Benchmark app's)
+    Given  the shared OCR selector
     When   a temperature is set while the section is collapsed
     Then   it is returned by get_ocr_config()
     """
@@ -471,11 +471,11 @@ def test_ocr_selector_temperature_is_collapsed_but_still_saved(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_benchmark_selector_shows_the_temperature_without_expanding(qtbot) -> None:
+def test_a_selector_can_show_the_temperature_without_expanding(qtbot) -> None:
     """
-    Given  the OCR selector as the Benchmark window builds it
+    Given  an OCR selector built with its expert section open
     When   it is created
-    Then   "Expert settings" is open, so a benchmark run can set the temperature directly
+    Then   "Expert settings" is open, so the temperature can be set directly
     """
     selector = OcrConfigSelector(app_service=services_of(DummyAppService()), expert_collapsed=False)
     qtbot.addWidget(selector)

@@ -25,7 +25,7 @@ whether a run can start; if something is missing, it names it and offers a butto
 green by itself once the problem is solved.
 
 **Menus:** **File** (open a folder or files, export, quit), **Settings** (opens the Settings window
-on a page), **Tools** (Setup Assistant, System Monitor, Benchmark) and **Help**.
+on a page), **Tools** (Setup Assistant, System Monitor) and **Help**.
 
 A line at the bottom of the window says what last happened: a document saved, results expired,
 models downloaded. It keeps the last line only; the log file (*What the app writes down*) keeps
@@ -207,6 +207,52 @@ banner says what is missing.
 Models on your own computer proofread German and English usefully but miss more errors and change
 more correct sentences than the largest online services, so the app shows every change and you
 decide what stays.
+
+---
+
+## Comparing models
+
+To see which writing model suits your documents, open a document you have read, go to **Check** and
+press **Compare models…** beside **Proofread again** — or use **Tools → Compare proofreading
+models…** and pick the document in the window. Tick the models you want to compare and press **Run selected**.
+
+- **Changes** lists every place a model changed the text: the student's words, what each model wrote
+  there, and how many models agree. Choose a row to read what each model said about it.
+- **Side by side** shows the student's sentences beside each model's, with the sentences a model
+  changed marked in colour.
+- **Overview** has one column per model: how long the answer took, how many places it changed, how
+  many of those the others changed too, how many only it changed, how many it explained, and what
+  went wrong.
+- **Twice, for chance.** *Run again* asks the chosen model a second time and keeps both answers.
+  **Overview** then says how many of its changes came in both runs and how many in one only, and
+  **Changes** writes *only once* beside a wording that one answer alone produced — a change that
+  may not happen again.
+- **Right or wrong.** In **Changes**, choose a row and say whether the change is right (the student
+  was wrong there) or wrong (the student's own words are). A verdict counts for every model that
+  wrote the same wording, and clicking it again takes it back. The **Overview** then counts what
+  each model got right, what it got wrong and the right changes it missed, and gives a score once
+  every change of that model is marked.
+
+Each model is asked with your settings — level, explanation language, corrections only, notes,
+hiding names — and nothing else changes, so an answer is what a run with that model would give. A
+model that already answered this text costs no request. One model is asked at a time, then removed
+from memory, so every answer starts cold and its time includes loading the model. **Stop** ends the
+comparison and interrupts a local model that is still answering; nothing half done is kept.
+Closing the window, or quitting the app, stops it too, after asking.
+
+Nothing leaves the computer before you press **Run selected**. An online model is marked `online`
+in its row; before the text goes to one, you are asked the same question as before a run, and names
+are hidden first when **Remove personal info** is on. While models are asked, no run starts and the
+document of the window stays the same.
+
+One text shows what these models do differently, not which of them is better — ask the same text
+twice and a model may answer differently. Answers are kept in the cache and go away with **Delete
+stored results…** or after the days set there; your verdicts stay in your data folder. An answer
+made with other settings than today's stays stored but is not shown, because the columns must
+differ in the model and in nothing else.
+
+**Use … for proofreading** makes the model you prefer the one that proofreads from now on
+(**Settings → AI models…**). The proofreading the open document has stays as it is.
 
 ---
 
@@ -395,5 +441,4 @@ a note if one does. Nothing about you or your documents is sent. Turn it off und
 - **Setup Assistant…** — see *Setting up*.
 - **System Monitor** — how long each file took, and live use of the processor, memory and (if
   present) the graphics card.
-- **Benchmark…** — try one document with different text-recognition settings and compare the
-  results side by side (see the *Advanced User Guide*).
+- **Compare proofreading models…** — see *Comparing models*.

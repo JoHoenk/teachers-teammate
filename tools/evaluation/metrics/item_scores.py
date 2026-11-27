@@ -23,18 +23,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
 
-from teachers_teammate.domain.proofreading.word_diff import tokenize
+from teachers_teammate.domain.proofreading.edit_agreement import (
+    EditMatch,
+    match_edits,
+    word_positions,
+)
+from teachers_teammate.domain.proofreading.sentences import Span
+from teachers_teammate.domain.proofreading.word_diff import Edit, tokenize
 
 from . import text_loss
 from .gleu import SOURCE_PREFIX, gleu_counts, to_scores
-from .quality import (
-    Edit,
-    EditMatch,
-    Span,
-    match_edits,
-    untouched_spans,
-    word_positions,
-)
+from .quality import untouched_spans
 
 
 def item_scores(

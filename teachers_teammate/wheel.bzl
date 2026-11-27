@@ -29,7 +29,6 @@ def app_wheel(name, version, tags = []):
             "console_scripts": [
                 "teachers-teammate = teachers_teammate.cli:main",
                 "teachers-teammate-gui = teachers_teammate.gui:main_gui",
-                "teachers-teammate-benchmark = teachers_teammate.gui.benchmark:main_benchmark",
             ],
         },
         extra_distinfo_files = {

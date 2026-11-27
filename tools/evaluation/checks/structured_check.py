@@ -33,9 +33,11 @@ from typing import TYPE_CHECKING
 
 from teachers_teammate.domain.correction_policy import cut_off_tries
 from teachers_teammate.domain.formatted_text import TextFormat
+from teachers_teammate.domain.proofreading.edit_agreement import count_explained
+from teachers_teammate.domain.proofreading.sentences import Span
 
 from ..metrics.offsets import char_spans_to_tokens
-from ..metrics.quality import Span, count_explained, untouched_spans
+from ..metrics.quality import untouched_spans
 from ..run.ports import ChatPort, ServerUnavailableError
 from .check_rule import CheckRule, CheckRun, Decision, FirstTry, Verdict
 from .gate1_fixtures import FIXTURES, Fixture

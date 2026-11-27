@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 import difflib
+from functools import lru_cache
 import re
 from typing import Literal, cast
 
@@ -30,6 +31,9 @@ _MARK_RE = re.compile(r"</?(?:sup|sub|u)>|~~|\*\*|__")
 
 DiffOpcode = tuple[str, int, int, int, int]
 """``(tag, i1, i2, j1, j2)``: the tokens ``raw[i1:i2]`` become ``corrected[j1:j2]``."""
+
+Edit = tuple[int, int, tuple[str, ...]]
+"""One word-diff change: ``(start, end, replacement)`` token indices into the source."""
 
 
 def tokenize(text: str) -> list[str]:
@@ -60,6 +64,16 @@ def diff_opcodes(
     return opcodes
 
 
+@lru_cache(maxsize=1024)
+def text_opcodes(raw: str, corrected: str) -> tuple[DiffOpcode, ...]:
+    """Return the opcodes of the word diff between two texts, layout changes counted as equal.
+
+    The diff is the slow part of reading a text against an answer, and a window, a score and a
+    review ask for it again and again on the same two texts, so it is made once for each pair.
+    """
+    return tuple(diff_opcodes(tokenize(raw), tokenize(corrected)))
+
+
 def _layout_only(old: Sequence[object], new: Sequence[object]) -> bool:
     """Whether a difference is whitespace alone (only text tokens have layout)."""
     if not all(isinstance(token, str) for token in (*old, *new)):
@@ -76,6 +90,20 @@ def token_offsets(tokens: Sequence[str]) -> list[int]:
         position += len(token)
     offsets.append(position)
     return offsets
+
+
+@lru_cache(maxsize=4096)
+def text_offsets(text: str) -> tuple[int, ...]:
+    """Return the character offset of every token boundary of *text*.
+
+    The result has one more entry than there are tokens: ``offsets[i]`` is where token *i* starts
+    and ``offsets[-1]`` is the length of the text.
+
+    The boundaries are cached by the text, because a report or a comparison asks for the same
+    source text once per label, per sentence span and per edit, and tokenizing it again each time
+    is the hot path.  The result is a tuple, so a caller cannot change what the cache holds.
+    """
+    return tuple(token_offsets(tokenize(text)))
 
 
 def similarity(a: str, b: str) -> float:
@@ -150,18 +178,20 @@ class Hunk:
         return f"{original} → {corrected}"
 
 
+@lru_cache(maxsize=1024)
 def word_diff(raw: str, corrected: str) -> tuple[Hunk, ...]:
     """Return the hunks of the word diff from *raw* to *corrected*, in text order.
 
     Both texts must be plain (see ``TextFormatter.plain_text``): the offsets are character
-    offsets into exactly these strings, which is what a stored review is anchored on.
+    offsets into exactly these strings, which is what a stored review is anchored on.  The hunks
+    are values, so the result is kept for the pair.
     """
     raw_tokens = tokenize(raw)
     corrected_tokens = tokenize(corrected)
     raw_at = token_offsets(raw_tokens)
     corrected_at = token_offsets(corrected_tokens)
     hunks: list[Hunk] = []
-    for tag, i1, i2, j1, j2 in diff_opcodes(raw_tokens, corrected_tokens):
+    for tag, i1, i2, j1, j2 in text_opcodes(raw, corrected):
         if tag == "equal":
             continue
         old, new, raw_trim, corrected_trim = _trim_layout(

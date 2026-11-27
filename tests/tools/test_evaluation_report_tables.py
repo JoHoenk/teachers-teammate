@@ -35,8 +35,8 @@ from tools.evaluation.core.records import (
     key_sha256,
     question_sha256,
 )
-from tools.evaluation.metrics.offsets import token_offsets
-from tools.evaluation.metrics.quality import ordered_edits
+from teachers_teammate.domain.proofreading.word_diff import text_offsets
+from teachers_teammate.domain.proofreading.edit_agreement import ordered_edits
 from tools.evaluation.report import compare, groups, load, stats
 from tools.evaluation.report.tables import by_error, false_alarms, passes, performance, sweep
 from tools.evaluation.store import layout, writer
@@ -57,7 +57,7 @@ def _label(
     source: str, reference: str, number: int = 0, code: str = "R:VERB:FORM"
 ) -> ReferenceLabel:
     """Return the *number*-th edit of *reference* against *source* as a label, in characters."""
-    offsets = token_offsets(source)
+    offsets = text_offsets(source)
     start, end, replacement = ordered_edits(source, reference)[number]
     return ReferenceLabel(
         start=offsets[start],

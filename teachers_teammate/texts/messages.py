@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..messages import Message, MessageKey, plain_text, render_all, set_renderer
-from . import addons, review, run, servers
+from . import addons, compare, review, run, servers
 
 #: The language the app speaks.  Only English exists so far.
 ENGLISH = "en"
@@ -84,6 +84,10 @@ _RENDERERS: dict[MessageKey, Callable[..., str]] = {
     MessageKey.NO_FIRST_TOKEN: servers.no_first_token,
     MessageKey.NO_MODELS_INSTALLED: servers.no_models_installed,
     MessageKey.UNREACHABLE: servers.unreachable,
+    # ── Comparing writing models on one text ─────────────────────────────────
+    MessageKey.MODEL_NOT_COMPARED: compare.model_not_compared,
+    MessageKey.PROOFREADING_NOT_COMPARED: _constant(compare.PROOFREADING_NOT_COMPARED),
+    MessageKey.MARKS_NOT_REPLACED: compare.marks_not_replaced,
     # ── The command line ─────────────────────────────────────────────────────
     MessageKey.CONFIG_FILE_MISSING: run.config_file_missing,
 }

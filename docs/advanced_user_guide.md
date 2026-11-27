@@ -220,22 +220,47 @@ the page says so.
 
 ---
 
-## Comparing reading setups (Benchmark)
+## Comparing models on one text
 
-**Tools → Benchmark…** reads one document with one setup at a time and keeps every result, so you
-can compare engines, models and image preparation on your own pages. It only reads — no
-proofreading, no Word files.
+**Tools → Compare proofreading models…**, or **Compare models…** in the Check tab of a document you
+have read. The window lists the writing models of this computer (ticked unless they answered this
+text already) and the online services whose key you set.
 
-1. **Choose document…** — a PDF, image or text file.
-2. Pick the engine, model and image preparation, then **Run & store**.
-3. Repeat with another setup. Each run is listed under **Stored runs**.
-4. Select one run → **Set as A**, another → **Set as B**. **Compare** shows the page, both texts,
-   the differences and a similarity score.
+- **Cost and time.** *Run selected* asks the ticked models one after another, one request each; a
+  stored answer of the same settings costs none, and neither does the document's own proofreading
+  when it is that model's. The time shown in a row before the run is an estimate from the speed
+  measurements of this computer; the time a model took includes loading it, as the first file of a
+  run does. A comparison counts as a run: the stored results cannot be deleted meanwhile and no
+  second run starts.
+- **Privacy.** An answer goes the way a run's text goes: with **Remove personal info** on, names are
+  hidden before an online model is asked, and what was sent is stored with the result. Nothing is
+  sent before *Run selected*, and before the text goes to an online model you are asked the same
+  question as before a run.
+- **What is compared.** The transcription as it stands, with your reading fixes, its notation and
+  the batch language — exactly what a run sends. Notes, level, explanation language and corrections
+  only apply too; nothing but the provider and the model differs between the columns.
+- **What the figures say.** One text cannot rank models. The numbers show what each of them changed,
+  how much of it they agree on and how long they took; the same text may come back differently at a
+  later run. Larger models change more correct sentences; the *Changes* tab shows every one of them
+  next to each other.
+- **Chance.** *Run again* asks the chosen model a second time; both answers are kept. Its column
+  then splits its changes into *In both runs* and *Only once* — with a temperature above 0 a model
+  may fix a place in one answer and leave it in the next, so "only once" is a difference you cannot
+  count on. *Changes* writes "(only once)" beside such a wording. One extra run costs one request
+  and a second copy of the answer in the cache.
+- **Marking a change.** The *Changes* tab lets you call each option right or wrong: right means the
+  student was wrong there and the wording belongs in the text, wrong that the student's own words
+  are. A mark is on the wording, so models that agreed are judged together, and a second click
+  takes it back. With the marks the *Overview* counts per model what it got right, what it got
+  wrong, and the right changes it missed — a change it neither made nor covered with another right
+  change. The score (F0.5) appears only when every change of that model is marked, because an
+  unmarked change says nothing about the model.
+- **Keeping a model.** *Use … for proofreading* writes **Settings → AI models…**'s provider and
+  model. The document keeps the proofreading it has, so nothing you worked on is lost.
 
-The similarity says how much two runs agree, not which one is right — judge that against the
-page. The newest 20 runs per document are kept, also when you rename the file; **Delete** and
-**Clear all runs for this document** remove them. A benchmark and a batch can run at the same time,
-but they share the graphics card.
+Answers live in the cache (`compare/` below the storage folder), so *Delete stored results…* and
+the retention remove them. Your marks do not: they are your own work, `compare_marks/<text hash>.json`
+in the data folder, one file per text, holding the place and a hash of the wording — no text.
 
 ---
 

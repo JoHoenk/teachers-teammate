@@ -1,6 +1,6 @@
 """Developer tool: what a reading model costs on one page of handwriting.
 
-NOT run in CI - it needs a running Ollama server and the developer's own benchmark pages.
+NOT run in CI - it needs a running Ollama server and the developer's own test pages.
 
     bazel run //tools/dev:ocr_page_tokens -- --pages ~/handwriting
 
@@ -204,7 +204,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         nargs="+",
         required=True,
         type=Path,
-        help="the benchmark pages: image files, or directories of them",
+        help="the test pages: image files, or directories of them",
     )
     parser.add_argument(
         "--models",

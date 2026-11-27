@@ -28,7 +28,6 @@ PINNED = {
     "addons.py": 6,
     "anonymization.py": 6,
     "api_keys.py": 1,
-    "benchmark_service.py": 7,
     "commands.py": 3,
     "correction_options.py": 1,
     "data_flow.py": 2,

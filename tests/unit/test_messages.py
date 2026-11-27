@@ -179,6 +179,9 @@ def test_the_value_of_a_key_only_grows() -> None:
         "NO_FIRST_TOKEN": "no_first_token",
         "NO_MODELS_INSTALLED": "no_models_installed",
         "UNREACHABLE": "unreachable",
+        "MODEL_NOT_COMPARED": "model_not_compared",
+        "PROOFREADING_NOT_COMPARED": "proofreading_not_compared",
+        "MARKS_NOT_REPLACED": "marks_not_replaced",
         "CONFIG_FILE_MISSING": "config_file_missing",
     }
 

@@ -22,12 +22,13 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from teachers_teammate.domain.proofreading.edit_agreement import match_edits
+from teachers_teammate.domain.proofreading.word_diff import text_offsets
+
 from ...core.constants import TextKind
 from ...core.labels import CATEGORIES, UNLABELLED, ReferenceLabel
 from ...core.languages import name as language_name
 from ...core.languages import ordered
-from ...metrics.offsets import token_offsets
-from ...metrics.quality import match_edits
 from ..pooled import TextItem
 
 CATEGORY_ORDER: tuple[str, ...] = (*CATEGORIES, UNLABELLED)
@@ -96,7 +97,7 @@ def error_table(items: Sequence[TextItem], *, by: str = "category") -> str:
         if item.kind != TextKind.ERRORS or not item.record.labels:
             continue
         by_edit = _labels_by_edit(item)
-        offsets = token_offsets(item.record.source)
+        offsets = text_offsets(item.record.source)
         for match in match_edits(item.record.source, item.output, item.record.reference):
             start, end, replacement = match.edit
             label = by_edit.get((offsets[start], offsets[end], "".join(replacement)))

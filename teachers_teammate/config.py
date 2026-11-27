@@ -56,17 +56,15 @@ class OcrConfig:
     Holds only the fields that vary per OCR run (engine/model/
     preprocessing/temperature).  Shared fields the OCR stage *reads* but that are
     also consumed by correction/evaluation — ``language``, ``ollama_url``,
-    ``ocr_timeout`` — stay on :class:`Config`.  Both the pipeline and the
-    benchmark app vary this value object.
+    ``ocr_timeout`` — stay on :class:`Config`.  The pipeline builds it once per run.
     """
 
     engine: str = DEFAULTS["ocr_engine"]
-    """An :class:`~teachers_teammate.domain.data_location.OcrEngine` for a run; a ``str`` because a
-    stored Benchmark run keeps the engine it was read with, an old online one included."""
+    """An :class:`~teachers_teammate.domain.data_location.OcrEngine` for a run."""
     model: str = DEFAULTS["ocr_model"]
     preprocess_method: PreprocessMethod = DEFAULTS["preprocess_method"]
     temperature: float = OCR_TEMPERATURE
-    """Fixed for the app; only the Benchmark varies it to compare readings."""
+    """Fixed for the app."""
     pdf_render_dpi: int = DEFAULTS["pdf_render_dpi"]
     pdf_text_layer: PdfTextLayerMode = DEFAULTS["pdf_text_layer"]
     """Whether a PDF's embedded text may replace OCR (``auto``/``always``/``never``)."""
@@ -87,10 +85,8 @@ class OcrConfig:
         Keys that are missing fall back to :data:`DEFAULTS`.  This is the single place the
         GUI's flat settings (``ocr_engine``, ``preprocess_method``, …) map onto the fields.
 
-        The engine and its model are normalised here and not in :meth:`__post_init__`: an
-        :class:`OcrConfig` is also the record of a Benchmark run, and a stored run must keep
-        the engine it was read with (an old online one included) so its history still reads
-        right.
+        The engine and its model are normalised here and not in :meth:`__post_init__`, so a
+        field a caller sets is taken as given.
         """
 
         def get(key: str) -> Any:
@@ -203,8 +199,8 @@ class Config:
     ) -> Config:
         """Build a :class:`Config` from a flat settings dict (``ocr.toml`` key names).
 
-        The one place a :class:`Config` is assembled: the GUI, the CLI and the Benchmark all
-        come through here, so a key means the same in all three.  Keys *values* does not hold
+        The one place a :class:`Config` is assembled: the GUI and the CLI both come through
+        here, so a key means the same in both.  Keys *values* does not hold
         fall back to :data:`DEFAULTS`; the folders and ``recursive`` are the caller's, because
         they are what a batch is about rather than a setting of the app.
         """

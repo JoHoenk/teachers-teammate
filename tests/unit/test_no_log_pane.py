@@ -1,7 +1,7 @@
 """The window keeps no log pane: the log file holds the record, the status bar the last line.
 
-Only the installer dialogs and the Benchmark window keep a text pane, and that one shows progress
-(pip output, benchmark steps).  This test keeps a log widget from growing back into the GUI.
+Only the installer dialogs keep a text pane, and that one shows progress (pip output).  This test
+keeps a log widget from growing back into the GUI.
 """
 
 from __future__ import annotations

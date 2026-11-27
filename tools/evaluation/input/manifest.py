@@ -14,12 +14,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+from teachers_teammate.domain.proofreading.edit_agreement import ordered_edits
+from teachers_teammate.domain.proofreading.word_diff import text_offsets
+
 from ..core.constants import TextKind
 from ..core.hashing import sha256_text
 from ..core.manifest import ManifestItem
 from ..core.records import ReferenceLabel, TestRecord
-from ..metrics.offsets import token_offsets
-from ..metrics.quality import ordered_edits
 
 
 def manifest_item(record: TestRecord, meta: Mapping[str, Any] | None = None) -> ManifestItem:
@@ -95,7 +96,7 @@ def edit_hashes(record: ReferenceEdits) -> list[dict[str, Any]]:
     """
     if record.kind != TextKind.ERRORS:
         return []
-    offsets = token_offsets(record.source)
+    offsets = text_offsets(record.source)
     codes = {(label.start, label.end): label.code for label in record.labels}
     entries: list[dict[str, Any]] = []
     for start, end, replacement in ordered_edits(record.source, record.reference):

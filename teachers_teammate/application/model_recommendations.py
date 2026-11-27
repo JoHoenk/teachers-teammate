@@ -38,6 +38,7 @@ from ..domain.model_catalog import (
     ModelRating,
     ModelUses,
     OllamaModelSpec,
+    active_profile,
     best_model,
     catalog_uses,
     choose_profile,
@@ -391,6 +392,31 @@ class ModelRecommendationService:
             )
             for tag in tags
         ]
+
+    def rate_for(
+        self,
+        tags: Sequence[str],
+        task: ModelCategory,
+        detection: HardwareDetection | None,
+        setting: HardwareProfileSetting,
+        ollama_url: str,
+        *,
+        cached_only: bool = False,
+    ) -> list[ModelRating]:
+        """Return a rating per tag on the computer *detection* describes, as *setting* reads it.
+
+        The profile, the computer's memory and its card come from *detection*; a profile the
+        teacher chose by hand decides over it.
+        """
+        return self.rate_ollama_models(
+            tags,
+            task,
+            active_profile(detection, setting),
+            ollama_url,
+            cached_only=cached_only,
+            system_memory_gb=detection.system_memory_gb if detection is not None else None,
+            card_gb=detection.card_gb if detection is not None else None,
+        )
 
     # ── invalidation ───────────────────────────────────────────────────────
 

@@ -17,7 +17,7 @@ from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 
-from ..exceptions import ModelDownloadCancelledError
+from ..exceptions import ModelDownloadCancelledError, RunStoppedError
 from ..messages import log_failure
 
 _logger = logging.getLogger(__name__)
@@ -39,7 +39,8 @@ class LongJobThread(QThread):
 
     A subclass implements :meth:`work` and watches :attr:`stop_event` where it waits, so
     :meth:`stop` ends it at the next chunk; :meth:`work` then raises
-    :class:`~teachers_teammate.exceptions.ModelDownloadCancelledError` to say it ended
+    :class:`~teachers_teammate.exceptions.ModelDownloadCancelledError` (a download) or
+    :class:`~teachers_teammate.exceptions.RunStoppedError` (anything else) to say it ended
     unfinished.  A job that finished anyway reports success.  Whatever :meth:`work` returns
     is :attr:`result` and travels with ``finished_ok``.
     """
@@ -69,7 +70,8 @@ class LongJobThread(QThread):
     def work(self) -> Any:
         """Do the job; return what ``finished_ok`` should carry.
 
-        Raise ``ModelDownloadCancelledError`` when :attr:`stop_event` ended it unfinished.
+        Raise ``ModelDownloadCancelledError`` or ``RunStoppedError`` when :attr:`stop_event` ended
+        it unfinished.
         """
         raise NotImplementedError
 
@@ -82,7 +84,7 @@ class LongJobThread(QThread):
     def run(self) -> None:
         try:
             self.result = self.work()
-        except ModelDownloadCancelledError:
+        except ModelDownloadCancelledError, RunStoppedError:
             self.finished_err.emit(ABORTED)
         except Exception as exc:  # noqa: BLE001  # any failure reaches the window as a sentence
             log_failure(_logger, "A long job ended with an error", exc)

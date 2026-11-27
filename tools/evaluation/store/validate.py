@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from teachers_teammate.domain.proofreading.edit_agreement import char_edits, char_to_token, edits
+
 from ..core import protocol_table
 from ..core.constants import OLLAMA, TextKind
 from ..core.formats import FormatError, read_jsonl
@@ -41,8 +43,6 @@ from ..core.records import (
     question_sha256,
     read_run_file,
 )
-from ..metrics.offsets import char_to_token
-from ..metrics.quality import char_edits, edits
 from . import layout, reader
 from . import marks as marks_module
 

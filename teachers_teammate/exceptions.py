@@ -183,6 +183,14 @@ class ConfigFileParseError(ValueError):
     file cannot be parsed or read."""
 
 
+class MarksKeptError(OSError):
+    """The teacher's verdicts on a text cannot be read, so a save would destroy them.
+
+    It carries the :class:`~teachers_teammate.messages.Message` that says why; the file is left
+    as it is.
+    """
+
+
 class StorageResolutionError(RuntimeError):
     """Raised when no candidate storage root is writable."""
 

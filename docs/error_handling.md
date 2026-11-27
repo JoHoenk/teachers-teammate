@@ -53,9 +53,9 @@ The frozen entry (`frozen_entry.py`) starts both before the GUI is imported, so 
 or a platform plugin that does not load reaches the file.
 
 Inside the GUI, `gui/_background.py` logs every failure it hands to `on_done`, named by the
-task, and `OCRWorker`, `BenchmarkWorker` and `LongJobThread` log a crashed run before they
-report it. A catch-all that shows the teacher a failure (an export, the settings file, a
-preview) logs it as well. A caller therefore decides only what the teacher is shown.
+task, and `OCRWorker` and `LongJobThread` log a crashed run before they report it. A catch-all
+that shows the teacher a failure (an export, the settings file, a preview) logs it as well. A
+caller therefore decides only what the teacher is shown.
 
 ## One surface in the window
 
@@ -79,10 +79,10 @@ A failed file is never a dialog. The row says why (`_results_table._warning_text
 end-of-run line and the tray count the failures. A run with every file failed leaves the teacher
 one line, not thirty boxes.
 
-An installer and the Benchmark window keep a pane of their own, but it shows progress — pip's
-output, the steps of a benchmark run. When pip fails, the last twenty lines of it go to the log at
-WARNING (`addon_manager.PIP_FAILURE_LINES`), since the pane closes with the dialog. That is the
-child process's output, not the error: the handler still logs the error once.
+An installer keeps a pane of its own, but it shows progress — pip's output. When pip fails, the
+last twenty lines of it go to the log at WARNING (`addon_manager.PIP_FAILURE_LINES`), since the
+pane closes with the dialog. That is the child process's output, not the error: the handler
+still logs the error once.
 
 ## Where an event goes
 

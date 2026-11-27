@@ -1,8 +1,8 @@
 """The Python wheel is the whole package and says what pyproject.toml says.
 
 Until this test existed the wheel held only the non-GUI half of the package, so
-``teachers-teammate-gui`` and ``teachers-teammate-benchmark`` crashed after a ``pip install``, the
-help pages and the icon were missing, and ``[llm]`` and ``[privacy]`` installed nothing.  The
+``teachers-teammate-gui`` crashed after a ``pip install``, the help pages and the icon were
+missing, and ``[llm]`` and ``[privacy]`` installed nothing.  The
 wheel is built by Bazel (``//teachers_teammate:teachers_teammate_wheel``) from the targets in
 ``teachers_teammate/BUILD``, and this test holds it to the source tree and to pyproject.toml, so
 the three cannot drift apart.
@@ -82,7 +82,7 @@ def test_every_source_module_is_in_the_wheel(wheel: zipfile.ZipFile, package_dir
     """
     Given  the Python files of teachers_teammate in the source tree
     When   they are looked up in the wheel
-    Then   every one is there, GUI and Benchmark included (a missing module is a crash after
+    Then   every one is there, GUI included (a missing module is a crash after
            `pip install`, not a missing feature)
     """
     in_wheel = set(wheel.namelist())

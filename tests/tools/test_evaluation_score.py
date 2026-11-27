@@ -29,18 +29,16 @@ from tools.evaluation.core.records import (
     TestRecord,
 )
 from tools.evaluation.metrics import text_loss
-from tools.evaluation.metrics.quality import apply_alternatives, edits
+from teachers_teammate.domain.proofreading.edit_agreement import apply_alternatives, edits
 from tools.evaluation.report.score import (
     SCORER_VERSION,
     ScoreOptions,
     Scored,
-    added_marks,
     category_agreement,
     review_for_counting,
     score,
     score_row,
     scored_from_dict,
-    strip_added_marks,
 )
 
 SOURCE = "Er gehen heim."
@@ -431,29 +429,6 @@ def test_marks_the_model_added_are_counted_when_the_report_asks() -> None:
 
     assert scored.true_positives == 0
     assert scored.marks_added is True
-
-
-def test_a_mark_the_source_already_has_is_not_reported() -> None:
-    """
-    Given  a Markdown source and an answer that keeps its bold text
-    When   the added marks are checked
-    Then   nothing is reported, because the model added nothing
-    """
-    source = "Er **geht** heim."
-
-    assert added_marks(source, source) is False
-
-
-def test_stripping_leaves_a_mark_the_source_already_has() -> None:
-    """
-    Given  a Markdown source and an answer that adds a second bold word
-    When   the marks the source does not have are stripped
-    Then   the source's own bold text stays, because it is part of the text
-    """
-    source = "Er **geht** heim."
-    output = "Er **geht** gleich heim."
-
-    assert strip_added_marks(source, output) == output
 
 
 # ── the accepted alternatives of the key ────────────────────────────────────

@@ -27,7 +27,7 @@ STUDENT_STRIKE = "#999999"
 """The student's own crossed-out words: grey, so they read as the page's history."""
 
 MODEL_STRIKE = "#c0392b"
-"""The words the model took out: red, as in the Word files and the benchmark."""
+"""The words the model took out: red, as in the Word files."""
 
 CHOSEN_BACKGROUND = "#ffe066"
 CHOSEN_TEXT = "#222222"

@@ -24,6 +24,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from teachers_teammate.domain.proofreading.marks import strip_added_marks
+
 from ..core.axes import run_key_sha256
 from ..core.constants import TextKind
 from ..core.formats import FormatError
@@ -38,7 +40,6 @@ from .score import (
     ScoreOptions,
     score,
     scored_from_dict,
-    strip_added_marks,
 )
 
 SCORES_SUFFIX = ".scores.jsonl"

@@ -18,10 +18,12 @@ SETTINGS = "Settings"
 ALL_SETTINGS = "All settings…"
 
 TOOLS = "Tools"
-BENCHMARK = "Benchmark…"
-BENCHMARK_TIP = "Try a document with different text-recognition settings and compare the results."
 SYSTEM_MONITOR = "System Monitor"
 SYSTEM_MONITOR_TIP = "How busy this computer is, and how long each document took."
+COMPARE_MODELS = "Compare proofreading models…"
+COMPARE_MODELS_TIP = (
+    "Ask several writing models about one document's text and see what each of them changed."
+)
 SETUP_ASSISTANT = "Setup Assistant…"
 SETUP_ASSISTANT_TIP = "Answer a few questions to set up the AI for this computer."
 

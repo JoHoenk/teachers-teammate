@@ -1,9 +1,8 @@
 """Unit tests for the core layer: the formats, the identities, the axes and the protocol table.
 
 The formats round-trip, an unknown field survives a read and a write, a changed reference moves
-``key_sha256`` and not
-``question_sha256``, added request data moves neither, character offsets round-trip through the
-tokenizer, and changing each record field in turn moves exactly the hash it should.
+``key_sha256`` and not ``question_sha256``, added request data moves neither, character spans
+convert to tokens, and changing each record field in turn moves exactly the hash it should.
 """
 
 from __future__ import annotations
@@ -637,34 +636,7 @@ def test_the_key_of_a_whole_set_covers_every_text() -> None:
     assert key_sha256([first, changed]) != key_sha256([first, second])
 
 
-# ── character offsets round-trip through the tokenizer ───────────────────────
-
-
-def test_a_character_span_round_trips_through_the_tokenizer() -> None:
-    """
-    Given  a text and every token boundary of it
-    When   every boundary is mapped to a token and back
-    Then   the character offset is the one it started from
-    """
-    text = "Gestern hat sie ins Kino gegangen."
-    boundaries = offsets.token_offsets(text)
-
-    for index, position in enumerate(boundaries):
-        assert offsets.char_to_token(text, position) == index
-        assert offsets.token_to_char(text, index) == position
-
-
-def test_the_token_boundaries_of_a_text_are_read_once() -> None:
-    """Given  a text whose token boundaries were asked for
-    When   they are asked for again
-    Then   the same tuple comes back, because the boundaries are cached by the text
-    """
-    text = "Gestern hat sie ins Kino gegangen."
-    first = offsets.token_offsets(text)
-
-    second = offsets.token_offsets(text)
-
-    assert first is second
+# ── character spans to token spans ──────────────────────────────────────────
 
 
 def test_the_text_under_a_character_span_is_the_tokens_joined() -> None:
@@ -679,17 +651,6 @@ def test_the_text_under_a_character_span_is_the_tokens_joined() -> None:
     start, end = offsets.token_span_to_chars(text, span)
 
     assert offsets.text_under(text, (start, end)) == "sie ins Kino"
-
-
-def test_a_position_inside_a_token_has_no_token_index() -> None:
-    """
-    Given  a character position in the middle of a word
-    When   it is mapped to a token
-    Then   there is none
-    """
-    text = "Gestern hat sie"
-
-    assert offsets.char_to_token(text, 3) is None
 
 
 def test_a_span_that_does_not_lie_on_token_boundaries_is_refused() -> None:

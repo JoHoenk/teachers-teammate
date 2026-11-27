@@ -30,7 +30,7 @@ py_library(
     deps = ["//teachers_teammate:application_lib"],
 )
 
-# Developer probe (needs a running Ollama server and the developer's own benchmark pages; not run
+# Developer probe (needs a running Ollama server and the developer's own test pages; not run
 # in CI) that measures what a reading model costs on one page: the answer tokens per page and the
 # words per page, which are the catalog's answer_length and TYPICAL_PAGE_WORDS.
 py_binary(

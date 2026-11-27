@@ -1,6 +1,6 @@
 """What a report computes from counts: one F-beta, pooled over the texts of a group.
 
-:class:`~..metrics.quality.EditScore` knows the metrics of one text; a report needs them over many
+:class:`~teachers_teammate.domain.proofreading.edit_agreement.EditScore` knows the metrics of one text; a report needs them over many
 texts, and it needs one answer to "nothing was scored here".  This module is that arithmetic, pure
 and shared by every table, so no two tables can drift apart.  It also names what a report needs from
 one scored text (:class:`ItemFacts`), and what a table that shows the text itself needs
@@ -17,12 +17,13 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from teachers_teammate.domain.proofreading.edit_agreement import DEFAULT_BETA, EditScore
+
 from ..core.axes import AXIS_BY_NAME, axis_label, compare_key, compare_key_sha256, varying_axes
 from ..core.modes import Exchange, setup_label, steps_of
 from ..core.performance import Performance
 from ..core.records import Protocol as RunProtocol
 from ..core.records import RunHeader, TestRecord
-from ..metrics.quality import DEFAULT_BETA, EditScore
 
 
 class CountsLike(Protocol):
@@ -195,7 +196,7 @@ def mode_label(protocol: RunProtocol) -> str:
 
 
 def pooled(items: Iterable[CountsLike]) -> EditScore:
-    """Sum the counts of the items into one :class:`~..metrics.quality.EditScore`."""
+    """Sum the counts of the items into one :class:`~teachers_teammate.domain.proofreading.edit_agreement.EditScore`."""
     true_positives = false_positives = found = false_negatives = 0
     for item in items:
         true_positives += item.true_positives

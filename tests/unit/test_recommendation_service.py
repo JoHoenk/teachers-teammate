@@ -211,6 +211,43 @@ def test_detect_hardware_reports_the_computers_memory_from_the_probe(monkeypatch
 
 
 @pytest.mark.unit
+def test_rating_for_a_detection_follows_it_unless_a_profile_was_chosen(monkeypatch) -> None:
+    """
+    Given  a detected computer with a 16 GB card and 32 GB of memory
+    When   a model is rated for that detection, with the profile left to the app and chosen by hand
+    Then   the first rating is the detection's own, the second follows the chosen profile
+    """
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+
+    monkeypatch.setattr(gpu_detector, "detect_gpus", lambda: [GpuInfo("nvidia", "RTX 3080", 16384)])
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
+    monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 32.0)
+    service = _service()
+    detection = service.detect_hardware(_URL)
+    tags = ["gpt-oss:20b"]
+
+    automatic = service.rate_for(tags, "general", detection, HardwareProfileSetting.AUTO, _URL)
+    chosen = service.rate_for(tags, "general", detection, HardwareProfileSetting.CPU, _URL)
+
+    assert automatic == service.rate_ollama_models(
+        tags,
+        "general",
+        detection.profile,
+        _URL,
+        system_memory_gb=detection.system_memory_gb,
+        card_gb=detection.card_gb,
+    )
+    assert chosen == service.rate_ollama_models(
+        tags,
+        "general",
+        HardwareProfile.CPU,
+        _URL,
+        system_memory_gb=detection.system_memory_gb,
+        card_gb=detection.card_gb,
+    )
+
+
+@pytest.mark.unit
 def test_a_chosen_profile_carries_the_memory_only_for_a_local_server(monkeypatch) -> None:
     """
     Given  a chosen profile ("8gb") and a computer with 32 GB of memory

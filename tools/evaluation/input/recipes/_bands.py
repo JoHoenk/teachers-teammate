@@ -21,8 +21,9 @@ import io
 import random
 from typing import cast
 
+from teachers_teammate.domain.proofreading.edit_agreement import ordered_edits
+
 from ...core.constants import TextKind
-from ...metrics.quality import ordered_edits
 from .. import testset
 from ..corpora.falko_merlin import FalkoMerlin
 from ..corpora.wi import WriteAndImprove

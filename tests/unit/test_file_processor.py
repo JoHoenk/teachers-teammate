@@ -38,12 +38,11 @@ from teachers_teammate.exceptions import (
     StageErrorKind,
 )
 from teachers_teammate.infrastructure.workflow.file_processor import (
-    REVIEW_UNMATCHED,
     FileProcessor,
     FileProcessorDeps,
 )
 from teachers_teammate.interfaces import Corrector
-from teachers_teammate.texts.review import REVIEW_DOES_NOT_FIT
+from teachers_teammate.texts.review import REVIEW_DOES_NOT_FIT, REVIEW_UNMATCHED
 from teachers_teammate.infrastructure.proofreading.port import PortAnswer, StepRequest
 from tests.fakes.fake_port import FakePort, answer
 

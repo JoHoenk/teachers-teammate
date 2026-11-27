@@ -29,8 +29,8 @@ from tools.evaluation.core.records import (
     key_sha256,
     question_sha256,
 )
-from tools.evaluation.metrics.offsets import token_offsets
-from tools.evaluation.metrics.quality import ordered_edits
+from teachers_teammate.domain.proofreading.word_diff import text_offsets
+from teachers_teammate.domain.proofreading.edit_agreement import ordered_edits
 from tools.evaluation.report import load
 from tools.evaluation.report.viewer import model
 from tools.evaluation.store import layout, writer
@@ -46,7 +46,7 @@ FINGERPRINT = protocol_table.fingerprints_of(protocol_table.current_version())[0
 
 def _label(source: str, reference: str) -> ReferenceLabel:
     """Return the first edit of *reference* against *source* as a label, in characters."""
-    offsets = token_offsets(source)
+    offsets = text_offsets(source)
     start, end, replacement = ordered_edits(source, reference)[0]
     return ReferenceLabel(
         start=offsets[start],
@@ -94,7 +94,7 @@ def _header(records: tuple[TestRecord, ...], testset: str) -> RunHeader:
 
 def _review(record: TestRecord) -> CorrectionReview:
     """Return the review of *record*: its one edit, explained."""
-    offsets = token_offsets(record.source)
+    offsets = text_offsets(record.source)
     start, end, replacement = ordered_edits(record.source, record.reference or record.source)[0]
     return CorrectionReview(
         edits=(

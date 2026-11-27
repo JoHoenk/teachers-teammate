@@ -17,9 +17,11 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from teachers_teammate.domain.proofreading.edit_agreement import EditScore, edits
+from teachers_teammate.domain.proofreading.word_diff import Edit
+
 from ...core.constants import TextKind
 from ...core.performance import step_one_share
-from ...metrics.quality import Edit, EditScore, edits
 from .. import groups
 
 DECIDING_LANGUAGES: tuple[str, ...] = groups.DECIDING_LANGUAGES

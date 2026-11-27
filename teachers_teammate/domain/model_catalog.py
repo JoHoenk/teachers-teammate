@@ -633,7 +633,7 @@ RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
     "ocr": {
         HardwareProfile.CPU: ("glm-ocr:q8_0",),
         # 16 GB reading list intentionally equals the 8 GB list until a larger
-        # vision model has been validated with the Benchmark app.
+        # vision model has been validated on a teacher's handwriting.
         HardwareProfile.CARD_8GB: (
             DEFAULT_OCR_MODEL,
             "qwen3-vl:8b",

@@ -24,8 +24,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from teachers_teammate.domain.proofreading.edit_agreement import DEFAULT_BETA
+
 from ...core.performance import per_100_words
-from ...metrics.quality import DEFAULT_BETA
 from .. import pooled, summary
 from ..groups import DECIDING_LANGUAGES, Range
 from ..load import LoadedItem

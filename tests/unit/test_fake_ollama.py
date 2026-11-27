@@ -403,6 +403,22 @@ def test_the_last_word_of_every_text_is_replaced_whatever_it_is(fake: FakeOllama
     assert two == "First Page\n\nSecond Zielwort\n"
 
 
+def test_a_model_of_its_own_tag_writes_its_own_last_word(fake: FakeOllama) -> None:
+    """
+    Given  a fake that replaces the last word, and gives one model tag a word of its own
+    When   that model and another one are asked about the same text
+    Then   each writes its own word, so the two disagree at that place
+    """
+    fake.answer_chats(
+        ProofreadingAnswers(last_word="Zielwort", last_words=(("other:1b", "Vergleichswort"),))
+    )
+    client = OllamaClient(fake.url)
+    asked = correct_user("Hello Wor1d", language="English", level="A2")
+
+    assert client.chat("m:1b", asked) == "Hello Zielwort"
+    assert client.chat("other:1b", asked) == "Hello Vergleichswort"
+
+
 def test_a_stand_in_that_cannot_answer_says_why_over_http(fake: FakeOllama) -> None:
     """
     Given  a fake that proofreads and a chat request without any text to proofread

@@ -490,7 +490,7 @@ class StageBuilder:
 
         if cfg.anonymization_enabled:
             try:
-                anonymizer = self._build_anonymizer()
+                anonymizer = self.build_anonymizer()
             except ProviderNotAvailableError as exc:
                 if cfg.correction_enabled:
                     raise  # text would be sent unprotected: the run must not start
@@ -527,7 +527,12 @@ class StageBuilder:
         )
         return where is DataLocation.ONLINE
 
-    def _build_anonymizer(self) -> Anonymizer:
+    def build_anonymizer(self) -> Anonymizer:
+        """Return the anonymizer of this config's language and settings.
+
+        The one place the settings are resolved into the models and patterns an anonymizer
+        loads, so a run, a comparison and a text export all hide the same names.
+        """
         cfg = self.config
         try:
             anon_config, notice = resolve_anonymizer_config(
@@ -549,7 +554,7 @@ class StageBuilder:
         """
         if not self.config.text_anonymized_enabled:
             return None
-        return shared or self._build_anonymizer()
+        return shared or self.build_anonymizer()
 
     def build_evaluation(
         self,

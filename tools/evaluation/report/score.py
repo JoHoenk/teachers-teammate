@@ -20,12 +20,23 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field, fields
 from typing import Any
 
+from teachers_teammate.domain.proofreading.edit_agreement import (
+    EditScore,
+    apply_alternatives,
+    char_edits,
+    char_to_token,
+    count_explained,
+    edits,
+    match_edits,
+    ordered_edits,
+)
+from teachers_teammate.domain.proofreading.marks import added_marks, strip_added_marks
 from teachers_teammate.domain.proofreading.review import (
     AlignedReview,
     CorrectionReview,
     align,
 )
-from teachers_teammate.domain.proofreading.word_diff import tokenize
+from teachers_teammate.domain.proofreading.word_diff import Edit, text_offsets, tokenize
 
 from ..core.constants import TextKind
 from ..core.formats import FormatError
@@ -34,24 +45,11 @@ from ..core.modes import Step
 from ..core.records import TASK_PROOFREAD, TASKS, Answer, RunHeader, TestRecord
 from ..metrics import text_loss
 from ..metrics.item_scores import item_scores
-from ..metrics.offsets import char_span_to_tokens, char_to_token, token_offsets
-from ..metrics.quality import (
-    Edit,
-    EditScore,
-    apply_alternatives,
-    char_edits,
-    count_explained,
-    edits,
-    match_edits,
-    ordered_edits,
-    unchanged_sentences,
-)
+from ..metrics.offsets import char_span_to_tokens
+from ..metrics.quality import unchanged_sentences
 
 SCORER_VERSION = 4
 """Version of the numbers :func:`score` returns.  Bumped by hand, pinned by golden numbers."""
-
-_MARK_MARKS = ("**", "__", "~~", "[unclear]")
-"""Markdown marks some models add to "highlight" their changes; not part of the text."""
 
 
 @dataclass(frozen=True)
@@ -206,26 +204,6 @@ def scored_from_dict(scores: Mapping[str, Any]) -> Scored:
     return Scored.from_dict(scores)
 
 
-def strip_added_marks(source: str, output: str) -> str:
-    """Return *output* without the Markdown marks that *source* does not contain.
-
-    Scoring ignores them by default (``report --count-marks`` counts them): only the words matter.
-    """
-    for mark in _MARK_MARKS[:-1]:
-        if mark not in source:
-            output = output.replace(mark, "")
-    return output
-
-
-def added_marks(source: str, output: str) -> bool:
-    """Whether the output carries Markdown marks the source does not.
-
-    A model that "highlights" its changes puts literal asterisks into the text a teacher receives;
-    the structured-output check does not see it.
-    """
-    return any(mark in output and mark not in source for mark in _MARK_MARKS)
-
-
 def review_for_counting(
     run: RunHeader, review: CorrectionReview | None, source: str, output: str
 ) -> CorrectionReview | None:
@@ -293,7 +271,7 @@ def category_agreement(
             if match.exact
         )
     }
-    offsets = token_offsets(source)
+    offsets = text_offsets(source)
     if aligned is None:
         aligned = align(source, output, review)
     noted = {
@@ -539,7 +517,7 @@ def notes_of(
     A note that explains a change is linked to it by the index of that change in
     :func:`char_edits`; a note that matches no change keeps ``None`` and is flagged, so a reader
     can tell an unplaceable remark from an unlinked one.  The flagged notes are exactly
-    the ones :func:`~..metrics.quality.count_explained` counts as orphans.
+    the ones :func:`~teachers_teammate.domain.proofreading.edit_agreement.count_explained` counts as orphans.
     """
     if review is None:
         return ()
@@ -562,12 +540,10 @@ __all__ = [
     "CategoryAgreement",
     "ScoreOptions",
     "Scored",
-    "added_marks",
     "category_agreement",
     "notes_of",
     "review_for_counting",
     "score",
     "score_row",
     "scored_from_dict",
-    "strip_added_marks",
 ]

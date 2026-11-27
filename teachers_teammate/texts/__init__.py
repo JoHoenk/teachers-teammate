@@ -11,7 +11,6 @@ Which module owns what:
 ``_types.py``        the shapes: :class:`Notice`, :class:`Question`, :class:`FilePrompt`
 ``addons.py``        the reading engines, their downloads and the Add-ons page's installs
 ``app.py``           the app's name, the names of its steps, the update banner, Help and About
-``benchmark.py``     the Benchmark window
 ``check.py``         what the Check tab's widgets say around its text
 ``cli.py``           the command line's help and the lines it prints while it works
 ``credentials.py``   the Settings list of access keys (API keys) and the note under each

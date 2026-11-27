@@ -120,6 +120,33 @@ class RunStatsCollector:
         return sample
 
 
+class StepSampler:
+    """The steps of one proofreading, as a run's statistics collector takes them.
+
+    A proofreading unit (``workflow/proofread_text.py``) reports its one step here; a run hands
+    in the collector of the whole batch, the comparison one per model.  A step that is not
+    *usable* is discarded rather than counted: a failed answer, or a review that fell back to
+    corrections only, would put its requests into the answer length of another mode.
+    """
+
+    def __init__(self, collector: RunStatsCollector | None = None) -> None:
+        self._collector = collector
+
+    def begin_sample(self, step: SpeedStep) -> None:
+        """Mark *step* as running, so the requests it sends become one sample."""
+        if self._collector is not None:
+            self._collector.begin(step)
+
+    def finish_sample(self, *, words: int = 0, mode: str = "", usable: bool = True) -> None:
+        """Turn the requests of the step that just ended into one sample."""
+        if self._collector is None:
+            return
+        if usable:
+            self._collector.finish(words=words, mode=mode)
+        else:
+            self._collector.discard()
+
+
 def _sample_of(step: SpeedStep, stats: list[ChatStats], *, words: int) -> RunSample | None:
     """Return the sample the requests *stats* of *step* add up to, or ``None`` without a rate."""
     read_tokens = sum(item.prompt_eval_count for item in stats)

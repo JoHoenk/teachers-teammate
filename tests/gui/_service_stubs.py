@@ -458,6 +458,19 @@ class RecommendationServiceStub(LocalDataFlowStub):
             result[tag] = catalog_uses(spec) if spec is not None else None
         return result
 
+    def rate_for(self, tags, task, detection, setting, ollama_url, *, cached_only: bool = False):
+        from teachers_teammate.domain.model_catalog import active_profile  # noqa: PLC0415
+
+        return self.rate_ollama_models(
+            tags,
+            task,
+            active_profile(detection, setting),
+            ollama_url,
+            cached_only=cached_only,
+            system_memory_gb=detection.system_memory_gb if detection is not None else None,
+            card_gb=detection.card_gb if detection is not None else None,
+        )
+
     def rate_ollama_models(
         self,
         tags: list[str],

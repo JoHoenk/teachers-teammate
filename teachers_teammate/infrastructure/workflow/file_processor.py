@@ -9,7 +9,6 @@ from pathlib import Path
 import threading
 from typing import TYPE_CHECKING
 
-from ...domain.anonymization import leftover_placeholders, restore_with_offsets
 from ...domain.document_state import machine_texts
 from ...domain.formatted_text import TextFormat, join_labelled_pages
 from ...domain.output_files import (
@@ -20,8 +19,7 @@ from ...domain.output_files import (
     output_path,
 )
 from ...domain.performance_estimate import SpeedStep
-from ...domain.proofreading.result import CorrectionOutcome
-from ...domain.proofreading.review import CorrectionReview, fits, fitted_review
+from ...domain.proofreading.review import CorrectionReview, fitted_review
 from ...domain.stages import ProgressStage, Stage
 from ...domain.teacher_work import (
     CurrentTexts,
@@ -33,7 +31,6 @@ from ...domain.teacher_work import (
 from ...exceptions import (
     FILE_GONE_MESSAGE,
     RECOGNITION_OFF_MESSAGE,
-    AnonymizerError,
     FileSkipped,
     PipelineInputError,
     RecognitionSwitchedOffError,
@@ -61,20 +58,25 @@ from ...messages import (
     output_overwrites_input,
     output_read_back_as_input,
     output_replaces_another,
-    personal_info_removal_failed,
-    personal_info_restore_failed,
     preprocessing_failed,
     preview_save_failed,
 )
 from ...texts import report as report_text
-from ...texts.review import REVIEW_DOES_NOT_FIT, personal_info_still_hidden
+from ...texts.review import REVIEW_DOES_NOT_FIT
 from ...texts.run import RESULTS_CACHED, docx_failed, output_not_saved, text_files_failed
 from ..ocr_formats import plain_text_of
 from ..reporting import StdoutReporter
-from ..run_stats import RunStatsCollector
+from ..run_stats import RunStatsCollector, StepSampler
 from .cache_service import CacheContext, CacheReconciliationService
 from .ocr_service import OCRStageService
 from .preprocess_service import PreparedInput, PreprocessService
+from .proofread_text import (
+    ProofreadOutcome,
+    ProofreadText,
+    hide_personal_info,
+    names_left_hidden,
+    restore_personal_info,
+)
 
 if TYPE_CHECKING:
     from ..ocr_formats import OcrOutputPostprocessor
@@ -181,12 +183,6 @@ class ProcessingResult:
         )
 
 
-REVIEW_UNMATCHED = (
-    "The explanations could not be matched to the names in the text and were left out."
-)
-"""Warning when the review of an anonymized text could not be carried over to the real names."""
-
-
 @dataclass(frozen=True)
 class _OutputTexts:
     """The three texts one output pass writes: source, proofread and evaluation."""
@@ -284,14 +280,6 @@ class _LazyAnonymization:
         return self.result
 
 
-@dataclass(frozen=True)
-class _Sent:
-    """What went out for one proofreading: the text and the mask it was sent with."""
-
-    text: str
-    mask: AnonymizationMap
-
-
 def _served_review(
     ctx: CacheContext, texts: CurrentTexts, file: Path
 ) -> tuple[CorrectionReview | None, list[str]]:
@@ -341,7 +329,8 @@ class FileProcessor:
         self._on_ocr_done = config.on_ocr_done
         self._on_stage_started = config.on_stage_started
         self._reporter = config.reporter
-        self._stats = config.stats
+        #: Turns the requests of each step into a sample of how fast this machine is.
+        self._sampler = StepSampler(config.stats)
 
     def process(self, file: Path) -> ProcessingResult:
         """Process *file* through all pipeline stages.
@@ -406,7 +395,7 @@ class FileProcessor:
         except FileSkipped as left_out:
             return ProcessingResult.left_out(str(left_out))
         except StageError as exc:
-            self._finish_sample(usable=False)  # the requests of a failed step say nothing
+            self._sampler.finish_sample(usable=False)  # a failed step's requests say nothing
             _logger.error("%s stage failed (%s): %s", exc.stage or "pipeline", exc.kind, exc)
             return ProcessingResult.failure(str(exc))
         return replace(result, correction_warning="; ".join(correction_warnings))
@@ -556,26 +545,6 @@ class FileProcessor:
     def _report_ocr_page(self, page: int, total: int) -> None:
         self._reporter.status(report_text.ocr_page(page, total))
 
-    def _begin_sample(self, step: SpeedStep) -> None:
-        """Mark *step* as running, so the requests it sends become one sample."""
-        if self._stats is not None:
-            self._stats.begin(step)
-
-    def _finish_sample(self, *, words: int = 0, mode: str = "", usable: bool = True) -> None:
-        """Turn the requests of the step that just ended into one sample.
-
-        *words* is the text that went through, *mode* the proofreading mode really used.  A step
-        that sent no request (a result from the cache) gives no sample, and neither does one
-        that is not *usable*: a failed step, or a review that fell back to corrections only,
-        whose requests would be counted into the answer length of the mode that finally answered.
-        """
-        if self._stats is None:
-            return
-        if usable:
-            self._stats.finish(words=words, mode=mode)
-        else:
-            self._stats.discard()
-
     def _run_ocr(
         self,
         file: Path,
@@ -608,10 +577,10 @@ class FileProcessor:
             def page_started(page: int, total: int) -> None:
                 if total > 1:
                     self._report_ocr_page(page, total)
-                self._begin_sample(SpeedStep.READING)
+                self._sampler.begin_sample(SpeedStep.READING)
 
             def page_done(text: str) -> None:
-                self._finish_sample(words=len(text.split()))
+                self._sampler.finish_sample(words=len(text.split()))
 
             page_texts = self._ocr_stage_service.run_pages(
                 ocr_inputs, self._language, on_page=page_started, on_page_done=page_done
@@ -657,47 +626,21 @@ class FileProcessor:
     def _hide_personal_info(
         self, text: str, *, stage: Stage | str = "", before_model: bool = False
     ) -> tuple[str, AnonymizationMap]:
-        """Hide personal data in *text* before a model sees it (no-op without an anonymizer).
-
-        *stage* names the stage a failure belongs to; *before_model* is the pass made for one
-        request of its own (the review) rather than the one the proofreading shares.
-
-        The one place that calls the anonymizer, so every call — the pass the proofreading uses,
-        the one before the content review and the one before the anonymized text file — ends a
-        failing file the same way instead of ending the run.
-        """
-        if self._anonymizer is None:
-            return text, {}
-        try:
-            anonymized, anon_map = self._anonymizer.anonymize(text)
-        except Exception as exc:  # spaCy and name-model errors vary; report them per file
-            raise AnonymizerError(
-                personal_info_removal_failed(message_of(exc)), stage=stage
-            ) from exc
-        if before_model:
-            self._reporter.status(report_text.anonymized_before(stage))
-        else:
-            self._reporter.status(report_text.personal_info_removed(len(anon_map)))
-        return anonymized, anon_map
+        """Hide personal data in *text* before a model sees it (no-op without an anonymizer)."""
+        return hide_personal_info(
+            self._anonymizer, text, stage=stage, reporter=self._reporter, before_model=before_model
+        )
 
     def _restore_pii(
         self, text: str, anon_map: AnonymizationMap, *, stage: Stage | str = ""
     ) -> str:
         """Put the real personal data back into *text*; end the file when that fails."""
-        if not (anon_map and text and self._anonymizer is not None):
-            return text
-        try:
-            return self._anonymizer.restore(text, anon_map)
-        except (ValueError, KeyError) as exc:
-            raise AnonymizerError(
-                personal_info_restore_failed(message_of(exc)), stage=stage
-            ) from exc
+        return restore_personal_info(self._anonymizer, text, anon_map, stage=stage)
 
     @staticmethod
     def _left_hidden(text: str, anon_map: AnonymizationMap) -> str:
         """Return the warning about personal data still hidden in *text*, or ``""``."""
-        left = leftover_placeholders(text, anon_map)
-        return personal_info_still_hidden(left) if left else ""
+        return names_left_hidden(text, anon_map)
 
     def _run_correction_or_cache(
         self,
@@ -723,18 +666,25 @@ class FileProcessor:
             raise self._stop_correction(preview_img, texts)
         self._reporter.status(report_text.RUNNING_CORRECTION)
         self._notify_stage(file, ProgressStage.CORRECTION)
-        sent = _Sent(*anonymized(Stage.CORRECTION))
-        # A text that goes out in several pieces cannot be changed across a piece boundary;
-        # say so before the requests start, so the teacher knows what to expect.
-        pieces = self._correction.pieces(
-            sent.text, self._language, text_format=texts.transcription_format
-        )
-        if pieces is not None and pieces > 1:
-            self._reporter.status(report_text.proofreading_in_parts(file.name, pieces))
-        if self._stopping():  # the anonymization may have taken a while
-            raise self._stop_correction(preview_img, texts)
-        outcome = self._proofread(self._correction, sent.text, texts, preview_img)
-        return self._keep_correction(file, texts, ctx, outcome, sent)
+        try:
+            result = ProofreadText(
+                self._correction,
+                self._anonymizer,
+                self._language,
+                reporter=self._reporter,
+                sampler=self._sampler,
+            )(
+                texts.transcription,
+                texts.transcription_format,
+                name=file.name,
+                stop_requested=self._stopping,
+                # The file's anonymized text is made once and shared with the anonymized text
+                # file; the unit asks for it rather than hiding the same text again.
+                hide=lambda _text, _format: anonymized(Stage.CORRECTION),
+            )
+        except RunStoppedError as exc:
+            raise self._stop_correction(preview_img, texts) from exc
+        return self._keep_correction(file, texts, ctx, result)
 
     def _stored_correction(
         self, file: Path, texts: CurrentTexts, ctx: CacheContext
@@ -757,85 +707,36 @@ class FileProcessor:
             text_format=texts.transcription_format,
         )
 
-    def _proofread(
-        self, corrector: Corrector, text: str, texts: CurrentTexts, preview_img: str
-    ) -> CorrectionOutcome:
-        """Return the corrector's answer to *text*, with the sample of the run recorded."""
-        self._begin_sample(SpeedStep.PROOFREADING)
-        try:
-            outcome = corrector.correct(
-                text, self._language, text_format=texts.transcription_format
-            )
-        except RunStoppedError as exc:
-            raise self._stop_correction(preview_img, texts) from exc
-        # The mode the answer was really written in: a run that came back without a review
-        # answered in text mode, and its answer length is the text-mode one.
-        self._finish_sample(
-            words=len(text.split()),
-            mode="exchange" if outcome.review is not None else "text",
-            usable=not (outcome.failed or outcome.fell_back),
-        )
-        return outcome
-
     def _keep_correction(
-        self,
-        file: Path,
-        texts: CurrentTexts,
-        ctx: CacheContext,
-        outcome: CorrectionOutcome,
-        sent: _Sent,
+        self, file: Path, texts: CurrentTexts, ctx: CacheContext, result: ProofreadOutcome
     ) -> tuple[CorrectionReview | None, CacheContext, list[str]]:
-        """Restore the personal data of the answer, store it, and say what is worth a warning."""
-        corrected_text = self._restore_pii(outcome.text or "", sent.mask, stage=Stage.CORRECTION)
-        review, unmatched = self._restore_review_pii(
-            outcome.review,
-            sent.mask,
-            sent_text=sent.text,
-            raw_text=texts.transcription,
-            text_format=texts.transcription_format,
-            file_name=file.name,
-        )
-        warnings: list[str] = [outcome.warning] if outcome.warning else []
-        if unmatched:
-            warnings.append(REVIEW_UNMATCHED)
-        left_hidden = self._left_hidden(corrected_text, sent.mask)
-        if left_hidden:
-            warnings.append(left_hidden)
-        stored_warning = "; ".join(w for w in (outcome.warning, left_hidden) if w)
+        """Store the answer and say what is worth a warning."""
         # A failed outcome is the unchanged source; caching it would present that as a finished
         # correction and the next run would never try again.  (A corrections-only fallback
         # *is* stored: the model answered, and asking it for explanations again would repeat
         # the failed requests.)
-        if corrected_text and not outcome.failed:
-            ctx = self._store_correction(
-                file, texts, ctx, stored_warning, corrected_text, review, sent
-            )
-        return review, ctx, warnings
+        if result.text and not result.outcome.failed:
+            ctx = self._store_correction(file, texts, ctx, result)
+        return result.review, ctx, list(result.warnings)
 
     def _store_correction(
-        self,
-        file: Path,
-        texts: CurrentTexts,
-        ctx: CacheContext,
-        warning: str,
-        corrected_text: str,
-        review: CorrectionReview | None,
-        sent: _Sent,
+        self, file: Path, texts: CurrentTexts, ctx: CacheContext, result: ProofreadOutcome
     ) -> CacheContext:
         """Store the answer with what was sent; a write that fails leaves it this run's only."""
+        review = result.review.to_dict() if result.review is not None else None
         try:
             return self._cache_service.record_correction(
                 file,
                 ctx,
-                correction_text=corrected_text,
-                correction_review=review.to_dict() if review is not None else None,
-                correction_warning=warning,
+                correction_text=result.text,
+                correction_review=review,
+                correction_warning=result.stored_warning,
                 # The text the proofreading was made from, stored with its result so the window
                 # can show what really went out, also when nothing was found to hide and the
                 # transcription changes later.  With hiding off it is the extracted text itself,
                 # so nothing is duplicated.
-                sent_text=sent.text if self._anonymizer is not None else "",
-                sent_map=dict(sent.mask) if sent.mask else None,
+                sent_text=result.sent_text if self._anonymizer is not None else "",
+                sent_map=dict(result.sent_map) if result.sent_map else None,
                 # The transcription the answer was made from, so a proofreading made from a
                 # text the document no longer has is stale.
                 source_text=texts.transcription,
@@ -849,51 +750,12 @@ class FileProcessor:
                 state=replace(
                     ctx.state,
                     correction_done=True,
-                    correction_text=corrected_text,
-                    correction_review=review.to_dict() if review is not None else None,
-                    correction_warning=warning,
+                    correction_text=result.text,
+                    correction_review=review,
+                    correction_warning=result.stored_warning,
                     correction_source_hash=text_identity(texts.transcription),
                 ),
             )
-
-    def _restore_review_pii(
-        self,
-        review: CorrectionReview | None,
-        anon_map: AnonymizationMap,
-        *,
-        sent_text: str,
-        raw_text: str,
-        text_format: TextFormat,
-        file_name: str,
-    ) -> tuple[CorrectionReview | None, bool]:
-        """Put the real personal data back into *review* and keep its offsets right.
-
-        The corrector answers about the anonymized text, so the review's offsets are in the plain
-        text of what was sent and its words quote placeholders.  A name is rarely as long as its
-        placeholder, so every edit after a name would point at the wrong words: the review is
-        remapped through the offsets of the restore and then checked against the plain text of
-        the raw text.  A review that does not fit is dropped, which shows the plain diff and
-        keeps the correction itself; the caller says so in the warnings.
-
-        Returns:
-            The restored review (or ``None``) and whether it had to be dropped.
-        """
-        anonymizer = self._anonymizer
-        if review is None or not anon_map or anonymizer is None:
-            return review, False
-        try:
-            sent_plain = plain_text_of(sent_text, text_format)
-            restored_plain, offsets = restore_with_offsets(sent_plain, anon_map)
-            restored = review.map_text(lambda value: anonymizer.restore(value, anon_map))
-        except (ValueError, KeyError) as exc:
-            _logger.warning("Could not restore PII in the review of %s: %s", file_name, exc)
-            return None, True
-        raw_plain = plain_text_of(raw_text, text_format)
-        remapped = restored.remapped(offsets)
-        if restored_plain != raw_plain or not fits(remapped, raw_plain):
-            _logger.warning("Could not match the review of %s to the names in the text", file_name)
-            return None, True
-        return remapped, False
 
     def _run_evaluation_or_cache(
         self,
@@ -947,14 +809,14 @@ class FileProcessor:
         )
         if self._stopping():
             raise stopped()
-        self._begin_sample(SpeedStep.REVIEW)
+        self._sampler.begin_sample(SpeedStep.REVIEW)
         try:
             evaluation = self._evaluation.evaluate(
                 text_for_evaluation, self._language, text_format=texts.transcription_format
             )
         except RunStoppedError as exc:
             raise stopped() from exc
-        self._finish_sample(
+        self._sampler.finish_sample(
             words=len(text_for_evaluation.split()), usable=evaluation.warning is None
         )
         eval_text = self._restore_pii(evaluation.text or "", anon_map, stage=Stage.EVALUATION)

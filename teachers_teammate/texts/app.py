@@ -18,7 +18,6 @@ NAME = "Teacher's Teammate"
 #: The name with a typographic apostrophe, for a menu entry.
 NAME_TYPOGRAPHIC = NAME.replace("'", "\u2019")
 MAIN_WINDOW_TITLE = NAME
-BENCHMARK_WINDOW_TITLE = f"{NAME} — OCR Benchmark"
 
 GUIDE_TITLE = f"User Guide — {NAME}"
 ABOUT_TITLE = f"About {NAME}"
@@ -85,7 +84,6 @@ _PYSIDE_TAIL = (
 
 #: Raised when the GUI cannot start because Qt is not installed.
 MISSING_PYSIDE = f"The window needs {_PYSIDE_TAIL}"
-MISSING_PYSIDE_BENCHMARK = f"The Benchmark window needs {_PYSIDE_TAIL}"
 
 
 UPDATE_DOWNLOAD = "Download"

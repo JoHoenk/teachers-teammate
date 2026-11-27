@@ -2,7 +2,7 @@
 
 :class:`MarkdownRenderer` produces the canonical stored notation (CommonMark + GFM
 strikethrough/tables + inline ``<sup>``/``<sub>``/``<u>``); :class:`PlainTextRenderer`
-produces markup-free text for diffs and benchmark metrics.
+produces markup-free text for diffs and edit metrics.
 """
 
 from __future__ import annotations

@@ -43,7 +43,7 @@ _LINE_SEPARATOR = chr(0x2028)
 _NO_BREAK_SPACE = chr(0x00A0)
 
 STRIKE_COLOUR = "#c0392b"
-"""Colour of crossed-out words the model took out (the benchmark's and the Word files')."""
+"""Colour of crossed-out words the model took out (the Word files')."""
 
 STUDENT_STRIKE_COLOUR = "#999999"
 """Colour of the student's own crossed-out words: grey, so they read as the page's history
@@ -113,8 +113,8 @@ class _ListWriter:
 def render_html(doc: FormattedDocument, *, strike_colour: str = STRIKE_COLOUR) -> str:
     """Return Qt-compatible HTML for *doc* (no newlines in the markup: spacing is literal).
 
-    *strike_colour* colours the crossed-out words.  The benchmark and the Word files keep the
-    red of :data:`STRIKE_COLOUR`; the Check tab passes :data:`STUDENT_STRIKE_COLOUR`, because
+    *strike_colour* colours the crossed-out words.  The Word files keep the red of
+    :data:`STRIKE_COLOUR`; the Check tab passes :data:`STUDENT_STRIKE_COLOUR`, because
     there the crossed-out words are the student's own and must not read as the model's work.
     """
     parts: list[str] = ['<html><body style="white-space: pre-wrap;">']

@@ -21,15 +21,14 @@ from ..application.run import RunPreflight
 from ..config import Config
 from ..domain.requirements import MemoryShortfall
 from ..domain.stages import Stage
-from ..texts import app as app_text
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
-from ..texts.privacy import advice_text, level_text, stage_badge
 from . import _dialogs
 from ._background import run_in_background
 from ._check_controller import CheckController
 from ._config_panel import ConfigPanel
 from ._errors import show_failure, show_notice
+from ._flow_confirm import confirm_data_flow
 from ._privacy_settings import FlowAcknowledgements
 from ._readiness_controller import ReadinessController
 from ._results_table import ResultsTable
@@ -62,8 +61,10 @@ class RunStartHooks:
     recognised_files: Callable[[], set[Path]]
     #: Whether a run over these rows reads pages.
     recognition_needed: Callable[[list[str] | None], bool]
-    #: Whether a requirement check or a worker is already going.
+    #: Whether a requirement check, a worker or a model comparison is already going.
     run_in_progress: Callable[[], bool]
+    #: Whether a model comparison is asking models, which a run must not interrupt.
+    comparing: Callable[[], bool]
     #: The remembered "don't send this again" answers.
     acknowledgements: Callable[[], FlowAcknowledgements]
 
@@ -89,6 +90,9 @@ class RunStartController(QObject):
     def start(self) -> None:
         """Check what the queued rows need, then start a run over the selected ones."""
         if self._hooks.run_in_progress():
+            # The Run button is on while models are asked, so say why nothing starts.
+            if self._hooks.comparing():
+                self._hooks.run_controller.warn_busy()
             return
         self._hooks.run_session.from_check = False
         try:
@@ -201,23 +205,8 @@ class RunStartController(QObject):
     def _confirm_data_flow_then(self, config: Config, on_ready: Callable[[], None]) -> None:
         """Ask once before a run that sends content away from this computer."""
         flow = self._app_service.data_flow.describe_data_flow(config)
-        if (
-            not flow.leaves_computer
-            or flow.fingerprint in self._hooks.acknowledgements().fingerprints()
-        ):
+        if confirm_data_flow(self._view.window, flow, self._hooks.acknowledgements()):
             on_ready()
-            return
-        question = dlg.documents_leave_computer(
-            level_text(flow.level),
-            [(app_text.stage_title(stage.stage), stage_badge(stage)) for stage in flow.outbound],
-            [advice_text(tip) for tip in flow.advice],
-        )
-        answer = _dialogs.choose(self._view.window, question)
-        if not answer.accepted:
-            return
-        if answer.checked:
-            self._hooks.acknowledgements().remember(flow)
-        on_ready()
 
     def _confirm_teacher_work_then(
         self, config: Config, worked_on: WorkedOn, on_ready: Callable[[], None]

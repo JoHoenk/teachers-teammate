@@ -174,7 +174,10 @@ thread is left running. The target is `large`.
 One walk runs with proofreading on: the settings name a model on `127.0.0.1` and `FakeOllama`
 answers the exchange (`ProofreadingAnswers`). The walk reads and ticks the items in the Check tab,
 finds the model's word in the Word file, and spoils a stored review, which the app must drop with a
-logged warning (`application/merged_view.py`). The bundle walk never has proofreading on.
+logged warning (`application/merged_view.py`). It also compares that model with a second one that
+writes another word in the same place: one disagreement in *Changes*, the answer under `compare/`,
+a verdict under `compare_marks/`, and *Use for proofreading* in the settings file and back. The
+bundle walk never has proofreading on.
 
 ### Against a bundle
 

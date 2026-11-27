@@ -202,7 +202,7 @@ Function ${FUNC}
     Quit
   ${EndIf}
   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION \
-    "Teacher's Teammate is still open. Close it, also its System Monitor and Benchmark windows, then click Retry." \
+    "Teacher's Teammate is still open. Close it, also its System Monitor window, then click Retry." \
     IDRETRY retry${ID}
   Quit
 FunctionEnd
@@ -919,7 +919,7 @@ Function un.UnDataPageCreate
   ${NSD_SetState} $UnDelCache ${UN_DEFAULT_SETTINGS}
 
   ${NSD_CreateLabel} 22u 84u 258u 20u \
-    "(API keys, your corrections and checks, benchmark history and speed data)"
+    "(API keys, your corrections and checks, speed data)"
   Pop $0
 
   ${NSD_CreateLabel} 10u 108u 270u 32u \
@@ -1030,7 +1030,7 @@ Section "Uninstall"
     ; An all-users uninstall does not touch HKCU below; do not leave the empty parent behind.
     DeleteRegKey /ifempty HKCU "${REG_KEY}"
     RMDir /r "$LOCALAPPDATA\teachers_teammate\Cache"
-    ; The settings file, the benchmark history, the speed data and the teacher's own work sit
+    ; The settings file, the speed data and the teacher's own work sit
     ; beside packages\ and models\ (the config and data folders are the same on Windows).
     ; Earlier versions kept them in Cache\, which the line above already removed.
     Delete "$LOCALAPPDATA\teachers_teammate\ocr.toml"
@@ -1038,6 +1038,9 @@ Section "Uninstall"
     RMDir /r "$LOCALAPPDATA\teachers_teammate\speed"
     ; The corrections and checks the teacher made, one file per essay (domain/teacher_work.py).
     RMDir /r "$LOCALAPPDATA\teachers_teammate\work"
+    ; The verdicts the teacher gave on compared changes, one file per text
+    ; (domain/proofreading/option_marks.py).
+    RMDir /r "$LOCALAPPDATA\teachers_teammate\compare_marks"
     RMDir "$LOCALAPPDATA\teachers_teammate"
   ${EndIf}
 

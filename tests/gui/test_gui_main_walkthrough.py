@@ -477,6 +477,7 @@ def test_the_proofreading_steps_and_the_systems_own_both_run() -> None:
         "proofreading-items",
         "correct",
         "proofreading-checked",
+        "compare-models",
         "export",
         "export-held-open",
         "run-again",

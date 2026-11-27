@@ -35,8 +35,8 @@ from tools.evaluation.core.records import (
     question_sha256,
     text_id,
 )
-from tools.evaluation.metrics.offsets import token_offsets
-from tools.evaluation.metrics.quality import ordered_edits
+from teachers_teammate.domain.proofreading.word_diff import text_offsets
+from teachers_teammate.domain.proofreading.edit_agreement import ordered_edits
 from tools.evaluation.report import gates, groups, load, score, spot_check
 from tools.evaluation.store import accept, layout, reader, validate, writer
 
@@ -67,7 +67,7 @@ def _spans(text: str) -> tuple[tuple[int, int], ...]:
 
 def _label(source: str, reference: str) -> ReferenceLabel:
     """Return the first edit of *reference* against *source* as a label, in characters."""
-    offsets = token_offsets(source)
+    offsets = text_offsets(source)
     start, end, replacement = ordered_edits(source, reference)[0]
     return ReferenceLabel(
         start=offsets[start],
@@ -104,7 +104,7 @@ def _records() -> tuple[TestRecord, ...]:
 
 def _review(record: TestRecord) -> CorrectionReview:
     """Return the review of *record*: its one edit, explained."""
-    offsets = token_offsets(record.source)
+    offsets = text_offsets(record.source)
     start, end, replacement = ordered_edits(record.source, record.reference)[0]
     return CorrectionReview(
         edits=(

@@ -1250,6 +1250,7 @@ class _Alone:
     busy_warnings: list[None]
     busy: list[bool]
     sources: list[str]
+    compared: list[str]
 
 
 @pytest.fixture
@@ -1284,6 +1285,7 @@ def alone(qtbot, monkeypatch, tmp_path: Path) -> _Alone:
     stages: list[tuple[list[str], str]] = []
     busy_warnings: list[None] = []
     busy = [False]
+    compared: list[str] = []
     settings = MemorySettings()
     controller = CheckController(
         window,
@@ -1301,11 +1303,14 @@ def alone(qtbot, monkeypatch, tmp_path: Path) -> _Alone:
             open_settings=lambda *_a, **_kw: None,
             privacy_available=lambda: False,
             export=lambda *_a: None,
+            open_compare=compared.append,
         ),
     )
     tabs.addTab(QWidget(), "Documents")
     tabs.addTab(controller.page, "Check")
-    return _Alone(controller, table, tabs, session, synced, stages, busy_warnings, busy, sources)
+    return _Alone(
+        controller, table, tabs, session, synced, stages, busy_warnings, busy, sources, compared
+    )
 
 
 @pytest.mark.gui
@@ -1371,6 +1376,36 @@ def test_proofreading_from_check_during_a_run_only_warns(alone) -> None:
     assert alone.stages == []
     assert len(alone.busy_warnings) == 1
     assert alone.session.from_check is False
+
+
+@pytest.mark.gui
+def test_comparing_from_check_opens_the_window_on_the_open_document(alone) -> None:
+    """
+    Given  an open document and no run going
+    When   the teacher presses *Compare models…*
+    Then   the window is asked to open the compare window on that document
+    """
+    alone.controller.load(alone.sources[0])
+
+    alone.controller.page.compare_requested.emit()
+
+    assert alone.compared == [alone.sources[0]]
+
+
+@pytest.mark.gui
+def test_comparing_from_check_during_a_run_only_warns(alone) -> None:
+    """
+    Given  an open document while a run is going
+    When   the teacher presses *Compare models…*
+    Then   the window is told the run is busy, and no window is opened
+    """
+    alone.controller.load(alone.sources[0])
+    alone.busy[0] = True
+
+    alone.controller.page.compare_requested.emit()
+
+    assert alone.compared == []
+    assert len(alone.busy_warnings) == 1
 
 
 @pytest.mark.gui

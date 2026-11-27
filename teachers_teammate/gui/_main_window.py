@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon
@@ -53,6 +53,7 @@ from ._app_bootstrap import create_app, finish_process
 from ._background import LatestTask, wait_for_background_tasks
 from ._chart_widget import ChartWidget
 from ._check_controller import CheckController, CheckHooks
+from ._compare_launcher import CompareLauncher, LauncherHooks
 from ._config_panel import ConfigPanel
 from ._errors import install_notices, open_log_folder, show_notice, show_unexpected_anywhere
 from ._export_controller import ExportController
@@ -79,9 +80,6 @@ from ._update_banner import build_update_banner, show_update
 from ._update_check import check_for_update
 from .settings import SettingsPage
 from .settings._page import FOCUS_DETECTION
-
-if TYPE_CHECKING:
-    from .benchmark._benchmark_window import BenchmarkWindow
 
 _logger = logging.getLogger(__name__)
 
@@ -157,8 +155,6 @@ class MainWindow(QMainWindow):
         """Declare the menu bar and what its tools open later."""
         #: Built in ``_build_ui``; the window lays nothing out on it.
         self._menu_bar: MenuBar
-        #: The Benchmark window once opened (parentless, see ``_open_benchmark``).
-        self._benchmark_window: BenchmarkWindow | None = None
         #: Opens the Setup Assistant, also on a first start.
         self._setup_launcher: SetupLauncher
 
@@ -192,6 +188,7 @@ class MainWindow(QMainWindow):
         """Declare the widgets ``_build_ui`` assigns, so the type checker sees them."""
         self._update_banner: QFrame
         self._monitor: SystemMonitorWindow
+        self._compare: CompareLauncher
         self._stats: SystemStatsWidget
         self._run_btn: QPushButton
         self._stop_btn: QPushButton
@@ -292,6 +289,19 @@ class MainWindow(QMainWindow):
         self._monitor = SystemMonitorWindow(self._app_service.recommendations.read_gpu_usage)
         self._chart = self._monitor.chart
         self._stats = self._monitor.stats
+        self._compare = CompareLauncher(
+            services=self._app_service,
+            panel=self._config_panel,
+            hooks=LauncherHooks(
+                documents=lambda: [(str(path), path.name) for path in self._results_table.files()],
+                say=self._say,
+                busy=self._run_in_progress,
+                warn_busy=lambda: self._run_controller.warn_busy(),  # noqa: PLW0108
+                acknowledgements=self._acknowledgements,
+                save_settings=lambda: self._save_settings(notify=False),
+                settings_applied=self._after_settings_applied,
+            ),
+        )
 
     def _run_hooks(self) -> RunHooks:
         """What the run asks of this window. Looked up when a run happens, not now."""
@@ -333,6 +343,7 @@ class MainWindow(QMainWindow):
             open_settings=lambda page, focus: self.open_settings(page, focus=focus),
             privacy_available=lambda: self._privacy_controller.privacy_available,
             export=lambda ids, kind: self._export_controller.on_requested(ids, kind),  # noqa: PLW0108
+            open_compare=self._open_compare,
         )
 
     def _privacy_hooks(self) -> PrivacyHooks:
@@ -348,8 +359,8 @@ class MainWindow(QMainWindow):
         return MenuHooks(
             quit_requested=self._on_quit_requested,
             open_settings=self.open_settings,
-            open_benchmark=self._open_benchmark,
             open_monitor=self._open_system_monitor,
+            open_compare=self._open_compare,
             open_setup_assistant=self._setup_launcher.open,
             open_log_folder=self._open_log_folder,
         )
@@ -444,6 +455,7 @@ class MainWindow(QMainWindow):
                 recognised_files=lambda: self._recognised_files(),  # noqa: PLW0108
                 recognition_needed=lambda source_ids=None: self._recognition_needed(source_ids),
                 run_in_progress=lambda: self._run_in_progress(),  # noqa: PLW0108
+                comparing=lambda: self._compare.running(),  # noqa: PLW0108
                 acknowledgements=lambda: self._acknowledgements(),  # noqa: PLW0108
             ),
         )
@@ -499,30 +511,13 @@ class MainWindow(QMainWindow):
     def _open_system_monitor(self) -> None:
         self._monitor.show_and_raise()
 
+    def _open_compare(self, source_id: str = "") -> None:
+        """Open the compare window on *source_id*, or on the document in front."""
+        self._compare.open(source_id or self._check_controller.current)
+
     def _open_log_folder(self) -> None:
         """Help → Open Log Folder: show where the app writes down what went wrong."""
         open_log_folder()
-
-    def _open_benchmark(self) -> None:
-        """Show the Benchmark window; a second click brings the open one to the front.
-
-        The window is parentless on purpose: it is a whole app that the teacher arranges next
-        to this one, and an owned window would stay on top of it on Windows.  It reads the
-        saved settings (server, profile) when it is created, and again each time it is shown
-        after it was closed.
-        """
-        if self._benchmark_window is None:
-            from .benchmark.composition import (  # noqa: PLC0415  # loaded on demand
-                build_benchmark_window,
-            )
-
-            self._benchmark_window = build_benchmark_window(app_services=self._app_service)
-        elif not self._benchmark_window.isVisible():
-            self._benchmark_window.reload_settings()  # closed since: the settings may differ now
-        window = self._benchmark_window
-        window.show()
-        window.raise_()
-        window.activateWindow()
 
     def _build_left_panel(self) -> QWidget:
         left = QWidget()
@@ -579,19 +574,24 @@ class MainWindow(QMainWindow):
         self._settings_file.save(notify=notify, silent_on_error=silent_on_error)
 
     def _confirm_close_during_run(self) -> bool:
-        """Ask whether to stop the run and close; the default answer keeps the run going."""
-        return _dialogs.ask(self, dlg.close_during_run())
+        """Ask whether to stop the run or comparison and close; the default keeps it going."""
+        going = (
+            dlg.close_during_run() if self._run_controller.active else dlg.close_during_comparison()
+        )
+        return _dialogs.ask(self, going)
 
     def _on_quit_requested(self) -> None:
         """File → Quit: ask first when a run is going, then close like the window's X."""
-        if self._run_controller.active and not self._confirm_close_during_run():
+        if (self._run_controller.active or self._compare.running()) and not (
+            self._confirm_close_during_run()
+        ):
             return
         self._close_confirmed = True
         self.close()
 
     def closeEvent(self, event: Any) -> None:
         if (
-            self._run_controller.active
+            (self._run_controller.active or self._compare.running())
             and not self._close_confirmed
             and event.spontaneous()
             and not self._confirm_close_during_run()
@@ -603,12 +603,9 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001  # never block window close on a settings-save error
             log_failure(_logger, "The settings could not be saved at close", exc)
         self._check_controller.flush_layout()
-        # Only close() runs the Benchmark window's own closeEvent, which stops its worker;
-        # deleting it with a parent would not.  Closing the last window ends the app.
-        if self._benchmark_window is not None:
-            self._benchmark_window.close()
         # The System Monitor is parentless too: closing the last visible window ends the app.
         self._monitor.close()
+        self._compare.close()
         self._setup_launcher.shutdown()
         self._readiness_controller.shutdown()
         # Let the window disappear before waiting: running background tasks are
@@ -665,7 +662,7 @@ class MainWindow(QMainWindow):
             self._export_controller.set_enabled(True)
         # The readiness line says what is in the queue and what to do next; the bar only
         # reports progress, so it stays "Idle" until something runs.
-        if not self._run_in_progress():
+        if not self._run_controller.busy:
             self._run_controller.show_idle()
         self._check_controller.sync_with_queue()
         self._check_controller.update_tab()
@@ -693,8 +690,8 @@ class MainWindow(QMainWindow):
         )
 
     def _run_in_progress(self) -> bool:
-        """Return whether a requirement check or an OCR worker is already active."""
-        return self._run_controller.busy
+        """Return whether a requirement check, a run or a model comparison is going."""
+        return self._run_controller.busy or self._app_service.run.busy()
 
     def _restore_all_settings(self) -> None:
         """Reset every setting to its default and save (Settings already asked twice)."""

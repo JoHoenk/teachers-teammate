@@ -37,8 +37,8 @@ from tools.evaluation.core.records import (
     key_sha256,
     question_sha256,
 )
-from tools.evaluation.metrics.offsets import token_offsets
-from tools.evaluation.metrics.quality import ordered_edits
+from teachers_teammate.domain.proofreading.word_diff import text_offsets
+from teachers_teammate.domain.proofreading.edit_agreement import ordered_edits
 from tools.evaluation.run.defaults import temperature_for
 from tools.evaluation.store import layout, writer
 
@@ -51,7 +51,7 @@ FINGERPRINT = protocol_table.fingerprints_of(protocol_table.current_version())[0
 
 def _record() -> TestRecord:
     """Return one test record of one error text."""
-    offsets = token_offsets(SOURCE)
+    offsets = text_offsets(SOURCE)
     start, end, replacement = ordered_edits(SOURCE, REFERENCE)[0]
     return TestRecord(
         id="de-01",

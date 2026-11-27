@@ -84,6 +84,11 @@ class MessageKey(StrEnum):
     NO_MODELS_INSTALLED = "no_models_installed"
     UNREACHABLE = "unreachable"
 
+    # ── Comparing writing models on one text ─────────────────────────────────────
+    MODEL_NOT_COMPARED = "model_not_compared"
+    PROOFREADING_NOT_COMPARED = "proofreading_not_compared"
+    MARKS_NOT_REPLACED = "marks_not_replaced"
+
     # ── The command line ──────────────────────────────────────────────────────────
     CONFIG_FILE_MISSING = "config_file_missing"
 
@@ -502,6 +507,27 @@ def no_models_installed(url: str) -> Message:
 def unreachable(url: str, reason: Message) -> Message:
     """Return what a proofreading request says about the server it cannot reach."""
     return Message(MessageKey.UNREACHABLE, {"url": url, "reason": reason})
+
+
+# ── Comparing writing models on one text ────────────────────────────────────
+
+
+def model_not_compared(model: str, reason: Message) -> Message:
+    """Return why a model took no part in a comparison: it could not answer this text."""
+    return Message(MessageKey.MODEL_NOT_COMPARED, {"model": model, "reason": reason})
+
+
+def proofreading_not_compared() -> Message:
+    """Return why no model can answer: the settings have proofreading switched off."""
+    return Message(MessageKey.PROOFREADING_NOT_COMPARED)
+
+
+def marks_not_replaced(*, locked: bool) -> Message:
+    """Return why the teacher's verdicts on a text are left as they are: they cannot be read.
+
+    *locked* says the file cannot be read now; otherwise a newer version of the app wrote it.
+    """
+    return Message(MessageKey.MARKS_NOT_REPLACED, {"locked": locked})
 
 
 # ── The command line ───────────────────────────────────────────────────────

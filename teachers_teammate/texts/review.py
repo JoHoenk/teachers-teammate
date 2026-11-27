@@ -131,6 +131,12 @@ REVIEW_DOES_NOT_FIT = (
     "The stored proofreading no longer matches the text; its explanations were left out."
 )
 
+#: What a run says about a review of an anonymized text it could not carry over to the real names:
+#: the corrected text stays, the explanations do not.
+REVIEW_UNMATCHED = (
+    "The explanations could not be matched to the names in the text and were left out."
+)
+
 
 def personal_info_still_hidden(tokens: Sequence[str]) -> str:
     """Return the warning about stand-ins for personal data that are still in the text."""

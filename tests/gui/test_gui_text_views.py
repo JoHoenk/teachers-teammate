@@ -23,7 +23,7 @@ from teachers_teammate.domain.proofreading.review import (
     UnclearNote,
     edit_note,
 )
-from teachers_teammate.domain.teacher_work import TextEdit
+from teachers_teammate.domain.proofreading.text_edits import TextEdit
 from teachers_teammate.gui._formatted_text import document_from_qt
 from teachers_teammate.gui.check import _style
 from teachers_teammate.gui.check._masking import Masking

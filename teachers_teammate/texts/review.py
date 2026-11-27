@@ -748,7 +748,15 @@ VIEW_MARKED = "With corrections"
 VIEW_FINAL = "Final text"
 
 READING_FIX_WARNING = (
-    "Changing what was read removes the corrections of this document and your changes to them."
+    "Changing what was read can remove the corrections of this document and your changes to them."
+)
+READING_FIX_FELL_BACK = (
+    "The proofreading is gone: the change was in or next to a correction. Proofread this "
+    "document again; a new proofreading starts without your changes."
+)
+READING_FIX_NOT_CARRIED = (
+    "The proofreading is gone: it could not be kept over this change. Proofread this document "
+    "again; a new proofreading starts without your changes."
 )
 EDIT_ANYWAY = "Edit anyway"
 SHOW_NAMES = "Show names"

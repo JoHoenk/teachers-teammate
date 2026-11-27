@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QToolTip
 
 from teachers_teammate.application.check_document import CheckDocument, check_document_of
 from teachers_teammate.application.check_items import ItemKind
+from teachers_teammate.domain.proofreading.carry import ReadingFix
 from teachers_teammate.domain.proofreading.edits import edits
 from teachers_teammate.domain.proofreading.review import (
     CorrectionReview,
@@ -436,6 +437,92 @@ def test_a_document_without_a_proofreading_has_no_reading_fix_banner(qtbot) -> N
 
     assert body.banner.isHidden() is True
     assert body.read_view.isReadOnly() is False
+
+
+@pytest.mark.gui
+def test_a_fix_that_keeps_the_proofreading_only_shows_the_reading_fix_banner(qtbot) -> None:
+    """
+    Given  a page that shows a proofread document
+    When   the store hands back the same document after a fix it carried into the proofreading
+    Then   the corrections stay in front with their item, and nothing says the proofreading fell
+    """
+    doc = _document(review=_review(RAW, CORRECTED))
+    page = _page(qtbot)
+    page.show_document(doc, 1, 1)
+
+    page.show_document(
+        _retyped(doc, raw="Der bunter Hund bellt. Die Katze mauzt."), 1, 1, typed=True
+    )
+
+    assert page.body.view is ViewKind.MARKED
+    assert page.body.panel._list.count() == 1
+    assert page.body.banner.text == txt.READING_FIX_WARNING
+    assert txt.READING_FIX_FELL_BACK not in page.body.banner.text
+
+
+def _after_a_fix(qtbot, fix: ReadingFix, *, more_typing: int = 0) -> CheckPage:
+    """Return a page that showed a proofread document and was handed one without it after *fix*."""
+    doc = _document(review=_review(RAW, CORRECTED))
+    page = _page(qtbot)
+    page.show_document(doc, 1, 1)
+    bare = _document(source_id=doc.source_id, raw="Der braune Hund bellt.", corrected="")
+    page.show_document(bare, 1, 1, typed=True, fix=fix)
+    for _ in range(more_typing):
+        page.show_document(bare, 1, 1, typed=True, fix=ReadingFix.NONE)
+    return page
+
+
+@pytest.mark.gui
+def test_a_fix_that_took_the_proofreading_says_so_in_the_banner(qtbot) -> None:
+    """
+    Given  a page that shows a proofread document
+    When   a fix in or next to a correction leaves a document with no proofreading
+    Then   the banner says the proofreading is gone because of the correction, and *What was
+           read* is in front
+    """
+    page = _after_a_fix(qtbot, ReadingFix.TOUCHED_CORRECTION)
+
+    assert page.body.view is ViewKind.READ
+    assert page.body.banner.text == txt.READING_FIX_FELL_BACK
+    assert page.body.banner.action == ""
+
+
+@pytest.mark.gui
+def test_a_fix_that_could_not_be_carried_says_so_without_blaming_a_correction(qtbot) -> None:
+    """
+    Given  a page that shows a proofread document
+    When   a fix that touched no correction still leaves a document with no proofreading
+    Then   the banner gives the other reason
+    """
+    page = _after_a_fix(qtbot, ReadingFix.NOT_CARRIED)
+
+    assert page.body.banner.text == txt.READING_FIX_NOT_CARRIED
+
+
+@pytest.mark.gui
+def test_the_notice_stays_while_the_teacher_keeps_typing(qtbot) -> None:
+    """
+    Given  a page whose proofreading a fix took, with the strip saying so
+    When   the next saves of the typing hand back the document, which has no proofreading to lose
+    Then   the strip still says why, so it does not come and go under the cursor
+    """
+    page = _after_a_fix(qtbot, ReadingFix.TOUCHED_CORRECTION, more_typing=3)
+
+    assert page.body.banner.text == txt.READING_FIX_FELL_BACK
+
+
+@pytest.mark.gui
+def test_the_notice_goes_with_the_document(qtbot) -> None:
+    """
+    Given  a page whose proofreading a fix took, with the strip saying so
+    When   another document is shown
+    Then   the strip says nothing about it
+    """
+    page = _after_a_fix(qtbot, ReadingFix.TOUCHED_CORRECTION)
+
+    page.show_document(_document(source_id="other", corrected=""), 1, 1)
+
+    assert page.body.banner.isHidden() is True
 
 
 @pytest.mark.gui

@@ -12,13 +12,6 @@ where they exist.  A transcription part is bound to nothing (it is what the stud
 corrections part is bound to one machine answer (:func:`proofreading_id`), so a new answer makes
 it not apply rather than laying it over a text it was not written for.
 
-The whitespace is the whole difficulty.  A hunk of the word diff is trimmed of the layout around
-it, so putting the student's words back where the model removed them would glue them to their
-neighbours (``"Der bunte Hund"`` → ``"DerHund"``).  One function, :func:`_fit_gap`, decides the
-separators of every edit: a replacement keeps the ones it has, an insertion gets a space only
-where it would otherwise touch a word, and a removal takes one adjacent space with it.  Words are
-never joined across a block boundary.
-
 Pure: no I/O, no Qt, no Markdown.  The offsets are those of the text ``align()`` saw.
 """
 
@@ -28,38 +21,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 import hashlib
 import json
-import re
 
 from .formatted_text import TextFormat, normalize_text_format
 from .proofreading.quotes import map_forward
 from .proofreading.review import AlignedChange, AlignedReview, AlignedUnclear, EditNote, UnclearNote
+from .proofreading.text_edits import TextEdit, fit_gap
 from .proofreading.word_diff import Hunk
-
-_WORD_CHAR = re.compile(r"\w", flags=re.UNICODE)
-
-#: Whitespace a removal may take with it.  A line break is never taken: it separates blocks.
-_TAKEABLE = " \t\u00a0"
-
-
-@dataclass(frozen=True)
-class TextEdit:
-    """Replace ``corrected_plain[start:end]`` by *text* (``start == end``: an insertion)."""
-
-    start: int
-    end: int
-    text: str
-
-
-def apply_edits(text: str, edits: Sequence[TextEdit]) -> str:
-    """Return *text* with every edit of *edits* applied, last to first.
-
-    The edits must be disjoint; applying them from the end keeps the offsets of the ones before
-    valid.  The tests use this to check an action without a widget.
-    """
-    result = text
-    for edit in sorted(edits, key=lambda item: (item.start, item.end), reverse=True):
-        result = result[: edit.start] + edit.text + result[edit.end :]
-    return result
 
 
 def take_out(
@@ -79,7 +46,7 @@ def take_out(
         high = hunks[index + 1].corrected_start if index + 1 < len(hunks) else len(corrected_plain)
         words = raw_plain[hunk.raw_start : hunk.raw_end] if hunk.original else ""
         edits.append(
-            _fit_gap(
+            fit_gap(
                 corrected_plain,
                 hunk.corrected_start,
                 hunk.corrected_end,
@@ -110,7 +77,7 @@ def put_back(
         start, end = map_forward((part.raw_start, part.raw_end), hunks)
         if any(_touches(hunk, start, end) for hunk in teacher):
             return ()
-        edits.append(_fit_gap(corrected_plain, start, end, part.corrected))
+        edits.append(fit_gap(corrected_plain, start, end, part.corrected))
     return tuple(edits)
 
 
@@ -129,7 +96,7 @@ def use_suggestion(
         return ()
     hunks = [change.hunk for change in aligned.changes]
     start, end = map_forward((item.start, item.end), hunks)
-    return (_fit_gap(corrected_plain, start, end, item.note.recommendation),)
+    return (fit_gap(corrected_plain, start, end, item.note.recommendation),)
 
 
 def replace_words(
@@ -156,7 +123,7 @@ def replace_words(
         first, last = map_forward((start, end), [change.hunk for change in aligned.changes])
     if not 0 <= first <= last <= len(corrected_plain):
         return ()
-    return (_fit_gap(corrected_plain, first, last, text),)
+    return (fit_gap(corrected_plain, first, last, text),)
 
 
 def suggestion_is_wording(note: UnclearNote) -> bool:
@@ -167,53 +134,6 @@ def suggestion_is_wording(note: UnclearNote) -> bool:
     """
     text = note.recommendation.strip()
     return bool(text) and not text.endswith("?")
-
-
-def _fit_gap(
-    text: str, start: int, end: int, replacement: str, *, low: int = 0, high: int | None = None
-) -> TextEdit:
-    """Return the edit that puts *replacement* in place of ``text[start:end]``.
-
-    A replacement keeps the separators it has, because the hunk's span was trimmed of layout and
-    so begins and ends where the words do.  An insertion gets one space on the side where it
-    would otherwise touch a word, and none next to punctuation or a line start or end.  A removal
-    takes one adjacent space with it — the one after, else the one before, never a line break —
-    so the words around it do not end up with two spaces between them.  *low* and *high* bound
-    the space a removal may take, so two edits of one item never overlap.
-    """
-    limit = len(text) if high is None else high
-    if start < end and replacement:
-        return TextEdit(start, end, replacement)
-    if start == end and replacement:
-        return _insertion(text, start, replacement)
-    if start < end:
-        return _removal(text, start, end, low=low, high=limit)
-    return TextEdit(start, end, replacement)
-
-
-def _insertion(text: str, at: int, words: str) -> TextEdit:
-    """Return the edit that inserts *words* at *at*, with the spaces they need."""
-    before = text[at - 1] if at > 0 else ""
-    after = text[at] if at < len(text) else ""
-    lead = " " if _is_word(before) else ""
-    trail = " " if _is_word(after) else ""
-    return TextEdit(at, at, lead + words + trail)
-
-
-def _removal(text: str, start: int, end: int, *, low: int, high: int) -> TextEdit:
-    """Return the edit that removes ``text[start:end]`` and one adjacent space."""
-    after = text[end] if end < len(text) else ""
-    if after in _TAKEABLE and end + 1 <= high:
-        return TextEdit(start, end + 1, "")
-    before = text[start - 1] if start > 0 else ""
-    if before in _TAKEABLE and start - 1 >= low:
-        return TextEdit(start - 1, end, "")
-    return TextEdit(start, end, "")
-
-
-def _is_word(char: str) -> bool:
-    """Whether *char* is a letter, digit or underscore — what a word is made of."""
-    return bool(char) and _WORD_CHAR.match(char) is not None
 
 
 def _touches(hunk: Hunk, start: int, end: int) -> bool:
@@ -276,6 +196,23 @@ class CorrectionsWork:
         would otherwise never be able to.
         """
         return self.text is not None or self.checked or bool(self.kept)
+
+
+@dataclass(frozen=True)
+class CarriedAnswer:
+    """The answer a reading fix left standing, as the corrections part binds to it.
+
+    The window's commands build it from
+    :func:`~teachers_teammate.domain.proofreading.carry.carry_reading_fix`: *bound_to* is the
+    :func:`proofreading_id` of the carried answer, and *teacher_corrected* is the teacher's own
+    corrected text with the same word changes made — ``None`` while it is the machine's own.
+    *was_bound_to* is the :func:`proofreading_id` of the answer before the fix: only a part
+    written on that answer is carried over with it.
+    """
+
+    bound_to: str
+    was_bound_to: str
+    teacher_corrected: str | None = None
 
 
 @dataclass(frozen=True)
@@ -547,13 +484,21 @@ def proofreading_source_matches(machine: MachineTexts, work: TeacherWork | None)
 
 
 def with_transcription(
-    work: TeacherWork, text: str, text_format: TextFormat, machine: MachineTexts
+    work: TeacherWork,
+    text: str,
+    text_format: TextFormat,
+    machine: MachineTexts,
+    carried: CarriedAnswer | None = None,
 ) -> TeacherWork:
     """Return *work* with *text* as the teacher's transcription.
 
     A copy that is the recognition's own text and not checked is no work at all, so the part is
     dropped.  A proofreading is made from the transcription, so storing a new one drops the
-    corrections part: they were written on an answer that no longer applies.
+    corrections part: they were written on an answer that no longer applies.  *carried* is an
+    answer the fix left standing instead: the part written on that answer is bound to it, keeps
+    everything the teacher looked at and decided, and takes the fix in their own corrected text;
+    a part written on another answer is dropped.  The text changed
+    either way, so the document is not checked any more.
     """
     checked = work.transcription.checked if work.transcription is not None else False
     part = (
@@ -561,7 +506,17 @@ def with_transcription(
         if text == machine.raw_text and not checked
         else TranscriptionWork(text=text, text_format=text_format, checked=checked)
     )
-    corrections = None if machine.corrected_text.strip() else work.corrections
+    if carried is None:
+        corrections = None if machine.corrected_text.strip() else work.corrections
+    elif work.corrections is None or work.corrections.bound_to != carried.was_bound_to:
+        corrections = None
+    else:
+        corrections = replace(
+            work.corrections,
+            bound_to=carried.bound_to,
+            text=carried.teacher_corrected,
+            checked=False,
+        )
     return replace(work, transcription=part, corrections=corrections)
 
 

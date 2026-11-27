@@ -9,7 +9,20 @@ from unittest.mock import MagicMock
 import pytest
 from teachers_teammate.application.commands import DocumentCommands, WorkNotSavedError
 from teachers_teammate.application.run import windows_for
-from teachers_teammate.domain.teacher_work import CorrectionsWork, current_texts, with_corrected
+from teachers_teammate.domain.freshness import stage_hashes
+from teachers_teammate.domain.proofreading.carry import ReadingFix
+from teachers_teammate.domain.proofreading.edits import edits as word_edits
+from teachers_teammate.domain.proofreading.review import (
+    CorrectionReview,
+    edit_note,
+    fits,
+)
+from teachers_teammate.domain.teacher_work import (
+    CorrectionsWork,
+    current_texts,
+    text_identity,
+    with_corrected,
+)
 from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
 from teachers_teammate.infrastructure.state_repository import (
     OcrResultRecord,
@@ -205,6 +218,7 @@ def test_a_refused_write_is_reported_and_resets_nothing(tmp_path: Path) -> None:
     """
     repo, source = _repo_with_document(tmp_path, corrected="Hello world.")
     work_store = MagicMock()
+    work_store.load.return_value = None
     work_store.update.side_effect = WorkTooNewError("newer")
     commands = _commands_for(repo, work_store=work_store)
 
@@ -349,6 +363,287 @@ def test_edit_transcription_stores_the_notation_it_was_given(tmp_path: Path) -> 
 
     assert view is not None
     assert (view.raw_text, view.raw_text_format) == ("~~a~~ b!", "markdown")
+
+
+# ── A reading fix that leaves the proofreading standing ────────────────────
+
+#: The read text and its proofreading, for the documents these tests fix a word in.
+_PROOFREAD = ("hello world", "hello there")
+
+
+def _reviewed(raw: str, corrected: str) -> dict:
+    """Return the stored review of a proofreading from *raw* to *corrected*."""
+    return CorrectionReview(
+        edits=tuple(
+            edit_note(edit, category="word_choice", explanation="Wortwahl.")
+            for edit in word_edits(raw, corrected)
+        )
+    ).to_dict()
+
+
+def _document_with_proofreading(tmp_path: Path) -> tuple[StateRepository, Path]:
+    """A store holding one document that read ``hello world``, proofread to ``hello there``."""
+    return _repo_with_document(tmp_path, corrected="hello there", review=_reviewed(*_PROOFREAD))
+
+
+@pytest.mark.unit
+def test_edit_transcription_carries_a_fix_away_from_the_corrections(tmp_path: Path) -> None:
+    """
+    Given  a document whose proofreading corrects ``world`` to ``there``
+    When   edit_transcription() fixes ``hello``, a word the proofreading did not change
+    Then   the proofreading comes with the fix and its review still points at its words
+    """
+    repo, source = _document_with_proofreading(tmp_path)
+    commands = _commands_for(repo)
+
+    view = commands.edit_transcription(make_config(tmp_path), source=source, text="hallo world")
+
+    state = repo.load_valid(source)
+    assert state is not None
+    assert state.correction_done is True
+    assert state.correction_text == "hallo there"
+    assert state.correction_source_hash == text_identity("hallo world")
+    assert view is not None and view.correction_text == "hallo there"
+    assert view.correction_review is not None
+    assert fits(view.correction_review, "hallo world")
+
+
+@pytest.mark.unit
+def test_a_carried_proofreading_was_made_from_the_text_the_document_has(tmp_path: Path) -> None:
+    """
+    Given  a document whose proofreading a reading fix was carried into
+    When   the freshness of its stages is asked for, as a run and the queue do
+    Then   the answer belongs to the current text, so nothing sends it to be proofread again
+    """
+    repo, source = _document_with_proofreading(tmp_path)
+    commands = _commands_for(repo)
+    config = make_config(tmp_path)
+
+    commands.edit_transcription(config, source=source, text="hallo world")
+
+    state = repo.load_valid(source)
+    assert state is not None
+    work = TeacherWorkStore().load(compute_file_hash(source))
+    hashes = stage_hashes(state, work, commands._expected(config, source))
+    assert hashes.correction_source == hashes.expected_correction_source != ""
+
+
+@pytest.mark.unit
+def test_a_carried_fix_clears_the_content_review(tmp_path: Path) -> None:
+    """
+    Given  a document with a proofreading and a content review
+    When   edit_transcription() carries a fix into the proofreading
+    Then   the content review is gone: it was made from the text the fix changed
+    """
+    repo, source = _document_with_proofreading(tmp_path)
+    commands = _commands_for(repo)
+    state = repo.load_valid(source)
+    assert state is not None
+    repo.record_evaluation_result(source, state, evaluation_text="Gut.", eval_config_hash="eval")
+
+    commands.edit_transcription(make_config(tmp_path), source=source, text="hallo world")
+
+    carried = repo.load_valid(source)
+    assert carried is not None
+    assert carried.correction_done is True
+    assert carried.evaluation_done is False
+    assert carried.evaluation_text == ""
+
+
+@pytest.mark.unit
+def test_a_carried_fix_rebinds_the_teachers_corrections_and_unchecks_them(tmp_path: Path) -> None:
+    """
+    Given  a proofread document with the teacher's own corrected text, checked, one item looked at
+    When   edit_transcription() carries a fix into the proofreading
+    Then   their text takes the fix, stays theirs, and is no longer checked
+    """
+    repo, source = _document_with_proofreading(tmp_path)
+    commands = _commands_for(repo)
+    config = make_config(tmp_path)
+    assert commands.edit_corrected_text(config, source=source, text="hello there.") is not None
+    assert commands.set_checked(config, source=source, checked=True) is not None
+    commands.mark_looked_at(config, source=source, keys=["edit:1"])
+
+    view = commands.edit_transcription(config, source=source, text="hallo world")
+
+    assert view is not None
+    assert view.correction_text == "hallo there."
+    assert view.work.corrections_checked is False
+    work = TeacherWorkStore().load(compute_file_hash(source))
+    assert work is not None and work.corrections is not None
+    assert work.corrections.text == "hallo there."
+    assert work.corrections.checked is False
+    assert work.corrections.looked_at == frozenset({"edit:1"})
+
+
+@pytest.mark.unit
+def test_edit_transcription_resets_when_a_fix_touches_a_correction(tmp_path: Path) -> None:
+    """
+    Given  a document whose proofreading corrects ``world`` to ``there``
+    When   edit_transcription() fixes that same word
+    Then   the proofreading is reset: its explanation is about words that are no longer there
+    """
+    repo, source = _document_with_proofreading(tmp_path)
+    commands = _commands_for(repo)
+
+    view = commands.edit_transcription(make_config(tmp_path), source=source, text="hello earth")
+
+    state = repo.load_valid(source)
+    assert state is not None
+    assert state.correction_done is False
+    assert view is not None and view.correction_text == ""
+
+
+@pytest.mark.unit
+def test_the_teachers_own_text_that_cannot_take_the_fix_drops_the_proofreading(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a proofread document whose teacher's text holds the fixed word twice
+    When   edit_transcription() carries a fix into the proofreading
+    Then   nothing is carried: their text would get the fix in the wrong place
+    """
+    repo, source = _document_with_proofreading(tmp_path)
+    commands = _commands_for(repo)
+    config = make_config(tmp_path)
+    assert (
+        commands.edit_corrected_text(config, source=source, text="hello hello there.") is not None
+    )
+
+    commands.edit_transcription(config, source=source, text="hallo world")
+
+    state = repo.load_valid(source)
+    assert state is not None
+    assert state.correction_done is False
+
+
+@pytest.mark.unit
+def test_a_marked_up_transcription_carries_no_proofreading(tmp_path: Path) -> None:
+    """
+    Given  a proofread document read as plain text
+    When   edit_transcription() stores a Markdown transcription with a safe fix in it
+    Then   the proofreading is reset: its plain offsets say nothing about marked-up text
+    """
+    repo, source = _document_with_proofreading(tmp_path)
+    commands = _commands_for(repo)
+
+    view = commands.edit_transcription(
+        make_config(tmp_path), source=source, text="**hallo** world", text_format="markdown"
+    )
+
+    state = repo.load_valid(source)
+    assert state is not None
+    assert state.correction_done is False
+    assert view is not None and view.raw_text_format == "markdown"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("text", "text_format", "expected"),
+    [
+        ("hallo world", "plain", ReadingFix.CARRIED),
+        ("hello earth", "plain", ReadingFix.TOUCHED_CORRECTION),
+        ("**hallo** world", "markdown", ReadingFix.NOT_CARRIED),
+    ],
+)
+def test_the_view_says_what_the_fix_did_to_the_proofreading(
+    tmp_path: Path, text: str, text_format: str, expected: ReadingFix
+) -> None:
+    """
+    Given  a proofread document
+    When   a fix away from the corrections, one in a correction, or one in a marked-up text is stored
+    Then   the view says carried, touched a correction, or not carried
+    """
+    repo, source = _document_with_proofreading(tmp_path)
+    commands = _commands_for(repo)
+
+    view = commands.edit_transcription(
+        make_config(tmp_path), source=source, text=text, text_format=text_format
+    )
+
+    assert view is not None and view.reading_fix is expected
+
+
+@pytest.mark.unit
+def test_a_fix_in_a_document_without_a_proofreading_has_nothing_to_lose(tmp_path: Path) -> None:
+    """
+    Given  a document that was only read
+    When   edit_transcription() stores a fix
+    Then   the view says there was no proofreading to keep or lose
+    """
+    repo, source = _repo_with_document(tmp_path)
+    commands = _commands_for(repo)
+
+    view = commands.edit_transcription(make_config(tmp_path), source=source, text="hallo world")
+
+    assert view is not None and view.reading_fix is ReadingFix.NONE
+
+
+@pytest.mark.unit
+def test_a_proofreading_without_a_review_is_carried_without_one(tmp_path: Path) -> None:
+    """
+    Given  a proofreading that was stored with no review
+    When   edit_transcription() carries a fix into it
+    Then   the corrected text takes the fix and the document still has no review, rather than an
+           empty one that would show the model's changes as the teacher's
+    """
+    repo, source = _repo_with_document(tmp_path, corrected="hello there", review=None)
+    commands = _commands_for(repo)
+
+    view = commands.edit_transcription(make_config(tmp_path), source=source, text="hallo world")
+
+    state = repo.load_valid(source)
+    assert state is not None
+    assert state.correction_review is None
+    assert view is not None and view.correction_review is None
+    assert view.correction_text == "hallo there"
+
+
+@pytest.mark.unit
+def test_corrections_of_another_answer_are_not_rebound_to_the_carried_one(tmp_path: Path) -> None:
+    """
+    Given  a proofread document whose stored corrections belong to an older answer, with an
+           item looked at
+    When   edit_transcription() carries a fix into the proofreading
+    Then   the old corrections are dropped, and nothing counts as looked at on the carried answer
+    """
+    repo, source = _document_with_proofreading(tmp_path)
+    commands = _commands_for(repo)
+    _change_work(
+        source,
+        lambda work: dataclasses.replace(
+            work,
+            corrections=CorrectionsWork(
+                bound_to="an older answer", looked_at=frozenset({"edit:1"})
+            ),
+        ),
+    )
+
+    view = commands.edit_transcription(make_config(tmp_path), source=source, text="hallo world")
+
+    work = TeacherWorkStore().load(compute_file_hash(source))
+    assert work is not None and work.corrections is None
+    assert view is not None and view.work.looked_at == frozenset()
+
+
+@pytest.mark.unit
+def test_deleting_a_word_and_typing_another_keeps_the_proofreading(tmp_path: Path) -> None:
+    """
+    Given  a proofread document, and a typing stored twice: a word the proofreading did not
+           change is deleted, then another put in its place
+    When   both saves are stored
+    Then   the proofreading is still there and its text has the new word, once, with one space
+    """
+    repo, source = _document_with_proofreading(tmp_path)
+    commands = _commands_for(repo)
+    config = make_config(tmp_path)
+
+    commands.edit_transcription(config, source=source, text=" world")
+    view = commands.edit_transcription(config, source=source, text="hallo world")
+
+    assert view is not None
+    assert view.correction_done is True
+    assert view.correction_text == "hallo there"
 
 
 # ── Run preflight & model-list caching ──────────────────────────────────────

@@ -7,6 +7,7 @@ import pytest
 from teachers_teammate.domain.proofreading.review import CorrectionReview, align
 from teachers_teammate.domain.proofreading.word_diff import (
     Hunk,
+    OffsetMap,
     Similarity,
     diff_opcodes,
     similarity,
@@ -190,3 +191,43 @@ def test_a_hunk_summary_names_an_empty_side() -> None:
     assert Hunk(0, 0, 0, 5, "", "lange", "insert").summary == "(inserted) → lange"
     assert Hunk(0, 5, 0, 0, "sehr ", "", "delete").summary == "sehr → (deleted)"
     assert Hunk(0, 3, 0, 4, "ein", "einen", "replace").summary == "ein → einen"
+
+
+def test_an_offset_map_counts_the_layout_the_word_diff_calls_equal() -> None:
+    """
+    Given  two texts that differ by a collapsed double space and by one word
+    When   offsets after the collapse are mapped
+    Then   they move by the space that is gone, which the hunks alone do not know
+    """
+    text = "Er gehte heim.  Der Hund bellt."
+    other = "Er ging heim. Der Hund bellt."
+
+    mapped = OffsetMap(text, other)
+
+    assert mapped.forward(text.index("Der")) == other.index("Der")
+    assert mapped.forward(text.index("bellt")) == other.index("bellt")
+    assert mapped.forward(len(text), end=True) == len(other)
+
+
+def test_an_offset_map_widens_an_offset_inside_a_changed_stretch() -> None:
+    """
+    Given  a word that the other text spells differently
+    When   an offset inside it is mapped as the start and as the end of a span
+    Then   the start goes before what replaced the word and the end after it
+    """
+    mapped = OffsetMap("Der bunte Hund", "Der braune Hund")
+
+    assert mapped.forward(6) == 4
+    assert mapped.forward(6, end=True) == 10
+
+
+def test_an_offset_map_puts_an_insertion_point_in_a_re_spaced_gap_at_its_edge() -> None:
+    """
+    Given  a gap of two spaces that the other text has as one
+    When   the offset between the two spaces is mapped
+    Then   it lands at an edge of the one space, not beyond it
+    """
+    text = "Der  bellt"
+    other = "Der bellt"
+
+    assert OffsetMap(text, other).forward(4) in (3, 4)

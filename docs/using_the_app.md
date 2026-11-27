@@ -154,8 +154,11 @@ each such passage as `not proofread` to read with the rest.
 the page (Ctrl+Shift+Z or Ctrl+Y redoes). While a run works on a document, that document is
 read-only.
 
-**Fixing what was read** removes the proofreading, because it was made from the old text. The app
-asks once (**Edit anyway**) and then offers **Proofread this document**.
+**Fixing what was read** asks once (**Edit anyway**). In a text without formatting, a change away
+from every correction keeps the proofreading: its corrections and your decisions about them stay,
+and the final text takes the fix. The document is no longer marked as checked. Any other change, in
+or next to a correction or in a text with formatting, removes the proofreading, because it was made
+from the old text; the strip then says why, and the page offers **Proofread this document**.
 
 **Mark as checked** in the header records that you are done with a document (**✓ Checked**, or
 **✓ Text checked** without a proofreading). Click it again to take the mark back. Right-click in the

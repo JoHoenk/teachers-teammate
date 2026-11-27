@@ -247,10 +247,11 @@ bisects.
 
 ### Every action is a text edit in plain offsets
 
-`domain/teacher_work.py` holds `TextEdit(start, end, text)` and the builders of card actions
-(`take_out`, `put_back`, `use_suggestion`, `suggestion_is_wording`); tests use `apply_edits`.
+`domain/proofreading/text_edits.py` holds `TextEdit(start, end, text)`; `domain/teacher_work.py`
+holds the builders of card actions (`take_out`, `put_back`, `use_suggestion`,
+`suggestion_is_wording`); tests use `apply_edits`.
 `FinalView.apply_plain_edits()` maps them through `PlainMap` and applies them last to first in one
-edit block, so one Ctrl+Z undoes one action. Whitespace is one function (`_fit_gap`): a
+edit block, so one Ctrl+Z undoes one action. Whitespace is one function (`fit_gap`): a
 replacement keeps the separators, an insertion gets one space towards a neighbouring word, a
 removal takes one adjacent space, and words never join across a block boundary.
 
@@ -336,11 +337,12 @@ A checkable button in the Check header (`CheckPage.checked_toggled`, `refresh_ch
 
 ### The strip above the texts
 
-One `_Banner` (`_refresh_banner`) shows the most important reason: the lock, a failed hide, the
-reading fix, then `doc.warning`. Nothing that toggles with 👁 is in it, because a strip that comes
-and goes moves the text under the cursor. *Edit anyway* of the reading fix is greyed out while names
-are hidden. A failed hide is the exception: names show while the toggle says hidden, so the strip
-says so and offers to show them.
+One `_Banner` (`_refresh_banner`) shows the most important reason: the lock, a failed hide, what a
+reading fix took (the `ReadingFix` that `edit_transcription` returns on its view; it stays until
+the document changes or a proofreading is back), the reading fix, then `doc.warning`. Nothing that toggles with 👁 is in it,
+because a strip that comes and goes moves the text under the cursor. *Edit anyway* of the reading fix
+is greyed out while names are hidden. A failed hide is the exception: names show while the toggle
+says hidden, so the strip says so and offers to show them.
 
 Other strips (`gui/check/_run_strip.py`): `NextStepStrip` over an unproofread transcription
 (*Proofread*, or *Set up proofreading…* via `set_proofreading_ready`), and `RunStrip` while the

@@ -14,16 +14,15 @@ from teachers_teammate.domain.proofreading.review import (
     align,
     edit_note,
 )
+from teachers_teammate.domain.proofreading.text_edits import TextEdit, apply_edits
 from teachers_teammate.domain.proofreading.word_diff import Hunk, word_diff
 from teachers_teammate.domain.teacher_work import (
     WORK_VERSION,
     CorrectionsWork,
     MachineTexts,
     TeacherWork,
-    TextEdit,
     TranscriptionWork,
     WorkTooNewError,
-    apply_edits,
     current_texts,
     kept_over,
     looked_at_progress,

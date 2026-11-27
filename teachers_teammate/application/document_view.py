@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ..domain.data_location import SentRecord, SentStatus
 from ..domain.document_state import DocumentState
+from ..domain.proofreading.carry import ReadingFix
 from ..domain.proofreading.review import CorrectionReview
 from ..domain.stages import Stage
 from ..domain.teacher_work import WorkStatus
@@ -65,6 +66,10 @@ class DocumentStateView:
 
     Filled by the application layer, which is the only place that reads the teacher's work; a
     view built straight from the cache says they did nothing."""
+
+    reading_fix: ReadingFix = ReadingFix.NONE
+    """What the fix of the reading that this view is the result of did to the proofreading;
+    ``NONE`` for a view of anything else."""
 
 
 def to_view(input_file: Path, state: DocumentState) -> DocumentStateView:

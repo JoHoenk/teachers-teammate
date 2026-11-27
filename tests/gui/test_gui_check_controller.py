@@ -149,7 +149,7 @@ def test_a_stored_edit_reads_the_document_state_once(main_window, monkeypatch, s
 def test_check_controller_ocr_edit_is_stored_as_the_teachers_work(main_window, stored) -> None:
     """
     Given  a document open in the Check tab with a cached proofreading
-    When   OCR text is edited
+    When   a word the proofreading changed is edited
     Then   the teacher's text is stored apart from the cache, whose proofreading is reset
     """
     [source_id] = stored("page.png", raw="raw old", corrected="corr old")
@@ -157,7 +157,7 @@ def test_check_controller_ocr_edit_is_stored_as_the_teachers_work(main_window, s
     main_window._results_table.selectRow(0)
     main_window._check_controller.open_document(source_id)
 
-    main_window._check_controller.on_raw_text_edited("raw edited")
+    main_window._check_controller.on_raw_text_edited("row old")
 
     cfg = main_window._config_panel.to_config()
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
@@ -168,12 +168,85 @@ def test_check_controller_ocr_edit_is_stored_as_the_teachers_work(main_window, s
     work = TeacherWorkStore().load(compute_file_hash(source))
     assert work is not None
     assert work.transcription is not None
-    assert work.transcription.text == "raw edited"
+    assert work.transcription.text == "row old"
 
     row = main_window._results_table.row_for(source_id)
     assert row is not None
     assert row.has_text
     assert row.correction is not StageState.DONE
+
+
+@pytest.mark.gui
+def test_a_reading_fix_away_from_a_correction_keeps_the_proofreading(main_window, stored) -> None:
+    """
+    Given  a document open in the Check tab whose proofreading corrects ``have`` to ``has``
+    When   the teacher fixes the first word of the sentence, away from that correction
+    Then   the proofreading stays with its correction, and the banner says no more than the cost
+    """
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(4, 8, "have", "has"),),
+                sentences=(),
+                category="grammar",
+                explanation='"she" is 3rd person singular.',
+            ),
+        )
+    )
+    [source_id] = stored(
+        "page.png", raw="She have a dog.", corrected="She has a dog.", review=review
+    )
+    source = Path(source_id)
+    main_window._results_table.selectRow(0)
+    main_window._check_controller.open_document(source_id)
+
+    main_window._check_controller.on_raw_text_edited("Sie have a dog.")
+
+    cfg = main_window._config_panel.to_config()
+    state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
+    assert state is not None
+    assert state.correction_done is True
+    assert state.correction_text == "Sie has a dog."
+    body = main_window._check_controller.page.body
+    assert body.panel.row_count == 1
+    assert body.banner.text == txt.READING_FIX_WARNING
+
+
+@pytest.mark.gui
+def test_a_reading_fix_inside_a_correction_takes_the_proofreading(main_window, stored) -> None:
+    """
+    Given  a document open in the Check tab whose proofreading corrects ``have`` to ``has``
+    When   the teacher fixes that same word
+    Then   the proofreading is gone, the corrections with it, and the banner says so
+    """
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(4, 8, "have", "has"),),
+                sentences=(),
+                category="grammar",
+                explanation='"she" is 3rd person singular.',
+            ),
+        )
+    )
+    [source_id] = stored(
+        "page.png", raw="She have a dog.", corrected="She has a dog.", review=review
+    )
+    source = Path(source_id)
+    main_window._results_table.selectRow(0)
+    main_window._check_controller.open_document(source_id)
+
+    main_window._check_controller.on_raw_text_edited("She had a dog.")
+
+    cfg = main_window._config_panel.to_config()
+    state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
+    assert state is not None
+    assert state.correction_done is False
+    body = main_window._check_controller.page.body
+    assert body.panel.row_count == 0
+    assert body.banner.text == txt.READING_FIX_FELL_BACK
 
 
 @pytest.mark.gui

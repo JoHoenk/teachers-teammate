@@ -50,19 +50,17 @@ def _contrast(first: QColor, second: QColor) -> float:
 
 @pytest.mark.gui
 @pytest.mark.parametrize("kind", list(ItemKind), ids=lambda kind: kind.value)
-def test_every_kind_has_an_icon_and_a_look(kind: ItemKind) -> None:
+def test_every_kind_has_a_look_whose_text_reads(kind: ItemKind) -> None:
     """
     Given  a kind of item the list can show
-    When   its icon and its look are asked for
-    Then   both exist, and the look's text reads on its own background
+    When   its look is asked for
+    Then   it has a background, a text colour and an accent, and the text reads on its background
     """
-    assert _style.icon(kind, looked_at=False)
-    assert _style.icon(kind, looked_at=True)
-
     look = _style.look(_item(kind, category="grammar"))
 
     assert QColor(look.background).isValid()
     assert QColor(look.text).isValid()
+    assert QColor(look.accent).isValid()
     assert _contrast(QColor(look.text), QColor(look.background)) >= 4.5
 
 

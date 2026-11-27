@@ -29,7 +29,7 @@ from dataclasses import replace
 import html
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal, SignalInstance
-from PySide6.QtGui import QColor, QFont, QPainter
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QBoxLayout,
@@ -82,6 +82,9 @@ FILTER_LEFT_OUT = "left_out"
 _ROW_ROLE = Qt.ItemDataRole.UserRole + 1
 
 _ROW_HEIGHT = 24
+
+#: How wide the bar at the left of a row is: the accent of its kind.
+_BAR_WIDTH = 3
 
 #: How many rows of the list stay visible whatever the card's height is.
 _LIST_MIN_ROWS = 3
@@ -149,15 +152,20 @@ def _columns_of(item: CheckItem) -> tuple[str, str]:
 
 
 def _icon_of(item: CheckItem, *, looked_at: frozenset[str]) -> str:
-    """Return the character in front of a row: whether the item was looked at."""
-    return _style.icon(item.kind, looked_at=item.key in looked_at)
+    """Return the bullet in front of a row: there while the teacher has not looked at it."""
+    return _style.todo_mark(item, looked_at=item.key in looked_at)
 
 
 def _category_of(item: CheckItem) -> str:
-    """Return the badge a row shows on the right: its category, or what kind of thing it is."""
-    if item.category or item.kind in MODEL_KINDS:
-        return txt.category_label(item.category)
-    return _KIND_BADGES.get(item.kind, "")
+    """Return the badge a row shows on the right: what kind of thing it is, else its category.
+
+    The kind comes first, so a correction the teacher took out says *taken out* rather than its
+    category; the category of that correction stays on its card.
+    """
+    kind = _KIND_BADGES.get(item.kind)
+    if kind is not None:
+        return kind
+    return txt.category_label(item.category)
 
 
 def _words_in_text(item: CheckItem, corrected_plain: str) -> str:
@@ -173,6 +181,23 @@ def _words_in_text(item: CheckItem, corrected_plain: str) -> str:
     if not 0 <= start <= end <= len(corrected_plain):
         return item.after
     return corrected_plain[start:end]
+
+
+def _row_font(font: QFont, *, looked_at: bool) -> QFont:
+    """Return the font a row is drawn in: bold until the teacher has looked at it."""
+    drawn = QFont(font)
+    drawn.setBold(not looked_at)
+    return drawn
+
+
+def _bar_rect(rect: QRect) -> QRect:
+    """Return the bar at the left edge of a row: the accent of the item's kind."""
+    return QRect(rect.left(), rect.top(), _BAR_WIDTH, rect.height())
+
+
+def _bullet_rect(rect: QRect, metrics) -> QRect:
+    """Return the column of the bullet, one bullet wide whether or not it holds one."""
+    return QRect(rect.left(), rect.top(), metrics.horizontalAdvance(_style.TODO_DOT), rect.height())
 
 
 def _column_rects(rect: QRect, arrow_width: int) -> tuple[QRect, QRect, QRect]:
@@ -193,17 +218,20 @@ def _column_rects(rect: QRect, arrow_width: int) -> tuple[QRect, QRect, QRect]:
 
 
 class _ItemDelegate(QStyledItemDelegate):
-    """Draws one row: its icon, the student's words, the corrected ones, and the category badge.
+    """Draws one row: its kind's bar, its bullet, the two sorts of words, and the badge.
 
-    The two word columns are the same width in every row, so the student's words and the
-    correction line up down the list.  A row the teacher has looked at is drawn in the theme's
-    secondary grey, and the chosen row in the theme's selection text, so both stay readable.
+    The bar at the left edge is the accent of the item's kind, so a row says what happened to the
+    text without a word.  The bullet column is one bullet wide whether or not it holds one, so the
+    words of all rows start at the same place.  The two word columns are the same width in every
+    row, so the student's words and the correction line up down the list.  A row the teacher has
+    not looked at is bold, a looked-at one is drawn in the theme's secondary grey, and the chosen
+    row in the theme's selection text, so all three stay readable.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.looked_at: frozenset[str] = frozenset()
-        """The keys the teacher has looked at, which decides the icon and the colour."""
+        """The keys the teacher has looked at, which decides the bullet and the colour."""
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         """Draw the row of *index*; a row without one falls back to the plain text."""
@@ -216,16 +244,22 @@ class _ItemDelegate(QStyledItemDelegate):
         opt.text = ""
         style = opt.widget.style() if opt.widget is not None else QApplication.style()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
-        rect = opt.rect.adjusted(6, 0, -6, 0)
-        metrics = opt.fontMetrics
         looked_at = item.key in self.looked_at
         selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        font = _row_font(opt.font, looked_at=looked_at)
+        metrics = QFontMetrics(font)
         painter.save()
-        painter.setFont(QFont(opt.font))
+        painter.setFont(font)
         painter.setPen(_style.row_text(opt.palette, looked_at=looked_at, selected=selected))
-        icon = _icon_of(item, looked_at=self.looked_at)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, icon)
-        words = rect.adjusted(metrics.horizontalAdvance(icon) + 6, 0, 0, 0)
+        painter.fillRect(_bar_rect(opt.rect), QColor(_style.MARK_ACCENTS[item.kind]))
+        rect = opt.rect.adjusted(_BAR_WIDTH + 6, 0, -6, 0)
+        bullet = _icon_of(item, looked_at=self.looked_at)
+        painter.drawText(
+            _bullet_rect(rect, metrics),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            bullet,
+        )
+        words = rect.adjusted(metrics.horizontalAdvance(_style.TODO_DOT) + 6, 0, 0, 0)
         words = self._draw_badge(painter, words, metrics, item)
         self._draw_words(painter, words, metrics, item)
         painter.restore()
@@ -239,8 +273,8 @@ class _ItemDelegate(QStyledItemDelegate):
     ) -> QRect:
         """Draw the badge at the right of *rect*; return what is left for the words.
 
-        The badge keeps its own two colours, also on the chosen row: they are chosen to read
-        together, and the row's colour would not read on the badge's background.
+        The badge keeps its neutral grey, also on the chosen row: it is chosen to read together
+        with its own text, and the row's colour would not read on it.
         """
         category = _category_of(item)
         if not category:

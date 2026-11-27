@@ -81,24 +81,6 @@ CHIP_TEXT = "#d3d8dc"
 #: The bullet in front of a row the teacher has not looked at yet.
 TODO_DOT = "\u2022"
 
-ICON_LOOKED_AT = "\u25cf"
-"""An item the teacher has looked at."""
-
-ICON_NOT_LOOKED_AT = "\u25cb"
-"""An item the teacher has not looked at yet."""
-
-ICON_OWN = "\u270b"
-"""The teacher's own change: nothing to look at, so it keeps its own mark."""
-
-ICON_TAKEN_OUT = "\u21b6"
-"""A correction the teacher took out: it keeps its own mark too."""
-
-#: The kinds that keep their own icon instead of the looked-at pair.
-_KIND_ICONS = {
-    ItemKind.OWN: ICON_OWN,
-    ItemKind.TAKEN_OUT: ICON_TAKEN_OUT,
-}
-
 #: The underline of a mark: the kinds that are not a plain change say so with its style.
 _UNDERLINE = {
     ItemKind.UNCLEAR: QTextCharFormat.UnderlineStyle.DotLine,
@@ -141,14 +123,6 @@ def todo_mark(item: CheckItem, *, looked_at: bool) -> str:
     a row already looked at has none either; the row's colour says it was looked at.
     """
     return TODO_DOT if counts_for_looked_at(item) and not looked_at else ""
-
-
-def icon(kind: ItemKind, *, looked_at: bool) -> str:
-    """The character the list shows for *kind*: its own mark, or whether it was looked at."""
-    own = _KIND_ICONS.get(kind)
-    if own is not None:
-        return own
-    return ICON_LOOKED_AT if looked_at else ICON_NOT_LOOKED_AT
 
 
 def row_text(palette: QPalette, *, looked_at: bool, selected: bool) -> QColor:

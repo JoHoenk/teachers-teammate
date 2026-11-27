@@ -960,3 +960,15 @@ def test_save_settings_file_leaves_no_temporary_file(tmp_path: Path) -> None:
     save_settings_file(tmp_path / "ocr.toml", {"language": "German"})
 
     assert [path.name for path in tmp_path.iterdir()] == ["ocr.toml"]
+
+
+def test_a_config_with_both_text_files_writes_only_the_anonymized_one(tmp_path: Path) -> None:
+    """
+    Given  settings with the plain and the anonymized text file both on
+    When   a Config is built from them
+    Then   only the anonymized text file is written
+    """
+    config = make_config(tmp_path, text_enabled=True, text_anonymized_enabled=True)
+
+    assert (config.text_enabled, config.text_anonymized_enabled) == (False, True)
+    assert config.writes_text_files is True

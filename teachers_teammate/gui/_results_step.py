@@ -120,9 +120,7 @@ class ResultsStep(QObject):
         self._text_enabled = QCheckBox(txt.RESULTS_TEXT_CHECKBOX)
         self._text_enabled.setToolTip(txt.TEXT_FILE_TOOLTIP)
         self._text_mode = QComboBox()
-        self._text_mode.addItems(
-            [txt.TEXT_MODE_AS_WRITTEN, txt.TEXT_MODE_ANONYMIZED, txt.TEXT_MODE_BOTH]
-        )
+        self._text_mode.addItems([txt.TEXT_MODE_AS_WRITTEN, txt.TEXT_MODE_ANONYMIZED])
         self._text_mode.setToolTip(txt.TEXT_MODE_TOOLTIP)
         trl.addWidget(self._text_enabled)
         trl.addWidget(self._text_mode)
@@ -208,17 +206,15 @@ class ResultsStep(QObject):
         """Return the two text-file keys the row stands for."""
         if not self._text_enabled.isChecked():
             return _TextKeys(False, False)
-        mode = self._text_mode.currentText()
-        return _TextKeys(
-            as_written=mode in (txt.TEXT_MODE_AS_WRITTEN, txt.TEXT_MODE_BOTH),
-            anonymized=mode in (txt.TEXT_MODE_ANONYMIZED, txt.TEXT_MODE_BOTH),
-        )
+        anonymized = self._text_mode.currentText() == txt.TEXT_MODE_ANONYMIZED
+        return _TextKeys(as_written=not anonymized, anonymized=anonymized)
 
 
 def _mode_text(values: ResultsValues) -> str:
-    """Return which of the three "Text file" choices *values* stands for."""
-    if values.text_enabled and values.text_anonymized_enabled:
-        return txt.TEXT_MODE_BOTH
+    """Return which of the two "Text file" choices *values* stands for.
+
+    Settings with both keys on show *anonymized*, the one file the run writes (``Config``).
+    """
     if values.text_anonymized_enabled:
         return txt.TEXT_MODE_ANONYMIZED
     return txt.TEXT_MODE_AS_WRITTEN

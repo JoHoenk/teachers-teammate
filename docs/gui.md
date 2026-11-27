@@ -128,6 +128,11 @@ they cannot open behind it.
 
 `ConfigPanel` has four steps: Documents, Language (with Level), What should happen, Results.
 
+- Documents and Results each have a `PathRow` (`_path_row.py`): a read-only field, chosen only
+  with its buttons (*Folder…* / *Files…*, *Choose…*), never typed.
+- A run writes one text file, *as written* or *anonymized* (`text_enabled` /
+  `text_anonymized_enabled`). With both keys on, `Config` keeps the anonymized one and the
+  Results step shows it; the CLI refuses `--text` with `--text-anonymized`.
 - Under recognition, personal-info removal, proofreading and review sits a `UsesLine`
   (`_data_flow_summary.py`) with the step's model and place. Text from
   `DataFlowService.describe_steps(config)` — every step as if ticked, so an unticked step keeps its

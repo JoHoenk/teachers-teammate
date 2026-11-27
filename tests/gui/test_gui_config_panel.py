@@ -378,8 +378,8 @@ def test_the_results_problem_is_a_file_output_without_a_folder(qtbot) -> None:
 def test_the_results_step_shows_what_it_stores(qtbot) -> None:
     """
     Given  a Results step
-    When   the two text-file choices are stored as one answer and shown again
-    Then   the row stands for both files at once, and the folder comes back unchanged
+    When   the anonymized text file is stored as one answer and shown again
+    Then   the row shows it, and the folder comes back unchanged
     """
     from PySide6.QtWidgets import QWidget  # noqa: PLC0415
 
@@ -404,14 +404,14 @@ def test_the_results_step_shows_what_it_stores(qtbot) -> None:
         output="/tmp/results",
         docx_enabled=True,
         docx_format="comments",
-        text_enabled=True,
+        text_enabled=False,
         text_anonymized_enabled=True,
     )
 
     step.apply(stored)
 
     assert step.values() == stored
-    assert step._text_mode.currentText() == "both"
+    assert step._text_mode.currentText() == "anonymized"
     assert step._docx_format.currentText() == "comments"
 
 
@@ -1321,20 +1321,20 @@ def test_results_step_shows_and_saves_the_output_choices(qtbot, tmp_path: Path) 
     assert panel._results._text_mode.currentText() == "as written"
 
     panel._results._docx_enabled.setChecked(False)
-    panel._results._text_mode.setCurrentText("both")
+    panel._results._text_mode.setCurrentText("anonymized")
     saved = panel.to_dict()
 
     assert saved["output"] == str(tmp_path)
     assert saved["docx_enabled"] is False
     assert saved["docx_format"] == "comments"
-    assert saved["text_enabled"] is True
+    assert saved["text_enabled"] is False
     assert saved["text_anonymized_enabled"] is True
 
     reloaded = make_config_panel()
     qtbot.addWidget(reloaded)
     reloaded.load_from_dict(saved)
     assert not reloaded._results._docx_enabled.isChecked()
-    assert reloaded._results._text_mode.currentText() == "both"
+    assert reloaded._results._text_mode.currentText() == "anonymized"
     assert reloaded.get_output_dir() == str(tmp_path)
 
 
@@ -1345,7 +1345,7 @@ def test_results_step_shows_and_saves_the_output_choices(qtbot, tmp_path: Path) 
         (False, False, "as written"),
         (True, False, "as written"),
         (False, True, "anonymized"),
-        (True, True, "both"),
+        (True, True, "anonymized"),
     ],
 )
 def test_the_text_file_row_round_trips_all_four_key_combinations(
@@ -1354,7 +1354,8 @@ def test_the_text_file_row_round_trips_all_four_key_combinations(
     """
     Given  saved settings with each combination of the two text-file keys
     When   they are loaded into the panel and read back
-    Then   the checkbox and the choice show them, and to_dict() writes the same two keys
+    Then   the checkbox and the choice show them, to_dict() writes the same two keys, and the
+           run writes one text file: with both on, the anonymized one
     """
     panel = make_config_panel()
     qtbot.addWidget(panel)
@@ -1366,23 +1367,26 @@ def test_the_text_file_row_round_trips_all_four_key_combinations(
     saved = panel.to_dict()
     assert saved["text_enabled"] is as_written
     assert saved["text_anonymized_enabled"] is anonymized
+    config = panel.lookup_config()
+    assert config.text_enabled is (as_written and not anonymized)
+    assert config.text_anonymized_enabled is anonymized
 
 
 @pytest.mark.gui
 def test_unticking_the_text_file_keeps_the_choice_for_next_time(qtbot) -> None:
     """
-    Given  the text file ticked with "both" chosen
+    Given  the text file ticked with "anonymized" chosen
     When   the checkbox is unticked
-    Then   both keys are off, the choice stays "both" and the choice is disabled
+    Then   both keys are off, the choice stays "anonymized" and the choice is disabled
     """
     panel = make_config_panel()
     qtbot.addWidget(panel)
     panel._results._text_enabled.setChecked(True)
-    panel._results._text_mode.setCurrentText("both")
+    panel._results._text_mode.setCurrentText("anonymized")
 
     panel._results._text_enabled.setChecked(False)
 
-    assert panel._results._text_mode.currentText() == "both"
+    assert panel._results._text_mode.currentText() == "anonymized"
     assert not panel._results._text_mode.isEnabled()
     assert panel.get_settings_dict()["text_enabled"] is False
     assert panel.get_settings_dict()["text_anonymized_enabled"] is False

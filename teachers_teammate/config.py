@@ -187,6 +187,11 @@ class Config:
     # ── Internal ─────────────────────────────────────────────────────────────
     ocr_timeout: int = DEFAULTS["ocr_timeout"]
 
+    def __post_init__(self) -> None:
+        # A run writes one text file: with both keys on, the anonymized one.
+        if self.text_anonymized_enabled:
+            object.__setattr__(self, "text_enabled", False)
+
     @classmethod
     def from_settings(
         cls,

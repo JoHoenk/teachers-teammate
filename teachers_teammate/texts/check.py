@@ -132,6 +132,7 @@ RUN_PROOFREADING_PLAIN = "Proofreading…"
 RUN_PREPARING = "Preparing the pages…"
 RUN_READING = "Reading the text…"
 RUN_WAITING = "Waiting for its turn in this run…"
+RUN_STEP = "Step {number} of {total}: {step}"
 RUN_TIME_LEFT_SEPARATOR = " · "
 """The strip in the header while the open document is in a run: what is being done to it."""
 
@@ -213,6 +214,11 @@ SAVE_ANONYMIZED = "Save it with names hidden\u2026"
 def run_proofreading(model: str) -> str:
     """Return the run strip's line for proofreading with *model*."""
     return RUN_PROOFREADING.format(model=model)
+
+
+def run_step(number: int, total: int, step: str) -> str:
+    """Return the run strip's line for *step*, the *number*-th of the document's *total*."""
+    return RUN_STEP.format(number=number, total=total, step=step)
 
 
 def run_waiting_for_model(other: str) -> str:

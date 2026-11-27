@@ -465,14 +465,15 @@ def _add_output_args(parser: argparse.ArgumentParser) -> None:
         action="store_false",
         help=cli_text.HELP_NO_DOCX,
     )
-    out_grp.add_argument(
+    text_grp = out_grp.add_mutually_exclusive_group()
+    text_grp.add_argument(
         "--text",
         dest="text_enabled",
         action="store_true",
         default=DEFAULTS["text_enabled"],
         help=cli_text.HELP_TEXT,
     )
-    out_grp.add_argument(
+    text_grp.add_argument(
         "--text-anonymized",
         dest="text_anonymized_enabled",
         action="store_true",

@@ -667,7 +667,7 @@ def test_the_check_tab_shows_the_run_while_the_open_document_is_in_it(
     """
     Given  a document open in the Check tab, and a run over two documents that includes it
     When   the run starts, reaches the open document, reads it and ends
-    Then   the run strip waits, then says what is done with the document, then is gone
+    Then   the run strip waits, then says which of the document's steps is done, then is gone
     """
     a, b = stored("a.png", "b.png")
     main_window._check_controller.open_document(a)
@@ -681,13 +681,13 @@ def test_the_check_tab_shows_the_run_while_the_open_document_is_in_it(
     assert strip.text == check_text.RUN_WAITING
 
     main_window._run_controller._on_file_started(a, "a.png", 2, 2)
-    assert strip.text.startswith("Proofreading with ")
+    assert strip.text == check_text.run_step(1, 2, check_text.RUN_READING)
 
     main_window._run_controller._on_stage_started(a, "a.png", "ocr", 2, 2)
-    assert strip.text == check_text.RUN_READING
+    assert strip.text == check_text.run_step(1, 2, check_text.RUN_READING)
 
     main_window._run_controller._on_ocr_done(a, "a.png", 2, 2)
-    assert strip.text.startswith("Proofreading with ")
+    assert strip.text.startswith(check_text.run_step(2, 2, "Proofreading with "))
 
     main_window._run_controller._on_run_finished(RunSummary(succeeded=("a.png", "b.png")))
     assert strip.isHidden()

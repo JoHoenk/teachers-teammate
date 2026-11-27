@@ -1051,25 +1051,29 @@ class _TextFlagsAppService(_AppServiceStub):
 @pytest.mark.use_case("Headless_CLI_Batch")
 def test_parse_args_text_file_flags() -> None:
     """
-    Given  --text and --text-anonymized, and a call without them
+    Given  --text, --text-anonymized, a call without them, and both together
     When   _parse_args() is called
-    Then   the flags are True only when given
+    Then   a flag is True only when given, and both together are refused
     """
     from teachers_teammate.cli import _parse_args  # noqa: PLC0415
 
-    given = _parse_args(argv=["-i", "/in", "-o", "/out", "--text", "--text-anonymized"])
+    plain = _parse_args(argv=["-i", "/in", "-o", "/out", "--text"])
+    anonymized = _parse_args(argv=["-i", "/in", "-o", "/out", "--text-anonymized"])
     absent = _parse_args(argv=["-i", "/in", "-o", "/out"])
 
-    assert (given.text_enabled, given.text_anonymized_enabled) == (True, True)
+    assert (plain.text_enabled, plain.text_anonymized_enabled) == (True, False)
+    assert (anonymized.text_enabled, anonymized.text_anonymized_enabled) == (False, True)
     assert (absent.text_enabled, absent.text_anonymized_enabled) == (False, False)
+    with pytest.raises(SystemExit):
+        _parse_args(argv=["-i", "/in", "-o", "/out", "--text", "--text-anonymized"])
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
 def test_run_cli_passes_text_file_flags_to_config(tmp_path: Path) -> None:
     """
-    Given  --no-docx --text --text-anonymized with an output folder
+    Given  --no-docx --text-anonymized with an output folder
     When   run_cli() is called
-    Then   the Config asks for both text files and no Word document
+    Then   the Config asks for the anonymized text file and no Word document
     """
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
 
@@ -1082,7 +1086,6 @@ def test_run_cli_passes_text_file_flags_to_config(tmp_path: Path) -> None:
             "-o",
             str(tmp_path / "out"),
             "--no-docx",
-            "--text",
             "--text-anonymized",
         ],
         app_service=services_of(service),
@@ -1092,7 +1095,7 @@ def test_run_cli_passes_text_file_flags_to_config(tmp_path: Path) -> None:
     config = service.configs[0]
     assert (config.docx_enabled, config.text_enabled, config.text_anonymized_enabled) == (
         False,
-        True,
+        False,
         True,
     )
     assert config.writes_text_files is True

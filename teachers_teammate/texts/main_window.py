@@ -33,8 +33,7 @@ TEXT_FILE_TOOLTIP = "Save the extracted text of each input file as a text file (
 TEXT_MODE_TOOLTIP = (
     "as written — the text as it was read (name.txt).\n"
     "anonymized — names and other personal data replaced by placeholders\n"
-    "(name_anonymized.txt). Runs on this computer and needs the privacy add-on (spaCy).\n"
-    "both — one file of each."
+    "(name_anonymized.txt). Runs on this computer and needs the privacy add-on (spaCy)."
 )
 
 
@@ -169,10 +168,9 @@ def memory_use(used_gb: float, total_gb: float) -> str:
     return f"{used_gb:.1f} / {total_gb:.1f} GB"
 
 
-#: The three choices of the "Text file" row: which text files a run writes.
+#: The two choices of the "Text file" row: which text file a run writes.
 TEXT_MODE_AS_WRITTEN = "as written"
 TEXT_MODE_ANONYMIZED = "anonymized"
-TEXT_MODE_BOTH = "both"
 
 #: The title above the chart of how long each file took, and the key to its two kinds of bar.
 CHART_TITLE = "Processing time per file"

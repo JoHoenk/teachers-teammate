@@ -601,3 +601,26 @@ def test_the_run_strip_shows_what_the_run_does_and_stops_it(qtbot) -> None:
 
     page.set_run(None)
     assert page._run_strip.isHidden()
+
+
+@pytest.mark.gui
+def test_the_run_strip_counts_the_steps_of_the_document(qtbot) -> None:
+    """
+    Given  a page whose document is in a run that reads and proofreads
+    When   the reading is over and the proofreading runs, and then a run that only reads
+    Then   the strip says "Step 2 of 2" and the bar stands at one of two steps; a single step
+           is not counted and the bar only moves
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+    page.show_document(_document("a.png", "/tmp/a.png", raw_text="Hallo"), 1, 1)
+
+    page.set_run(RunState("Proofreading with qwen3…", steps=2, steps_done=1))
+
+    assert page._run_strip.text == "Step 2 of 2: Proofreading with qwen3…"
+    assert (page._run_strip._bar.maximum(), page._run_strip._bar.value()) == (2, 1)
+
+    page.set_run(RunState("Reading the text…"))
+
+    assert page._run_strip.text == "Reading the text…"
+    assert page._run_strip._bar.maximum() == 0

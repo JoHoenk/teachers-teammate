@@ -337,15 +337,18 @@ class CheckController(QObject):
                 )
             )
             return
-        step = self._session.step or (
-            check_text.run_proofreading(self._session.model)
-            if self._session.model
+        session = self._session
+        step = session.step or (
+            check_text.run_proofreading(session.model)
+            if session.model and session.file_steps_done
             else check_text.RUN_READING
         )
-        snapshot = self._session.snapshot
+        snapshot = session.snapshot
         self._page.set_run(
             RunState(
                 step,
+                steps=session.steps_per_file,
+                steps_done=session.file_steps_done,
                 time_left=snapshot.note,
                 time_left_tip=snapshot.tooltip,
                 stop_text=stop_text,

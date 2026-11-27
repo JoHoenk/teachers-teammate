@@ -29,6 +29,7 @@ from teachers_teammate.gui.check._side_panel import (
     _category_of,
     _column_rects,
     _icon_of,
+    _legend_html,
     _row_font,
 )
 from teachers_teammate.application.document_view import DocumentStateView
@@ -1800,3 +1801,50 @@ def test_dragging_the_card_tells_the_window_its_height(qtbot) -> None:
     panel._split.moveSplitter(panel._card.height() + 40, 1)
 
     assert told == [panel.card_split]
+
+
+# ── The legend ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_the_legend_says_what_every_colour_and_mark_of_the_tab_means(qtbot) -> None:
+    """
+    Given  the marks the Check tab draws in the text, in the list and in the card
+    When   the legend of the marks is built
+    Then   it holds every kind's accent, both strikes, and a line for each mark
+    """
+    legend = _legend_html()
+
+    for accent in set(_style.MARK_ACCENTS.values()):
+        assert accent in legend
+    assert _style.pale(_style.MARK_ACCENTS[ItemKind.CORRECTION]) in legend
+    assert _style.MODEL_STRIKE in legend
+    assert _style.STUDENT_STRIKE in legend
+    for line in (
+        check_txt.LEGEND_CORRECTION,
+        check_txt.LEGEND_OWN,
+        check_txt.LEGEND_UNCLEAR,
+        check_txt.LEGEND_TAKEN_OUT,
+        check_txt.LEGEND_PALER,
+        check_txt.LEGEND_UNDERLINE,
+        check_txt.LEGEND_STRIKES,
+        check_txt.LEGEND_STRIKE_MODEL,
+        check_txt.LEGEND_STRIKE_STUDENT,
+        check_txt.LEGEND_LIST,
+    ):
+        assert line in legend
+
+
+@pytest.mark.gui
+def test_the_info_button_beside_next_hands_out_the_legend(qtbot) -> None:
+    """
+    Given  a side panel that shows a document
+    When   the teacher points at the info button beside *Next*
+    Then   its tooltip is the legend, and its accessible name says what it holds
+    """
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
+    button = panel._legend_button
+
+    assert button.toolTip() == _legend_html()
+    assert button.accessibleName() == check_txt.LEGEND_TIP
+    assert button.autoRaise()

@@ -40,7 +40,7 @@ BASE_BACKGROUND = "#19232d"
 _WEAKER_SHARE = 0.45
 
 
-def _weaker(colour: str) -> str:
+def pale(colour: str) -> str:
     """Return *colour* blended towards the background: the same hue, drawn weaker."""
     tint = QColor(colour)
     base = QColor(BASE_BACKGROUND)
@@ -149,5 +149,5 @@ def look(item: CheckItem) -> MarkLook:
     """
     background, text = MARK_COLOURS[item.kind]
     if item.is_minor:
-        background = _weaker(background)
+        background = pale(background)
     return MarkLook(background, text, MARK_ACCENTS[item.kind], _UNDERLINE.get(item.kind, _SOLID))

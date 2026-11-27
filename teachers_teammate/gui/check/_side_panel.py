@@ -7,9 +7,12 @@ an edit of the final text.
 
 *Next* on the card walks the rows the teacher has not looked at yet, in list order and from the top
 at the end; a document opens at the first of them.  The walk keeps no state of its own: choosing a
-row is what marks it looked at, so the icons and the footer say how far it got.  The boxes above
-the list narrow both the list and the walk: nothing ticked shows every row, and *Not looked at*
-narrows whatever else is ticked, while the counts keep covering the whole document.
+row is what marks it looked at, so the bullet in the list and the footer say how far it got.  The
+boxes above the list narrow both the list and the walk: nothing ticked shows every row, and *Not
+looked at* narrows whatever else is ticked, while the counts keep covering the whole document.
+
+A row says its kind with the colour of the bar at its left edge — colour says what happened to the
+text, a word says the category — and the info button beside *Next* spells the colours out.
 
 The card says what the change is on one side and why it was made on the other, side by side once
 the panel is wide enough for both.  Its height is the teacher's — a splitter against the list, so
@@ -17,7 +20,7 @@ a long explanation is read whole — and its text scrolls inside it, so neither 
 *Next* move while the teacher steps through a document.  The content review has a tab of its own
 next to the list.
 
-All wording comes from :mod:`...texts.review` and :mod:`...texts.check`; the colours and icons from
+All wording comes from :mod:`...texts.review` and :mod:`...texts.check`; the colours from
 :mod:`._style`.
 """
 
@@ -28,7 +31,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 import html
 
-from PySide6.QtCore import QRect, QSize, Qt, Signal, SignalInstance
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal, SignalInstance
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (
     QApplication,
@@ -48,6 +51,8 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QTabWidget,
     QTextBrowser,
+    QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -344,6 +349,44 @@ def _chip(text: str) -> str:
         f' color:{_style.CHIP_TEXT};">'
         f"&nbsp;{html.escape(text)}&nbsp;</span>"
     )
+
+
+def _escaped(text: str) -> str:
+    """Return *text* fit for rich text, with its apostrophes kept as themselves."""
+    return html.escape(text, quote=False)
+
+
+def _swatch(colour: str) -> str:
+    """Return a small square of *colour*: what one line of the legend is about."""
+    return f'<span style="background-color:{colour};">&nbsp;&nbsp;&nbsp;&nbsp;</span>'
+
+
+def _struck(text: str, colour: str) -> str:
+    """Return *text* struck through in *colour*: words a correction took out."""
+    return f'<span style="color:{colour};"><s>{_escaped(text)}</s></span>'
+
+
+def _legend_html() -> str:
+    """Return the legend of the tab's marks: one line per colour, per mark and per strike."""
+    accents = _style.MARK_ACCENTS
+    lines = [
+        f"{_swatch(colour)} {_escaped(text)}"
+        for colour, text in (
+            (accents[ItemKind.CORRECTION], check_txt.LEGEND_CORRECTION),
+            (accents[ItemKind.OWN], check_txt.LEGEND_OWN),
+            (accents[ItemKind.UNCLEAR], check_txt.LEGEND_UNCLEAR),
+            (accents[ItemKind.TAKEN_OUT], check_txt.LEGEND_TAKEN_OUT),
+            (_style.pale(accents[ItemKind.CORRECTION]), check_txt.LEGEND_PALER),
+        )
+    ]
+    lines.append(_escaped(check_txt.LEGEND_UNDERLINE))
+    lines.append(
+        f"{_escaped(check_txt.LEGEND_STRIKES)}: "
+        f"{_struck(check_txt.LEGEND_STRIKE_MODEL, _style.MODEL_STRIKE)}, "
+        f"{_struck(check_txt.LEGEND_STRIKE_STUDENT, _style.STUDENT_STRIKE)}"
+    )
+    lines.append(_escaped(check_txt.LEGEND_LIST))
+    return "<br>".join(lines)
 
 
 def _title_html(item: CheckItem, masking: Masking) -> str:
@@ -741,9 +784,19 @@ class SidePanel(QWidget):
         self._next_button.setMinimumWidth(self._next_button.sizeHint().width())
         self._next_button.setText(txt.NEXT)
         self._next_button.setToolTip(txt.NEXT_TOOLTIP)
+        self._legend = _legend_html()
+        self._legend_button = QToolButton()
+        self._legend_button.setAutoRaise(True)
+        self._legend_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation)
+        )
+        self._legend_button.setAccessibleName(check_txt.LEGEND_TIP)
+        self._legend_button.setToolTip(self._legend)
+        self._legend_button.clicked.connect(self._show_legend)
         top = QHBoxLayout()
         top.setSpacing(4)
         top.addWidget(self._counts, 1)
+        top.addWidget(self._legend_button)
         top.addWidget(self._next_button)
         layout.addLayout(top)
 
@@ -873,6 +926,14 @@ class SidePanel(QWidget):
         key = next_unseen(self._walk_keys(), self._looked_at, self.chosen)
         if key:
             self.set_chosen(key)
+
+    def _show_legend(self) -> None:
+        """Show the legend at the button: a click asks for what the tooltip says."""
+        QToolTip.showText(
+            self._legend_button.mapToGlobal(QPoint(0, self._legend_button.height())),
+            self._legend,
+            self._legend_button,
+        )
 
     def set_chosen(self, key: str) -> None:
         """Select the row of *key*, if the list has it, without telling the page back.

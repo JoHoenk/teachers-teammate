@@ -123,6 +123,26 @@ BADGE_OWN = "your change"
 BADGE_TAKEN_OUT = "taken out"
 """The badge of an item the list has no category for: what kind of thing it is."""
 
+# ── The legend of the marks ──────────────────────────────────────────────
+
+LEGEND_TIP = "What the marks mean"
+"""The info button beside *Next*: its accessible name, and what its legend is."""
+
+LEGEND_CORRECTION = "Correction by the AI"
+LEGEND_OWN = "Your change"
+LEGEND_UNCLEAR = "Unclear or not proofread: read it yourself"
+LEGEND_TAKEN_OUT = "Taken out: the student's words are back"
+LEGEND_PALER = "Paler: a spelling or punctuation change"
+LEGEND_UNDERLINE = (
+    "Underlined solid for a change, dotted for something unclear or not proofread, dashed for "
+    "what you took out"
+)
+LEGEND_STRIKES = "With corrections"
+LEGEND_STRIKE_MODEL = "removed by the AI"
+LEGEND_STRIKE_STUDENT = "crossed out by the student"
+LEGEND_LIST = "In the list: \u2022 is there to look at, a grey row you have read"
+"""The legend of the tab's marks, one line per colour and per mark of the text and the list."""
+
 
 def filter_label(label: str, count: int) -> str:
     """Return a filter chip's text with its count, e.g. ``"Grammar 4"``."""

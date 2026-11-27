@@ -157,16 +157,19 @@ def _is_word_char(char: str) -> bool:
     return char == "_" or unicodedata.category(char)[0] in ("L", "N")
 
 
-def surface_pattern(values: Iterable[str]) -> re.Pattern[str] | None:
+def surface_pattern(values: Iterable[str], *, ignore_case: bool = False) -> re.Pattern[str] | None:
     """Return a regex that finds any of *values* as a whole word, the longest one first.
 
     ``None`` when there is nothing to look for.  This is what :func:`mask` matches with, and
     what an anonymizer uses to find a further occurrence of a name it has already replaced.
+    *ignore_case* is for the lists a teacher writes (:attr:`AnonymizerConfig.hide` and
+    :attr:`AnonymizerConfig.keep`), which do not tell ``Anna`` from ``anna``.
     """
     surfaces = sorted({value for value in values if value}, key=len, reverse=True)
     if not surfaces:
         return None
-    return re.compile("|".join(_word_bounded(surface) for surface in surfaces))
+    flags = re.IGNORECASE if ignore_case else 0
+    return re.compile("|".join(_word_bounded(surface) for surface in surfaces), flags)
 
 
 def leftover_placeholders(text: str, mapping: PlaceholderMap) -> tuple[str, ...]:
@@ -387,6 +390,12 @@ class AnonymizerConfig:
             regardless of language.
         patterns: Regex patterns applied after NER, as ``(tag, pattern)``
             pairs.  An empty tuple skips regex anonymization entirely.
+        hide: Texts the anonymizer hides wherever they stand, as ``[NAME_n]``: a
+            text a teacher wants hidden whatever the models and patterns find
+            (:func:`config_hiding`).  Whole words, case-folded (:func:`keep_key`).
+        keep: Texts the anonymizer must leave as they are: a text a teacher wants
+            sent as written (:func:`config_keeping`).  What a pass found is dropped
+            when it is such a text or lies inside one; a text in both lists is kept.
     """
 
     #: SECONDARY_MODEL_AUTO ("the system language's model"), SECONDARY_MODEL_NONE / None
@@ -395,6 +404,8 @@ class AnonymizerConfig:
     secondary_model: str | None = None
     primary_model: str | None = None
     patterns: tuple[tuple[str, str], ...] = field(default_factory=lambda: tuple(DEFAULT_PATTERNS))
+    hide: tuple[str, ...] = ()
+    keep: tuple[str, ...] = ()
 
 
 class AnonymizerNoticeKind(StrEnum):
@@ -475,3 +486,52 @@ def resolve_anonymizer_config(
             ),
         )
     return replace(config, secondary_model=system_model), None
+
+
+#: The tag of what :attr:`AnonymizerConfig.hide` finds: it becomes the placeholder ``[NAME_1]``.
+HIDDEN_TAG = "NAME"
+
+
+def keep_key(surface: str) -> str:
+    """Return *surface* as the lists compare it: NFC, case-folded, without outer space."""
+    return unicodedata.normalize("NFC", surface).strip().casefold()
+
+
+def config_hiding(config: AnonymizerConfig, literal: str) -> AnonymizerConfig:
+    """Return *config* with *literal* hidden from now on.
+
+    The literal joins :attr:`AnonymizerConfig.hide` and leaves the keep list, which would
+    otherwise win: the rule that hides it must be the newer of the two.
+    """
+    word = literal.strip()
+    if not word:
+        return config
+    key = keep_key(word)
+    hidden = config.hide
+    if all(keep_key(entry) != key for entry in hidden):
+        hidden = (*hidden, word)
+    return replace(
+        config,
+        hide=hidden,
+        keep=tuple(entry for entry in config.keep if keep_key(entry) != key),
+    )
+
+
+def config_keeping(config: AnonymizerConfig, literal: str) -> AnonymizerConfig:
+    """Return *config* with *literal* left as it is in what goes out.
+
+    The literal joins :attr:`AnonymizerConfig.keep` and leaves the hide list, so the two
+    cannot contradict each other.
+    """
+    word = literal.strip()
+    if not word:
+        return config
+    key = keep_key(word)
+    kept = config.keep
+    if all(keep_key(entry) != key for entry in kept):
+        kept = (*kept, word)
+    return replace(
+        config,
+        hide=tuple(entry for entry in config.hide if keep_key(entry) != key),
+        keep=kept,
+    )

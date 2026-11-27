@@ -121,6 +121,10 @@ def anonymization_fingerprint(config: Config, facts: KeyFacts) -> tuple[str, ...
         resolved.primary_model or "",
         resolved.secondary_model or "",
         *(f"{tag}={pattern}" for tag, pattern in resolved.patterns),
+        # Only when there is one: a result stored before these lists existed recorded a hash
+        # without them, and must still match.
+        *(f"hide={literal}" for literal in resolved.hide),
+        *(f"keep={literal}" for literal in resolved.keep),
     )
 
 

@@ -168,6 +168,14 @@ date is replaced, so the proofreading does not see `9.11.1989` in a history essa
 number like `Aufgabe 1.2.10` may be taken for a date. If that gets in the way, remove the `DATE`
 patterns under **Settings → Privacy… → Personal info: patterns**.
 
+**Words to always hide, words to never hide.** Under **Settings → Privacy… → Personal info:
+patterns**, *Always hidden* lists words that are replaced wherever they stand, even when no
+detection finds them, and *Never hidden* lists words that are sent as written, even when a
+detection finds them. Both ignore capital letters and match whole words. A word in both lists is
+sent as written. The **Check** tab adds to them: select a word in **What was read** and choose
+**Hide this**, or **Don't hide this** on a stand-in. It applies to the next proofreading; a result
+made before says "made with other privacy settings".
+
 **Name detection models.** Install spaCy and a model under **Settings → Add-ons… → Name
 detection**. The multilingual model (`xx_ent_wiki_sm`) is a safe default; the German
 (`de_core_news_sm`) and English (`en_core_web_sm`) models are more accurate for their language. A

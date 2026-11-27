@@ -22,6 +22,7 @@ class Masking:
 
     def __init__(self) -> None:
         self._available = False
+        self._run_hides = False
         self._enabled = False
         self._mapping: dict[str, str] = {}
         self._text = ""
@@ -43,12 +44,17 @@ class Masking:
         return self._available
 
     @property
+    def run_hides(self) -> bool:
+        """Whether the next proofreading is made with the names hidden (the run's setting)."""
+        return self._run_hides
+
+    @property
     def preview(self) -> tuple[str, Mapping[str, str]] | None:
         """The anonymizer's text of the open transcription with its map, or ``None``.
 
-        ``None`` until the answer arrives, after a failure, and when the answer holds no text:
-        then the names stand in what would go out, which is what the box of *What was read*
-        shows.
+        ``None`` until the answer arrives, after a failure, when the answer holds no text, and
+        while the answer to the text now open is out: then the names stand in what would go
+        out, which is what the box of *What was read* shows.
         """
         if not self._ready or self._error or not self._text:
             return None
@@ -109,6 +115,10 @@ class Masking:
         if not available:
             self._enabled = False
 
+    def set_run_hides(self, hides: bool) -> None:
+        """Say whether the next proofreading is made with the names hidden."""
+        self._run_hides = bool(hides)
+
     def set_enabled(self, enabled: bool) -> None:
         """Show the texts with placeholders, or show the names again."""
         self._enabled = bool(enabled) and self._available
@@ -122,9 +132,7 @@ class Masking:
         self._requested = ""
         self._masked = {}
 
-    def set_result(
-        self, mapping: Mapping[str, str], *, text: str = "", error: str = ""
-    ) -> None:
+    def set_result(self, mapping: Mapping[str, str], *, text: str = "", error: str = "") -> None:
         """Hand over the placeholder map and the anonymized text of the open document.
 
         *text* is the string the anonymizer made — the one a request is built from, marks the
@@ -145,7 +153,13 @@ class Masking:
         return bool(raw_text.strip()) and self._requested != raw_text
 
     def mark_requested(self, raw_text: str) -> None:
-        """Remember that the names of *raw_text* were asked for, so they are asked once."""
+        """Remember that the names of *raw_text* were asked for, so they are asked once.
+
+        The anonymized text held so far was made from another text, so it is no preview of this
+        one.
+        """
+        if raw_text != self._requested:
+            self._text = ""
         self._requested = raw_text
 
     def _masked_text(self, text: str) -> tuple[str, OffsetMap]:

@@ -12,8 +12,11 @@ from teachers_teammate.application.anonymization import AnonymizationService
 from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.application.run import RunService
 from teachers_teammate.gui import _main_window as main_window_module
+from teachers_teammate.domain.data_location import SentRecord
+from teachers_teammate.texts import check as check_text
 from teachers_teammate.texts import review as txt
 from teachers_teammate.gui._main_window import MainWindow
+from teachers_teammate.gui._privacy_view_controller import PrivacyHooks
 from teachers_teammate.gui._readiness_controller import ReadinessController
 from teachers_teammate.gui._privacy_settings import DISPLAY_ANONYMIZED_KEY
 from teachers_teammate.gui.settings import SettingsPage, SettingsResult
@@ -100,8 +103,17 @@ class _MemorySettings:
         self.store.pop(key, None)
 
 
-def _open_document(main_window, monkeypatch, tmp_path, raw: str, corrected: str = "") -> None:
-    """Store a document with these texts and open it in the Check tab."""
+def _open_document(
+    main_window,
+    monkeypatch,
+    tmp_path,
+    raw: str,
+    corrected: str = "",
+    *,
+    sent: SentRecord | None = None,
+    sent_text: str = "",
+) -> None:
+    """Store a document with these texts, sent like *sent*, and open it in the Check tab."""
     cfg = make_config(tmp_path)
     cfg.input_dir.mkdir(parents=True, exist_ok=True)
     source = cfg.input_dir / "page.png"
@@ -117,6 +129,8 @@ def _open_document(main_window, monkeypatch, tmp_path, raw: str, corrected: str 
             correction_text=corrected,
             ocr_done=bool(raw),
             correction_done=bool(corrected),
+            correction_sent=sent,
+            correction_sent_text=sent_text,
         ),
     )
     main_window._results_table.set_queue(
@@ -604,3 +618,162 @@ def test_only_the_newest_anonymization_reaches_the_page(
     QTest.qWait(100)
 
     assert main_window._check_controller.page.body.read_view.toPlainText() == "[PERSON_1] ist hier."
+
+
+# ── Hide this / Don't hide this: the rule the Check tab writes ────────────
+
+
+def _record_anonymize(monkeypatch) -> list:
+    """Patch the anonymizer to answer at once, and return the settings it was asked with."""
+    asked: list = []
+
+    def _fake_anonymize(_self, _text, _language, config=None):
+        asked.append(config)
+        return ANONYMIZED, MAPPING
+
+    monkeypatch.setattr(AnonymizationService, "anonymize_text", _fake_anonymize)
+    return asked
+
+
+def _record_hooks(main_window) -> tuple[list[str], list[bool], list[bool]]:
+    """Send the controller's status lines, saves and rule changes to lists, and return them."""
+    said: list[str] = []
+    saved: list[bool] = []
+    changed: list[bool] = []
+    main_window._privacy_controller._hooks = PrivacyHooks(
+        say=said.append,
+        save_settings=lambda: saved.append(True),
+        rules_changed=lambda: changed.append(True),
+    )
+    return said, saved, changed
+
+
+@pytest.mark.gui
+def test_hide_this_writes_the_rule_and_hides_the_text_again(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  an open document whose names are hidden
+    When   the Check tab asks for a selected word to be hidden from now on
+    Then   the word joins the hide list, which is saved and announced, and the placeholders are
+           worked out again with it
+    """
+    asked = _record_anonymize(monkeypatch)
+    said, saved, changed = _record_hooks(main_window)
+    _open_document(main_window, monkeypatch, tmp_path, RAW)
+    _wait_for(lambda: not main_window._check_controller.page._masking.pending)
+
+    main_window._check_controller.page.hide_requested.emit("Bernd")
+    _wait_for(lambda: len(asked) == 2)
+
+    assert asked[-1].hide == ("Bernd",)
+    assert asked[-1].patterns == asked[0].patterns
+    assert saved == [True]
+    assert changed == [True]
+    assert said == [check_text.hiding_from_now_on("Bernd")]
+
+
+@pytest.mark.gui
+def test_dont_hide_this_keeps_the_name_in_what_is_sent(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  an open document whose names are hidden
+    When   the Check tab asks for a name to be sent as written from now on
+    Then   the name joins the keep list and the next anonymizer call is given it
+    """
+    asked = _record_anonymize(monkeypatch)
+    said, saved, changed = _record_hooks(main_window)
+    _open_document(main_window, monkeypatch, tmp_path, RAW)
+    _wait_for(lambda: not main_window._check_controller.page._masking.pending)
+
+    main_window._check_controller.page.keep_requested.emit("Bernd")
+    _wait_for(lambda: len(asked) == 2)
+
+    assert asked[-1].keep == ("Bernd",)
+    assert saved == [True]
+    assert changed == [True]
+    assert said == [check_text.keeping_from_now_on("Bernd")]
+
+
+@pytest.mark.gui
+def test_the_line_says_a_rule_applies_to_the_next_proofreading(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a document whose proofreading was stored with its names hidden
+    When   the teacher hides another word
+    Then   the line says the rule applies to the next proofreading, and the box keeps the
+           string that was sent
+    """
+    _record_anonymize(monkeypatch)
+    said, _saved, _changed = _record_hooks(main_window)
+    sent = SentRecord(provider="ollama", names_hidden=1, hiding_on=True)
+    _open_document(
+        main_window,
+        monkeypatch,
+        tmp_path,
+        RAW,
+        CORRECTED,
+        sent=sent,
+        sent_text=ANONYMIZED,
+    )
+    _wait_for(lambda: not main_window._check_controller.page._masking.pending)
+
+    main_window._check_controller.page.hide_requested.emit("Bernd")
+
+    assert said == [f"{check_text.hiding_from_now_on('Bernd')} {check_text.NEXT_PROOFREADING_ONLY}"]
+    assert main_window._check_controller.page.body.read_view.toPlainText() == ANONYMIZED
+
+
+@pytest.mark.gui
+def test_a_rule_written_while_the_placeholders_are_worked_out_asks_again(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  placeholders for the open text that are still being worked out
+    When   the teacher hides another word meanwhile
+    Then   they are asked for again with the new rule, and the answer made with the old one is
+           not the last word
+    """
+    release = threading.Event()
+    asked: list = []
+
+    def _fake_anonymize(_self, _text, _language, config=None):
+        asked.append(config)
+        if len(asked) == 1:
+            release.wait(5)
+        return ANONYMIZED, MAPPING
+
+    monkeypatch.setattr(AnonymizationService, "anonymize_text", _fake_anonymize)
+    _record_hooks(main_window)
+    _open_document(main_window, monkeypatch, tmp_path, RAW)
+    _wait_for(lambda: len(asked) == 1)
+
+    main_window._check_controller.page.hide_requested.emit("Bernd")
+    release.set()
+    _wait_for(lambda: len(asked) == 2)
+
+    assert asked[0].hide == ()
+    assert asked[1].hide == ("Bernd",)
+
+
+@pytest.mark.gui
+def test_the_run_setting_reaches_the_check_tab(main_window) -> None:
+    """
+    Given  a window whose Check tab holds the run's hiding setting
+    When   the setting changes and the availability is looked at again
+    Then   the tab knows, so the box of *What was read* never claims to show what will be sent
+           while the run sends the names as written
+    """
+    controller = main_window._privacy_controller
+    masking = main_window._check_controller.page._masking
+
+    controller.refresh_availability()
+    before = masking.run_hides
+    main_window._config_panel.set_anonymization_enabled(not before)
+    after = main_window._config_panel.lookup_config().anonymization_enabled
+    controller.refresh_availability()
+
+    assert after is not before
+    assert masking.run_hides is after

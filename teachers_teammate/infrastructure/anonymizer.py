@@ -16,7 +16,9 @@ import re
 import threading
 
 from ..domain.anonymization import (
+    HIDDEN_TAG,
     AnonymizerConfig,
+    keep_key,
     resolve_anonymizer_config,
     restore,
     surface_pattern,
@@ -223,16 +225,46 @@ def _compiled_pattern(tag: str, pattern: str) -> re.Pattern[str]:
         raise AnonymizerError(personal_info_pattern_invalid(tag, exc)) from exc
 
 
-def _without_overlaps(text: str, ordered: list[_Span]) -> list[_Span]:
+@dataclass(frozen=True)
+class _Keep:
+    """What the teacher's keep list protects in one text: the surfaces and where they stand."""
+
+    keys: frozenset[str] = frozenset()
+    ranges: tuple[tuple[int, int], ...] = ()
+
+    @classmethod
+    def of(cls, text: str, keep: tuple[str, ...]) -> _Keep:
+        """Return what the entries of *keep* protect in *text*."""
+        pattern = surface_pattern(keep, ignore_case=True)
+        if pattern is None:
+            return cls()
+        return cls(
+            frozenset(keep_key(entry) for entry in keep),
+            tuple(match.span() for match in pattern.finditer(text)),
+        )
+
+    def covers(self, start: int, end: int, surface: str) -> bool:
+        """Whether a span is a kept text, or lies inside the occurrence of one."""
+        return keep_key(surface) in self.keys or any(
+            kept_start <= start and end <= kept_end for kept_start, kept_end in self.ranges
+        )
+
+
+def _without_overlaps(text: str, ordered: list[_Span], keep: _Keep) -> list[_Span]:
     """Return *ordered* with every part another span already covers taken out.
 
     *ordered* is the priority order — person names first, then the patterns as they are
     configured.  A span that loses a part to a person name keeps the rest: a street the NER
     model half swallowed is still replaced as a street.  A pattern span another pattern
     overlaps is dropped whole, so a stray fragment never becomes a placeholder of its own.
+
+    A span that *keep* covers — a text of the teacher's keep list, or part of one — is dropped,
+    whoever found it.
     """
     accepted: list[_Span] = []
     for candidate in ordered:
+        if keep.covers(candidate.start, candidate.end, candidate.surface):
+            continue
         pieces = [(candidate.start, candidate.end)]
         for taken in accepted:
             pieces = [
@@ -249,8 +281,8 @@ def _without_overlaps(text: str, ordered: list[_Span]) -> list[_Span]:
         for start, end in pieces:
             piece = text[start:end]
             trimmed = piece.strip()
-            if trimmed:
-                offset = start + len(piece) - len(piece.lstrip())
+            offset = start + len(piece) - len(piece.lstrip())
+            if trimmed and not keep.covers(offset, offset + len(trimmed), trimmed):
                 accepted.append(_Span(offset, offset + len(trimmed), trimmed, candidate.tag))
     return accepted
 
@@ -303,11 +335,14 @@ def _letters(number: int) -> str:
     return label
 
 
-def _further_surfaces(text: str, spans: list[_Span], placeholders: dict[str, str]) -> list[_Span]:
+def _further_surfaces(
+    text: str, spans: list[_Span], placeholders: dict[str, str], keep: _Keep
+) -> list[_Span]:
     """Return the further occurrences of the surfaces already in *placeholders*.
 
     A name the model found in one sentence is replaced in all of them, so a run never sends a
-    name just because the NER pass was unsure about the second mention.
+    name just because the NER pass was unsure about the second mention.  What *keep* covers
+    stays as written.
     """
     pattern = surface_pattern(placeholders)
     if pattern is None:
@@ -316,6 +351,7 @@ def _further_surfaces(text: str, spans: list[_Span], placeholders: dict[str, str
         _Span(match.start(), match.end(), match.group(0), "")
         for match in pattern.finditer(text)
         if not any(max(span.start, match.start()) < min(span.end, match.end()) for span in spans)
+        and not keep.covers(match.start(), match.end(), match.group(0))
     ]
 
 
@@ -387,14 +423,20 @@ class SpacyAnonymizer(Anonymizer):
         replaced in one go, so no pattern ever runs over a placeholder; the tag that comes
         first in the settings wins an overlap, a person name before all of them.  A surface
         that was found once is also replaced where a pass missed it, with its own placeholder.
+        The texts the teacher asked to hide come first, the ones to keep are never replaced.
 
         Returns:
             Tuple of *(anonymized_text, mapping)* where mapping is
             ``{placeholder: original_surface_text}``.
         """
-        spans = _without_overlaps(text, [*self._person_spans(text), *self._pattern_spans(text)])
+        keep = _Keep.of(text, self._config.keep)
+        spans = _without_overlaps(
+            text,
+            [*self._hidden_spans(text), *self._person_spans(text), *self._pattern_spans(text)],
+            keep,
+        )
         placeholders = _assign_placeholders(spans, text)
-        spans = [*spans, *_further_surfaces(text, spans, placeholders)]
+        spans = [*spans, *_further_surfaces(text, spans, placeholders, keep)]
         return _replace(text, spans, placeholders), {
             placeholder: surface for surface, placeholder in placeholders.items()
         }
@@ -425,6 +467,16 @@ class SpacyAnonymizer(Anonymizer):
                 for start, end, surface in person_spans(self._nlp_secondary)
                 if not any(max(s, start) < min(e, end) for s, e in covered)
             ),
+        ]
+
+    def _hidden_spans(self, text: str) -> list[_Span]:
+        """Return the texts of the teacher's hide list where they stand in *text*."""
+        pattern = surface_pattern(self._config.hide, ignore_case=True)
+        if pattern is None:
+            return []
+        return [
+            _Span(match.start(), match.end(), match.group(0), HIDDEN_TAG)
+            for match in pattern.finditer(text)
         ]
 
     def _pattern_spans(self, text: str) -> list[_Span]:

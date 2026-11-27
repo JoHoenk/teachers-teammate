@@ -55,8 +55,8 @@ class DocumentStateView:
     sent_text: str = ""
     """The text the stored proofreading was sent as, in the notation of the document.
 
-    Empty when names were not hidden (the transcription went as written) and when nothing was
-    found to hide; :attr:`sent` tells those two apart."""
+    Empty when names were not hidden (the transcription went as written) and for a result an
+    older version stored; :attr:`sent` tells names hidden from names as written."""
 
     sent_map: dict[str, str] = field(default_factory=dict)
     """The placeholder map of :attr:`sent_text`: placeholder → the original the model found."""

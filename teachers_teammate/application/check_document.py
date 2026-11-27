@@ -83,8 +83,9 @@ class CheckDocument:
     sent_text: str
     """The text the stored proofreading was sent as, in the notation of the document.
 
-    Empty when names were hidden but nothing was found, and when they were not hidden at all;
-    :attr:`sent` tells those two apart, and :func:`sent_view_of` reads it."""
+    Empty when names were not hidden (the transcription went as written) and for a result an
+    older version stored; :attr:`sent` tells names hidden from names as written, and
+    :func:`sent_view_of` reads it."""
     sent_map: Mapping[str, str]
     """The placeholder map of :attr:`sent_text`: placeholder → the original the model found."""
     work: WorkStatus
@@ -190,6 +191,8 @@ class SentKind(StrEnum):
     """The names are being replaced; until they are, the box shows the text as read."""
     AS_WRITTEN = "as_written"
     """Names go out as written, so there is nothing to show but the transcription."""
+    HIDDEN_HERE = "hidden_here"
+    """A run sends names as written, but the teacher hides them on this screen."""
     NAMES_SHOWN = "names_shown"
     """Names are hidden when sent, but the teacher reads them here: hiding is off."""
     UNAVAILABLE = "unavailable"
@@ -215,6 +218,7 @@ def sent_view_of(
     doc: CheckDocument,
     *,
     available: bool,
+    run_hides: bool,
     hiding: bool,
     preview: tuple[str, Mapping[str, str]] | None = None,
 ) -> SentView:
@@ -224,24 +228,45 @@ def sent_view_of(
     request is made from beats what the box could reconstruct: a proofreading that went out with
     names hidden is shown as it was stored, a name the model spelled differently included.
 
-    *available* says names can be hidden at all and *hiding* whether the texts are shown with
-    placeholders.  *preview* is the anonymizer's ``(text, map)`` of the current transcription —
-    ``None`` until it arrives, and after a failure, when the names stand in what would go out.
+    *run_hides* says the next proofreading is made with the names hidden (the *Remove personal
+    info* setting), *available* that names can be hidden at all, and *hiding* whether the texts
+    are shown with placeholders.  *preview* is the anonymizer's ``(text, map)`` of the current
+    transcription — ``None`` until it arrives, and after a failure, when the names stand in
+    what would go out.  A stored proofreading is answered from its own record, so *run_hides*
+    only matters without one.  When a run sends the names as written the box never claims to
+    show what will be sent: it shows the names, or the placeholders the teacher asked for on
+    this screen, and says which.
     """
     if doc.has_proofreading:
-        if not _sent_hidden(doc):
+        return _stored_view(doc, hiding=hiding)
+    if not run_hides:
+        if not (available and hiding):
             return _shown(doc.raw_text, doc, SentKind.AS_WRITTEN)
-        if hiding:
-            return _shown(doc.sent_text or doc.raw_text, doc, SentKind.SENT, doc.sent_map)
-        return _shown(doc.raw_text, doc, SentKind.NAMES_SHOWN)
+        return _anonymized_view(doc, preview, SentKind.HIDDEN_HERE)
     if not available:
         return _shown(doc.raw_text, doc, SentKind.UNAVAILABLE)
     if not hiding:
         return _shown(doc.raw_text, doc, SentKind.NAMES_SHOWN)
+    return _anonymized_view(doc, preview, SentKind.WILL_BE_SENT)
+
+
+def _stored_view(doc: CheckDocument, *, hiding: bool) -> SentView:
+    """Return the box for a stored proofreading: what its request carried."""
+    if not _sent_hidden(doc):
+        return _shown(doc.raw_text, doc, SentKind.AS_WRITTEN)
+    if hiding:
+        return _shown(doc.sent_text or doc.raw_text, doc, SentKind.SENT, doc.sent_map)
+    return _shown(doc.raw_text, doc, SentKind.NAMES_SHOWN)
+
+
+def _anonymized_view(
+    doc: CheckDocument, preview: tuple[str, Mapping[str, str]] | None, kind: SentKind
+) -> SentView:
+    """Return the box with the anonymizer's *preview* as *kind*, or the transcription while it is out."""
     if preview is None:
         return _shown(doc.raw_text, doc, SentKind.WORKING)
     text, names = preview
-    return _shown(text, doc, SentKind.WILL_BE_SENT, names)
+    return _shown(text, doc, kind, names)
 
 
 def _shown(

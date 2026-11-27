@@ -321,12 +321,28 @@ def test_the_box_holds_the_stored_string_and_not_a_remasked_copy() -> None:
     """
     doc = _sent_doc(sent_text=SENT)
 
-    sent = sent_view_of(doc, available=True, hiding=True)
+    sent = sent_view_of(doc, available=True, run_hides=True, hiding=True)
 
     assert sent.kind is SentKind.SENT
     assert sent.text == SENT
     assert sent.placeholders == ("<PERSON_1>",)
     assert dict(sent.names) == SENT_MAP
+
+
+def test_the_box_holds_what_was_sent_when_nothing_was_found_to_hide() -> None:
+    """
+    Given  a proofreading stored with the text it was sent as, though no name was found in it,
+           and a transcription the teacher has fixed since
+    When   the box of *What was read* is asked what it shows with names hidden
+    Then   it holds the string that was sent, not the transcription as it reads now
+    """
+    doc = _sent_doc(sent_text="Der alte Text.", map=False)
+
+    sent = sent_view_of(doc, available=True, run_hides=True, hiding=True)
+
+    assert sent.kind is SentKind.SENT
+    assert sent.text == "Der alte Text."
+    assert sent.placeholders == ()
 
 
 @pytest.mark.parametrize(
@@ -340,6 +356,29 @@ def test_the_box_holds_the_stored_string_and_not_a_remasked_copy() -> None:
         {"proofread": False, "kind": SentKind.WORKING},
         {"proofread": False, "hiding": False, "kind": SentKind.NAMES_SHOWN},
         {"proofread": False, "available": False, "kind": SentKind.UNAVAILABLE},
+        {
+            "proofread": False,
+            "run_hides": False,
+            "preview": True,
+            "kind": SentKind.HIDDEN_HERE,
+            "text": PREVIEW,
+        },
+        {"proofread": False, "run_hides": False, "kind": SentKind.WORKING},
+        {"proofread": False, "run_hides": False, "hiding": False, "kind": SentKind.AS_WRITTEN},
+        {
+            "proofread": False,
+            "run_hides": False,
+            "available": False,
+            "kind": SentKind.AS_WRITTEN,
+        },
+        {
+            "proofread": True,
+            "run_hides": False,
+            "hiding": True,
+            "sent": SENT,
+            "kind": SentKind.SENT,
+            "text": SENT,
+        },
     ],
     ids=[
         "sent-nothing-hidden",
@@ -350,11 +389,16 @@ def test_the_box_holds_the_stored_string_and_not_a_remasked_copy() -> None:
         "not-sent-yet-working",
         "names-shown-hiding-off",
         "names-cannot-be-hidden",
+        "run-does-not-hide-screen-does",
+        "run-does-not-hide-screen-working",
+        "run-does-not-hide-screen-shows-names",
+        "run-does-not-hide-without-the-add-on",
+        "stored-proofreading-beats-todays-setting",
     ],
 )
 def test_the_box_of_what_was_read_follows_one_rule(case: dict) -> None:
     """
-    Given  a stored document, and what the window knows about hiding
+    Given  a stored document, and what the window knows about hiding, the run included
     When   the box of *What was read* is asked what it shows
     Then   it holds the one text and names the one reason the rule gives for it
     """
@@ -368,6 +412,7 @@ def test_the_box_of_what_was_read_follows_one_rule(case: dict) -> None:
     sent = sent_view_of(
         doc,
         available=case.get("available", True),
+        run_hides=case.get("run_hides", True),
         hiding=case.get("hiding", True),
         preview=preview,
     )

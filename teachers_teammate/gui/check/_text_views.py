@@ -25,7 +25,7 @@ from PySide6.QtGui import (
     QTextCursor,
     QWheelEvent,
 )
-from PySide6.QtWidgets import QTextEdit, QToolTip, QWidget
+from PySide6.QtWidgets import QMenu, QTextEdit, QToolTip, QWidget
 
 from ...application.check_document import CheckDocument, SentView
 from ...application.check_items import CheckItem, ItemKind
@@ -157,16 +157,12 @@ def _is_separator(char: str) -> bool:
     return not char or char == _BOUNDARY or char.isspace()
 
 
-def _placeholder_spans(
-    plain: str, placeholders: Sequence[str]
-) -> tuple[tuple[int, int, str], ...]:
+def _placeholder_spans(plain: str, placeholders: Sequence[str]) -> tuple[tuple[int, int, str], ...]:
     """Return every occurrence of *placeholders* in *plain*, as ``(start, end, token)``."""
     pattern = surface_pattern(placeholders)
     if pattern is None:
         return ()
-    return tuple(
-        (match.start(), match.end(), match.group(0)) for match in pattern.finditer(plain)
-    )
+    return tuple((match.start(), match.end(), match.group(0)) for match in pattern.finditer(plain))
 
 
 class _ZoomWheel(QObject):
@@ -403,12 +399,17 @@ class _EditableView(CheckTextView):
             self._formatting.append(action)
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
-        """Show the standard menu, with the formatting actions where the document has them."""
+        """Show the standard menu, with what this view offers and the formatting actions."""
         menu = self.createStandardContextMenu(event.pos())
+        self._add_menu_entries(menu)
         if self._formatting:
             menu.addSeparator()
             menu.addActions(self._formatting)
         menu.exec(event.globalPos())
+
+    def _add_menu_entries(self, menu: QMenu) -> None:
+        """Add the entries only a subclass offers to its context *menu*."""
+        _ = menu
 
     def _text_of(self, doc: FormattedDocument) -> str:
         """Return *doc* in the notation of the document."""
@@ -444,11 +445,21 @@ class ReadView(_EditableView):
     teacher sees which words stand for a name, and hovering one shows the name behind it.
     """
 
+    hide_requested = Signal(str)
+    """*Hide this* was chosen on selected words: the words, as they are read."""
+    keep_requested = Signal(str)
+    """*Don't hide this* was chosen on a placeholder: the name it stands for."""
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setToolTip(check_text.READ_TIP)
         self._names: dict[str, str] = {}
         self._chips: tuple[tuple[int, int, str], ...] = ()
+        self._rules_open = False
+
+    def set_rules_open(self, open_: bool) -> None:
+        """Say whether a rule written here reaches the next send: only then the menu offers one."""
+        self._rules_open = open_
 
     def show_sent(self, sent: SentView, text_format: TextFormat) -> None:
         """Fill the box from *sent*: the text it holds, chipped at its placeholders."""
@@ -485,6 +496,70 @@ class ReadView(_EditableView):
             if offset is not None and start <= offset < end:
                 return token
         return ""
+
+    # ── what changes what is hidden ───────────────────────────────────────
+
+    def _add_menu_entries(self, menu: QMenu) -> None:
+        """Offer *Don't hide this* on a placeholder, or *Hide this* on selected words."""
+        offsets = self._selection_offsets()
+        if offsets is None or not self._rules_open:
+            return
+        menu.setToolTipsVisible(True)
+        token = self._chip_touched(*offsets)
+        if token:
+            menu.addSeparator()
+            menu.addAction(self._keep_action(token))
+            return
+        words = self._hideable_words(*offsets)
+        if words:
+            menu.addSeparator()
+            menu.addAction(self._hide_action(words))
+
+    def _keep_action(self, token: str) -> QAction:
+        """Return the entry that sends the name behind *token* as it is from now on."""
+        name = self._names.get(token, "")
+        action = QAction(check_text.KEEP_THIS, self)
+        action.setToolTip(check_text.KEEP_THIS_TIP)
+        action.triggered.connect(lambda _checked=False, kept=name: self.keep_requested.emit(kept))
+        return action
+
+    def _hide_action(self, words: str) -> QAction:
+        """Return the entry that hides *words* from now on."""
+        action = QAction(check_text.HIDE_THIS, self)
+        action.setToolTip(check_text.HIDE_THIS_TIP)
+        action.triggered.connect(
+            lambda _checked=False, hidden=words: self.hide_requested.emit(hidden)
+        )
+        return action
+
+    def _selection_offsets(self) -> tuple[int, int] | None:
+        """Return the plain offsets of the selection, or ``None`` when nothing is selected.
+
+        The selection is read through the map: a position in text the plain text does not hold
+        snaps to the words beside it, so no arithmetic on the widget's own text is needed.
+        """
+        cursor = self.textCursor()
+        if self._map is None or not cursor.hasSelection():
+            return None
+        start = self._map.offset(cursor.selectionStart())
+        end = self._map.offset(cursor.selectionEnd())
+        return (start, end) if end > start else None
+
+    def _chip_touched(self, start: int, end: int) -> str:
+        """Return the placeholder the selected words are in or touch, or ``""``."""
+        return next(
+            (
+                token
+                for chip_start, chip_end, token in self._chips
+                if chip_start < end and start < chip_end
+            ),
+            "",
+        )
+
+    def _hideable_words(self, start: int, end: int) -> str:
+        """Return the selected words if they can be hidden as a whole, else ``""``."""
+        words = self._plain[start:end].strip()
+        return words if words and "\n" not in words else ""
 
 
 class FinalView(_EditableView):

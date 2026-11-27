@@ -82,12 +82,18 @@ _SENT_CAPTIONS: dict[SentKind, str] = {
     SentKind.SENT: check_text.SENT_CAPTION,
     SentKind.WILL_BE_SENT: check_text.WILL_BE_SENT_CAPTION,
     SentKind.AS_WRITTEN: check_text.NAMES_SENT_AS_WRITTEN,
+    SentKind.HIDDEN_HERE: check_text.NAMES_HIDDEN_HERE_CAPTION,
     SentKind.NAMES_SHOWN: check_text.NAMES_SHOWN_CAPTION,
     SentKind.UNAVAILABLE: check_text.NAMES_NOT_HIDDEN_CAPTION,
 }
 
 #: The states in which the box holds a text that is not the transcription: it cannot be typed in.
-_SHOWS_SENT = (SentKind.SENT, SentKind.WILL_BE_SENT, SentKind.WORKING)
+_SHOWS_SENT = (
+    SentKind.SENT,
+    SentKind.WILL_BE_SENT,
+    SentKind.HIDDEN_HERE,
+    SentKind.WORKING,
+)
 
 
 class CopyKind(Enum):
@@ -287,6 +293,10 @@ class CheckBody(QWidget):
     """Ctrl+wheel changed the text size; the window stores it for the next document."""
     item_shown = Signal(str)
     """An item became the one the card shows: its key."""
+    hide_requested = Signal(str)
+    """*Hide this* was chosen in *What was read*: the words to hide from now on."""
+    keep_requested = Signal(str)
+    """*Don't hide this* was chosen in *What was read*: the name to send as written."""
     layout_changed = Signal(object)
     """The teacher dragged a pane: the :class:`CheckLayout` the tab has now."""
 
@@ -362,6 +372,8 @@ class CheckBody(QWidget):
     def _connect_views(self) -> None:
         """Pass on what the text views and the side panel report."""
         self.read_view.text_edited.connect(self.raw_text_edited)
+        self.read_view.hide_requested.connect(self.hide_requested)
+        self.read_view.keep_requested.connect(self.keep_requested)
         self.final_view.text_edited.connect(self.corrected_text_edited)
         for view in (self.read_view, self.marked_view, self.final_view):
             view.item_clicked.connect(self._on_item_clicked)
@@ -428,16 +440,23 @@ class CheckBody(QWidget):
         """Return what the box of *What was read* shows for *doc*.
 
         The rule itself is in the application layer: the body only says what the window knows
-        about hiding — whether it is possible, whether it is on — and hands the anonymizer's
-        answer along.
+        about hiding — whether a run does it, whether it is possible, whether it is on — and
+        hands the anonymizer's answer along.
         """
         masking = self._masking
         return sent_view_of(
             doc,
             available=masking.available,
+            run_hides=masking.run_hides,
             hiding=masking.enabled,
             preview=masking.preview,
         )
+
+    @property
+    def sent_kind(self) -> SentKind | None:
+        """Return which text the box of *What was read* holds, or ``None`` without a document."""
+        doc = self._doc
+        return self.sent_view(doc).kind if doc is not None else None
 
     def _reading_fix_notice(self, typed_here: bool, doc: CheckDocument, fix: ReadingFix) -> str:
         """Return what the strip says about the proofreading a reading fix took, or ``""``.
@@ -585,6 +604,7 @@ class CheckBody(QWidget):
         """Bring the marks, the editability, the banners and the widths in line with the state."""
         self._refresh_marks()
         self._refresh_sent_caption()
+        self._refresh_hiding_rules()
         self._refresh_editability()
         self._refresh_banner()
         self._refresh_panel_visibility()
@@ -606,8 +626,9 @@ class CheckBody(QWidget):
         """Say above the box what it holds: how the text was sent, or why the names stand in it.
 
         Only over *What was read*: the other two views always show the proofread text, with the
-        placeholders of the same map.  A text with crossed-out words gets one line more: those
-        words never leave this computer.
+        placeholders of the anonymizer's map of today, which a stored proofreading made with
+        other settings need not share; hovering a placeholder names its original.  A text with
+        crossed-out words gets one line more: those words never leave this computer.
         """
         lines: list[str] = []
         doc = self._doc
@@ -620,6 +641,10 @@ class CheckBody(QWidget):
                 lines.append(check_text.CROSSED_OUT_NOT_SENT)
         self._sent_caption.setText("\n".join(lines))
         self._sent_caption.setVisible(bool(lines))
+
+    def _refresh_hiding_rules(self) -> None:
+        """Offer *Hide this* and *Don't hide this* only where the next send obeys them."""
+        self.read_view.set_rules_open(self._masking.available and self._masking.run_hides)
 
     def _refresh_editability(self) -> None:
         """Let the teacher type where the state allows it, and say why where it does not.
@@ -911,6 +936,10 @@ class CheckPage(QWidget):
     """The teacher pressed *Checked*: the state the document should have now."""
     display_anonymized_changed = Signal(bool)
     anonymization_needed = Signal(str)
+    hide_requested = Signal(str)
+    """*Hide this* was chosen in *What was read*: the words to hide from now on."""
+    keep_requested = Signal(str)
+    """*Don't hide this* was chosen in *What was read*: the name to send as written."""
     text_zoom_changed = Signal(int)
     item_shown = Signal(str)
     """An item became the one the card shows: its key."""
@@ -959,6 +988,8 @@ class CheckPage(QWidget):
         self.body.corrected_text_edited.connect(self.corrected_text_edited)
         self.body.anonymization_needed.connect(self.anonymization_needed)
         self.body.anonymization_needed.connect(self._refresh_hide_names_box)
+        self.body.hide_requested.connect(self.hide_requested)
+        self.body.keep_requested.connect(self.keep_requested)
         self.body.display_anonymized_changed.connect(self.display_anonymized_changed)
         self.body.text_zoom_changed.connect(self.text_zoom_changed)
         self.body.item_shown.connect(self.item_shown)
@@ -1230,6 +1261,11 @@ class CheckPage(QWidget):
         self.body.set_masking(self._masking)
         self._refresh_hide_names_box()
 
+    @property
+    def sent_kind(self) -> SentKind | None:
+        """Return which text the box of *What was read* holds, or ``None`` without a document."""
+        return self.body.sent_kind
+
     def set_display_anonymized(self, enabled: bool) -> None:
         """Show the texts with placeholders, or with the names again."""
         self._display_anonymized = bool(enabled)
@@ -1248,8 +1284,13 @@ class CheckPage(QWidget):
         self._hide_names_box.setChecked(self._display_anonymized and self._anonymized_available)
         self._hide_names_box.blockSignals(False)
 
-    def set_display_anonymized_available(self, available: bool) -> None:
-        """Say whether names can be hidden at all; without the add-on they are shown."""
+    def set_display_anonymized_available(self, available: bool, *, run_hides: bool) -> None:
+        """Say whether names can be hidden at all and whether a run hides them.
+
+        Without the add-on the names are shown.  *run_hides* is the run's own setting, which
+        the box of *What was read* needs to say what will be sent.
+        """
+        self._masking.set_run_hides(run_hides)
         self._anonymized_available = bool(available)
         self._hide_names_box.setEnabled(self._anonymized_available)
         self._sync_hide_names_box()

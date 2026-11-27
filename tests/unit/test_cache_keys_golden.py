@@ -73,6 +73,8 @@ _PRIVACY_KEYS: dict[str, str] = {
     "hiding-off": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "hiding-on/patterns": "0de9f711afff76a02b5bff982568f9bb6e7bde55fb56824a68e91572af65037d",
     "hiding-on/primary-model": "0fcbe8330400f0993b073501449b0e3d7b1f5740b88d8eda35cf594a5f8efa7f",
+    "hiding-on/kept": "c31c9dc870b8919bd340e813ded91b4681ee57035715f486ed1c9746a7fe3549",
+    "hiding-on/hidden": "b5c73d07cdad1f337acecce556a95bcddca901e033b67c610416aeed99fee094",
 }
 
 #: ``name -> how it was sent``, as the stored record holds it.
@@ -215,6 +217,20 @@ def _hidden_configs(tmp_path: Path) -> dict[str, Config]:
             anonymizer_primary_model="xx_ent_wiki_sm",
             anonymizer_secondary_model="none",
         ),
+        "hiding-on/hidden": make_config(
+            tmp_path,
+            anonymization_enabled=True,
+            anonymizer_patterns=patterns,
+            anonymizer_hide=["Anna"],
+            anonymizer_secondary_model="none",
+        ),
+        "hiding-on/kept": make_config(
+            tmp_path,
+            anonymization_enabled=True,
+            anonymizer_patterns=patterns,
+            anonymizer_keep=["Anna Müller"],
+            anonymizer_secondary_model="none",
+        ),
     }
 
 
@@ -342,7 +358,8 @@ def test_the_content_review_keys_are_unchanged(tmp_path: Path) -> None:
 
 def test_the_privacy_fingerprints_are_unchanged(tmp_path: Path) -> None:
     """
-    Given  personal-info removal off, on with patterns, and on with a chosen model
+    Given  personal-info removal off, on with patterns, on with a chosen model, and on with a
+           hidden text and a kept text
     When   the fingerprint of each is computed
     Then   every fingerprint is the stored one, so a window keeps telling a result made with
            other privacy settings from one made with today's

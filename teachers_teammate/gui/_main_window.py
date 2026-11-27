@@ -60,7 +60,7 @@ from ._image_utils import load_icon, load_pixmap
 from ._menu_bar import MenuBar, MenuHooks
 from ._preprocess_preview import PreprocessPreview
 from ._privacy_settings import DISPLAY_ANONYMIZED_DEFAULT, FlowAcknowledgements
-from ._privacy_view_controller import PrivacyViewController
+from ._privacy_view_controller import PrivacyHooks, PrivacyViewController
 from ._pull_manager import PullManager
 from ._qsettings import app_settings
 from ._qt import present
@@ -335,6 +335,14 @@ class MainWindow(QMainWindow):
             export=lambda ids, kind: self._export_controller.on_requested(ids, kind),  # noqa: PLW0108
         )
 
+    def _privacy_hooks(self) -> PrivacyHooks:
+        """What the privacy view asks of this window."""
+        return PrivacyHooks(
+            say=self._say,
+            save_settings=lambda: self._save_settings(notify=False),
+            rules_changed=self._refresh_queue_from_inputs,
+        )
+
     def _menu_hooks(self) -> MenuHooks:
         """What the menu bar asks of the window."""
         return MenuHooks(
@@ -365,6 +373,7 @@ class MainWindow(QMainWindow):
             table=self._results_table,
             check=self._check_controller,
             settings_store=self._settings_store,
+            hooks=self._privacy_hooks(),
         )
         self._readiness_controller = ReadinessController(
             self,

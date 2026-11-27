@@ -178,6 +178,14 @@ the owning page and its key to that page's `load` / `values` / `owned_keys`. Say
 it with the `WHERE_*` constants in `texts/settings.py`, not a hard-coded menu path. See
 {doc}`gui` → "Settings window"
 
+## A failure, and what the log says about it
+
+Failures are logged where they are handled, once; a catch-all logs through `messages.log_failure`:
+an error that carries a `Message` is expected (WARNING, the message), everything else is a bug
+(ERROR, its type and frames, never its message). The hooks `start_logging()` installs catch what reaches no
+handler at all; a Qt slot, a `QThread.run` and a plain thread all end there. The GUI only decides
+what the teacher is shown. See {doc}`error_handling`
+
 ## New user-facing text
 
 Dynamic parts are functions (`dlg.no_files_found(folder)`), one module per surface in `texts/`.

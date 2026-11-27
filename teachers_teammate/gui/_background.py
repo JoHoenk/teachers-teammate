@@ -19,6 +19,9 @@ Tasks that wait on a remote server (model lists, the update check, a server sear
 ``network=True`` and run on a pool of their own: a task cannot be interrupted, so a stale
 fetch keeps its thread until it ends, and it must not hold up the local tasks (hardware,
 export, the GPU read) while it does.
+
+A failure is written to the log file here, once, where the task ended and before it reaches
+``on_done``: the caller decides only what the teacher is shown.
 """
 
 from __future__ import annotations
@@ -31,6 +34,8 @@ import time
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
+from ..messages import log_failure
+
 _logger = logging.getLogger(__name__)
 
 #: Upper bound of simultaneous background tasks.  The tasks are I/O bound
@@ -40,6 +45,8 @@ _MAX_THREADS = 4
 _MAX_NETWORK_THREADS = 4
 #: How long :func:`wait_for_background_tasks` waits by default.
 _DEFAULT_WAIT_MS = 3000
+#: What the log says about a task that raised: the caller decides what the teacher is shown.
+TASK_FAILED = "A background task ended with an error"
 
 # Deliveries stay referenced until their result arrived on the GUI thread; an
 # unreferenced QObject would be destroyed together with its pending signal.
@@ -67,6 +74,12 @@ def _owner_alive(owner: QObject | None) -> bool:
         _logger.debug("The owner of the task is gone, so its result is dropped")
         return False
     return True
+
+
+def _log_raised(fn: Callable[..., object], error: BaseException) -> None:
+    """Write *error* of the task *fn* to the log file: each failure handed to ``on_done``, once."""
+    name = getattr(fn, "__qualname__", type(fn).__name__)
+    log_failure(_logger, f"{TASK_FAILED} ({name})", error)
 
 
 class _Delivery(QObject):
@@ -108,6 +121,7 @@ class _Task(QRunnable):
             result = self._fn()
         except Exception as exc:  # noqa: BLE001  # any failure is reported to on_done, never raised in the pool
             error = exc
+            _log_raised(self._fn, exc)
         self._delivery.arrived.emit(result, error)
 
 
@@ -158,6 +172,7 @@ class _StreamTask(QRunnable):
             result = self._fn(self._stream.item.emit)
         except Exception as exc:  # noqa: BLE001  # any failure is reported to on_done, never raised in the pool
             error = exc
+            _log_raised(self._fn, exc)
         self._stream.ended.emit(result, error)
 
 

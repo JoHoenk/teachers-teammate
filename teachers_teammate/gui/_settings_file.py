@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, QTimer
@@ -20,6 +21,7 @@ from ..application.stored_results import RunInProgressError
 from ..config import broken_settings_copy, load_config_file, save_settings_file
 from ..domain.releases import version_tuple
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
+from ..messages import log_failure
 from ..settings_schema import DEFAULTS
 from ..texts import dialogs as dlg
 from ..texts import main_window as win
@@ -28,6 +30,8 @@ from . import _dialogs
 from ._config_panel import ConfigPanel
 from ._log_widget import LogWidget
 from ._window_geometry import maximize_without_saved_geometry, restore_geometry
+
+_logger = logging.getLogger(__name__)
 
 #: The GUI-store key holding the app version that last started with this setup.
 APP_VERSION_KEY = "gui/app_version"
@@ -139,6 +143,7 @@ class SettingsFile(QObject):
             if self._remember_version():
                 QTimer.singleShot(0, self._hooks.ask_after_update)
         except Exception as exc:  # noqa: BLE001  # a file that does not load is kept, not written over
+            log_failure(_logger, "The settings file could not be loaded", exc)
             self._keep_unreadable_file(config_path, exc)
 
     def _remember_version(self) -> bool:

@@ -1,23 +1,29 @@
 """The one log file: where a warning or an error of the app goes, once per process.
 
 The installed window has no console, so the log file is the only place a traceback reaches.
-These tests cover the file being there, being one, being rotated, and the app starting all
-the same when it cannot be written.
+These tests cover the file being there, being one, being rotated, the app starting all the same
+when it cannot be written, and the nets that catch what reaches no handler at all.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
+import sys
+import threading
 
 import pytest
 
+from teachers_teammate import __version__
 from teachers_teammate.infrastructure import logging_setup
 from teachers_teammate.infrastructure.workflow.coordinator import run_files
 from teachers_teammate.infrastructure.workflow.file_processor import ProcessingResult
 from teachers_teammate.interfaces import Reporter
 
 _logger = logging.getLogger("tests.logging_setup")
+
+pytestmark = pytest.mark.usefixtures("process_logging_untouched")
 
 
 class _QuietReporter(Reporter):
@@ -31,22 +37,6 @@ class _QuietReporter(Reporter):
 
     def error(self, line: str) -> None:
         return None
-
-
-@pytest.fixture(autouse=True)
-def _logging_back_to_its_previous_state():
-    """Leave the root logger as it was: this module's handlers go, and the state is reset."""
-    root = logging.getLogger()
-    handlers_before = list(root.handlers)
-    level_before = root.level
-    logging_setup._installed = logging_setup._Installed()
-    yield
-    for handler in list(root.handlers):
-        if handler not in handlers_before:
-            handler.close()
-            root.removeHandler(handler)
-    root.setLevel(level_before)
-    logging_setup._installed = logging_setup._Installed()
 
 
 def _file_handlers() -> list[logging.Handler]:
@@ -148,3 +138,239 @@ def test_an_unexpected_error_leaves_its_kind_and_frames_but_not_its_message(
     assert "Unexpected error while processing anna.png: ValueError" in text
     assert "process" in text
     assert secret not in text
+
+
+def _lines_holding(path: Path, what: str) -> list[str]:
+    """Return the lines of *path* that hold *what*."""
+    return [line for line in path.read_text(encoding="utf-8").splitlines() if what in line]
+
+
+def test_a_thread_that_ends_with_an_error_is_logged(tmp_path: Path) -> None:
+    """
+    Given  a process whose logging was started
+    When   a thread ends with an exception nobody caught
+    Then   the file names the type and the frames, and not the message
+    """
+    path = logging_setup.start_logging(tmp_path)
+    assert path is not None
+
+    quoted = "the student wrote forty-two apples"
+
+    def read() -> None:
+        raise ValueError(quoted)
+
+    thread = threading.Thread(target=read, name="reader-7")
+    thread.start()
+    thread.join()
+    logging.shutdown()
+
+    lines = _lines_holding(path, logging_setup.WHAT_UNEXPECTED)
+    assert len(lines) == 1
+    assert "ValueError" in lines[0]
+    assert "reader-7" in lines[0]
+    written = path.read_text(encoding="utf-8")
+    assert "in read" in written
+    assert "forty-two apples" not in written
+
+
+def test_an_exception_of_the_main_thread_is_logged(tmp_path: Path) -> None:
+    """
+    Given  a process whose logging was started
+    When   an exception reaches sys.excepthook, as Qt hands it one from a slot
+    Then   the file holds one such line, with the type and the frames
+    """
+    path = logging_setup.start_logging(tmp_path)
+    assert path is not None
+
+    def read() -> None:
+        raise ValueError("secret")
+
+    try:
+        read()
+    except ValueError as error:
+        sys.excepthook(ValueError, error, error.__traceback__)
+    logging.shutdown()
+
+    lines = _lines_holding(path, logging_setup.WHAT_UNEXPECTED)
+    assert len(lines) == 1
+    assert "ValueError" in lines[0]
+    assert "in read" in path.read_text(encoding="utf-8")
+
+
+def test_an_exception_python_could_not_raise_is_logged_and_not_shown(tmp_path: Path) -> None:
+    """
+    Given  a process whose logging was started with what the window shows a bug with
+    When   a destructor raises while its object is collected
+    Then   the file names the destructor and its frames, and not the message, and the entry
+           point is not told: nothing the teacher did failed
+    """
+    reported: list[BaseException] = []
+    path = logging_setup.start_logging(tmp_path, on_unexpected=reported.append)
+    assert path is not None
+
+    quoted = "the destructor choked on forty-two apples"
+
+    class _Collects:
+        def __del__(self) -> None:
+            raise ValueError(quoted)
+
+    _Collects()
+    logging.shutdown()
+
+    lines = _lines_holding(path, logging_setup.WHAT_IGNORED)
+    assert len(lines) == 1
+    written = path.read_text(encoding="utf-8")
+    assert "in __del__" in written
+    assert "forty-two apples" not in written
+    assert reported == []
+
+
+def test_the_entry_point_is_told_about_what_reached_no_handler(tmp_path: Path) -> None:
+    """
+    Given  a process whose logging was started with what the window shows a bug with
+    When   an exception reaches a hook
+    Then   the file holds its line and the entry point received the exception
+    """
+    reported: list[BaseException] = []
+    path = logging_setup.start_logging(tmp_path, on_unexpected=reported.append)
+    assert path is not None
+
+    def read() -> None:
+        raise ValueError("secret")
+
+    try:
+        read()
+    except ValueError as error:
+        sys.excepthook(ValueError, error, error.__traceback__)
+    logging.shutdown()
+
+    assert [type(one).__name__ for one in reported] == ["ValueError"]
+    assert len(_lines_holding(path, logging_setup.WHAT_UNEXPECTED)) == 1
+
+
+def test_a_native_crash_leaves_its_stack_in_its_own_file(
+    tmp_path: Path, process_logging_untouched
+) -> None:
+    """
+    Given  a data root
+    When   start_logging() runs, twice, in two sessions
+    Then   logs/crash.log is open for the stacks faulthandler reports, its handle kept, and each
+           session wrote a header line with its time, version and process
+    """
+    path = logging_setup.start_logging(tmp_path)
+    assert path is not None
+    crash_log = tmp_path / "logs" / logging_setup.CRASH_NAME
+    handle = logging_setup._installed.crash_file
+    assert handle is not None
+    process_logging_untouched.assert_called_once_with(file=handle, all_threads=True)
+    handle.close()
+    logging_setup._installed = logging_setup._Installed()
+    logging_setup._enable_crash_log(tmp_path / "logs")
+
+    headers = crash_log.read_text(encoding="utf-8").splitlines()
+    assert len(headers) == 2
+    assert all(f"version {__version__} pid {os.getpid()}" in line for line in headers)
+
+
+def test_a_crash_log_that_has_grown_too_large_starts_over(tmp_path: Path) -> None:
+    """
+    Given  a crash.log larger than the log file may grow
+    When   the crash log is opened
+    Then   it holds only the header of this session
+    """
+    folder = tmp_path / "logs"
+    folder.mkdir()
+    (folder / logging_setup.CRASH_NAME).write_text("x" * (logging_setup.MAX_BYTES + 1))
+
+    logging_setup._enable_crash_log(folder)
+
+    assert (folder / logging_setup.CRASH_NAME).read_text(encoding="utf-8").startswith("--- ")
+    assert (folder / logging_setup.CRASH_NAME).stat().st_size < 200
+
+
+def test_a_crash_log_that_cannot_be_opened_is_said_in_the_log(tmp_path: Path) -> None:
+    """
+    Given  a data folder where crash.log cannot be opened (a folder is in its place)
+    When   start_logging() runs
+    Then   the app starts, the log names the crash log's failure, and no handle is kept
+    """
+    (tmp_path / "logs" / logging_setup.CRASH_NAME).mkdir(parents=True)
+
+    path = logging_setup.start_logging(tmp_path)
+    assert path is not None
+    logging.shutdown()
+
+    assert logging_setup._installed.crash_file is None
+    assert _lines_holding(path, "The crash log could not be opened: IsADirectoryError (errno 21")
+
+
+def test_ctrl_c_is_not_logged_as_a_bug(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """
+    Given  a process whose logging was started with what the window shows a bug with
+    When   a KeyboardInterrupt reaches sys.excepthook
+    Then   the file holds no line and the entry point is not told, and the console still gets
+           the interpreter's report
+    """
+    reported: list[BaseException] = []
+    path = logging_setup.start_logging(tmp_path, on_unexpected=reported.append)
+    assert path is not None
+
+    try:
+        raise KeyboardInterrupt
+    except KeyboardInterrupt as error:
+        sys.excepthook(KeyboardInterrupt, error, error.__traceback__)
+    logging.shutdown()
+
+    assert path.read_text(encoding="utf-8") == ""
+    assert reported == []
+    assert "KeyboardInterrupt" in capsys.readouterr().err
+
+
+def test_a_console_gets_the_interpreters_report_and_the_line_only_the_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    Given  a process with a console whose logging was started
+    When   an exception reaches sys.excepthook
+    Then   the console shows it once, in full, as the interpreter does, and the file holds the
+           redacted line
+    """
+    path = logging_setup.start_logging(tmp_path)
+    assert path is not None
+
+    quoted = "seen on the console"
+    try:
+        raise ValueError(quoted)
+    except ValueError as error:
+        sys.excepthook(ValueError, error, error.__traceback__)
+    logging.shutdown()
+
+    shown = capsys.readouterr().err
+    assert shown.count(quoted) == 1
+    assert logging_setup.WHAT_UNEXPECTED not in shown
+    written = path.read_text(encoding="utf-8")
+    assert logging_setup.WHAT_UNEXPECTED in written
+    assert quoted not in written
+
+
+def test_a_hook_that_fails_to_show_the_error_is_logged(tmp_path: Path) -> None:
+    """
+    Given  an entry point whose on_unexpected raises
+    When   an exception reaches a hook
+    Then   the file holds the bug's line and the failure to show it
+    """
+
+    def refuse(error: BaseException) -> None:
+        raise RuntimeError("no window")
+
+    path = logging_setup.start_logging(tmp_path, on_unexpected=refuse)
+    assert path is not None
+
+    try:
+        raise ValueError("secret")
+    except ValueError as error:
+        sys.excepthook(ValueError, error, error.__traceback__)
+    logging.shutdown()
+
+    assert len(_lines_holding(path, logging_setup.WHAT_UNEXPECTED)) == 1
+    assert _lines_holding(path, "The unexpected error could not be shown: RuntimeError")

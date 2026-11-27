@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -152,16 +153,20 @@ def test_ocr_worker_passes_its_files(qtbot, tmp_path: Path) -> None:
 
 
 @pytest.mark.gui
-def test_ocr_worker_emits_fatal_error_on_pipeline_exception(qtbot, tmp_path: Path) -> None:
+def test_ocr_worker_emits_fatal_error_on_pipeline_exception(
+    qtbot, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """
     Given  an OCRWorker whose application service run path raises
     When   run() is invoked
-    Then   a fatal log message is emitted and run_finished carries a failed RunSummary
+    Then   a fatal log message is emitted, run_finished carries a failed RunSummary, and the
+           log file holds the error's type and frames but not its message
     """
+    quoted = "boom over page forty-two"
 
     class _RaiseAppService:
         def run_selected(self, *_args, **_kwargs):
-            raise RuntimeError("boom")
+            raise RuntimeError(quoted)
 
     cfg = make_config(tmp_path)
     worker = OCRWorker(cfg, [Path("/tmp/a.png")], app_service=services_of(_RaiseAppService()))
@@ -171,11 +176,17 @@ def test_ocr_worker_emits_fatal_error_on_pipeline_exception(qtbot, tmp_path: Pat
     worker.log_line.connect(lambda text: logs.append(text))
     worker.run_finished.connect(summaries.append)
 
-    worker.run()
-    qtbot.wait(10)
+    with caplog.at_level(logging.ERROR, logger="teachers_teammate.gui._worker"):
+        worker.run()
+        qtbot.wait(10)
 
     assert any("FATAL ERROR" in line for line in logs)
-    assert [(s.status, s.error) for s in summaries] == [(RunStatus.FAILED, "boom")]
+    assert [(s.status, s.error) for s in summaries] == [(RunStatus.FAILED, quoted)]
+    failure = next(one for one in caplog.records if one.name == "teachers_teammate.gui._worker")
+    assert failure.levelno == logging.ERROR
+    assert failure.getMessage().startswith("The run ended with an error: RuntimeError")
+    assert "in run" in failure.getMessage()
+    assert "page forty-two" not in failure.getMessage()
 
 
 @pytest.mark.gui

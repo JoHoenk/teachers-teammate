@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 
 from PySide6.QtWidgets import QWidget
 
 from teachers_teammate.gui._background import (
+    TASK_FAILED,
     LatestTask,
     _MAX_NETWORK_THREADS,
     _owner_alive,
@@ -59,6 +61,54 @@ def test_error_is_delivered_instead_of_raised(qtbot) -> None:
     assert delivered[0][0] is None
     assert isinstance(delivered[0][1], RuntimeError)
     assert str(delivered[0][1]) == "boom"
+
+
+def test_a_failed_task_is_logged_once(qtbot, caplog) -> None:
+    """
+    Given  a task that raises, and a caller that decides what to show for it
+    When   it runs in the background
+    Then   on_done receives the exception and the log file holds one line for it, naming the task
+    """
+    delivered: list[BaseException | None] = []
+
+    quoted = "boom over page forty-two"
+
+    def work() -> None:
+        raise RuntimeError(quoted)
+
+    with caplog.at_level(logging.ERROR, logger="teachers_teammate.gui._background"):
+        run_in_background(work, lambda result, error: delivered.append(error))
+        qtbot.waitUntil(lambda: bool(delivered), timeout=5000)
+
+    assert isinstance(delivered[0], RuntimeError)
+    lines = [one for one in caplog.records if one.name == "teachers_teammate.gui._background"]
+    assert len(lines) == 1
+    said = lines[0].getMessage()
+    assert said.startswith(TASK_FAILED)
+    assert "test_a_failed_task_is_logged_once.<locals>.work): RuntimeError" in said
+    assert "page forty-two" not in said
+
+
+def test_a_failed_streaming_task_is_logged_once(qtbot, caplog) -> None:
+    """
+    Given  a task that reports as it goes and then raises
+    When   it runs in the background
+    Then   the log file holds one line for its failure
+    """
+    ended: list[BaseException | None] = []
+
+    def work(emit) -> None:
+        emit("one")
+        raise RuntimeError("boom")
+
+    with caplog.at_level(logging.ERROR, logger="teachers_teammate.gui._background"):
+        run_streaming(work, lambda item: None, lambda result, error: ended.append(error))
+        qtbot.waitUntil(lambda: bool(ended), timeout=5000)
+
+    assert isinstance(ended[0], RuntimeError)
+    assert (
+        len([one for one in caplog.records if one.name == "teachers_teammate.gui._background"]) == 1
+    )
 
 
 def test_latest_task_drops_results_of_superseded_tasks(qtbot) -> None:

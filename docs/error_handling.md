@@ -1,0 +1,68 @@
+# Error handling and logging
+
+Two audiences, one rule each: the teacher sees what they can act on, and the log file holds
+everything.
+
+## The two audiences
+
+- **The teacher** sees a failure where they look: the row of the file, the status line, the
+  dialog of the action they took. Short, and only what they can do about it.
+- **The log file** (`<data root>/logs/teachers-teammate.log`, rotated, four files) is the full
+  record: what failed, where, and with which kind of error. It leaves the computer — a teacher
+  sends it to whoever helps — so no line holds a document's text, a prompt or a key
+  (`tests/unit/test_log_lines_carry_no_text.py`).
+
+## Log once, where it is handled
+
+The code that handles an error logs it: it catches it and does not re-raise, or it hands it to a
+caller that shows it. Code that raises, or that passes an error on, logs nothing.
+
+`messages.log_failure(logger, what, error)` is that one call, and it tells the two kinds apart:
+
+| Kind | What makes it one | Line |
+|---|---|---|
+| Expected | carries a `Message` (`error.args[0]`) | WARNING, the message, no traceback |
+| Bug | anything else | ERROR, the type and the frames, never the message |
+
+An exception's own words can quote the text it choked on. A bug's line names the type — and,
+for an `OSError`, its `errno` and `strerror` — and nothing else. An expected error that wraps a
+foreign one (`detail`) logs the bare key, not the foreign words. Either line names the kinds
+of the errors it was raised from, so the root cause stays visible.
+
+## Nothing is lost
+
+`start_logging()` (`infrastructure/logging_setup.py`) installs the nets of the process, once:
+
+- `sys.excepthook`, `threading.excepthook` and `sys.unraisablehook` write a bug's line and then
+  hand the exception to the entry point's `on_unexpected` — for a Qt slot, a `QThread.run` and a
+  thread of its own. An exception Python could not raise at all (a destructor's) is logged but
+  not handed on. The interpreter's own hook still runs after the line, so a console shows the
+  full error; stderr leaves the net's line to the file. Ctrl+C is the teacher's doing and
+  only gets the interpreter's report.
+- `faulthandler` writes the stack of a native crash (a segfault in a reader or in Qt) to
+  `logs/crash.log`; the handle stays open for the life of the process. Each start writes a
+  header line (time, version, pid), so a stack belongs to the session above it; a file without
+  a stack holds no crash. It replaces a `PYTHONFAULTHANDLER` target, and on Windows it also
+  reports exceptions native code handled itself.
+- Qt's own messages go to the logger `qt` (`infrastructure/qt_log.py`), installed before the
+  first `QApplication`: warnings and above are logged with their category, one warning once per
+  text; the rest is a debug detail.
+
+The frozen entry (`frozen_entry.py`) starts both before the GUI is imported, so a failed import
+or a platform plugin that does not load reaches the file.
+
+Inside the GUI, `gui/_background.py` logs every failure it hands to `on_done`, named by the
+task, and `OCRWorker`, `BenchmarkWorker` and `LongJobThread` log a crashed run before they
+report it. A catch-all that shows the teacher a failure (an export, the settings file, a
+preview) logs it as well. A caller therefore decides only what the teacher is shown.
+
+## Where an event goes
+
+| Kind | Example | Teacher sees | Log |
+|---|---|---|---|
+| Expected, one file | a stage failed, a file was skipped | the row, the end-of-run line | the `Message` |
+| Expected, one action | save, export or settings load failed | a dialog | WARNING, the `Message` |
+| Environment state | Ollama unreachable, model missing | the readiness line | WARNING once per change |
+| Bug | any other exception | — | ERROR, type and frames |
+| Native crash | a segfault in a reader or in Qt | — | `logs/crash.log` |
+| Success, progress | DOCX saved, `[3/10] Processing` | status line, progress bar, row | INFO |

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import logging
 import os
 from pathlib import Path
 import sys
@@ -46,6 +47,7 @@ from ..config import Config
 from ..domain.data_location import DataFlow
 from ..domain.install_item import InstallItem
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
+from ..messages import log_failure
 from ..settings_schema import DEFAULTS, normalize_saved_ollama_url
 from ..texts import app as app_text
 from ..texts import check as check_text
@@ -86,6 +88,8 @@ from .settings._page import FOCUS_DETECTION
 
 if TYPE_CHECKING:
     from .benchmark._benchmark_window import BenchmarkWindow
+
+_logger = logging.getLogger(__name__)
 
 
 def _app_icon() -> QIcon | None:
@@ -608,8 +612,8 @@ class MainWindow(QMainWindow):
             return
         try:
             self._save_settings(notify=False, silent_on_error=True)
-        except Exception:  # noqa: BLE001  # never block window close on a settings-save error
-            pass
+        except Exception as exc:  # noqa: BLE001  # never block window close on a settings-save error
+            log_failure(_logger, "The settings could not be saved at close", exc)
         self._check_controller.flush_layout()
         # Only close() runs the Benchmark window's own closeEvent, which stops its worker;
         # deleting it with a parent would not.  Closing the last window ends the app.

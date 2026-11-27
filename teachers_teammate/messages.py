@@ -9,6 +9,9 @@ messages, so it can be written as JSON.
 ``str(message)`` gives the sentence once ``teachers_teammate.texts`` has installed a language.
 Until then it gives ``"key: args"``, which keeps a traceback, a log line and a test readable
 without the wording.
+
+A failure is logged by :func:`log_failure`, the one place that tells an expected error — one
+carrying a message — from a bug.
 """
 
 from __future__ import annotations
@@ -16,7 +19,9 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+import logging
 from pathlib import Path
+import traceback
 from types import MappingProxyType
 
 
@@ -124,11 +129,19 @@ def set_renderer(render: Callable[[Message], str] | None) -> None:
     _Words.render = render
 
 
-def plain_text(message: Message) -> str:
-    """Return *message* as ``"key: args"``: for the log, and for a message with no wording."""
+def plain_text(message: Message, *, own_words: bool = True) -> str:
+    """Return *message* as ``"key: args"``: for the log, and for a message with no wording.
+
+    A ``detail`` holds a foreign error's own words, which can quote a document.  The log passes
+    ``own_words=False`` and gets the bare key for it.
+    """
+    if message.key is MessageKey.DETAIL and not own_words:
+        return str(message.key)
     if not message.args:
         return str(message.key)
-    values = ", ".join(f"{name}={_plain_value(value)}" for name, value in message.args.items())
+    values = ", ".join(
+        f"{name}={_plain_value(value, own_words)}" for name, value in message.args.items()
+    )
     return f"{message.key}: {values}"
 
 
@@ -139,12 +152,71 @@ def message_of(error: BaseException) -> Message:
     return detail(str(error))
 
 
-def _plain_value(value: Arg) -> str:
+def log_failure(logger: logging.Logger, what: str, error: BaseException) -> None:
+    """Write *error*, named by *what*, to *logger*: an expected error or a bug.
+
+    Expected is an error that carries a message — ``infrastructure`` worded it, so the line
+    holds that message at WARNING, with no traceback.  Anything else is a bug: its kind and
+    its frames at ERROR.  Neither line holds a foreign error's own words, which can quote the
+    text that choked it; the kinds of the errors it was raised from say what they were.
+
+    The one that handles an error logs it: catching it and not re-raising, or handing it to a
+    caller that shows it.  Raising it, or passing it on, logs nothing.
+    """
+    causes = _causes_of(error)
+    if _is_expected(error):
+        said = plain_text(message_of(error), own_words=False)
+        if causes:
+            said += f" (caused by {', '.join(_kind_of(cause) for cause in causes)})"
+        logger.warning("%s: %s", what, said)
+        return
+    lines = [f"{what}: {_kind_of(error)}\n{_frames_of(error)}"]
+    lines += [f"caused by {_kind_of(cause)}\n{_frames_of(cause)}" for cause in causes]
+    logger.error("%s", "".join(lines))
+
+
+#: How many errors of a chain a line names: a chain longer than this is a loop in disguise.
+_MAX_CAUSES = 5
+
+
+def _causes_of(error: BaseException) -> list[BaseException]:
+    """Return the errors *error* was raised from or while handling, nearest first."""
+    causes: list[BaseException] = []
+    seen = {id(error)}
+    current = error
+    while len(causes) < _MAX_CAUSES:
+        nxt = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+        if nxt is None or id(nxt) in seen:
+            break
+        causes.append(nxt)
+        seen.add(id(nxt))
+        current = nxt
+    return causes
+
+
+def _frames_of(error: BaseException) -> str:
+    """Return the frames *error* travelled through, without its own words."""
+    return "".join(traceback.format_tb(error.__traceback__))
+
+
+def _is_expected(error: BaseException) -> bool:
+    """Whether *error* carries a message, which makes it expected rather than a bug."""
+    return bool(error.args) and isinstance(error.args[0], Message)
+
+
+def _kind_of(error: BaseException) -> str:
+    """Return what a line says of *error*: its kind, and an ``OSError``'s code and reason."""
+    if not isinstance(error, OSError) or error.errno is None:
+        return type(error).__name__
+    return f"{type(error).__name__} (errno {error.errno}: {error.strerror})"
+
+
+def _plain_value(value: Arg, own_words: bool) -> str:
     """Return *value* for the plain form of a message."""
     if isinstance(value, Message):
-        return plain_text(value)
+        return plain_text(value, own_words=own_words)
     if isinstance(value, tuple):
-        return SEPARATOR.join(_plain_value(item) for item in value)
+        return SEPARATOR.join(_plain_value(item, own_words) for item in value)
     return str(value)
 
 

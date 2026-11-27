@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from pathlib import Path
 import threading
 
@@ -10,9 +11,12 @@ from PySide6.QtCore import QThread, Signal
 
 from ...application.benchmark_service import BenchmarkApplicationService, BenchmarkRunStopped
 from ...config import OcrConfig
+from ...messages import log_failure
 from ...settings_schema import DEFAULTS
 from ...texts.run import STOPPED_BY_USER
 from .._qt_stream import QtStream
+
+_logger = logging.getLogger(__name__)
 
 
 class BenchmarkWorker(QThread):
@@ -62,6 +66,7 @@ class BenchmarkWorker(QThread):
             self.finished_err.emit(STOPPED_BY_USER)
             return
         except (Exception, SystemExit) as exc:  # noqa: BLE001  # surface any failure to the GUI without crashing
+            log_failure(_logger, "The benchmark run ended with an error", exc)
             self.finished_err.emit(str(exc))
             return
         self.finished_ok.emit(run)

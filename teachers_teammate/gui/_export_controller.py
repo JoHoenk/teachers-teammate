@@ -6,6 +6,7 @@ and writes them — the text ones off the GUI thread, because hiding names runs 
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import NamedTuple
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import QPushButton, QStyle, QWidget
 
 from ..application.composition import AppServices
 from ..application.export import DocxExport, NothingToExport, WouldOverwriteInput
+from ..messages import log_failure
 from ..texts import dialogs as dlg
 from ..texts import main_window as txt
 from . import _dialogs, _handles
@@ -26,6 +28,8 @@ from ._export_menu import ExportKind, build_export_menu
 from ._qt import present
 from ._results_table import ResultsTable
 
+_logger = logging.getLogger(__name__)
+
 
 def _export_failure(name: str, exc: Exception) -> str:
     """Return the line that tells the teacher why *name* could not be exported."""
@@ -33,6 +37,7 @@ def _export_failure(name: str, exc: Exception) -> str:
         return dlg.export_no_text(name)
     if isinstance(exc, WouldOverwriteInput):
         return dlg.export_would_overwrite_input(name, exc.target.name)
+    log_failure(_logger, "A file could not be exported", exc)
     return f"{name}: {exc}"
 
 

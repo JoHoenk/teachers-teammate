@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import logging
 from pathlib import Path
 import threading
 import time
@@ -14,8 +15,11 @@ from ..application.composition import AppServices
 from ..config import Config
 from ..domain.run_summary import FileOutcome, FileStatus, KeepAwakeState, RunSummary
 from ..interfaces import CallbackReporter, ProgressCallbacks
+from ..messages import log_failure
 from ..texts.run import BATTERY_WARNING, fatal_error, stopped_message
 from ._types import FileDoneEvent
+
+_logger = logging.getLogger(__name__)
 
 
 class OCRWorker(QThread):
@@ -143,6 +147,7 @@ class OCRWorker(QThread):
                 self._config, self._files, **pipeline_kwargs
             )
         except (Exception, SystemExit) as exc:  # noqa: BLE001  # catch SystemExit to prevent the worker thread from killing the GUI process; also catches unexpected exceptions
+            log_failure(_logger, "The run ended with an error", exc)
             self.log_line.emit(fatal_error(exc))
             summary = RunSummary(error=str(exc) or "unexpected error")
         self.run_finished.emit(summary)

@@ -89,6 +89,9 @@ def _start_gui() -> int:
         from PySide6.QtGui import QPixmap  # noqa: PLC0415
         from PySide6.QtWidgets import QApplication, QSplashScreen  # noqa: PLC0415
 
+        from teachers_teammate.infrastructure import qt_log  # noqa: PLC0415
+
+        qt_log.install()  # before the QApplication: a platform plugin that fails says so here
         app = QApplication.instance() or QApplication(sys.argv)
         image = _splash_image()
         if image.exists():
@@ -107,6 +110,10 @@ def _start_gui() -> int:
                 app.processEvents()
     except Exception:  # noqa: BLE001  # a bundle without Qt: the GUI import below reports it
         splash = None
+
+    from teachers_teammate.infrastructure.logging_setup import start_logging  # noqa: PLC0415
+
+    start_logging()  # before the heavy imports: a bundle's import error has no console to reach
 
     try:
         from teachers_teammate.gui import main_gui  # noqa: PLC0415

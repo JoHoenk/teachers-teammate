@@ -62,6 +62,9 @@ service per topic; the only entry for GUI and CLI; does not import `texts/`) →
 - What a teacher cannot rebuild lives in the config or data root, never the cache.
 - Diagnostics go to `logging`; nothing prints. An `except` that only passes, continues or returns a
   constant says why in a comment.
+- Log once, where the error is handled; never log and re-raise. A catch-all and a failure shown to
+  the teacher log through `messages.log_failure`. `docs/error_handling.md` has the rest: expected
+  errors against bugs, and the process's nets.
 
 **Results and caches**
 - `raw_text` / `correction_text` are plain or Markdown: use `TextFormatter.plain_text` / `.document`

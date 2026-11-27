@@ -12,6 +12,7 @@ from teachers_teammate.domain.context_budget import BASE_NUM_CTX
 from teachers_teammate.domain.correction_prompts import correct_system
 from teachers_teammate.domain.model_catalog import LoadedModel, ServerFacts, request_profile
 from teachers_teammate.domain.performance_estimate import SpeedStep, StepOutcome
+from teachers_teammate.domain.ollama_snapshot import InstalledModel, ServerSnapshot
 from teachers_teammate.exceptions import (
     OCRDeadlineError,
     OCRError,
@@ -86,24 +87,29 @@ class _FakeClient:
         self._error = error
         self._keep_loaded = keep_loaded
         self._version = version
+        #: How often the server was asked for its version and models.
+        self.answers_asked = 0
 
     def server_facts(self) -> ServerFacts:
         """Return the version, the digests and what is loaded right now."""
+        self.answers_asked += 1
         return ServerFacts(
             version=self._version,
             digests={name: f"sha256:{name}" for name in self.installed},
             loaded=tuple(self.loaded),
         )
 
-    def list_models(self) -> list[str]:
-        """Return the installed models."""
-        return list(self.installed)
-
-    def list_models_or_error(self) -> tuple[list[str], str]:
-        """Return the installed models, or the message of a server that cannot be reached."""
+    def snapshot(self) -> ServerSnapshot:
+        """Return the answer of the server: its version, or why it could not be asked."""
+        self.answers_asked += 1
         if self._unreachable:
-            return [], self._unreachable
-        return list(self.installed), ""
+            return ServerSnapshot(unreachable=self._unreachable)
+        return ServerSnapshot(
+            version=self._version,
+            models=tuple(
+                InstalledModel(tag=name, digest=f"sha256:{name}") for name in self.installed
+            ),
+        )
 
     def loaded_models(self) -> tuple[LoadedModel, ...]:
         """Return the models in memory."""
@@ -637,6 +643,20 @@ def test_the_result_carries_the_server_facts_of_the_end() -> None:
 
     assert result.facts.version == "0.40.15"
     assert result.facts.digest_of("gemma4:e4b") == "sha256:gemma4:e4b"
+
+
+def test_the_server_is_asked_about_itself_once_before_and_once_after() -> None:
+    """
+    Given  a server that answers
+    When   the probe runs
+    Then   it asks for the server's version and models once at the start, whose answer also
+           gives the facts before the test, and once at the end
+    """
+    client = _FakeClient()
+
+    _probe(client).run(_request())
+
+    assert client.answers_asked == 2
 
 
 def test_the_result_records_whether_the_computer_runs_on_battery() -> None:

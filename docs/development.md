@@ -537,7 +537,8 @@ and `report --performance --catalog-lines` prints the `answer_length` lines for 
 | Piece | Where | Rule |
 |---|---|---|
 | Decisions (best model, suitability, hardware profile, `rate_model`) | `domain/model_catalog.py` | Pure functions, no I/O — table-test them. |
-| Caches (local hardware probe, model classification) | `application/model_recommendations.py` | One owner. Call `on_ollama_models_changed(url)` after every pull; it evicts the model list, the classifications and the server's speed facts. Only definite classifications are cached. The memory and GPU readers and the context choice live here too (`available_memory_gb`, `read_gpu_usage`, `read_system_usage`, `context_choice`). |
+| The local hardware probe | `application/model_recommendations.py` | One owner: it runs once per process and describes this computer, not the server. The memory and GPU readers and the context choice live here too (`available_memory_gb`, `read_gpu_usage`, `read_system_usage`, `context_choice`). |
+| What a server answered (version, installed models with digests and sizes, what a model can do) | `application/ollama_server.py` | One owner. `snapshot(url)` asks and holds the answer, `cached_snapshot(url)` never asks, `forget(url)` drops it — a pull does by itself. No other service keeps an Ollama cache; what is in memory (`/api/ps`) is never held. |
 | Texts a teacher reads | `teachers_teammate/texts/` | Qt-free; widgets never build these sentences themselves. See "Where text lives" above. |
 | Widgets | `gui/_hardware_profile_selector.py`, `gui/_model_guidance.py`, `gui/settings/_addons_page.py` | Presentation only. They rate models through `rate_for(..., cached_only=True)` — never contacting Ollama on the GUI thread. |
 

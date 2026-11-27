@@ -199,9 +199,6 @@ class FakeGuiService(LocalDataFlowStub):
             card_gb=detection.card_gb if detection is not None else None,
         )
 
-    def on_ollama_models_changed(self, ollama_url: str) -> None:
-        _ = ollama_url
-
     def addon_packages_dir(self) -> Path:
         return Path(tempfile.gettempdir()) / "teachers-teammate-addons"
 

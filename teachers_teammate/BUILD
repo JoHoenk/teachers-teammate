@@ -47,6 +47,7 @@ _DOMAIN_SRCS = [
     "domain/offset_map.py",
     "domain/ollama_address.py",
     "domain/ollama_discovery.py",
+    "domain/ollama_snapshot.py",
     "domain/output_files.py",
     "domain/page_layout.py",
     "domain/pdf_text_layer.py",

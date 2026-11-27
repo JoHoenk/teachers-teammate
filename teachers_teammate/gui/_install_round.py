@@ -445,8 +445,6 @@ class InstallRound(QObject):
         self.log_line.emit(txt.LOG_OLLAMA_DONE)
         self.item_done.emit(item)
         self._installed_any = True
-        # The installed-model list and the classifications are stale from now on.
-        self._svc.recommendations.on_ollama_models_changed(self._ollama_url)
 
     # ── the end of the round ─────────────────────────────────────────────────────
 

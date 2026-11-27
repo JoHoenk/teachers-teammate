@@ -13,6 +13,7 @@ from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.application.ports import OllamaServer
 from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.ollama_snapshot import InstalledModel, ServerSnapshot
 from teachers_teammate.domain.providers import ProviderInfo
 
 from ..fakes.fake_secret_store import FakeSecretStore
@@ -31,10 +32,41 @@ class _NoServer:
         raise AssertionError(f"the server at {url} was asked about {model!r}")
 
 
+class _FakeServer:
+    """An Ollama server port: the answer it gives, and what it was asked to forget."""
+
+    def __init__(self, answer: ServerSnapshot) -> None:
+        self.answer = answer
+        self.calls = 0
+        self.forgotten: list[str] = []
+
+    def snapshot(self, url: str) -> ServerSnapshot:
+        """Return the scripted answer and count the request."""
+        _ = url
+        self.calls += 1
+        return self.answer
+
+    def cached_snapshot(self, url: str, *, max_age: float | None = None) -> ServerSnapshot | None:
+        """Return the scripted answer as what is held, without counting a request."""
+        _ = url, max_age
+        return None if not self.answer.models else self.answer
+
+    def forget(self, url: str) -> None:
+        """Remember that the server was forgotten."""
+        self.forgotten.append(url)
+
+
 def _service(**kwargs) -> ProviderService:
     """Return the service over a server that is never asked."""
     return ProviderService(
         ollama=cast(OllamaServer, _NoServer()), credentials=ApiKeys(FakeSecretStore()), **kwargs
+    )
+
+
+def _service_with(server: object) -> ProviderService:
+    """Return the service over the fake Ollama server port *server*."""
+    return ProviderService(
+        ollama=cast(OllamaServer, server), credentials=ApiKeys(FakeSecretStore())
     )
 
 
@@ -90,51 +122,59 @@ def test_invalidate_model_cache_forces_refetch(monkeypatch: pytest.MonkeyPatch) 
     assert call_count == 2
 
 
+@pytest.mark.unit
+def test_one_ollama_server_is_shared_by_every_service_that_reads_it() -> None:
+    """
+    Given  the built services
+    When   the services that read the Ollama server are looked at
+    Then   they all hold the one instance, so a pull seen by one is seen by all and no second
+           cache can drift away from it
+    """
+    services = build_app_services()
+
+    assert services.providers._ollama is services.ollama
+    assert services.recommendations._ollama is services.ollama
+    assert services.speeds._ollama is services.ollama
+    assert services.run._ollama is services.ollama
+    assert services.comparison._ollama is services.ollama
+
+
 @pytest.mark.use_case("Model_Category_Guidance")
-def test_ollama_model_cache_key_ignores_url_spelling(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_ollama_list_comes_from_the_service_that_owns_the_server() -> None:
     """
-    Given  the model list cached under "http://host:11434/"
-    When   it is invalidated through "http://host:11434"
-    Then   the entry is gone (both spellings share one cache entry)
+    Given  an Ollama server that answered which models it has installed
+    When   the models are listed twice and the list is then forgotten
+    Then   every look goes to the service that keeps that answer, not through the provider
+           module, and forgetting is handed to it
     """
-    calls: list[str] = []
+    server = _FakeServer(ServerSnapshot(models=(InstalledModel("a:latest"),)))
+    providers = _service_with(server)
 
-    def fake_list(provider: str, **_kw) -> list[str]:
-        calls.append(provider)
-        return ["a:latest"]
-
-    monkeypatch.setattr(providers_module, "list_provider_models_checked", _as_listing(fake_list))
-    providers = _service()
-
-    providers.list_provider_models("ollama", base_url="http://host:11434/")
-    providers.list_provider_models("ollama", base_url="http://host:11434")
-    assert len(calls) == 1  # second call was a cache hit
-
+    first = providers.list_provider_models("ollama", base_url="http://host:11434/")
+    second = providers.list_provider_models("ollama", base_url="http://host:11434")
     providers.invalidate_model_cache("ollama", "http://host:11434")
-    providers.list_provider_models("ollama", base_url="http://host:11434/")
-    assert len(calls) == 2
+
+    assert first == second == ["a:latest"]
+    assert server.calls == 2
+    assert server.forgotten == ["http://host:11434"]
 
 
 @pytest.mark.unit
-def test_empty_model_list_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unreachable_ollama_says_why_instead_of_listing_nothing() -> None:
     """
-    Given  an Ollama server that is unreachable (empty model list) at first
-    When   it is started and the list is requested again
-    Then   the second call asks the server again instead of serving the cached failure
+    Given  an Ollama server that cannot be asked
+    When   the models are listed
+    Then   the listing is a failed one that carries the reason without the check line's
+           mark, so a picker can say why in its own line instead of showing an empty list
     """
-    answers = [[], ["qwen3-vl:8b"]]
-    monkeypatch.setattr(
-        providers_module,
-        "list_provider_models_checked",
-        _as_listing(lambda *_a, **_k: answers.pop(0)),
-    )
-    providers = _service()
+    server = _FakeServer(ServerSnapshot(unreachable="✗ Cannot connect to Ollama"))
+    providers = _service_with(server)
 
-    first = providers.list_provider_models("ollama", base_url="http://127.0.0.1:11434")
-    second = providers.list_provider_models("ollama", base_url="http://127.0.0.1:11434")
+    listing = providers.list_provider_models_checked("ollama", base_url="http://127.0.0.1:11434")
 
-    assert first == []
-    assert second == ["qwen3-vl:8b"]
+    assert listing.models == []
+    assert listing.source == "failed"
+    assert listing.problem == "Cannot connect to Ollama"
 
 
 @pytest.mark.unit
@@ -395,25 +435,3 @@ def test_check_connection_provider_returns_false_when_env_var_missing(
 
 
 # ── list_supported_suffixes
-
-
-@pytest.mark.unit
-def test_refreshing_the_ollama_model_list_drops_the_classifications_of_that_server() -> None:
-    """
-    Given  the built services, with a classification kept for one Ollama server
-    When   the model list of that server is refreshed
-    Then   the recommendations forget that server's classifications, and no other's
-    """
-    from teachers_teammate.domain.ollama_address import normalize_ollama_url  # noqa: PLC0415
-
-    services = build_app_services()
-    kept = {"qwen3.5:9b": frozenset()}
-    url, other = "http://127.0.0.1:11434", "http://192.168.1.50:11434"
-    cache = services.recommendations._classification
-    cache[normalize_ollama_url(url)] = dict(kept)
-    cache[normalize_ollama_url(other)] = dict(kept)
-
-    services.providers.invalidate_model_cache("ollama", url)
-
-    assert normalize_ollama_url(url) not in cache
-    assert normalize_ollama_url(other) in cache

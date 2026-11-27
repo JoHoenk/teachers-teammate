@@ -718,7 +718,7 @@ def test_without_a_manager_the_round_pulls_by_itself(qtbot, fake_threads) -> Non
     When   it pulls two models
     Then   it runs the pulls itself, one after the other, and reports each arrival
     """
-    round_, service = _round()
+    round_, _service = _round()
     seen = _record(round_)
 
     round_.start(ollama_models=["a:1b", "b:1b"], ollama_url="http://127.0.0.1:11434")
@@ -726,7 +726,6 @@ def test_without_a_manager_the_round_pulls_by_itself(qtbot, fake_threads) -> Non
     assert fake_threads.order == ["a:1b", "b:1b"]
     assert _keys(seen["done"]) == ["ollama:a:1b", "ollama:b:1b"]
     assert seen["finished"] == [True]
-    assert service.changed_urls == ["http://127.0.0.1:11434", "http://127.0.0.1:11434"]
 
 
 @pytest.mark.parametrize(

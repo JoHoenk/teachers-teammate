@@ -29,7 +29,6 @@ from ..domain.model_catalog import (
     find_spec,
     ram_needed_gb,
 )
-from ..domain.model_listing import ModelListing
 from ..domain.ollama_address import models_include
 from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import TEXT_SUFFIX, FolderProblem, output_folder_problem
@@ -565,9 +564,7 @@ class RunService:
             if ocr_reason:
                 return RunPreflight(ocr_not_allowed=ocr_reason)
         if uses_ollama(config):
-            if fresh:
-                self._providers.forget_ollama_model_list(config.ollama_url)
-            installed, unreachable = self._installed_ollama_models(config.ollama_url)
+            installed, unreachable = self._installed_ollama_models(config.ollama_url, fresh=fresh)
             if unreachable:
                 return RunPreflight(
                     ollama_unreachable=unreachable,
@@ -595,20 +592,20 @@ class RunService:
             ollama_wait=self._ollama_wait(config) if memory else WaitDetail(),
         )
 
-    def _installed_ollama_models(self, url: str) -> tuple[list[str], str]:
+    def _installed_ollama_models(self, url: str, *, fresh: bool = False) -> tuple[list[str], str]:
         """Return ``(installed, unreachable)`` for the Ollama server at *url*.
 
         *unreachable* is ``""`` when the server answered — also when it has no model
-        downloaded yet — and the connection message otherwise.  Makes at most one
-        request (none within the model-cache TTL), so an unreachable server costs a
-        single timeout instead of one per question asked of it.
+        downloaded yet — and the connection message otherwise.  *fresh* asks the server even
+        though it answered a moment ago, which is what starting a run does.  Either way the
+        answer costs one request however many questions of the check read it, so an unreachable
+        server costs a single timeout.
         """
-        cached = self._providers.get_cached_models(PROVIDER_OLLAMA, base_url=url)
-        if cached is not None:
-            return list(cached), ""
-        installed, unreachable = self._ollama.listed_models(url)
-        self._providers.remember_listing(PROVIDER_OLLAMA, ModelListing(installed), base_url=url)
-        return installed, unreachable
+        if fresh:
+            answer = self._ollama.snapshot(url, max_age=0.0)
+        else:
+            answer = self._ollama.snapshot(url)
+        return answer.tags, answer.unreachable
 
     def _ollama_issue(self, url: str, message: str) -> RequirementIssue:
         """Return what is wrong with Ollama at *url*: not found, not running, or unreachable.

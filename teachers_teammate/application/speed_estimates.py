@@ -412,7 +412,7 @@ class SpeedEstimateService:
         *,
         effective_model: Callable[[str, str, str], str],
         ollama: OllamaServer,
-        client_factory: OllamaClientFactory,
+        client_factory: OllamaClientFactory[object],
         store: SpeedStore | None = None,
         samples: SampleStore,
         probe_factory: Callable[..., PerformanceProbe],
@@ -439,8 +439,6 @@ class SpeedEstimateService:
         self._store = store or SpeedStore()
         self._samples = samples
         self._probe_factory = probe_factory
-        self._lock = threading.RLock()
-        self._facts: dict[str, ServerFacts] = {}
 
     # ── what the page measures ─────────────────────────────────────────────
 
@@ -462,28 +460,16 @@ class SpeedEstimateService:
 
     # ── server facts ───────────────────────────────────────────────────────
 
-    def refresh_server_facts(self, ollama_url: str) -> ServerFacts:
-        """Fetch and cache the version, the digests and the loaded models of *ollama_url*.
-
-        Contacts the server, so call it from a background thread.  Never raises: a server that
-        cannot be reached gives empty facts, which makes every stored measurement out of date
-        rather than wrong.
-        """
-        url = normalize_ollama_url(ollama_url)
-        facts = self._ollama.server_facts(url)
-        with self._lock:
-            self._facts[url] = facts
-        return facts
-
     def cached_server_facts(self, ollama_url: str) -> ServerFacts | None:
-        """Return the cached facts of *ollama_url*, or ``None`` while they are unknown."""
-        with self._lock:
-            return self._facts.get(normalize_ollama_url(ollama_url))
+        """Return what the server last answered about itself, or ``None`` until it was asked.
 
-    def forget_server_facts(self, ollama_url: str) -> None:
-        """Forget the cached facts of *ollama_url* (call after a pull or a server restart)."""
-        with self._lock:
-            self._facts.pop(normalize_ollama_url(ollama_url), None)
+        No age limit: a version that is known beats none.  The panel asks for a new answer when
+        it opens and the held one is older than ``SNAPSHOT_TTL_S``.  A server
+        that did not answer gives empty facts, so every stored measurement is out of date rather
+        than shown as current.
+        """
+        snapshot = self._ollama.cached_snapshot(ollama_url)
+        return None if snapshot is None else snapshot.facts()
 
     # ── the test ───────────────────────────────────────────────────────────
 
@@ -506,7 +492,7 @@ class SpeedEstimateService:
         url = normalize_ollama_url(choices.ollama_url)
         probe = self._probe_factory(
             # The client gets the event too: it is what abandons a request that is waiting.
-            self._client_factory(url, cancel_event),
+            self._client_factory(url, cancel_event=cancel_event),
             cancel_event=cancel_event,
             gpu_found=hardware is not None and hardware.gpu_name is not None,
             on_battery=_on_battery(),
@@ -514,10 +500,11 @@ class SpeedEstimateService:
         )
         result = probe.run(choices.request())
         if result.error:
-            # A server that could not be reached says nothing: no facts to cache, nothing to store.
+            # A server that could not be reached says nothing: nothing to store.
             return result
-        with self._lock:
-            self._facts[url] = result.facts
+        # The panel compares a record with what the server has now, so the digests are read
+        # again after the test: a model that was pulled meanwhile would make it out of date.
+        self._ollama.snapshot(url, max_age=0.0)
         for record in self._records(url, result, hardware):
             self._store.save(record)
         return result
@@ -564,16 +551,15 @@ class SpeedEstimateService:
         choices: SpeedChoices,
         *,
         hardware: HardwareDetection | None = None,
-        cached_only: bool = True,
     ) -> SpeedSummary:
         """Return what the panel shows for *choices*.
 
-        ``cached_only`` (the default) never contacts the server: it reads the cached server
-        facts, so it is safe on the GUI thread.  A caller that has not fetched them yet gets the
-        measurement without the out-of-date check.
+        Never contacts the server: it reads what the server last answered, so it is safe on the
+        GUI thread.  Until the server was asked, a measurement is shown without the out-of-date
+        check.
         """
         url = normalize_ollama_url(choices.ollama_url)
-        facts = self.cached_server_facts(url) if cached_only else self.refresh_server_facts(url)
+        facts = self.cached_server_facts(url)
         rows = self._rows(choices, url=url, facts=facts, hardware=hardware)
         # A run that paid a model load for most of its documents is a run whose models evict
         # each other: that is what the teacher sees as "every file takes longer than the last".

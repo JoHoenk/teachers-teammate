@@ -19,6 +19,7 @@ from teachers_teammate.application.speed_estimates import (
 )
 from teachers_teammate.application.ports import OllamaServer
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX
+from teachers_teammate.domain.ollama_snapshot import InstalledModel, ServerSnapshot
 from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     DetectionReason,
@@ -193,25 +194,41 @@ def _exchange_time(
 
 
 class _FakeServer:
-    """A stand-in for the Ollama server port: fixed facts, and a count of the calls."""
+    """A stand-in for the Ollama server port: one fixed answer, and a count of the requests."""
 
     def __init__(self, facts: ServerFacts) -> None:
         self.facts = facts
+        #: What the server answered: the facts a test scripted, as a snapshot holds them.
+        self.answer = ServerSnapshot(
+            version=facts.version,
+            models=tuple(
+                InstalledModel(tag=tag, digest=digest) for tag, digest in facts.digests.items()
+            ),
+        )
         self.calls = 0
 
-    def server_facts(self, url: str) -> ServerFacts:
-        """Return the scripted facts and count the call."""
-        _ = url
+    def snapshot(self, url: str, *, max_age: float = 0.0) -> ServerSnapshot:
+        """Return the scripted answer and count the request."""
+        _ = url, max_age
         self.calls += 1
-        return self.facts
+        return self.answer
+
+    def cached_snapshot(self, url: str, *, max_age: float | None = None) -> ServerSnapshot | None:
+        """Return the scripted answer as what is held, without counting a request."""
+        _ = url, max_age
+        answer = self.answer
+        return None if not (answer.models or answer.version or answer.unreachable) else answer
 
 
 class _FakeClient:
     """A stand-in for the client the probe drives; a fake probe never uses it."""
 
 
-def _client_factory(_url: str, _cancel: threading.Event | None) -> object:
+def _client_factory(
+    url: str, *, cancel_event: threading.Event | None = None, timeout: float | None = None
+) -> object:
     """Return the client the probe of a speed test drives; a fake probe never reads it."""
+    _ = url, cancel_event, timeout
     return _FakeClient()
 
 
@@ -457,11 +474,13 @@ def test_a_test_that_measured_nothing_stores_nothing(tmp_path: Path) -> None:
     assert store.records() == ()
 
 
-def test_the_test_caches_the_server_facts(tmp_path: Path) -> None:
+def test_the_test_asks_the_server_again_after_it_measured(tmp_path: Path) -> None:
     """
-    Given  a probe that reported the server's version and digests
+    Given  a probe that reported the server's version and digests, and a server that reports
+           them still
     When   the speed test runs
-    Then   the facts are cached, so the panel needs no second request
+    Then   the server is asked once more, so the panel compares the new record with what the
+           server has now rather than with the answer it gave before the test
     """
     facts = ServerFacts(version="0.40.15", digests={"gemma4:e4b": "sha256:aaa"})
     probe = _FakeProbe(
@@ -472,10 +491,11 @@ def test_the_test_caches_the_server_facts(tmp_path: Path) -> None:
             facts=facts,
         )
     )
-    service, _store, _server = _service(tmp_path, probe=probe)
+    service, _store, server = _service(tmp_path, facts=facts, probe=probe)
 
     service.test_speed(_choices())
 
+    assert server.calls == 1
     assert service.cached_server_facts(_URL) == facts
 
 
@@ -517,8 +537,11 @@ def test_the_client_of_the_test_gets_the_stop_event(tmp_path: Path) -> None:
     """
     seen: list[threading.Event | None] = []
 
-    def client_factory(_url: str, cancel: threading.Event | None) -> object:
-        seen.append(cancel)
+    def client_factory(
+        url: str, *, cancel_event: threading.Event | None = None, timeout: float | None = None
+    ) -> object:
+        _ = url, timeout
+        seen.append(cancel_event)
         return _FakeClient()
 
     service = SpeedEstimateService(
@@ -750,7 +773,6 @@ def test_a_changed_digest_makes_the_summary_out_of_date(tmp_path: Path) -> None:
         tmp_path, facts=ServerFacts(version="0.40.15", digests={"gemma4:e4b": "sha256:new"})
     )
     store.save(_record(digest="sha256:old"))
-    service.refresh_server_facts(_URL)
 
     summary = service.speed_summary(_choices(reading_model=""))
 
@@ -772,32 +794,33 @@ def test_unknown_server_facts_do_not_mark_a_measurement_out_of_date(tmp_path: Pa
     assert summary.out_of_date is False
 
 
-def test_cached_only_never_contacts_the_server(tmp_path: Path) -> None:
+def test_a_server_that_did_not_answer_makes_a_measurement_out_of_date(tmp_path: Path) -> None:
     """
-    Given  a service whose server facts were never fetched
-    When   the summary is asked for with ``cached_only``
-    Then   the server is not asked, so the GUI thread never waits
+    Given  a measurement, and a server whose latest answer is that it could not be reached
+    When   the summary is asked for
+    Then   it is marked out of date: nothing says the measured model is still there
+    """
+    service, store, server = _service(tmp_path)
+    server.answer = ServerSnapshot(unreachable="✗ Cannot connect to Ollama")
+    store.save(_record())
+
+    summary = service.speed_summary(_choices(reading_model=""))
+
+    assert summary.out_of_date is True
+
+
+def test_the_summary_never_contacts_the_server(tmp_path: Path) -> None:
+    """
+    Given  a service whose server was never asked
+    When   the summary is asked for
+    Then   the server is not asked either, so the GUI thread never waits
     """
     service, store, server = _service(tmp_path)
     store.save(_record())
 
-    service.speed_summary(_choices(), cached_only=True)
+    service.speed_summary(_choices())
 
     assert server.calls == 0
-
-
-def test_the_summary_asks_the_server_when_it_may(tmp_path: Path) -> None:
-    """
-    Given  a service with a reachable server
-    When   the summary is asked for without ``cached_only``
-    Then   the server facts are fetched once
-    """
-    service, store, server = _service(tmp_path)
-    store.save(_record())
-
-    service.speed_summary(_choices(), cached_only=False)
-
-    assert server.calls == 1
 
 
 def test_a_share_of_zero_on_a_computer_with_a_card_is_reported(tmp_path: Path) -> None:
@@ -1304,7 +1327,6 @@ def test_page_times_answer_for_the_measured_models_only(tmp_path: Path) -> None:
     facts = ServerFacts(version="0.40.15", digests={"gemma4:e4b": "sha256:aaa"})
     service, store, _server = _service(tmp_path, facts=facts)
     store.save(_record())
-    service.refresh_server_facts(_URL)
 
     times = service.page_times(["gemma4:e4b", "qwen3:4b"], "general", _URL, hardware=_hardware())
 
@@ -1322,7 +1344,6 @@ def test_page_times_leave_out_a_measurement_that_no_longer_fits(tmp_path: Path) 
     facts = ServerFacts(version="0.40.15", digests={"gemma4:e4b": "sha256:new"})
     service, store, _server = _service(tmp_path, facts=facts)
     store.save(_record(digest="sha256:old"))
-    service.refresh_server_facts(_URL)
 
     assert service.page_times(["gemma4:e4b"], "general", _URL, hardware=_hardware()) == {}
 
@@ -1336,7 +1357,6 @@ def test_page_times_use_the_reading_step_for_a_reading_model(tmp_path: Path) -> 
     facts = ServerFacts(version="0.40.15", digests={"glm-ocr:q8_0": "sha256:aaa"})
     service, store, _server = _service(tmp_path, facts=facts)
     store.save(_record(tag="glm-ocr:q8_0"))
-    service.refresh_server_facts(_URL)
 
     times = service.page_times(["glm-ocr:q8_0"], "ocr", _URL, hardware=_hardware())
 

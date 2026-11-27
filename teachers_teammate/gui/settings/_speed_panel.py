@@ -13,9 +13,10 @@ Three rules shape it:
   itself — not at start, not when a model is chosen.
 * **It tests the models chosen on AI models right now**, unsaved choices included (the window
   hands the panel those settings), so a teacher can compare two models before pressing OK.
-* **Nothing here waits for the network.**  The figures come from the stored measurements
-  (``cached_only``); the server's version and model digests, which decide whether a measurement
-  is still current, are fetched in the background and only then redraw the block.
+* **Nothing here waits for the network.**  The figures come from the stored measurements and
+  from what the server last answered; its version and model digests, which decide whether a
+  measurement is still current, are asked for in the background and redraw the block when they
+  arrive.
 
 A step that runs here but was never measured keeps its row and says so: dropping it would make
 the class set look shorter than it is.  While no step uses Ollama the block says so instead:
@@ -120,7 +121,8 @@ class SpeedPanel(QWidget):
         """Create the block.
 
         Args:
-            app_service: The application services; only :class:`SpeedEstimateService` is used.
+            app_service: The application services: the speed estimates, and the Ollama server
+                whose version and digests the estimates are checked against.
             settings_provider: Returns the settings as the AI models page shows them now, so the
                 test covers unsaved choices too.
             profile_selector: The page's one resolution of this computer; it decides whether a
@@ -135,9 +137,8 @@ class SpeedPanel(QWidget):
         self._running = False
         self._cancel = threading.Event()
         self._test_task = LatestTask(self)
-        self._facts_task = LatestTask(self)
-        #: The address whose server facts were asked for, so they are fetched once per address.
-        self._facts_url = ""
+        # The server is a remote one: a fetch that waits does not hold up the local tasks.
+        self._facts_task = LatestTask(self, network=True)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -222,24 +223,18 @@ class SpeedPanel(QWidget):
     def set_ollama_url(self, url: str) -> None:
         """Follow the local AI server address chosen on *This computer*."""
         self._ollama_url = url
-        self._facts_url = ""  # another server has other facts
         self.refresh()
 
     def refresh(self) -> None:
-        """Redraw from the stored measurements; never contacts the server.
+        """Redraw from the stored measurements and ask the server about itself.
 
-        Says "nothing to measure" while no step runs on Ollama.  The server facts are asked for in
-        the background the first time an address is seen, and the block is redrawn when they
-        arrive.
+        Says "nothing to measure" while no step runs on Ollama.  The block is drawn from what the
+        server last answered — usually held already, so nothing is asked — and the answer that is
+        asked for in the background redraws it when it arrives.
         """
-        choices = self._choices()
-        has_models = bool(choices.models())
-        self._body.setVisible(has_models)
-        self._nothing.setVisible(not has_models)
-        if not has_models:
+        if not self._draw_block():
             return
         self._fetch_facts()
-        self._draw(self._service.speeds.speed_summary(choices, hardware=self._hardware()))
 
     def stop(self) -> None:
         """Ask a running test to stop; nothing is stored.
@@ -328,19 +323,31 @@ class SpeedPanel(QWidget):
     # ── server facts ───────────────────────────────────────────────────────
 
     def _fetch_facts(self) -> None:
-        """Ask for the server's version and digests once per address, in the background.
+        """Ask the server for its version and digests in the background, then redraw.
 
-        They are what makes a stored measurement out of date, and fetching them needs the
-        network, so the block is drawn from the cache first and redrawn when they arrive.
+        They are what makes a stored measurement out of date.  Fetching them needs the network, so
+        the block is drawn from what is held first; the answer redraws it, and asking again would
+        be a fetch of its own.
         """
         url = self._ollama_url
-        if not url or url == self._facts_url:
+        if not url:
             return
-        self._facts_url = url
-        self._facts_task.submit(
-            lambda: self._service.speeds.refresh_server_facts(url),
-            lambda _result, _error: self.refresh(),
-        )
+        self._facts_task.submit(lambda: self._service.ollama.snapshot(url), self._on_facts)
+
+    def _on_facts(self, _result: object, _error: object) -> None:
+        """Redraw the block with the answer that arrived; asking again would be a fetch."""
+        self._draw_block()
+
+    def _draw_block(self) -> bool:
+        """Draw what the stored measurements say; ``False`` while no step runs on Ollama."""
+        choices = self._choices()
+        has_models = bool(choices.models())
+        self._body.setVisible(has_models)
+        self._nothing.setVisible(not has_models)
+        if not has_models:
+            return False
+        self._draw(self._service.speeds.speed_summary(choices, hardware=self._hardware()))
+        return True
 
     # ── drawing ────────────────────────────────────────────────────────────
 

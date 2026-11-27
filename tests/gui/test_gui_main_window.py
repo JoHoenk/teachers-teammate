@@ -2701,25 +2701,6 @@ def test_the_setup_result_is_applied_without_a_guard_dialog(
 # ── add-ons wiring (review findings #1, #9, #10 and the GPU tab) ───────────
 
 
-@pytest.mark.use_case("Model_Category_Guidance")
-def test_finished_pull_evicts_cached_model_list(main_window, monkeypatch) -> None:
-    """
-    Given  a pull that finished (possibly after the Settings window was closed)
-    When   the pull manager reports it
-    Then   the main window evicts the model list of the server it pulled from, so
-           the pre-run "model missing" check does not use a stale cache
-    """
-    evicted: list[str] = []
-    monkeypatch.setattr(
-        ModelRecommendationService,
-        "on_ollama_models_changed",
-        lambda self, url: evicted.append(url),
-    )
-    main_window._pull_manager._current_url = "http://gpu-box:11434"
-    main_window._on_pull_finished("qwen3-vl:8b")
-    assert evicted == ["http://gpu-box:11434"]
-
-
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
 def test_missing_model_dialog_opens_addons_with_models_preselected(
     qtbot, main_window, monkeypatch
@@ -4686,10 +4667,6 @@ def test_a_download_takes_over_the_line_and_a_new_check_follows(
     monkeypatch.setattr(
         ready_window._readiness_controller, "start_check", lambda **_kw: checks.append(1)
     )
-    monkeypatch.setattr(
-        ready_window._app_service.recommendations, "on_ollama_models_changed", lambda _url: None
-    )
-
     ready_window._on_pull_started("qwen3:8b")
     ready_window._on_pull_progress("pulling", 50, 200)
 

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+import socket
 import sys
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -38,6 +41,36 @@ def _fresh_own_host_names():
     _REAL_OWN_HOST_NAMES.cache_clear()
     yield
     _REAL_OWN_HOST_NAMES.cache_clear()
+
+
+@pytest.fixture
+def stalling_server():
+    """Return the address of a server that accepts a connection and never answers it."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    # A short accept timeout: the fixture stops by itself once the test is over.
+    server.settimeout(0.1)
+    stop = threading.Event()
+
+    def hold() -> None:
+        while not stop.is_set():
+            try:
+                connection, _address = server.accept()
+            except TimeoutError:
+                continue
+            try:
+                stop.wait(10)
+            finally:
+                connection.close()
+            return
+
+    thread = threading.Thread(target=hold, daemon=True, name="stalling-ollama")
+    thread.start()
+    yield f"http://127.0.0.1:{server.getsockname()[1]}"
+    stop.set()
+    thread.join(timeout=5)
+    server.close()
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -109,46 +142,6 @@ def test_list_models_strips_trailing_slash_from_url(monkeypatch) -> None:
     assert not str(host_arg).endswith("/"), f"Trailing slash in URL: {host_arg}"
 
 
-# ── OllamaClient.list_models_with_size ────────────────────────────────────
-
-
-def test_list_models_with_size_returns_tuples(monkeypatch) -> None:
-    """
-    Given  ollama.Client.list() returns models with size attributes
-    When   OllamaClient.list_models_with_size() is called
-    Then   a list of (name, size_bytes) tuples is returned
-    """
-    m1, m2 = MagicMock(), MagicMock()
-    m1.model, m1.size = "llama3:latest", 4_000_000_000
-    m2.model, m2.size = "mistral:7b", 7_000_000_000
-    list_resp = MagicMock()
-    list_resp.models = [m1, m2]
-    mock_client = MagicMock()
-    mock_client.list.return_value = list_resp
-    mock_ollama = MagicMock()
-    mock_ollama.Client.return_value = mock_client
-    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
-
-    result = OllamaClient("http://127.0.0.1:11434").list_models_with_size()
-
-    assert result == [("llama3:latest", 4_000_000_000), ("mistral:7b", 7_000_000_000)]
-
-
-def test_list_models_with_size_returns_empty_on_error(monkeypatch) -> None:
-    """
-    Given  ollama.Client.list() raises an exception
-    When   OllamaClient.list_models_with_size() is called
-    Then   an empty list is returned
-    """
-    mock_client = MagicMock()
-    mock_client.list.side_effect = Exception("timeout")
-    mock_ollama = MagicMock()
-    mock_ollama.Client.return_value = mock_client
-    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
-
-    assert OllamaClient("http://127.0.0.1:11434").list_models_with_size() == []
-
-
 # ── OllamaClient.check_connection ─────────────────────────────────────────
 
 
@@ -166,6 +159,24 @@ def test_check_connection_returns_true_with_models(monkeypatch) -> None:
     assert connected is True
     assert model_ok is True
     assert "2" in msg
+
+
+def test_check_connection_and_list_models_ask_only_for_the_model_list(monkeypatch) -> None:
+    """
+    Given  a server that lists a model
+    When   the connection is checked and the models are listed, as the readiness line does
+    Then   each asks /api/tags once and never /api/version, which neither needs
+    """
+    _mock_server(monkeypatch, models=[("gemma4:e4b", "sha256:aaa")], loaded=[])
+    versions: list[str] = []
+    monkeypatch.setattr(ollama_utils, "_http_json", lambda url, timeout: versions.append(url) or {})
+    client = OllamaClient("http://127.0.0.1:11434")
+
+    client.check_connection()
+    client.list_models()
+
+    assert sys.modules["ollama"].Client.return_value.list.call_count == 2
+    assert versions == []
 
 
 def test_check_connection_returns_false_without_models(monkeypatch) -> None:
@@ -1240,24 +1251,18 @@ def test_check_model_no_warning_for_vision_model(monkeypatch) -> None:
     assert not any("may not support vision" in w for w in reporter.warnings)
 
 
-def test_list_models_or_error_tells_unreachable_from_empty(monkeypatch) -> None:
+def test_check_model_gives_up_on_a_server_that_never_answers(stalling_server) -> None:
     """
-    Given  one server that answers with no models and one that cannot be reached
-    When   OllamaClient.list_models_or_error() is called on each
-    Then   the first yields ([], "") and the second ([], <message>), one request each
+    Given  a server that accepts the connection and answers nothing at all
+    When   check_model is asked with a short timeout
+    Then   it raises OllamaUnreachableError at the timeout instead of holding the run's start
     """
-    mock_ollama = _make_mock_ollama([])
-    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
-    client = mock_ollama.Client.return_value
+    started = time.monotonic()
 
-    assert OllamaClient("http://127.0.0.1:11434").list_models_or_error() == ([], "")
+    with pytest.raises(OllamaUnreachableError):
+        OllamaClient(stalling_server, timeout=0.2).check_model("gemma4:e4b")
 
-    client.list.side_effect = ConnectionError("Connection refused")
-    models, error = OllamaClient("http://127.0.0.1:11434").list_models_or_error()
-
-    assert models == []
-    assert "Cannot connect to Ollama" in error
-    assert client.list.call_count == 2
+    assert time.monotonic() - started < 5.0
 
 
 # ── Structured output ──────────────────────────────────────────────────────
@@ -1843,6 +1848,62 @@ def test_loaded_model_without_a_size_has_no_share(monkeypatch) -> None:
     loaded = facts.loaded_model("x:1b")
     assert loaded is not None
     assert loaded.on_card_share == 0.0
+
+
+# ── OllamaClient.snapshot ──────────────────────────────────────────────────
+
+
+def test_a_snapshot_asks_the_server_once_for_the_models_it_holds(monkeypatch) -> None:
+    """
+    Given  a server that lists two models with their digests and sizes
+    When   OllamaClient.snapshot() is called
+    Then   one request to /api/tags answers for the tags, the digests and the sizes, together
+           with the version of the server
+    """
+    _mock_server(
+        monkeypatch,
+        models=[("gemma4:e4b", "sha256:aaa"), ("glm-ocr:q8_0", "sha256:bbb")],
+        loaded=[],
+    )
+    mock_client = sys.modules["ollama"].Client.return_value
+
+    snapshot = OllamaClient("http://127.0.0.1:11434").snapshot()
+
+    assert snapshot.version == "0.40.15"
+    assert snapshot.tags == ["gemma4:e4b", "glm-ocr:q8_0"]
+    assert snapshot.digest_of("glm-ocr:q8_0") == "sha256:bbb"
+    assert snapshot.sizes() == {"gemma4:e4b": 1_000_000_000, "glm-ocr:q8_0": 1_000_000_000}
+    assert snapshot.unreachable == ""
+    assert mock_client.list.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (ConnectionError("Connection refused"), "Cannot connect to Ollama"),
+        (TimeoutError("timeout"), "Connection timed out"),
+        (RuntimeError("The read operation timed out"), "Connection timed out"),
+        (RuntimeError("boom"), "Unexpected error contacting Ollama"),
+    ],
+    ids=["cannot-connect", "timed-out", "httpx-timed-out", "unexpected"],
+)
+def test_a_snapshot_of_a_server_that_cannot_be_asked_says_why(
+    monkeypatch, error: Exception, expected: str
+) -> None:
+    """
+    Given  a server whose model list cannot be read, for each kind of failure
+    When   OllamaClient.snapshot() is called
+    Then   the answer holds no model and carries the message a teacher reads, never an error
+    """
+    mock_ollama = _make_mock_ollama([])
+    mock_ollama.Client.return_value.list.side_effect = error
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    snapshot = OllamaClient("http://127.0.0.1:11434").snapshot()
+
+    assert snapshot.tags == []
+    assert snapshot.sizes() == {}
+    assert expected in snapshot.unreachable
 
 
 # ── The statistics sink ────────────────────────────────────────────────────

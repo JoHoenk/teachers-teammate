@@ -767,11 +767,6 @@ class MainWindow(QMainWindow):
         self._readiness_controller.set_download_progress(completed, total)
 
     def _on_pull_finished(self, _model_name: str) -> None:
-        # Also covers pulls that finish after the Settings window was closed:
-        # without this the cached model list stays stale for minutes.
-        self._app_service.recommendations.on_ollama_models_changed(
-            self._pull_manager.current_url or self._current_ollama_url()
-        )
         self._readiness_controller.end_download()
 
     def _on_pull_error(self, msg: str) -> None:

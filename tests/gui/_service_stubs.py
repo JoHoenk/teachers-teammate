@@ -51,6 +51,7 @@ from teachers_teammate.domain.model_catalog import (
     rate_model,
 )
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.ollama_snapshot import ServerSnapshot
 from teachers_teammate.domain.performance_estimate import ProbeResult, TimeRange
 from teachers_teammate.domain.providers import ProviderInfo, display_name_of
 
@@ -327,15 +328,15 @@ class LocalDataFlowStub:
         choices: SpeedChoices,
         *,
         hardware: HardwareDetection | None = None,
-        cached_only: bool = True,
     ) -> SpeedSummary:
         """Answer with nothing measured: a stub has no store to read."""
-        _ = choices, hardware, cached_only
+        _ = choices, hardware
         return SpeedSummary()
 
-    def refresh_server_facts(self, ollama_url: str) -> None:
-        """Nothing to fetch: a stub has no server."""
-        _ = ollama_url
+    def snapshot(self, url: str, *, max_age: float = 0.0) -> ServerSnapshot:
+        """Answer with an empty server: a stub has none to ask."""
+        _ = url, max_age
+        return ServerSnapshot()
 
     def page_times(
         self,
@@ -387,7 +388,6 @@ class RecommendationServiceStub(LocalDataFlowStub):
 
     def __init__(self) -> None:
         self.detect_calls: list[tuple[str, bool]] = []
-        self.changed_urls: list[str] = []
         self.injected_packages_dir = False  # inject_addon_packages_dir was called
         self.outdated_addons = False  # an app update left add-ons that wait for an update
         self.addon_updates = 0  # how often update_addons ran
@@ -501,9 +501,6 @@ class RecommendationServiceStub(LocalDataFlowStub):
             )
             for tag in tags
         ]
-
-    def on_ollama_models_changed(self, ollama_url: str) -> None:
-        self.changed_urls.append(ollama_url)
 
     # ── add-on packages (install rounds) ─────────────────────────────────────
     def addon_packages_dir(self) -> Path:

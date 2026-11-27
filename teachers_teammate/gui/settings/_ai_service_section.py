@@ -636,12 +636,14 @@ class AiServiceSection(QWidget):
         if provider == PROVIDER_OLLAMA:
 
             def fetch(report: Callable[[str], None]) -> ModelListing:
-                tags = self._app_service.providers.list_provider_models(provider, base_url=url)
+                listing = self._app_service.providers.list_provider_models_checked(
+                    provider, base_url=url
+                )
                 # Classify here so set_models() only needs cache lookups.  It costs one
                 # request per model, so say how many there are before it starts.
-                report(checking_models_text(len(tags)))
-                self._app_service.recommendations.classify_ollama_models(tags, url)
-                return ModelListing(tags)
+                report(checking_models_text(len(listing.models)))
+                self._app_service.recommendations.classify_ollama_models(listing.models, url)
+                return listing
 
         else:
 

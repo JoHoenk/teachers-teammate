@@ -49,7 +49,7 @@ OVERSIZED_ATTRIBUTES: dict[str, int] = {}
 
 #: The classes still over the public-method limit, at the number they have today.
 OVERSIZED_METHODS: dict[str, int] = {
-    "teachers_teammate/application/providers.py::ProviderService": 25,
+    "teachers_teammate/application/providers.py::ProviderService": 23,
     "teachers_teammate/gui/_check_controller.py::CheckController": 27,
     "teachers_teammate/gui/_config_panel.py::ConfigPanel": 32,
     "teachers_teammate/gui/_results_table.py::ResultsTable": 27,

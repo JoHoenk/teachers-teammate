@@ -83,6 +83,11 @@ How to add a stage, provider, OCR engine, setting and more:
 | [evaluations/TOOLS.md](evaluations/TOOLS.md) | The evaluation commands and their code |
 | [evaluations/FORMAT.md](evaluations/FORMAT.md) | The evaluation store's layout and rules |
 
+## Conduct and security
+
+Be kind: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). A vulnerability goes through
+[SECURITY.md](SECURITY.md), not a public issue.
+
 ## License
 
 Contributions are licensed under the project's license,

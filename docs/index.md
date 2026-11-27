@@ -37,6 +37,8 @@ Settings are saved and restored on the next start. Installation and system requi
 [project page](https://github.com/JoHoenk/teachers-teammate#installation). Every release has a
 `SHA256SUMS` file and a build attestation to check a download; the commands are in the
 [deployment guide](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/deployment.md#checksums-and-provenance).
+Which files are signed, where they come from and what the app sends on its own: the
+[code signing policy](code_signing_policy.md).
 
 ## License
 

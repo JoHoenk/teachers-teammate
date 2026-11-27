@@ -39,9 +39,9 @@ in the [deployment guide](deployment.md).
 
 | Role | Who | What it means |
 |---|---|---|
-| Author | the maintainer | writes the change and the release |
-| Reviewer | the maintainer | reads the workflow and the installer script before they are merged |
-| Approver | the maintainer | approves each signing request by hand in the signing service's web page |
+| Author | [JoHoenk](https://github.com/JoHoenk) | changes the source, the workflows and the installer script directly |
+| Reviewer | [JoHoenk](https://github.com/JoHoenk) | reviews every pull request from anyone else, Dependabot's included, before it is merged; changes to workflows, build scripts and the installer script get particular attention |
+| Approver | [JoHoenk](https://github.com/JoHoenk) | approves each signing request by hand in the signing service's web page |
 
 One person holds all three roles. Every account involved (GitHub, signing service) uses
 two-factor authentication, and every release needs a manual approval, so pushing a tag alone
@@ -64,6 +64,15 @@ What this app does with your data (not a statement of the signing service):
   download.
 - **Documents, settings and results** stay on your computer unless you confirm a run with an
   online service.
+
+Where a service is contacted, its own privacy policy applies:
+
+- GitHub (update check):
+  [privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement)
+- Hugging Face and Ollama (models you download): [Hugging Face](https://huggingface.co/privacy),
+  [Ollama](https://ollama.com/privacy)
+- PyPI (add-on packages you install): [privacy notice](https://policies.python.org/pypi.org/Privacy-Notice/)
+- Online AI services: the policy of the provider you set up.
 
 ## Reporting a problem
 

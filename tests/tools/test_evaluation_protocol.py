@@ -57,16 +57,16 @@ def test_the_protocol_file_holds_every_version_and_the_current_one_is_what_the_t
     """
     Given  the version file of the request side
     When   the current stamp is asked for
-    Then   it is version 4, versions 1 to 3 are still recorded (their runs stay checkable), and
+    Then   it is version 5, versions 1 to 4 are still recorded (their runs stay checkable), and
            the current fingerprint is the one the tool computes
     """
     stamp = protocol.current_stamp()
     table = protocol_table.read_table()
 
-    assert stamp.eval_version == 4
-    assert [entry["version"] for entry in table["versions"]] == [1, 2, 3, 4]
-    assert stamp.fingerprint in protocol_table.fingerprints_of(4)
-    for version in (1, 2, 3):
+    assert stamp.eval_version == 5
+    assert [entry["version"] for entry in table["versions"]] == [1, 2, 3, 4, 5]
+    assert stamp.fingerprint in protocol_table.fingerprints_of(5)
+    for version in (1, 2, 3, 4):
         assert protocol_table.accepts(version, protocol_table.fingerprints_of(version)[0])
 
 
@@ -116,7 +116,7 @@ def test_the_fingerprint_changes_when_a_prompt_changes(monkeypatch) -> None:
         (correction, "_HUMAN_TEXT", "Text: {text}\nLanguage: {language}"),
         (correction_schema.CorrectionAnswer, "model_json_schema", lambda: {"type": "object"}),
         (correction, "REVIEW_ANSWER_FACTOR", 3.0),
-        (protocol, "repair_message", lambda previous, error: "Again, please."),
+        (protocol, "repair_message", lambda error: "Again, please."),
         (protocol, "NUM_CTX", 16384),
         (protocol, "ANSWER_FORMAT_VERSION", 99),
     ],
@@ -431,7 +431,7 @@ def test_the_correct_only_instructions_hash_covers_step_one_alone(monkeypatch) -
 #: app.  Saved evaluation runs are looked up by these hashes, so the move must not change a byte
 #: of them: a failure here means the move changed what a run sends, not that the pin is stale.
 _PINNED: dict[str, object] = {
-    "sha256": "e8bec644cb5f69c9ff437f0e2c1e1a813aade338fb56d5b14146cabe4417260d",
+    "sha256": "f037208052b37496a2c9f694d868e0a3b54f6db54a795ec0571320d04aaedc3f",
     "one-request-review": [
         "5cee79f68176628d5db29b8c87cb462b020b50e183595071bbac0f015ef7ae39",
         "5cee79f68176628d5db29b8c87cb462b020b50e183595071bbac0f015ef7ae39",
@@ -447,7 +447,7 @@ _PINNED: dict[str, object] = {
     "one-request-text_budget": 2796,
     "text-first_budget": 4749,
     "text-first/correct_budget": 4749,
-    "repair": "cd4964a4f3f7e0afff0d82aa83607604b5d997921c35aa953b2b50a7437d46db",
+    "repair": "b3a84db263fcfeb4462875db1b0ec2d33994a70bdeae6dd78cc82c7ba68432c6",
     "answer_format_version": 1,
     "repair_answer_tokens": 4096,
 }

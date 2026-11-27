@@ -86,11 +86,11 @@ def test_a_cut_off_answer_that_stays_cut_off_fails_the_step() -> None:
     assert len(port.requests) == 2
 
 
-def test_an_invalid_answer_is_repaired_once_with_the_error_and_the_answer() -> None:
+def test_an_invalid_answer_is_repaired_once_with_the_error() -> None:
     """
     Given  a port whose first answer does not match the schema and whose second one does
     When   the runner sends the request
-    Then   the repair request quotes the previous answer and the validation error
+    Then   the repair request quotes the validation error and not the rejected answer
     """
     port = FakePort(invalid("not JSON at all"), answer(json.dumps({"note": "Zeitform falsch."})))
 
@@ -100,8 +100,8 @@ def test_an_invalid_answer_is_repaired_once_with_the_error_and_the_answer() -> N
     assert len(port.requests) == 2
     repair = port.requests[1].user
     assert repair.startswith(port.requests[0].user)
-    assert "not JSON at all" in repair
-    assert "Validation error:" in repair
+    assert "Reason:" in repair
+    assert "not JSON at all" not in repair
 
 
 def test_a_second_invalid_answer_fails_the_step_without_a_second_repair() -> None:
@@ -239,14 +239,12 @@ def test_the_repair_check_measures_the_error_that_is_really_sent() -> None:
     When   the runner decides whether the repair fits
     Then   the error counts, so the repair is skipped before the server refuses it
     """
-    from teachers_teammate.infrastructure.proofreading.runner import (  # noqa: PLC0415
-        repair_message,
-    )
+    from teachers_teammate.domain.correction_prompts import repair_message  # noqa: PLC0415
 
     request = _request()
     raw = "not JSON at all"
     _, error = _parse(raw)
-    without = len(request.system) + len(request.user) + 2 + len(repair_message(raw, ""))
+    without = len(request.system) + len(request.user) + 2 + len(repair_message(""))
     num_ctx = 2 * -(-without // 3)
     port = FakePort(answer(raw), window=ContextBudget(num_ctx))
 

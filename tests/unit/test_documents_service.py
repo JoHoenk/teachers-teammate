@@ -387,12 +387,14 @@ def test_describe_sent_texts_carries_the_notes_for_the_ai(tmp_path: Path) -> Non
     """
     Given  a proofreading step with the teacher's notes
     When   describe_sent_texts() builds the report
-    Then   the notes travel with the section, apart from the prompts
+    Then   the languages, the level and the notes travel with the section, apart from the prompts
     """
     svc, source = _svc_with_document(tmp_path, raw_text="Anna wrote this.")
     config = dataclasses.replace(
         make_config(tmp_path),
         correction_enabled=True,
+        correction_level="B1",
+        language="German",
         correction_notes="Year 9, second foreign language.",
     )
 
@@ -401,6 +403,8 @@ def test_describe_sent_texts_carries_the_notes_for_the_ai(tmp_path: Path) -> Non
     report = svc.documents.describe_sent_texts(config, view)
 
     sent = next(s for s in report.sections if s.stage.stage == "correction")
+    assert sent.notes.startswith("Text language: German\n")
+    assert "CEFR level of the student: B1" in sent.notes
     assert sent.notes.endswith("Year 9, second foreign language.")
     assert all("Year 9" not in prompt for _step, prompt in sent.instructions)
 

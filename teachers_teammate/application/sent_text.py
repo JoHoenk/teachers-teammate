@@ -29,7 +29,8 @@ class CorrectionInstructions:
 
     #: ``(step, system prompt)`` of each step that runs, in step order.
     prompts: tuple[tuple[str, str], ...] = ()
-    #: The teacher's own notes, which every proofreading request carries.
+    #: The lines every proofreading request carries before the text: the languages and the level
+    #: of the student, then the teacher's own notes.
     notes: str = ""
 
 

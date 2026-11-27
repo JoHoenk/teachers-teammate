@@ -41,7 +41,6 @@ from ..domain.performance_estimate import (
     StepOutcome,
     StepResult,
 )
-from ..domain.stages import Stage
 from ..exceptions import (
     OCRDeadlineError,
     OCRError,
@@ -588,14 +587,14 @@ def _writing_request(
     """
     from ..domain.correction_policy import DEFAULT_LEVEL  # noqa: PLC0415
     from ..domain.correction_prompts import correct_system, correct_user  # noqa: PLC0415
-    from ..domain.notation import with_notation_hint  # noqa: PLC0415
+    from ..domain.review_prompts import review_message, review_system  # noqa: PLC0415
     from ..settings_schema import DEFAULTS  # noqa: PLC0415
 
     paragraph = sample_paragraph(request.language)
     if step is SpeedStep.REVIEW:
         # The content review sends its instructions inside the message, as the evaluator does.
-        system = with_notation_hint(DEFAULTS["evaluate_prompt"], "plain", task=Stage.EVALUATION)
-        prompt = f"{system}\n\nLanguage: {request.language}\n\nCorrected text:\n\n{paragraph}"
+        system = review_system(DEFAULTS["evaluate_prompt"], "plain")
+        prompt = f"{system}\n\n{review_message(request.language, paragraph)}"
         return "", prompt, None, review_temperature(model), request_profile(model).think
     profile = request_profile(model)
     system = correct_system(profile.correct.prompt)

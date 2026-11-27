@@ -107,11 +107,6 @@ def correction_failed(reason: BaseException) -> str:
     return f"Correction failed ({reason})."
 
 
-def review_message(language: str, text: str) -> str:
-    """Return the message of a content review request: the language, then the text."""
-    return f"Language: {language}\n\nCorrected text:\n\n{text}"
-
-
 def evaluation_failed(reason: BaseException) -> str:
     """Return the warning of a content review request that failed in transport."""
     return f"Evaluation failed ({reason})."

@@ -48,6 +48,7 @@ from .domain.ollama_discovery import DEFAULT_SERVER_URL
 from .domain.output_files import DocxFormat
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES, parse_pdf_text_layer
 from .domain.prompt_text import migrate_saved_default
+from .domain.review_prompts import REVIEW_SYSTEM
 from .domain.setting_values import ContextSetting, PreprocessMethod
 from .domain.settings_notice import SettingNotice, SettingNoticeKind
 from .domain.stages import Stage
@@ -59,17 +60,6 @@ PREPROCESS_METHODS: tuple[PreprocessMethod, ...] = tuple(PreprocessMethod)
 """The two image preparations: the automatic one, and "Original page" (no step)."""
 
 _DEFAULT_LANGUAGE = "English"
-
-#: What the content review asks.  The teacher can replace it (Options… of "Review content").
-_DEFAULT_EVALUATE_PROMPT = (
-    "You help a teacher read a student's text. Review its content, not its spelling, "
-    "grammar or punctuation. Write a short report with: "
-    "1) what the text is about, in one sentence; "
-    "2) whether it is complete and consistent; "
-    "3) gaps, contradictions or passages that are hard to follow, each with a short quote; "
-    "4) one short suggestion for the teacher. "
-    "Write in the language of the text and keep the report brief."
-)
 
 
 class SettingScope(StrEnum):
@@ -236,7 +226,7 @@ def _evaluate_prompt(value: object) -> str:
     Trailing whitespace is dropped: it is not part of the instructions, and the value is part
     of the review's fingerprint.
     """
-    return migrate_saved_default(str(value).rstrip(), _DEFAULT_EVALUATE_PROMPT)
+    return migrate_saved_default(str(value).rstrip(), REVIEW_SYSTEM)
 
 
 def normalize_saved_ollama_url(value: object) -> str:
@@ -365,7 +355,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("evaluation_enabled", False, SettingScope.RUN, _flag),
     Setting("evaluate_provider", PROVIDER_OLLAMA, SettingScope.RUN, _provider_of(Stage.EVALUATION)),
     Setting("evaluate_model", DEFAULT_WRITING_MODEL, SettingScope.RUN),
-    Setting("evaluate_prompt", _DEFAULT_EVALUATE_PROMPT, SettingScope.RUN, _evaluate_prompt),
+    Setting("evaluate_prompt", REVIEW_SYSTEM, SettingScope.RUN, _evaluate_prompt),
     # ── Output ────────────────────────────────────────────────────────────────
     Setting("docx_format", DocxFormat.TABLE, SettingScope.RUN, _member_of(DocxFormat)),
     Setting("docx_enabled", False, SettingScope.RUN, _flag),

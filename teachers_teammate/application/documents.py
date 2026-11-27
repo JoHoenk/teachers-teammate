@@ -16,7 +16,8 @@ from pathlib import Path
 from ..cache_keys import correction_key, expected_hashes, privacy_key
 from ..config import Config
 from ..domain.context_budget import RunWindows
-from ..domain.correction_prompts import notes_block
+from ..domain.correction_policy import DEFAULT_LEVEL
+from ..domain.correction_prompts import notes_block, parameters
 from ..domain.document_state import DocumentState, machine_texts
 from ..domain.formatted_text import TextFormat, normalize_text_format
 from ..domain.freshness import (
@@ -26,7 +27,7 @@ from ..domain.freshness import (
     stage_hashes,
 )
 from ..domain.key_facts import KeyFacts
-from ..domain.notation import with_notation_hint
+from ..domain.review_prompts import review_system
 from ..domain.stages import Stage
 from ..domain.teacher_work import current_texts
 from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
@@ -302,21 +303,27 @@ class DocumentQueries:
         return lambda text: self._anonymization.anonymize_text(text, language, anon_config)
 
     def _sent_correction(self, config: Config) -> CorrectionInstructions:
-        """Return what the proofreading requests are told: their prompts and the notes.
+        """Return what the proofreading requests are told besides the text.
 
-        Both are taken from the code the stages use, so the dialog shows the requests a run
-        really makes: the prompts are fixed, so this and the notes are all the model is told.
+        The prompts come from the exchange and the lines from the functions that build the user
+        message, so the dialog shows what a run really sends: the prompts are fixed, and the
+        languages, the level and the notes are the rest of what the model is told.
         """
+        lines = parameters(
+            config.language,
+            level=config.correction_level or DEFAULT_LEVEL,
+            explanation_language=config.explanation_language,
+        )
         return CorrectionInstructions(
             prompts=proofreading_prompts(config),
-            notes=notes_block(config.correction_notes).strip(),
+            notes=f"{lines}{notes_block(config.correction_notes)}",
         )
 
     def _sent_evaluation_prompt(self, config: Config, text_format: TextFormat) -> str:
         """Return the instructions the evaluator sends, or ``""`` when it sends none."""
 
         prompt = config.evaluate_prompt or DEFAULTS["evaluate_prompt"]
-        return with_notation_hint(prompt, text_format, task=Stage.EVALUATION)
+        return review_system(prompt, text_format)
 
     def _merged(self, view: DocumentStateView, state: DocumentState) -> DocumentStateView:
         """Return *view* with the teacher's texts over the machine's."""

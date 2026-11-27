@@ -22,6 +22,7 @@ from teachers_teammate.domain.correction_prompts import (
     unclear_user,
 )
 from teachers_teammate.domain.proofreading.edits import batches, edits, sentence_groups
+from teachers_teammate.domain.proofreading.review import CHANGE_CATEGORIES
 from teachers_teammate.domain.proofreading.sentences import sentence_spans
 from teachers_teammate.domain.proofreading.word_diff import word_diff
 
@@ -267,3 +268,16 @@ def test_a_variant_has_an_identity_that_follows_its_text(monkeypatch) -> None:
     assert prompt_identity("keep") != before
     with pytest.raises(ValueError, match="no step"):
         prompt_identity("banana")
+
+
+def test_the_explain_prompt_names_exactly_the_categories_the_review_stores() -> None:
+    """
+    Given  the category line of the explain prompt and the categories a review stores
+    When   the two are compared
+    Then   they name the same categories, so a new category cannot be left out of the prompt
+    """
+    line = next(line for line in EXPLAIN_SYSTEM.splitlines() if line.startswith("Categories:"))
+
+    named = [name.strip() for name in line.removeprefix("Categories:").rstrip(".").split(",")]
+
+    assert named == list(CHANGE_CATEGORIES)

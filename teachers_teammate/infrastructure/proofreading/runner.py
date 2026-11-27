@@ -7,8 +7,7 @@ robust exist once instead of once per step and once per connection:
   runaway (a model that starts listing correct fragments with an empty change), not a text that
   is too long, and a second try very likely answers.
 * An answer that does not match the schema gets **one** repair request quoting the validation
-  error and the previous answer.  A repair that cannot fit the context window is skipped before
-  it is sent, which saves a round trip; a repair answer that is cut off is not retried, because
+  error.  A repair that cannot fit the context window is skipped before it is sent, which saves a round trip; a repair answer that is cut off is not retried, because
   the repair request is the longest of all and a retry would not make it shorter.
 * A transport error ends the step: the next request would meet the same unreachable server.
 
@@ -21,23 +20,12 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
 from ...domain.context_budget import answers_with_the_same_text
+from ...domain.correction_prompts import repair_message
 from ...domain.proofreading.result import FailureKind, StepReport
 from .port import ModelPort, PortAnswer, StepRequest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-
-def repair_message(previous: str, error: str) -> str:
-    """Return the message that asks the model to answer the same question again, validly."""
-    return (
-        "Your previous answer was not valid JSON for the structure described in the"
-        " instructions.\n\n"
-        f"Validation error:\n{error}\n\n"
-        f"Your previous answer was:\n{previous}\n\n"
-        "Answer again, in the same way, with only the JSON object described in the"
-        " instructions."
-    )
 
 
 @dataclass(frozen=True)
@@ -79,9 +67,9 @@ class StepRunner:
             return self._failed(answer, reports)
         value, error = self._value(answer, parse)
         if value is None and req.repairable and answer.raw.strip():
-            if not self._repair_fits(req, answer.raw, error):
+            if not self._repair_fits(req, error):
                 return StepOutcome(failure="invalid", error=error, reports=tuple(reports))
-            answer = self._ask(req, reports, repair=(answer.raw, error))
+            answer = self._ask(req, reports, repair=error)
             if answer.failure == "truncated":
                 return self._failed(answer, reports)
             if answer.failure == "transport":
@@ -109,12 +97,12 @@ class StepRunner:
         return parse(answer.raw)
 
     def _ask(
-        self, req: StepRequest, reports: list[StepReport], *, repair: tuple[str, str] | None = None
+        self, req: StepRequest, reports: list[StepReport], *, repair: str | None = None
     ) -> PortAnswer:
         """Send one request of *req*, with the repair message when *repair* is given."""
         request = req
         if repair is not None:
-            request = replace(req, user=f"{req.user}\n\n{repair_message(*repair)}")
+            request = replace(req, user=f"{req.user}\n\n{repair_message(repair)}")
         if request.schema is None:
             answer = self._port.ask_text(request)
         else:
@@ -130,11 +118,11 @@ class StepRunner:
         )
         return answer
 
-    def _repair_fits(self, req: StepRequest, previous: str, error: str) -> bool:
-        """Return whether the repair request for *previous* and its *error* fits the window.
+    def _repair_fits(self, req: StepRequest, error: str) -> bool:
+        """Return whether the repair request for *error* fits the window.
 
         ``True`` where the window is unknown or not enforced (a provider with a window of its
-        own).  The repair request repeats the text and adds the previous answer, so it is the
+        own).  The repair request repeats the text and adds the error, so it is the
         longest request of the step; its answer is a full answer again, so it is checked with the
         same allowance as the request itself
         (:func:`~teachers_teammate.domain.context_budget.answers_with_the_same_text`).
@@ -142,7 +130,7 @@ class StepRunner:
         budget = self._port.window()
         if budget is None:
             return True
-        repair = f"{req.user}\n\n{repair_message(previous, error)}"
+        repair = f"{req.user}\n\n{repair_message(error)}"
         return budget.request_fits(
             len(req.system) + len(repair),
             answer_tokens=answers_with_the_same_text(budget.num_ctx),

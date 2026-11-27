@@ -7,8 +7,8 @@ from collections.abc import Callable, Mapping
 from ..config import Config
 from ..domain.correction_policy import CorrectionOutput
 from ..domain.formatted_text import TextFormat
-from ..domain.notation import with_notation_hint
 from ..domain.prompt_text import migrate_saved_default
+from ..domain.review_prompts import notation_hint
 from ..domain.stages import Stage
 from ..settings_schema import DEFAULTS
 
@@ -34,7 +34,7 @@ def evaluation_fixed_instructions(text_format: TextFormat = "plain") -> str:
 
     Markdown is the only format with a hint, so for plain text this is ``""``.
     """
-    return with_notation_hint("", text_format, task=Stage.EVALUATION).strip()
+    return notation_hint(text_format)
 
 
 def review_has_own_model(

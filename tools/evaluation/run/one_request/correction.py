@@ -43,9 +43,7 @@ from teachers_teammate.domain.context_budget import (
 from teachers_teammate.domain.correction_policy import CUT_OFF_TRIES, normalize_output_mode
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
-from teachers_teammate.domain.notation import with_notation_hint
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
-from teachers_teammate.domain.stages import Stage
 from teachers_teammate.infrastructure.proofreading.port import (
     REVIEW_TIMEOUT_CAP,  # noqa: F401  # re-exported for the tests that pin the timeout
     LangChainPort,
@@ -89,6 +87,21 @@ FALLBACK_WARNING = (
 """Warning shown when a review answer failed and the file was corrected in text mode."""
 
 _PROVIDER_ERROR = "Correction failed; keeping original text."
+
+_NOTATION_HINT = (
+    "The text is written in Markdown. ~~text~~ marks words the writer crossed out; "
+    "<sup>text</sup> marks words the writer inserted above the line; <sub>text</sub> marks "
+    "words written below the line; <u>text</u> is underlined. "
+    "Keep all of these marks and the Markdown structure unchanged. "
+    "Do not correct crossed-out words; use them only as context."
+)
+"""What this measurement tells a model about Markdown; the app's exchange shields it instead."""
+
+
+def _with_notation_hint(system: str, text_format: TextFormat) -> str:
+    """Return *system* with the notation hint appended when *text_format* is Markdown."""
+    return f"{system}\n\n{_NOTATION_HINT}" if text_format == "markdown" else system
+
 
 _HUMAN_REVIEW = "Text language: {language}\nExplanation language: {explanation}\n\nText:\n\n{text}"
 _HUMAN_TEXT = "Text language: {language}\n\nText:\n\n{text}"
@@ -219,9 +232,7 @@ def instruction_parts(
     :func:`~teachers_teammate.domain.model_catalog.request_profile`.
     """
     policy = fill_placeholders(_resolve_prompt(prompt, language), level=level)
-    fixed = with_notation_hint(
-        resolve_format(mode, answer_format), text_format, task=Stage.CORRECTION
-    )
+    fixed = _with_notation_hint(resolve_format(mode, answer_format), text_format)
     if mode == "review" and compact_json:
         fixed = f"{fixed}\n{COMPACT_ANSWER_RULE}"
     return policy, fixed

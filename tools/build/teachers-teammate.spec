@@ -322,7 +322,7 @@ else:
 # The version resource Windows shows in the exe's properties, in Task Manager and in the
 # SmartScreen prompt, written by tools/build/make_version_resource.py just before this spec
 # runs.  Its product name and product version are the ones the setup and the uninstaller carry
-# (a code-signing service checks that they match), so a build without it is refused here.
+# so a build without it is refused here.
 _VERSION_INFO = None
 if sys.platform == "win32":
     _VERSION_INFO = ROOT / "teachers_teammate" / "_build" / "version_info.txt"

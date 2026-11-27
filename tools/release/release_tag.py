@@ -48,8 +48,6 @@ RELEASE_FILE_PATTERNS = (
 
 CHECKSUMS_NAME = "SHA256SUMS"
 
-SIGNING_POLICY = "docs/code_signing_policy.md"
-
 
 def check_form(tag: str) -> None:
     """Refuse a tag that is not a release version.
@@ -113,17 +111,9 @@ def version_forms(tag: str) -> dict[str, str]:
     return {"value": value, "win": value.split("-", 1)[0]}
 
 
-def draft_arguments(tag: str, repo: str) -> list[str]:
-    """Return the ``gh release create`` arguments for the draft of *tag*.
-
-    The body starts with the link to the code signing policy: the signing service asks for it on
-    every download page.  GitHub puts ``--notes`` in front of the generated notes, so both stay.
-    """
-    notes = (
-        "**What is signed, where the files come from and what the app does with your data:** "
-        f"[code signing policy](https://github.com/{repo}/blob/main/{SIGNING_POLICY})"
-    )
-    arguments = ["--draft", "--verify-tag", "--generate-notes", "--notes", notes]
+def draft_arguments(tag: str) -> list[str]:
+    """Return the ``gh release create`` arguments for the draft of *tag*."""
+    arguments = ["--draft", "--verify-tag", "--generate-notes"]
     arguments += ["--title", f"Release {tag}"]
     if is_prerelease(tag):
         arguments.append("--prerelease")
@@ -336,7 +326,7 @@ def _command_draft(args: argparse.Namespace) -> int:
             args.tag,
             "--repo",
             args.repo,
-            *draft_arguments(args.tag, args.repo),
+            *draft_arguments(args.tag),
         ]
     )
     return 0

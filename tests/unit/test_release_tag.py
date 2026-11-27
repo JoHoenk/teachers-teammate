@@ -109,18 +109,16 @@ def test_version_forms_drop_the_prefix_and_the_prerelease_suffix() -> None:
     assert release_tag.version_forms("v0.5.7") == {"value": "0.5.7", "win": "0.5.7"}
 
 
-def test_draft_arguments_mark_a_prerelease_and_link_the_signing_policy() -> None:
+def test_draft_arguments_mark_a_prerelease_and_start_a_draft() -> None:
     """
     Given  a final tag and a pre-release tag
     When   draft_arguments() is called
-    Then   both are drafts that verify the tag and start with the signing-policy link, and only
-           the pre-release carries --prerelease
+    Then   both are drafts that verify the tag, and only the pre-release carries --prerelease
     """
-    final = release_tag.draft_arguments("v0.5.7", "owner/name")
-    pre = release_tag.draft_arguments("v0.5.7-rc.1", "owner/name")
+    final = release_tag.draft_arguments("v0.5.7")
+    pre = release_tag.draft_arguments("v0.5.7-rc.1")
 
     assert final[:3] == ["--draft", "--verify-tag", "--generate-notes"]
-    assert "https://github.com/owner/name/blob/main/docs/code_signing_policy.md" in " ".join(final)
     assert "--prerelease" not in final
     assert pre[-1] == "--prerelease"
 

@@ -87,7 +87,7 @@ Details: [advanced user guide](https://github.com/JoHoenk/teachers-teammate/blob
 | [Overview](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/index.md) | What the app does and how it works |
 | [Using the app](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/using_the_app.md) | Step by step through the desktop app |
 | [Advanced user guide](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/advanced_user_guide.md) | Reading methods, AI models, image preparation, privacy protection, the command line |
-| [Code signing policy](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/code_signing_policy.md) | What is signed, where the files come from, privacy statement |
+| [Privacy](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/privacy.md) | What the app does with your data |
 
 Developers: see [CONTRIBUTING.md](https://github.com/JoHoenk/teachers-teammate/blob/main/CONTRIBUTING.md).
 

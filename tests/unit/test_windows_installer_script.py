@@ -25,13 +25,13 @@ def _script() -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _policy() -> str:
-    """Return docs/code_signing_policy.md from the Bazel runfiles, or from the checkout."""
+def _privacy_page() -> str:
+    """Return docs/privacy.md from the Bazel runfiles, or from the checkout."""
     root = os.environ.get("TEST_SRCDIR", "")
-    relative = os.environ.get("CODE_SIGNING_POLICY", "")
+    relative = os.environ.get("PRIVACY_PAGE", "")
     if root and relative:
         return (Path(root) / relative).read_text(encoding="utf-8")
-    path = Path(__file__).resolve().parents[2] / "docs" / "code_signing_policy.md"
+    path = Path(__file__).resolve().parents[2] / "docs" / "privacy.md"
     return path.read_text(encoding="utf-8")
 
 
@@ -235,19 +235,16 @@ def test_the_elevated_copy_is_told_the_settings_folder_whatever_the_box_says() -
     assert 'StrCpy $R1 "$R1 /NOUPDATECHECK"' in leave[off:]
 
 
-def test_the_privacy_link_opens_the_privacy_statement_not_the_top_of_the_page() -> None:
+def test_the_privacy_link_opens_a_page_that_exists() -> None:
     """
-    Given  the installer script and the signing policy page it links to
-    When   PRIVACY_URL and the page's headings are read
-    Then   the link carries the anchor of "Privacy statement" and that heading still exists
-           (a renamed heading would send the teacher to the top of the page without a sound)
+    Given  the installer script and the privacy page
+    When   PRIVACY_URL is read
+    Then   it points at docs/privacy.md and the page says what the update check sends
     """
     url = re.search(r'!define PRIVACY_URL "([^"]+)"', _script())
     assert url is not None
-    assert url.group(1).endswith("/docs/code_signing_policy.md#privacy-statement")
-
-    headings = [line for line in _policy().splitlines() if line.startswith("#")]
-    assert "## Privacy statement" in headings
+    assert url.group(1).endswith("/docs/privacy.md")
+    assert "**Update check:**" in _privacy_page()
 
 
 def test_the_relaunch_passes_its_arguments_as_a_register() -> None:

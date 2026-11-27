@@ -21,8 +21,6 @@ _NSI = (
 
 #: ``!define APP_NAME      "Teacher's Teammate"``
 _APP_NAME = re.compile(r'^!define\s+APP_NAME\s+"([^"]*)"', re.MULTILINE)
-#: ``<product-name>Teacher's Teammate</product-name>`` in a signing artifact configuration.
-_PRODUCT_NAME = re.compile(r"<product-name>([^<]*)</product-name>")
 
 
 def test_a_release_version_gives_the_four_numbers_and_the_release_string() -> None:
@@ -86,16 +84,10 @@ def test_the_product_name_is_the_same_in_the_exe_and_the_installer() -> None:
     """
     Given  the version resource generator and the NSIS script
     When   both are read
-    Then   they name the same product, which a code-signing service checks
+    Then   they name the same product
     """
     names = {make_version_resource.PRODUCT_NAME}
     names.update(_APP_NAME.findall(_NSI.read_text(encoding="utf-8")))
-
-    # The artifact configurations of the signing workflow name the product too; they are read
-    # here as soon as they exist, so the three files cannot drift apart.
-    for configuration in sorted((_NSI.parent / "signpath").glob("*.xml")):
-        text = configuration.read_text(encoding="utf-8")
-        names.update(_PRODUCT_NAME.findall(text))
 
     assert names == {make_version_resource.PRODUCT_NAME}
 

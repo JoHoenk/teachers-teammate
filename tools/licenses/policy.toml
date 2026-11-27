@@ -223,6 +223,9 @@ shiboken6 = [
 numpy = ["win_amd64", "macosx_arm64"]
 # Pillow's Windows wheel bundles the libraries the Linux build links against.
 pillow = ["win_amd64"]
+# Qt's Windows wheels also carry the commercial-license notice.
+pyside6-essentials = ["win_amd64"]
+shiboken6 = ["win_amd64"]
 
 # The pins of tools/build/requirements_platform.txt, and locked build tools such as setuptools,
 # that the build needs and the bundle does not carry.  Listed so the build check can tell "allowed" from "forgotten".

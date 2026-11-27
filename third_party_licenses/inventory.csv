@@ -2,13 +2,13 @@ Component,Version,License,Scope,Kind
 altgraph,0.17.5,MIT,build,package
 annotated-doc,0.0.7,MIT,addon,package
 annotated-types,0.8.0,MIT,bundle,package
-anthropic,2.11.0,Apache-2.0,addon,package
+anthropic,2.14.0,Apache-2.0,addon,package
 anyio,4.16.0,MIT,bundle,package
 blis,1.3.4,BSD-3-Clause,addon,package
 catalogue,2.0.10,MIT,addon,package
-certifi,2026.10.23,MPL-2.0,bundle,package
+certifi,2026.11.20,MPL-2.0,bundle,package
 cffi,2.1.1,MIT-0,bundle,package
-charset-normalizer,3.5.2,MIT,bundle,package
+charset-normalizer,3.5.3,MIT,bundle,package
 click,8.5.1,BSD-3-Clause,addon,package
 cloudpathlib,0.26.0,MIT,addon,package
 cohere,5.21.1,MIT,addon,package
@@ -22,20 +22,20 @@ doc-ori,7330ab70,Apache-2.0,bundle,model
 docstring-parser,0.18.0,MIT,addon,package
 en_core_web_sm,3.8.0,MIT,addon,model
 fastavro,1.13.1,MIT,addon,package
-filelock,4.2.12,MIT,addon,package
+filelock,4.3.1,MIT,addon,package
 filetype,1.2.0,MIT,addon,package
 fr_core_news_sm,3.8.0,LGPL-LR,addon,model
 fsspec,2026.9.0,BSD-3-Clause,addon,package
-google-auth,2.62.2,Apache-2.0,addon,package
+google-auth,2.63.1,Apache-2.0,addon,package
 google-genai,3.6.1,Apache-2.0,addon,package
 h11,0.16.0,MIT,bundle,package
 hf-xet,1.8.0,Apache-2.0,addon,package
 httpcore,1.0.9,BSD-3-Clause,bundle,package
 httpcore2,2.16.2,BSD-3-Clause,addon,package
-httpx,0.28.1,BSD-3-Clause,bundle,package
+httpx,0.29.0,BSD-3-Clause,bundle,package
 httpx-sse,0.4.3,MIT,addon,package
 httpx2,2.16.2,BSD-3-Clause,addon,package
-huggingface-hub,2.4.0,Apache-2.0,addon,package
+huggingface-hub,2.5.0,Apache-2.0,addon,package
 idna,3.20,BSD-3-Clause,bundle,package
 jaraco-classes,3.4.0,MIT,bundle,package
 jaraco-context,6.1.2,MIT,bundle,package
@@ -46,15 +46,15 @@ jiter,0.19.0,MIT,addon,package
 jsonpatch,1.48,BSD-3-Clause,addon,package
 jsonpointer,3.12,BSD-3-Clause,addon,package
 keyring,25.7.0,MIT,bundle,package
-langchain-anthropic,1.7.12,MIT,addon,package
+langchain-anthropic,1.7.13,MIT,addon,package
 langchain-cohere,0.6.0,MIT,addon,package
-langchain-core,1.8.4,MIT,addon,package
-langchain-google-genai,4.5.2,MIT,addon,package
+langchain-core,1.8.5,MIT,addon,package
+langchain-google-genai,4.5.3,MIT,addon,package
 langchain-mistralai,1.2.0,MIT,addon,package
-langchain-ollama,1.1.0,MIT,addon,package
+langchain-ollama,1.2.0,MIT,addon,package
 langchain-openai,1.8.5,MIT,addon,package
 langchain-protocol,0.0.22,MIT,addon,package
-langsmith,0.15.1,MIT,addon,package
+langsmith,0.16.2,MIT,addon,package
 lxml,6.1.3,BSD-3-Clause,bundle,package
 macholib,1.16.4,MIT,build,package
 markdown-it-py,4.3.0,MIT,bundle,package
@@ -66,11 +66,11 @@ nl_core_news_sm,3.8.0,CC-BY-SA-4.0,addon,model
 numpy,2.5.5,BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0,bundle,package
 nvidia-ml-py,13.615.71,BSD-3-Clause,bundle,package
 ollama,0.6.3,MIT,bundle,package
-openai,3.57.0,Apache-2.0,addon,package
+openai,3.60.0,Apache-2.0,addon,package
 opencv-python-headless,5.1.0.95,Apache-2.0,bundle,package
 opentelemetry-api,1.45.2,Apache-2.0,addon,package
 orjson,3.13.0,MPL-2.0 AND (Apache-2.0 OR MIT),addon,package
-packaging,26.3,Apache-2.0 OR BSD-2-Clause,bundle,package
+packaging,26.4,Apache-2.0 OR BSD-2-Clause,bundle,package
 pefile,2024.8.26,MIT,build,package
 pillow,13.0.0,MIT-CMU,bundle,package
 pip,26.3,MIT,bundle,package
@@ -93,10 +93,10 @@ pyside6-essentials,6.12.0,LGPL-3.0-only,bundle,package
 python,3.14.10,PSF-2.0,bundle,interpreter
 python-docx,1.2.0,MIT,bundle,package
 pywin32-ctypes,0.2.3,BSD-3-Clause,bundle,package
-pyyaml,6.0.3,MIT,bundle,package
+pyyaml,6.0.4,MIT,bundle,package
 qdarkstyle,3.2.3,MIT,bundle,package
 qtpy,2.4.3,MIT,bundle,package
-regex,2026.11.19,Apache-2.0 AND CNRI-Python,addon,package
+regex,2026.11.25,Apache-2.0 AND CNRI-Python,addon,package
 requests,2.34.2,Apache-2.0,bundle,package
 requests-toolbelt,1.0.0,Apache-2.0,addon,package
 rich,15.0.0,MIT,addon,package
@@ -105,7 +105,7 @@ setuptools,84.2.1,MIT,addon,package
 setuptools,84.2.1,MIT,build,package
 shellingham,1.5.4,ISC,addon,package
 shiboken6,6.12.0,LGPL-3.0-only,bundle,package
-smart-open,9.0.6,MIT,addon,package
+smart-open,10.0.0,MIT,addon,package
 sniffio,1.3.1,Apache-2.0,addon,package
 spacy,3.8.18,MIT,addon,package
 spacy-legacy,3.0.12,MIT,addon,package
@@ -117,8 +117,8 @@ tiktoken,0.14.0,MIT,addon,package
 tokenizers,0.23.3,Apache-2.0,addon,package
 tqdm,4.70.1,MPL-2.0 AND MIT,addon,package
 truststore,0.10.5,MIT,addon,package
-typer,0.29.2,MIT,addon,package
-types-pyyaml,6.0.12.20261113,Apache-2.0,addon,package
+typer,0.29.3,MIT,addon,package
+types-pyyaml,6.0.12.20261122,Apache-2.0,addon,package
 types-requests,2.33.0.20261030,Apache-2.0,addon,package
 typing-extensions,4.16.0,PSF-2.0,bundle,package
 typing-inspection,0.4.5,MIT,bundle,package

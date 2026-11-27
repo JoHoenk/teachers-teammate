@@ -31,7 +31,6 @@ YOUR_CHANGE = "your change"
 WHY_PREFIX = "Why:"
 RECOMMENDED_PREFIX = "Recommended:"
 SUGGESTION_PREFIX = "Suggestion:"
-MEANING_NOT_CERTAIN = "meaning not certain"
 
 CHANGE_CATEGORY_LABELS: dict[str, str] = {
     "grammar": "Grammar",
@@ -93,10 +92,10 @@ PROOFREADING_FAILED = "Proofreading failed; keeping the original text."
 PROOFREADING_NO_ANSWER = "Proofreading failed; the model did not answer."
 #: A chunked file whose one piece failed: no half-corrected text is ever stored.
 CHUNK_FAILURE = "Proofreading part of the text failed; keeping the original text."
-#: The item of a stretch the answer left out, which was put back.
-LEFT_OUT_WHY = (
-    "The AI left this passage out of its answer. It is kept here as you wrote it, without "
-    "corrections: read it with the rest."
+#: The card and the mark tip of a stretch the answer did not proofread, which was put back.
+#: Said here rather than stored with the result, so an older result never keeps older words.
+NOT_PROOFREAD_WHY = (
+    "The AI did not proofread this passage. It stands as the student wrote it: read it yourself."
 )
 #: A structured answer that does not have the shape the request asked for.
 ANSWER_NOT_STRUCTURED = "the answer did not match the required structure"
@@ -113,13 +112,16 @@ def evaluation_failed(reason: BaseException) -> str:
 
 
 def left_out_warning(count: int, words: int) -> str:
-    """Return the warning about *count* passages of *words* words the answer left out."""
-    return f"The AI left out {count} passages ({words} words); they are kept as you wrote them."
+    """Return the warning about *count* passages of *words* words the AI did not proofread."""
+    return (
+        f"The AI did not proofread {count} passages ({words} words); they stand as the student "
+        "wrote them."
+    )
 
 
 def left_out_warning_one(words: int) -> str:
     """Return the same warning for one passage."""
-    return f"The AI left out a passage ({words} words); it is kept as you wrote it."
+    return f"The AI did not proofread a passage ({words} words); it stands as the student wrote it."
 
 
 #: What a run says about a stored proofreading whose words are no longer at the offsets it points
@@ -306,11 +308,6 @@ KEPT_TOOLTIP = (
 def recommendation_caption(is_suggestion: bool) -> str:
     """Return the caption in front of a recommended version."""
     return SUGGESTION_PREFIX if is_suggestion else RECOMMENDED_PREFIX
-
-
-def suggestion_note(is_suggestion: bool) -> str:
-    """Return the parenthetical shown under a suggested version, or ``""``."""
-    return MEANING_NOT_CERTAIN if is_suggestion else ""
 
 
 # ── What is sent for this file ────────────────────────────────────────────────
@@ -705,7 +702,7 @@ ALL_LOOKED_AT = "All looked at"
 
 OPTIONAL_CHANGE = "optional"
 AI_NOT_SURE = "AI not sure"
-NO_EXPLANATION_MADE = "no explanation was made for this one"
+NO_EXPLANATION_MADE = "No explanation given."
 TAKEN_OUT = "taken out"
 SHOW_NAMES_TO_CHANGE = "Show the names to change the text"
 COULD_NOT_MARK = "The corrections could not be marked in this text."
@@ -724,7 +721,7 @@ def take_out_all_tooltip(count: int) -> str:
 
 
 def item_counts(corrections: int, unclear: int, left_out: int = 0) -> str:
-    """Return the footer of the list: corrections, unclear passages and passages the AI left out."""
+    """Return the footer of the list: corrections, unclear passages and passages not proofread."""
     parts: list[str] = []
     if corrections:
         parts.append(
@@ -733,7 +730,7 @@ def item_counts(corrections: int, unclear: int, left_out: int = 0) -> str:
     if unclear:
         parts.append(f"{unclear} unclear")
     if left_out:
-        parts.append(f"{left_out} left out by the AI")
+        parts.append(f"{left_out} not proofread")
     return " · ".join(parts)
 
 

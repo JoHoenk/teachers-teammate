@@ -18,11 +18,16 @@ from teachers_teammate.application.check_items import ItemKind
 from teachers_teammate.application.formatting import TextFormatter
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.proofreading.edits import edits
-from teachers_teammate.domain.proofreading.review import CorrectionReview, edit_note
+from teachers_teammate.domain.proofreading.review import (
+    CorrectionReview,
+    UnclearNote,
+    edit_note,
+)
 from teachers_teammate.domain.teacher_work import TextEdit
 from teachers_teammate.gui._formatted_text import document_from_qt
 from teachers_teammate.gui.check import _style
 from teachers_teammate.gui.check._masking import Masking
+from teachers_teammate.texts import review as txt
 from teachers_teammate.gui.check._text_views import (
     MAX_POINT_SIZE,
     MIN_POINT_SIZE,
@@ -469,6 +474,54 @@ def test_hovering_a_mark_says_what_the_item_is(qtbot) -> None:
     assert "bunte \u2192 braune" in tip
     assert "Word choice" in tip
     assert "Farbe." in tip
+
+
+@pytest.mark.gui
+def test_hovering_a_passage_that_was_not_proofread_says_so_in_the_words_of_the_app(qtbot) -> None:
+    """
+    Given  a document with a stretch the model did not proofread, with a reason stored with it
+    When   the pointer rests on its mark
+    Then   the tip names the stretch and the sentence the app words, not the stored one
+    """
+    doc = check_document_of(
+        DocumentStateView(
+            source_id="/tmp/Anna.png",
+            name="Anna.png",
+            preview_img="",
+            raw_text=RAW,
+            correction_text=CORRECTED,
+            evaluation_text="",
+            ocr_done=True,
+            correction_done=True,
+            evaluation_done=False,
+            original_img="",
+            preprocess_steps=(),
+            raw_text_format="plain",
+            correction_review=CorrectionReview(
+                edits=(
+                    edit_note(
+                        edits(RAW, CORRECTED)[0], category="word_choice", explanation="Farbe."
+                    ),
+                ),
+                unclear=(UnclearNote(15, 25, "bellt laut", "Ausgelassen.", "", left_out=True),),
+            ),
+            correction_warning="",
+            sent={},
+            page_images=(),
+            original_images=(),
+        )
+    )
+    view = _view(qtbot, FinalView, doc)
+    mark, cursor = next(
+        (mark, cursor) for mark, cursor in view._mark_cursors if mark.kind is ItemKind.LEFT_OUT
+    )
+
+    tip = view._tip_at(_point_on(view, cursor))
+
+    assert cursor.selectedText() == "bellt laut"
+    assert mark.tip == tip
+    assert txt.NOT_PROOFREAD_WHY in tip
+    assert "Ausgelassen." not in tip
 
 
 @pytest.mark.gui

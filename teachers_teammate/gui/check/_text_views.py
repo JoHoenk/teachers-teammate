@@ -115,8 +115,11 @@ def marks_of(doc: CheckDocument, masking: Masking) -> tuple[Mark, ...]:
 def _mark_tip(item: CheckItem, masking: Masking) -> str:
     """Return what hovering the mark of *item* says: its words, its category, and why.
 
-    The first line of the explanation only: the card is where the whole of it is read.
+    The first line of the explanation only: the card is where the whole of it is read.  A passage
+    the AI did not proofread is explained by the wording of the app, not by the run that stored it.
     """
+    if item.kind is ItemKind.LEFT_OUT:
+        return f"{masking.mask(item.before)}\n{txt.NOT_PROOFREAD_WHY}"
     before = masking.mask(item.before)
     after = masking.mask(item.after)
     lines = [f"{before} \u2192 {after}" if before and after else before or after]

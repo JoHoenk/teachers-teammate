@@ -428,7 +428,7 @@ def _tags_of(item: CheckItem) -> tuple[str, ...]:
 def _body_html(item: CheckItem, masking: Masking) -> str:
     """Return what the card says under the words: the category, the explanation and the notes."""
     if item.kind is ItemKind.LEFT_OUT:
-        return html.escape(masking.mask(item.why))
+        return html.escape(txt.NOT_PROOFREAD_WHY)
     if item.kind is ItemKind.UNCLEAR:
         lines: list[str] = []
         if item.why:
@@ -436,9 +436,6 @@ def _body_html(item: CheckItem, masking: Masking) -> str:
         if item.suggestion:
             caption = txt.recommendation_caption(item.suggestion_uncertain)
             lines.append(f"{html.escape(caption)} {html.escape(masking.mask(item.suggestion))}")
-        note = txt.suggestion_note(item.suggestion_uncertain)
-        if note:
-            lines.append(f"<i>{html.escape(note)}</i>")
         return "<br>".join(lines)
     lines = []
     if item.category:

@@ -448,7 +448,6 @@ def test_the_card_of_an_unclear_passage_offers_the_suggestion(qtbot) -> None:
     assert panel._rows[0].kind is ItemKind.UNCLEAR
     assert "Farbe unklar." in _card_text(panel)
     assert f"{txt.SUGGESTION_PREFIX} bunte Farbe" in _card_text(panel)
-    assert txt.MEANING_NOT_CERTAIN in _card_text(panel)
     assert _buttons(panel) == [txt.USE_SUGGESTION]
 
 
@@ -938,12 +937,12 @@ def test_a_stored_edit_does_not_move_the_choice(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_the_card_of_a_stretch_the_ai_left_out_says_so_and_offers_no_wording(qtbot) -> None:
+def test_the_card_of_a_stretch_that_was_not_proofread_says_so_and_offers_no_wording(qtbot) -> None:
     """
-    Given  a document with one stretch the model left out of its answer
+    Given  a document with one stretch the model did not proofread, with a reason stored with it
     When   the side panel shows it, with an unclear passage beside it
-    Then   the list has a row for it, the card names the stretch and says why it is listed, there
-           is no suggestion to use but Change leads to the words, and the footer counts it apart
+    Then   the list has a row for it, the card names the stretch and says it was not proofread in
+           the words of this app, there is no suggestion to use, and the footer counts it apart
     """
     review = CorrectionReview(
         unclear=(
@@ -964,10 +963,11 @@ def test_the_card_of_a_stretch_the_ai_left_out_says_so_and_offers_no_wording(qtb
     kinds = [row.kind for row in panel._rows]
     assert kinds == [ItemKind.LEFT_OUT, ItemKind.UNCLEAR]
     panel.set_chosen(panel._rows[0].key)
-    assert "Die KI hat diese Stelle ausgelassen." in _card_text(panel)
+    assert txt.NOT_PROOFREAD_WHY in _card_text(panel)
+    assert "Die KI hat diese Stelle ausgelassen." not in _card_text(panel)
     assert _buttons(panel) == []
     assert _replace_field(panel) == ""
-    assert panel._counts.text() == "1 unclear · 1 left out by the AI · 0 of 2 looked at"
+    assert panel._counts.text() == "1 unclear · 1 not proofread · 0 of 2 looked at"
 
 
 # ── The card keeps its place ──────────────────────────────────────────────

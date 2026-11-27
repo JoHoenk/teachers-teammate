@@ -27,7 +27,7 @@ from ..domain.model_catalog import (
 )
 from .app import NAME
 from .review import REMOVE_PERSONAL_INFO
-from .settings import WHERE_ADDONS, WHERE_AI_SETUP
+from .settings import WHERE_AI_SETUP
 
 # ── "My computer" ─────────────────────────────────────────────────────────────
 
@@ -621,15 +621,6 @@ OWN_LABEL = "your model"
 def current_version_note(model_id: str) -> str:
     """Return the note that names the version a model's name stands for today."""
     return f"Currently {model_id}."
-
-
-def first_start_log(reading_model: str, writing_model: str, profile: HardwareProfile) -> str:
-    """Return the log line that says which models the first start chose for this computer."""
-    return (
-        f"First start: chose reading model {reading_model} and writing model "
-        f"{writing_model} for your computer ({profile_text(profile)}). "
-        f"You can download them under {WHERE_ADDONS}.\n"
-    )
 
 
 # ── The privacy line under the AI models page's service list ──────────────────

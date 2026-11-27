@@ -61,6 +61,8 @@ _logger = logging.getLogger(__name__)
 #: pip runs one at a time: two installs into the same ``--target`` directory would
 #: corrupt each other.
 _PIP_LOCK = threading.Lock()
+#: How many lines of a failed pip run the log keeps: the last words say why it stopped.
+PIP_FAILURE_LINES = 20
 
 #: The add-on every LangChain provider builds on, which no provider module declares.
 ADDON_LLM_CORE = "llm_core"
@@ -1145,7 +1147,16 @@ def _run_pip(cmd: list[str], progress_cb: Callable[[str], None]) -> tuple[int, l
             lines.append(line)
             progress_cb(line)
         proc.wait()
+    if proc.returncode != 0:
+        _log_pip_failure(cmd, lines)
     return proc.returncode, lines
+
+
+def _log_pip_failure(cmd: list[str], lines: list[str]) -> None:
+    """Write the tail of a failed pip run to the log: the installer's pane is gone with it."""
+    _logger.warning("pip failed: %s", " ".join(cmd[1:]))
+    for line in lines[-PIP_FAILURE_LINES:]:
+        _logger.warning("%s", line.rstrip())
 
 
 def _install_into_staging(

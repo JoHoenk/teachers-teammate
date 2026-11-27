@@ -6,10 +6,8 @@ from ..domain.language import LANGUAGES
 from ..domain.name_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
 
 _COLOUR_ERROR = "#c0392b"
-_COLOUR_WARNING = "#e67e22"
 _COLOUR_OK = "#27ae60"
 _COLOUR_CACHED = "#1e8449"
-_COLOUR_INFO = "#cccccc"
 _COLOUR_OCR_BAR = "#3498db"
 _COLOUR_CORRECTION_BAR = "#e67e22"
 _COLOUR_EVAL_BAR = "#8e44ad"

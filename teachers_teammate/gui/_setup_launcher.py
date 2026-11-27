@@ -19,10 +19,11 @@ from ..application.composition import AppServices
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
 from ..domain.model_catalog import HardwareDetection
 from ..settings_schema import DEFAULTS, normalize_saved_ollama_url
-from ..texts.models import first_start_log
+from ..texts import dialogs as dlg
+from ..texts.models import profile_text
 from ._background import LatestTask
 from ._config_panel import ConfigPanel
-from ._log_widget import LogWidget
+from ._errors import show_notice
 from ._privacy_view_controller import PrivacyViewController
 from ._pull_manager import PullManager
 
@@ -55,7 +56,6 @@ class SetupLauncher(QObject):
         panel: ConfigPanel,
         pull_manager: PullManager,
         privacy: PrivacyViewController,
-        log: LogWidget,
         hooks: SetupHooks,
     ) -> None:
         super().__init__(window)
@@ -64,7 +64,6 @@ class SetupLauncher(QObject):
         self._panel = panel
         self._pull_manager = pull_manager
         self._privacy = privacy
-        self._log = log
         self._hooks = hooks
         #: Whether the assistant is open, so a second click cannot open a second one.
         self._open_assistant = False
@@ -192,10 +191,11 @@ class SetupLauncher(QObject):
         if not apply:
             return
         self._panel.update_settings(apply)
-        ocr_model = apply.get("ocr_model", str(settings.get("ocr_model", "")))
-        general_model = apply.get("correction_model") or apply.get(
-            "evaluate_model", best["correction_model"]
-        )
-        self._log.append_text(first_start_log(ocr_model, general_model, detection.profile))
         self._hooks.save()
         self._hooks.applied()
+        ocr_model = apply.get("ocr_model", str(settings.get("ocr_model", "")))
+        general_model = apply.get("correction_model") or apply.get("evaluate_model")
+        show_notice(
+            self._window,
+            dlg.first_start_models(ocr_model, general_model, profile_text(detection.profile)),
+        )

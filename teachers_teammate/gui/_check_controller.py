@@ -24,14 +24,16 @@ from ..application.commands import WorkNotSavedError
 from ..application.composition import AppServices
 from ..config import Config
 from ..domain.stages import Stage
+from ..messages import message_of
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts import review as txt
 from ..texts import run as run_text
-from . import _dialogs, _handles
+from . import _handles
 from ._background import run_in_background
 from ._config_panel import ConfigPanel
 from ._error_text import spacy_problem
+from ._errors import show_failure, show_notice
 from ._export_menu import ExportKind
 from ._results_table import ResultsTable
 from ._run_session import RunSession, StopStage
@@ -177,7 +179,7 @@ class CheckController(QObject):
         """
         doc = self._document(source_id)
         if doc is None:
-            _dialogs.notify(self._window, dlg.check_without_state(Path(source_id).name))
+            show_notice(self._window, dlg.check_without_state(Path(source_id).name))
             # What was open stays open; a lock the run put on it must still lift with the run.
             self.apply_lock()
             self.update_tab()
@@ -415,20 +417,21 @@ class CheckController(QObject):
         source = Path(self._open)
         try:
             config = self._panel.to_config()
-        except ValueError:
+        except ValueError as exc:
             # Without folders there is no store to write to: the button goes back to what the
             # document says, not to what was pressed.
-            _dialogs.notify(self._window, dlg.checked_not_saved())
+            show_failure(self._window, dlg.checked_not_saved(), exc)
             self._page.refresh_checked()
             return
         try:
             view = self._services.commands.set_checked(config, source=source, checked=checked)
         except WorkNotSavedError as exc:
-            _dialogs.notify(self._window, dlg.work_not_saved(exc.name, too_new=exc.too_new))
+            # The command logged the refusal; it is an expected event, not a bug to log again.
+            show_failure(self._window, dlg.work_not_saved(exc.name, too_new=exc.too_new))
             self._page.refresh_checked()
             return
         if view is None:
-            _dialogs.notify(self._window, dlg.checked_not_saved())
+            show_failure(self._window, dlg.checked_not_saved())
             # The button goes back to what the store says, not to what was pressed.
             self.load(self._open)
             return
@@ -475,8 +478,9 @@ class CheckController(QObject):
                     config, source=source, text=edited_text
                 )
         except WorkNotSavedError as exc:
-            # What was typed stays in the text view, so the teacher can still copy it.
-            _dialogs.notify(self._window, dlg.work_not_saved(exc.name, too_new=exc.too_new))
+            # What was typed stays in the text view, so the teacher can still copy it.  The
+            # command logged the refusal.
+            show_failure(self._window, dlg.work_not_saved(exc.name, too_new=exc.too_new))
             return
         if view is None:
             return
@@ -564,7 +568,11 @@ class CheckController(QObject):
 
         def _on_done(result: object, error: BaseException | None) -> None:
             if error is not None:
-                _dialogs.notify(self._window, dlg.copy_failed(spacy_problem(error) or str(error)))
+                show_failure(
+                    self._window,
+                    dlg.copy_failed(spacy_problem(error) or str(message_of(error))),
+                    error,
+                )
                 return
             QApplication.clipboard().setText(str(result))
             self._page.show_copied()

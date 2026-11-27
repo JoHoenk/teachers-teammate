@@ -825,7 +825,7 @@ class OllamaClient:
         Also warns when the model does not appear vision-capable, and notes
         when the model is not yet loaded (first request will be slow).  Advisory
         lines go through *reporter* (defaulting to :class:`StdoutReporter`, i.e.
-        stderr) so adapters can route them to a log pane.
+        stderr) so adapters can route them into the log file.
 
         Raises:
             :exc:`~teachers_teammate.exceptions.OllamaUnreachableError`: Server

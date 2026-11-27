@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.gui._qt_stream import QtStream
 from teachers_teammate.gui._worker import (
     OCRWorker,
 )
@@ -56,28 +55,6 @@ class _DummyAppService:
                     FileOutcome(source_id, "a.png", FileStatus.SAVED, warnings=("a remark",))
                 )
         return RunSummary(succeeded=("a.png",))
-
-
-@pytest.mark.gui
-def test_qt_stream_forwards_text() -> None:
-    """
-    Given  a QtStream bound to a callback signal-like object
-    When   write() is called with text
-    Then   the text is forwarded and the written length is returned
-    """
-
-    class _Signal:
-        def __init__(self) -> None:
-            self.value = ""
-
-        def emit(self, text: str) -> None:
-            self.value += text
-
-    sig = _Signal()
-    stream = QtStream(sig)
-    n = stream.write("hello")
-    assert n == 5
-    assert sig.value == "hello"
 
 
 @pytest.mark.gui
@@ -153,14 +130,14 @@ def test_ocr_worker_passes_its_files(qtbot, tmp_path: Path) -> None:
 
 
 @pytest.mark.gui
-def test_ocr_worker_emits_fatal_error_on_pipeline_exception(
+def test_ocr_worker_logs_a_crashed_run_and_reports_it(
     qtbot, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """
     Given  an OCRWorker whose application service run path raises
     When   run() is invoked
-    Then   a fatal log message is emitted, run_finished carries a failed RunSummary, and the
-           log file holds the error's type and frames but not its message
+    Then   the log file holds the error's type and frames but not its message, and
+           run_finished carries a failed RunSummary
     """
     quoted = "boom over page forty-two"
 
@@ -171,16 +148,13 @@ def test_ocr_worker_emits_fatal_error_on_pipeline_exception(
     cfg = make_config(tmp_path)
     worker = OCRWorker(cfg, [Path("/tmp/a.png")], app_service=services_of(_RaiseAppService()))
 
-    logs: list[str] = []
     summaries: list[RunSummary] = []
-    worker.log_line.connect(lambda text: logs.append(text))
     worker.run_finished.connect(summaries.append)
 
     with caplog.at_level(logging.ERROR, logger="teachers_teammate.gui._worker"):
         worker.run()
         qtbot.wait(10)
 
-    assert any("FATAL ERROR" in line for line in logs)
     assert [(s.status, s.error) for s in summaries] == [(RunStatus.FAILED, quoted)]
     failure = next(one for one in caplog.records if one.name == "teachers_teammate.gui._worker")
     assert failure.levelno == logging.ERROR
@@ -286,32 +260,3 @@ def test_ocr_worker_file_done_event_carries_the_stopped_flag(qtbot, tmp_path: Pa
     assert [(e.outcome.status, e.outcome.stopped_stage) for e in events] == [
         (FileStatus.STOPPED, "correction")
     ]
-
-
-@pytest.mark.gui
-def test_ocr_worker_logs_the_step_a_stopped_file_did_not_reach(qtbot, tmp_path: Path) -> None:
-    """
-    Given  a pipeline that reports a file as stopped before proofreading
-    When   run() is invoked
-    Then   the log pane gets the line that says so
-    """
-    from teachers_teammate.texts.run import stopped_message  # noqa: PLC0415
-
-    class _Stopped(_DummyAppService):
-        def run_selected(self, _config, _files, *, progress=None, **_kwargs) -> RunSummary:
-            assert progress is not None and progress.on_file_done is not None
-            progress.on_file_done(
-                FileOutcome("/tmp/a.png", "a.png", FileStatus.STOPPED, stopped_stage="correction")
-            )
-            return RunSummary(stopped=("a.png",))
-
-    worker = OCRWorker(
-        make_config(tmp_path), [Path("/tmp/a.png")], app_service=services_of(_Stopped())
-    )
-    lines: list[str] = []
-    worker.log_line.connect(lines.append)
-
-    worker.run()
-    qtbot.wait(10)
-
-    assert f"       → {stopped_message('correction')}\n" in lines

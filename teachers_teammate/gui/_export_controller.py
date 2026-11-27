@@ -6,24 +6,26 @@ and writes them — the text ones off the GUI thread, because hiding names runs 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 import os
 from pathlib import Path
 from typing import NamedTuple
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QPushButton, QStyle, QWidget
 
 from ..application.composition import AppServices
 from ..application.export import DocxExport, NothingToExport, WouldOverwriteInput
-from ..messages import log_failure
+from ..messages import log_failure, message_of
 from ..texts import dialogs as dlg
 from ..texts import main_window as txt
 from . import _dialogs, _handles
 from ._background import run_in_background
 from ._config_panel import ConfigPanel
 from ._error_text import spacy_problem
+from ._errors import show_failure, show_notice
 from ._export_menu import ExportKind, build_export_menu
 from ._qt import present
 from ._results_table import ResultsTable
@@ -51,8 +53,6 @@ class _TextExportOutcome(NamedTuple):
 class ExportController(QObject):
     """Everything that writes a result out of the app."""
 
-    log_line = Signal(str)
-
     def __init__(
         self,
         window: QWidget,
@@ -60,12 +60,14 @@ class ExportController(QObject):
         services: AppServices,
         panel: ConfigPanel,
         table: ResultsTable,
+        say: Callable[[str], None],
     ) -> None:
         super().__init__(window)
         self._window = window
         self._services = services
         self._panel = panel
         self._table = table
+        self._say = say
         self._button: QPushButton | None = None
         self._actions: list[QAction] = []
         self._text_export_running = False
@@ -116,7 +118,7 @@ class ExportController(QObject):
 
     def on_requested(self, source_ids: list[str], kind: ExportKind) -> None:
         if kind.is_text and self._text_export_running:
-            _dialogs.notify(self._window, dlg.busy_with_text_export())
+            show_notice(self._window, dlg.busy_with_text_export())
             return
         targets = self._pick_targets(source_ids, kind)
         if not targets:
@@ -224,7 +226,7 @@ class ExportController(QObject):
             config = self._panel.to_config()
         except ValueError as exc:
             errors.append(str(exc))
-            _dialogs.notify(self._window, dlg.word_export_failed(errors))
+            show_failure(self._window, dlg.word_export_failed(errors), exc)
             return
         for source_id, out_path in targets:
             try:
@@ -239,12 +241,12 @@ class ExportController(QObject):
                         labels_language=explanation_language,
                     ),
                 )
-                self.log_line.emit(txt.docx_saved(out_path))
+                self._say(txt.docx_saved(out_path))
             except Exception as exc:  # noqa: BLE001  # python-docx/PIL errors vary; collect per-file and continue the batch
                 errors.append(_export_failure(Path(source_id).name, exc))
 
         if errors:
-            _dialogs.notify(self._window, dlg.word_export_failed(errors))
+            show_failure(self._window, dlg.word_export_failed(errors))
 
     def _export_text(
         self, targets: list[tuple[str, Path]], errors: list[str], *, anonymize: bool
@@ -301,13 +303,13 @@ class ExportController(QObject):
         def done(result: object, error: BaseException | None) -> None:
             self._text_export_running = False
             if error is not None:
-                message = (spacy_problem(error) if anonymize else None) or str(error)
-                _dialogs.notify(self._window, dlg.text_export_error(message, preflight_errors))
+                message = (spacy_problem(error) if anonymize else None) or str(message_of(error))
+                show_failure(self._window, dlg.text_export_error(message, preflight_errors), error)
                 return
             if not isinstance(result, _TextExportOutcome):
                 return
             for out_path in result.written:
-                self.log_line.emit(txt.text_saved(out_path))
+                self._say(txt.text_saved(out_path))
             self._show_text_export_errors(result.failed)
 
         self._text_export_running = True
@@ -315,4 +317,4 @@ class ExportController(QObject):
 
     def _show_text_export_errors(self, errors: list[str]) -> None:
         if errors:
-            _dialogs.notify(self._window, dlg.text_export_failed(errors))
+            show_failure(self._window, dlg.text_export_failed(errors))

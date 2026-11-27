@@ -463,7 +463,6 @@ class DummySignal:
 
 class DummyWorker:
     def __init__(self, _config, files=None, app_service=None) -> None:
-        self.log_line = DummySignal()
         self.file_started = DummySignal()
         self.stage_started = DummySignal()
         self.ocr_done = DummySignal()

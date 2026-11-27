@@ -2,7 +2,7 @@
 
 The composition root wires services; it does not write prose.  These functions take the
 ``Config`` a run uses and the ``RunSummary`` it produced, and write to the ``Reporter`` the
-adapter chose, so the command line keeps its layout and the GUI keeps its log pane.
+adapter chose, so the command line keeps its layout and the log file its order.
 """
 
 from __future__ import annotations

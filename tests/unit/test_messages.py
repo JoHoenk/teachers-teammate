@@ -24,7 +24,7 @@ from teachers_teammate.texts import messages as wording
 
 #: The public functions of ``messages.py`` that are not a factory for one key.
 _NOT_FACTORIES = frozenset(
-    {"log_failure", "message_of", "plain_text", "render_all", "set_renderer"}
+    {"log_failure", "log_once", "message_of", "plain_text", "render_all", "set_renderer"}
 )
 
 #: Factories ``messages.py`` itself calls, so no other module needs to.
@@ -394,6 +394,38 @@ def test_a_chain_that_loops_back_ends_at_its_start(caplog) -> None:
         messages.log_failure(logger, "Looping", first)
 
     assert caplog.records[-1].getMessage().count("caused by KeyError") == 1
+
+
+def test_a_failure_the_catch_point_wrote_is_not_written_a_second_time(caplog) -> None:
+    """
+    Given  a failure that the task which raised it wrote, and the one that shows it to the teacher
+    When   log_once is asked for a line about it
+    Then   nothing more is written: the file keeps one line per failure
+    """
+    error = ValueError(messages.no_first_token(2.5))
+    logger = logging.getLogger("tests.messages")
+    with caplog.at_level(logging.WARNING, logger="tests.messages"):
+        messages.log_failure(logger, "Reading page 3", error)
+        messages.log_once(logger, "Reading page 3", error)
+
+    assert len(caplog.records) == 1
+
+
+def test_a_failure_nobody_wrote_is_written_by_log_once_once(caplog) -> None:
+    """
+    Given  a failure that no catch point wrote
+    When   log_once is asked for a line about it twice
+    Then   the first gets its line and the second none, so showing it writes it once
+    """
+    error = ValueError(messages.no_first_token(2.5))
+    logger = logging.getLogger("tests.messages")
+    with caplog.at_level(logging.WARNING, logger="tests.messages"):
+        messages.log_once(logger, "Reading page 3", error)
+        messages.log_once(logger, "Reading page 3", error)
+
+    assert [r.getMessage() for r in caplog.records] == [
+        "Reading page 3: no_first_token: seconds=2.5"
+    ]
 
 
 def _imported_names() -> set[str]:

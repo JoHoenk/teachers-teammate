@@ -13,10 +13,10 @@ from PySide6.QtCore import QThread, Signal
 
 from ..application.composition import AppServices
 from ..config import Config
-from ..domain.run_summary import FileOutcome, FileStatus, KeepAwakeState, RunSummary
+from ..domain.run_summary import FileOutcome, KeepAwakeState, RunSummary
 from ..interfaces import LoggingReporter, ProgressCallbacks
 from ..messages import log_failure
-from ..texts.run import BATTERY_WARNING, fatal_error, stopped_message
+from ..texts.run import BATTERY_WARNING
 from ._types import FileDoneEvent
 
 _logger = logging.getLogger(__name__)
@@ -27,7 +27,6 @@ class OCRWorker(QThread):
 
     Signals
     -------
-    log_line(text)
     file_started(source_id, name, idx, total)
     stage_started(source_id, name, stage, idx, total)
     ocr_done(source_id, name, idx, total)
@@ -40,7 +39,6 @@ class OCRWorker(QThread):
     :meth:`request_stop` sets them.
     """
 
-    log_line = Signal(str)
     file_started = Signal(str, str, int, int)  # (source_id, name, idx, total)
     # stage is a ProgressStage; not emitted when the reading comes from the cache.
     stage_started = Signal(str, str, str, int, int)  # (source_id, name, stage, idx, total)
@@ -75,8 +73,7 @@ class OCRWorker(QThread):
 
     def run(self) -> None:
         # The pipeline's story goes to the log, where a run that stopped early can be read
-        # afterwards.  The pane shows the same lines from a handler on that logger, so nothing
-        # is scraped from stdout.
+        # afterwards.
         reporter = LoggingReporter()
 
         # Per-file timing tracked via structured callbacks — no stdout parsing.
@@ -107,8 +104,6 @@ class OCRWorker(QThread):
 
         def on_file_done(outcome: FileOutcome) -> None:
             source_id = outcome.source_id
-            if outcome.status is FileStatus.STOPPED:
-                self.log_line.emit(f"       → {stopped_message(outcome.stopped_stage)}\n")
             now = time.monotonic()
             start = file_start_times.get(source_id, now)
             ocr_t = ocr_done_times.get(source_id, now)
@@ -146,7 +141,6 @@ class OCRWorker(QThread):
             )
         except (Exception, SystemExit) as exc:  # noqa: BLE001  # catch SystemExit to prevent the worker thread from killing the GUI process; also catches unexpected exceptions
             log_failure(_logger, "The run ended with an error", exc)
-            self.log_line.emit(fatal_error(exc))
             summary = RunSummary(error=str(exc) or "unexpected error")
         self.run_finished.emit(summary)
 

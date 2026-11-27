@@ -11,7 +11,8 @@ Until then it gives ``"key: args"``, which keeps a traceback, a log line and a t
 without the wording.
 
 A failure is logged by :func:`log_failure`, the one place that tells an expected error — one
-carrying a message — from a bug.
+carrying a message — from a bug.  :func:`log_once` is the same call for an error another catch
+point may have written already.
 """
 
 from __future__ import annotations
@@ -164,6 +165,7 @@ def log_failure(logger: logging.Logger, what: str, error: BaseException) -> None
     caller that shows it.  Raising it, or passing it on, logs nothing.
     """
     causes = _causes_of(error)
+    _mark_logged(error)
     if _is_expected(error):
         said = plain_text(message_of(error), own_words=False)
         if causes:
@@ -175,8 +177,30 @@ def log_failure(logger: logging.Logger, what: str, error: BaseException) -> None
     logger.error("%s", "".join(lines))
 
 
+def log_once(logger: logging.Logger, what: str, error: BaseException) -> None:
+    """Write *error* like :func:`log_failure`, unless a catch point already wrote it.
+
+    A failure travels: the task that raised it writes it, and the one that shows it to the
+    teacher would write the same failure a second time.  The error carries the mark of its line
+    (``__dict__``), so the second one is skipped and the file keeps one line per failure.
+    """
+    if getattr(error, LOGGED, False):
+        return
+    log_failure(logger, what, error)
+
+
 #: How many errors of a chain a line names: a chain longer than this is a loop in disguise.
 _MAX_CAUSES = 5
+#: The attribute an error carries once a line about it was written; see :func:`log_once`.
+LOGGED = "_teachers_teammate_logged"
+
+
+def _mark_logged(error: BaseException) -> None:
+    """Let *error* say that a line about it was written, when its kind lets it."""
+    try:
+        setattr(error, LOGGED, True)
+    except AttributeError:
+        pass  # an error of a kind without a __dict__: the mark is only a saving, not a rule
 
 
 def _causes_of(error: BaseException) -> list[BaseException]:

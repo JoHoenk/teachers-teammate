@@ -192,7 +192,7 @@ problem, no documents, no files, nothing selected, "Checking…", ready).
 
 ## The window tabs and the Check page
 
-Tab 0 is *Documents* (workflow panel, results list, log), tab 1 *Check*
+Tab 0 is *Documents* (workflow panel, results list), tab 1 *Check*
 (`gui/check/_page.py:CheckPage`). *Check* is disabled while no document has a result
 (`ResultsTable.checkable_source_ids()`). Labels carry state: *Documents · 12 of 28*,
 *Check — Anna_Mueller.pdf*.
@@ -364,8 +364,8 @@ Three, in `texts/dialogs.py`, each one dialog for the whole selection:
 All fail closed: if the question cannot be built, nothing re-runs. A re-run drops the work before
 resetting the cache; if the work cannot be dropped, nothing is reset.
 
-A run with changed settings keeps worked-on corrections and says so in the log (window and CLI);
-the queue shows that proofreading as done, noted *kept*, with a tooltip.
+A run with changed settings keeps worked-on corrections and says so in the log file and on the
+command line; the queue shows that proofreading as done, noted *kept*, with a tooltip.
 
 ### The lock
 

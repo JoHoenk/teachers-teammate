@@ -29,7 +29,7 @@ from . import _dialogs
 from ._background import run_in_background
 from ._check_controller import CheckController
 from ._config_panel import ConfigPanel
-from ._log_widget import LogWidget
+from ._errors import show_failure, show_notice
 from ._privacy_settings import FlowAcknowledgements
 from ._readiness_controller import ReadinessController
 from ._results_table import ResultsTable
@@ -46,7 +46,7 @@ class RunStartView:
     config_panel: ConfigPanel
     results_table: ResultsTable
     run_button: QPushButton
-    log: LogWidget
+    say: Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -94,11 +94,11 @@ class RunStartController(QObject):
         try:
             config = self._view.config_panel.to_config()
         except ValueError as exc:
-            _dialogs.notify(self._view.window, dlg.configuration_error(str(exc)))
+            show_failure(self._view.window, dlg.configuration_error(str(exc)), exc)
             return
         selected = self._view.results_table.selected_source_ids()
         if not selected and self._view.results_table.queued_source_ids():
-            return _dialogs.notify(self._view.window, dlg.no_files_selected())
+            return show_notice(self._view.window, dlg.no_files_selected())
         self._check_requirements_then(
             config,
             lambda preflight: self._confirm_teacher_work_then(
@@ -137,7 +137,7 @@ class RunStartController(QObject):
         # background check and the "checking" state it would show.
         problem = self._app_service.run.output_problem_for_run(config)
         if problem is not None:
-            _dialogs.notify(self._view.window, dlg.output_folder_refused(problem))
+            show_failure(self._view.window, dlg.output_folder_refused(problem))
             return
         self._preflight_running = True
         self._view.run_button.setEnabled(False)
@@ -180,7 +180,7 @@ class RunStartController(QObject):
         note = check_text.wait_detail_text(result.ollama_wait)
         if note:
             # A note, not a question: the run works, the first file just waits.
-            self._view.log.append_text(note + "\n")
+            self._view.say(note)
         if result.memory_shortfall is not None:
             self._confirm_memory_warning(result.memory_shortfall, lambda: on_ready(result))
             return
@@ -246,7 +246,7 @@ class RunStartController(QObject):
                 config, files=worked_on.unanswered, stage=Stage.CORRECTION
             )
             if failures:
-                _dialogs.notify(self._view.window, dlg.cache_invalidation_failed(list(failures)))
+                show_failure(self._view.window, dlg.cache_invalidation_failed(list(failures)))
                 return
         # The teacher was told that a new proofreading will not contain these corrections and
         # went on: they belong to no stored answer, so they are not asked about again.
@@ -265,14 +265,14 @@ class RunStartController(QObject):
             )
 
         if not queued_source_ids:
-            _dialogs.notify(self._view.window, dlg.no_files_found(str(config.input_dir)))
+            show_notice(self._view.window, dlg.no_files_found(str(config.input_dir)))
             return
 
         selected_source_ids = self._view.results_table.selected_source_ids()
         if not selected_source_ids and queue_was_empty:
             selected_source_ids = queued_source_ids
         if not selected_source_ids:
-            _dialogs.notify(self._view.window, dlg.no_files_selected())
+            show_notice(self._view.window, dlg.no_files_selected())
             return
 
         self._hooks.run_controller.start(config, selected_source_ids)
@@ -285,7 +285,7 @@ class RunStartController(QObject):
         try:
             config = self._view.config_panel.to_config()
         except ValueError as exc:
-            _dialogs.notify(self._view.window, dlg.configuration_error(str(exc)))
+            show_failure(self._view.window, dlg.configuration_error(str(exc)), exc)
             return
 
         # One stage by hand: the service builds that config, so the GUI holds no variant of
@@ -338,7 +338,7 @@ class RunStartController(QObject):
         asked, so the answer cannot be taken for granted.
         """
         if error is not None or not isinstance(result, WorkedOn):
-            _dialogs.notify(self._view.window, dlg.could_not_check_work())
+            show_failure(self._view.window, dlg.could_not_check_work())
             return
         if stage == Stage.CORRECTION:
             names = result.worked_on
@@ -361,14 +361,14 @@ class RunStartController(QObject):
         """Invalidate the cache from *stage* onward and start the worker on the rows."""
         files = self._hooks.queued_files(selected_source_ids)
         if not files:
-            _dialogs.notify(self._view.window, dlg.selection_mismatch())
+            show_notice(self._view.window, dlg.selection_mismatch())
             return
 
         failures = self._app_service.commands.invalidate_from_stage(
             config, files=files, stage=stage
         )
         if failures:
-            _dialogs.notify(self._view.window, dlg.cache_invalidation_failed(list(failures)))
+            show_failure(self._view.window, dlg.cache_invalidation_failed(list(failures)))
             return
 
         self._hooks.run_controller.start(config, [str(file.resolve()) for file in files], files)

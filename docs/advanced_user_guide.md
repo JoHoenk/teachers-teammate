@@ -239,6 +239,16 @@ but they share the graphics card.
 | macOS | `~/Library/Application Support/teachers_teammate` | `~/Library/Application Support/teachers_teammate` |
 | Linux | `~/.config/teachers_teammate` | `~/.local/share/teachers_teammate` |
 
+The log file is `logs/teachers-teammate.log` in the data folder, rotated: four files of about a
+megabyte, the oldest dropped. **Help → Open Log Folder** opens the folder it sits in; that file is
+what to send to whoever helps you. It holds file names, step names and error messages — never a
+document's text or an access key.
+
+**Settings → General → Log detail** decides how much is written: **Normal** keeps what a run did,
+**Detailed** adds what a developer needs and makes the file grow faster. A start can decide instead
+of the setting: `--log-level errors|normal|detailed`, the environment variable
+`TEACHERS_TEAMMATE_LOG_LEVEL`, or `--diagnose`, which means Detailed.
+
 ## If the app starts slowly or stops answering
 
 Start the app once with `--diagnose` (Windows: copy the shortcut and add it after the target).

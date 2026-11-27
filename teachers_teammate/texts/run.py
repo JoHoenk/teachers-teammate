@@ -218,11 +218,6 @@ def output_replaces_another(shown: str, owner: str) -> str:
     return f"{shown} would replace the output of {owner}; rename one of the two documents."
 
 
-def fatal_error(reason: BaseException) -> str:
-    """Return the log line for a run that ended on an error nothing handled."""
-    return f"FATAL ERROR: {reason}\n"
-
-
 # ── How a finished run is announced ───────────────────────────────────────────
 
 RUN_DONE = "Done \u2713"

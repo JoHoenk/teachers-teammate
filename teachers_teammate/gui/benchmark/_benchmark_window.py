@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QPlainTextEdit,
     QPushButton,
     QTabWidget,
     QVBoxLayout,
@@ -25,8 +26,8 @@ from ...texts import benchmark as bench_text
 from ...texts import dialogs as dlg
 from .. import _dialogs
 from .._app_bootstrap import create_app, finish_process
+from .._errors import show_failure, show_notice
 from .._handles import BENCHMARK_WINDOW
-from .._log_widget import LogWidget
 from .._ocr_config_selector import OcrConfigSelector
 from .._worker import detach_running_worker
 from ._benchmark_worker import BenchmarkWorker
@@ -111,9 +112,11 @@ class BenchmarkWindow(QMainWindow):
     def _build_right_panel(self) -> QWidget:
         tabs = QTabWidget()
         self._compare = CompareView()
-        self._log = LogWidget()
+        self._progress = QPlainTextEdit()
+        self._progress.setReadOnly(True)
+        self._progress.setObjectName("benchmark_progress")
         tabs.addTab(self._compare, bench_text.COMPARE_TAB)
-        tabs.addTab(self._log, bench_text.LOG_TAB)
+        tabs.addTab(self._progress, bench_text.PROGRESS_TAB)
         return tabs
 
     # ── actions ─────────────────────────────────────────────────────────────
@@ -130,11 +133,12 @@ class BenchmarkWindow(QMainWindow):
 
     def _on_run(self) -> None:
         if self._source is None:
-            _dialogs.notify(self, dlg.no_document())
+            show_notice(self, dlg.no_document())
             return
         ocr = self._selector.get_ocr_config()
         self._set_running(True)
-        self._log.append_text(bench_text.log_run_started(self._source.name))
+        self._progress.clear()
+        self._say(bench_text.progress_run_started(self._source.name))
         worker = self._worker_factory(
             self._source,
             ocr,
@@ -142,24 +146,29 @@ class BenchmarkWindow(QMainWindow):
             ollama_url=self._ollama_url,
             app_service=self._service,
         )
-        worker.log_line.connect(self._log.append_text)
+        worker.progress.connect(self._say)
         worker.finished_ok.connect(self._on_run_ok)
         worker.finished_err.connect(self._on_run_err)
+        worker.finished_stopped.connect(self._on_run_stopped)
         self._worker = worker
         worker.start()
 
     def _on_stop(self) -> None:
         if self._worker is not None and self._worker.isRunning():
             self._worker.stop_event.set()
-            self._log.append_text(bench_text.LOG_STOP_REQUESTED)
+            self._say(bench_text.PROGRESS_STOP_REQUESTED)
 
     def _on_run_ok(self, _run: object) -> None:
-        self._log.append_text(bench_text.LOG_RUN_STORED)
+        self._say(bench_text.PROGRESS_RUN_STORED)
         self._set_running(False)
         self._refresh_runs()
 
     def _on_run_err(self, message: str) -> None:
-        self._log.append_text(bench_text.log_run_failed(message))
+        self._set_running(False)
+        show_failure(self, dlg.benchmark_run_failed(message))
+
+    def _on_run_stopped(self) -> None:
+        self._say(bench_text.PROGRESS_RUN_STOPPED)
         self._set_running(False)
 
     def _on_selection_changed(self, run_id_a: str, run_id_b: str) -> None:
@@ -234,6 +243,10 @@ class BenchmarkWindow(QMainWindow):
     def _refresh_runs(self) -> None:
         runs = self._service.list_runs(self._source) if self._source else []
         self._runs_list.set_runs(runs)
+
+    def _say(self, line: str) -> None:
+        """Add *line* to the progress pane: what this run is doing, and where."""
+        self._progress.appendPlainText(line)
 
     def _set_running(self, running: bool) -> None:
         self._run_btn.setEnabled(not running)

@@ -38,7 +38,7 @@ from ..texts import dialogs as dlg
 from ..texts import main_window as win
 from ..texts import review as txt
 from ..texts.run import stopped_message
-from . import _dialogs, _handles
+from . import _handles
 from ._constants import (
     _COLOUR_CACHED,
     _COLOUR_CORRECTION_BAR,
@@ -47,6 +47,7 @@ from ._constants import (
     _COLOUR_OCR_BAR,
     _COLOUR_OK,
 )
+from ._errors import show_failure
 from ._export_menu import build_export_menu
 from ._qt import present
 from ._types import FileDoneEvent, StageStatus
@@ -589,7 +590,7 @@ class ResultsTable(QTableWidget):
         )
         info_btn.setToolTip(message)
         info_btn.clicked.connect(
-            lambda _=False, m=message: _dialogs.notify(None, dlg.stage_warning(m))
+            lambda _=False, m=message: show_failure(None, dlg.stage_warning(m))
         )
         h.addWidget(lbl)
         h.addWidget(info_btn)
@@ -612,9 +613,7 @@ class ResultsTable(QTableWidget):
             "QPushButton:hover { background: #e74c3c; }"
         )
         info_btn.setToolTip(message)
-        info_btn.clicked.connect(
-            lambda _=False, m=message: _dialogs.notify(None, dlg.stage_error(m))
-        )
+        info_btn.clicked.connect(lambda _=False, m=message: show_failure(None, dlg.stage_error(m)))
         h.addWidget(lbl)
         h.addWidget(info_btn)
         h.addStretch()

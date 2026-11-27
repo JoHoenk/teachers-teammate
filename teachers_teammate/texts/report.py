@@ -1,6 +1,6 @@
 """What a run writes to its log while it works: the banner, the progress lines, the closing block.
 
-The command line prints these lines and the main window's log pane shows them.  The banner is a
+The command line prints these lines and the log file keeps them.  The banner is a
 table of ``label : value`` rows; a progress line under a file starts with an arrow.
 """
 

@@ -19,7 +19,7 @@ RUN_AND_STORE = "Run && store"
 STOP = "Stop"
 
 COMPARE_TAB = "Compare"
-LOG_TAB = "Log"
+PROGRESS_TAB = "Progress"
 
 #: The compare view: the two runs' panes, the diff, and the line above them.
 PANE_RUN_A = "Run A"
@@ -45,17 +45,13 @@ DELETE = "Delete"
 CLEAR_ALL = "Clear all runs for this document"
 
 
-# ── The lines the window writes to its log ────────────────────────────────────
+# ── The lines the window writes to its progress pane ──────────────────────────
 
-LOG_STOP_REQUESTED = "Stop requested…\n"
-LOG_RUN_STORED = "Run stored.\n"
-
-
-def log_run_started(name: str) -> str:
-    """Return the log line for an OCR run on the document *name*."""
-    return f"Starting OCR run for {name}…\n"
+PROGRESS_STOP_REQUESTED = "Stop requested…"
+PROGRESS_RUN_STORED = "Run stored."
+PROGRESS_RUN_STOPPED = "Stopped."
 
 
-def log_run_failed(message: str) -> str:
-    """Return the log line for a run that failed with *message*."""
-    return f"ERROR: {message}\n"
+def progress_run_started(name: str) -> str:
+    """Return the line that says an OCR run began on the document *name*."""
+    return f"Starting OCR run for {name}…"

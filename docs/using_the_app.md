@@ -109,6 +109,14 @@ mouse wheel) change the zoom, and zooming in shows the scanned pixels. **Prepare
 switches between the pages as fixed for reading and as scanned (shown only when the preparation
 changed something).
 
+Where the cursor of the text stands, the scan shades the sentence it is in, in all three texts. The
+stronger the shade, the harder the line was to read, so a strong shade is where a mistake of the
+reading is likely. A passage no full stop ends — a heading, a list item, a date — is shaded by its
+line. The shade needs the reading model that comes with the app: without it, and wherever the app
+is not sure which line a sentence stands on, the scan simply shows the page. You can turn the shade
+off in **Settings → Scan quality…**; a text read while it was off has no shade until it is read
+again.
+
 **The list of corrections** on the right numbers what the text marks. Pick a row and the text
 scrolls to it; click a mark in the text and its row is picked. A row you have not looked at yet
 carries a **•** and is drawn bold; a row you have looked at is grey and has no dot. **Next ›** goes
@@ -423,7 +431,7 @@ corrects a tilt. Clean scans pass unchanged. **Original page** sends pages as th
 | **AI models** | The reading method, and the service and model for proofreading and content review, with the key of an online service |
 | **This computer** | How powerful the computer is (the model suggestions follow it), the speed test, and the address of the Ollama server |
 | **Online services** | All access keys in one list. Keys are kept in your system's keychain where there is one |
-| **Scan quality** | **Automatic** or **Original page**, with **Preview…**; under **Expert settings** the PDF resolution and how a PDF's own text is used |
+| **Scan quality** | **Automatic** or **Original page**, with **Preview…**; whether the scan shades the sentence under the cursor; under **Expert settings** the PDF resolution and how a PDF's own text is used |
 | **Privacy** | The "don't ask again" answers, how personal information is found and shown, and what the app keeps for earlier runs |
 | **Add-ons** | Everything optional: AI models for Ollama, support for online AI services, name detection (spaCy, needed to remove personal information), the built-in reader and page models (both come with the app). A download starts only when you ask |
 

@@ -50,6 +50,19 @@ class OffsetMap:
             return run[3]
         return offset + self._shift(offset)
 
+    def back(self, offset: int) -> int:
+        """Return where *offset* of the new text stands in the old one.
+
+        A position inside a replacement becomes the start of the run it replaced: the words that
+        stand there now are not the ones that were there.  The inverse of :meth:`start`.
+        """
+        index = bisect_right(self._new_ends, offset)
+        if index < len(self.runs):
+            old_start, _old_end, new_start, new_end = self.runs[index]
+            if new_start <= offset < new_end:
+                return old_start
+        return offset - self._shifts[index]
+
     @cached_property
     def _old_starts(self) -> tuple[int, ...]:
         """Where each run begins in the old text (sorted, for the bisect)."""
@@ -59,6 +72,11 @@ class OffsetMap:
     def _old_ends(self) -> tuple[int, ...]:
         """Where each run ends in the old text (sorted, for the bisect)."""
         return tuple(run[1] for run in self.runs)
+
+    @cached_property
+    def _new_ends(self) -> tuple[int, ...]:
+        """Where each run's replacement ends in the new text (sorted, for the bisect)."""
+        return tuple(run[3] for run in self.runs)
 
     @cached_property
     def _shifts(self) -> tuple[int, ...]:

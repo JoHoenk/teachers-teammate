@@ -93,7 +93,11 @@ cache identity in `ocr_key` (`cache_keys.py`); a check in
 `_ocr_engine_issues`, an `IssueKind` and its row in
 `gui/_fix_targets.py:fix_for`; its label in `texts/addons.py:OCR_ENGINE_LABELS`. The built-in
 reader is `ppocr` (`infrastructure/ppocr/`), its version `READER_VERSION` in
-`domain/local_models.py`. See {doc}`development` → "Text recognition engines"
+`domain/local_models.py`. An engine that knows where its words sit on the page overrides
+`read_page` and returns `PageReading(text, lines)` (`domain/page_layout.py`); one that does not
+takes the interface's default, and the built-in reader reads its pages alongside for the Check
+tab's marks (`StageBuilder.build_scan_places`). See {doc}`development`
+→ "Text recognition engines"
 
 ## A model file the app runs itself
 
@@ -217,7 +221,10 @@ teacher or a run start switches tabs; a finished file reloads the open document
 and never changes the tab. Edits go to the open document, never to
 the selected row, and land in `DocumentCommands` through `CheckController`. Marks are overlays (`ExtraSelection`), never
 document formatting. A document the run will redo is read-only from the run's start
-(`CheckPage.set_lock()`). See {doc}`gui` → "The window tabs and the Check page"
+(`CheckPage.set_lock()`). The scan's mark of the sentence under the cursor comes from the places
+stored with the reading (`domain/page_layout.py`, `check_document.py:mark_for_cursor`); the window
+only carries a view's offset over (`gui/check/_scan_link.py`). See {doc}`gui` → "The window tabs
+and the Check page"
 
 ## Model temperatures
 

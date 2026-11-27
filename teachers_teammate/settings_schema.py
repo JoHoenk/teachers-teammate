@@ -360,6 +360,10 @@ SETTINGS: tuple[Setting, ...] = (
     # Whether scans (images, PDFs without a text layer) are read.  Off = only text that already
     # exists is used (text files, PDFs with a text layer) and scans are skipped.
     Setting("recognition_enabled", True, SettingScope.RUN, _flag),
+    # Whether a run keeps where each line of a scan sits, so the Check tab can mark the sentence
+    # under the cursor on the page.  Needs the built-in reader's models; with another reader they
+    # read each page a second time.  Not part of any cache key.
+    Setting("scan_marks", True, SettingScope.RUN, _flag),
     # Keep the computer from going to sleep while documents are processed (the screen may still
     # turn off).  Not part of any cache key.
     Setting("keep_awake", True, SettingScope.RUN, _flag),

@@ -255,6 +255,11 @@ _REQUESTS_DEPS = [
     "@ocr_test_dependencies//requests:pkg",
 ]
 
+# rapidfuzz: where a page's lines stand in the text that was read from it, aligned once per
+# document by infrastructure/text_alignment.py, which imports it when it aligns: a test whose
+# run makes places needs it.
+_ALIGN_DEPS = ["@ocr_test_dependencies//rapidfuzz:pkg"]
+
 _GUI_DEPS = [
     "@ocr_test_dependencies//psutil:pkg",
     "@ocr_test_dependencies//pyside6_essentials:pkg",
@@ -273,7 +278,8 @@ _PIPELINE_DEPS = (
     _IMAGE_DEPS +
     _PDF_DEPS +
     _CV_DEPS +
-    _REQUESTS_DEPS + [
+    _REQUESTS_DEPS +
+    _ALIGN_DEPS + [
         "@ocr_test_dependencies//python_docx:pkg",
     ]
 )
@@ -318,6 +324,11 @@ app_test(
 app_test(
     "unit/test_step_runner.py",
     deps = _INFRASTRUCTURE_LIB,
+)
+
+app_test(
+    "unit/test_page_layout.py",
+    deps = _DOMAIN_LIB,
 )
 
 app_test(
@@ -653,7 +664,15 @@ app_test(
 
 app_test(
     "integration/test_pipeline_run.py",
+    extra_srcs = ["fakes/fake_reader.py"],
     deps = _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+# A run stores the places of a scan's lines, and the Check tab marks through them.
+app_test(
+    "integration/test_pipeline_scan_marks.py",
+    extra_srcs = ["fakes/fake_reader.py"],
+    deps = _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 app_test(
@@ -869,7 +888,7 @@ app_test(
 
 app_test(
     "unit/test_logging_setup.py",
-    deps = _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
+    deps = _FORMAT_DEPS + _ALIGN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 app_test(
@@ -1611,6 +1630,23 @@ app_test(
     deps = _TOOL_DEPS + _CV_DEPS + _IMAGE_DEPS + ["//tools/dev:ocr_page_tokens"],
 )
 
+# The developer tool that asks whether the reader's rows line up with the written lines of a page:
+# the scoring, the report and which transcription each page of a PDF is read against, on rows,
+# transcriptions and pages written in the test, so no reader model and no real page.  The tool
+# imports the reader, the preprocessor and the PDF provider, hence the CV, image and PDF deps.
+app_test(
+    "tools/test_page_lines.py",
+    deps = _TOOL_DEPS + _CV_DEPS + _IMAGE_DEPS + _PDF_DEPS + ["//tools/dev:page_lines"],
+)
+
+# The developer tool that writes the line measure's references from a Chandra OCR run: how a
+# block's lines are read and where a transcription is put, on output and pages written in the
+# test, so no model and no Chandra.  The tool imports the line measure, hence its deps.
+app_test(
+    "tools/test_chandra_gt.py",
+    deps = _TOOL_DEPS + _CV_DEPS + _IMAGE_DEPS + _PDF_DEPS + ["//tools/dev:chandra_gt"],
+)
+
 # One spelling per fact: the text id, the shared words (``ollama``, ``errors``, ``correct``) and the
 # host of a run each live once, in ``core``.  The search reads the syntax tree, so a docstring that
 # explains a rule is not a second copy of it.
@@ -1644,8 +1680,10 @@ app_test(
         "//tools:report",
         "//tools:store",
         "//tools:verify_model_catalog",
+        "//tools/dev:chandra_gt",
         "//tools/dev:compare_mistral_regions",
         "//tools/dev:ocr_page_tokens",
+        "//tools/dev:page_lines",
         "//tools/evaluation:gpu_agent",
     ],
 )
@@ -1725,7 +1763,7 @@ app_test(
 
 app_test(
     "unit/test_file_processor.py",
-    deps = _REQUESTS_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
+    deps = _REQUESTS_DEPS + _FORMAT_DEPS + _ALIGN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 app_test(
@@ -1739,8 +1777,14 @@ app_test(
 )
 
 app_test(
+    "unit/test_scan_places.py",
+    deps = _ALIGN_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+app_test(
     "unit/test_ocr_stage_service.py",
-    deps = _INFRASTRUCTURE_LIB,
+    extra_srcs = ["fakes/fake_reader.py"],
+    deps = _ALIGN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 app_test(
@@ -1755,7 +1799,7 @@ app_test(
 
 app_test(
     "unit/test_coordinator.py",
-    deps = _FORMAT_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
+    deps = _FORMAT_DEPS + _REQUESTS_DEPS + _ALIGN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 # A GUI test builds real widgets and a real window, and a loaded runner runs a dozen of them at
@@ -1969,6 +2013,12 @@ app_test(
 )
 
 app_test(
+    "gui/test_gui_scan_link.py",
+    size = "medium",
+    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+app_test(
     "gui/test_gui_side_panel.py",
     size = "medium",
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
@@ -2147,6 +2197,7 @@ app_test(
     "integration/test_pipeline_teacher_work.py",
     data = _READER_MODEL_DATA,
     env = _READER_MODEL_ENV,
+    extra_srcs = ["fakes/fake_reader.py"],
     deps = _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 

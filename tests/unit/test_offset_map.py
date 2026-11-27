@@ -120,3 +120,27 @@ def test_positions_between_many_runs_add_up_the_runs_before_them() -> None:
 
     assert [offsets.start(at) for at in (0, 4, 9, 12, 19, 22, 30)] == [0, 5, 10, 15, 22, 26, 34]
     assert [offsets.end(at) for at in (0, 4, 10, 12, 20, 22, 30)] == [0, 5, 11, 15, 23, 26, 34]
+
+
+def test_a_position_in_the_new_text_goes_back_to_where_its_run_began() -> None:
+    """
+    Given  a text whose run 5..10 grew to 5..13
+    When   positions of the new text are carried back
+    Then   the one inside the replacement is the run's start, the ones outside keep their shift
+    """
+    offsets = _map((5, 10, 5, 13))
+
+    assert [offsets.back(at) for at in (2, 7, 13, 16)] == [2, 5, 10, 13]
+
+
+def test_carrying_a_position_over_and_back_gives_it_again() -> None:
+    """
+    Given  a text with three replaced runs
+    When   every second position of it is carried over and back
+    Then   it stands where it stood, except where a replacement took its place
+    """
+    offsets = _map((2, 4, 2, 5), (10, 12, 11, 15), (20, 22, 23, 26))
+
+    outside = [at for at in range(0, 40) if not any(run[0] <= at < run[1] for run in offsets.runs)]
+
+    assert all(offsets.back(offsets.start(at)) == at for at in outside)

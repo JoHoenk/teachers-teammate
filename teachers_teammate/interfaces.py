@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal, NamedTuple, Protocol, runti
 from .domain.evaluation import EvaluationOutcome
 from .domain.formatted_text import FormattedDocument, TextFormat
 from .domain.ollama_discovery import WaitDetail
+from .domain.page_layout import PageReading
 from .domain.proofreading.result import CorrectionOutcome
 from .domain.proofreading.review import CorrectionReview
 from .domain.providers import ProviderInfo
@@ -169,6 +170,24 @@ class OCRProcessor(ABC):
         Raises:
             :exc:`~teachers_teammate.exceptions.OCRError`: on failure.
         """
+
+    def read_page(self, image_path: Path, language: str = "English") -> PageReading:
+        """Read *image_path* and return its text with the lines it stands on.
+
+        An engine that knows where a line sits on the page overrides this.  The default returns
+        the text alone: an Ollama reader and a PDF's text layer have no layout to give.
+
+        Args:
+            image_path: Path to the preprocessed image.
+            language: Natural language of the document text.
+
+        Returns:
+            The page's text and its lines, empty when the engine has no layout.
+
+        Raises:
+            :exc:`~teachers_teammate.exceptions.OCRError`: on failure.
+        """
+        return PageReading(text=self.process_image(image_path, language))
 
 
 class OcrOutputParser(ABC):

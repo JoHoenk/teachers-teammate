@@ -16,6 +16,7 @@ import time
 import numpy as np
 
 from ...domain.local_models import PPOCR_SMALL_DET, PPOCR_SMALL_REC, READER_NOT_DOWNLOADED
+from ...domain.page_layout import Box, PageReading, ReadLine
 from ...exceptions import ModelMissingError, OCRError, RunStoppedError, stop_requested
 from ...interfaces import OCRProcessor
 from ...messages import image_unreadable, message_of, reader_model_mismatch
@@ -59,26 +60,52 @@ class PpOcrProcessor(OCRProcessor):
             RunStoppedError: if "Stop now" was pressed while reading.
             OCRError: if the image cannot be read or the models misbehave.
         """
+        return self.read_page(image_path).text
+
+    def read_page(self, image_path: Path, language: str = "English") -> PageReading:  # noqa: ARG002
+        """Read the page and keep its lines: their text, their boxes and their confidence.
+
+        *language* is not used: one model reads 50 languages.  The corners are fractions of the
+        page's width and height, so a mark drawn over an image of another size still sits on the
+        line.
+
+        Raises:
+            ModelMissingError: if the models are not downloaded.
+            RunStoppedError: if "Stop now" was pressed while reading.
+            OCRError: if the image cannot be read or the models misbehave.
+        """
         detector, recogniser = self._load()
         image = read_image(image_path)
         if image is None:
             raise OCRError(image_unreadable(image_path))
+        height, width = image.shape[:2]
         try:
             started = time.perf_counter()
             boxes = detect(detector, image, self._settings)
             detected = time.perf_counter()
             rows = reading_order(boxes)
-            lines: list[str] = []
+            lines: list[ReadLine] = []
             for row in rows:
                 words: list[str] = []
+                confidences: list[float] = []
+                corners: list[Box] = []
                 for box in row:
                     if stop_requested(self._stop_event):
                         raise RunStoppedError
-                    text, _ = self._read(recogniser, crop_line(image, box))
+                    text, confidence = self._read(recogniser, crop_line(image, box))
                     if text.strip():
                         words.append(text.strip())
+                        confidences.append(confidence)
+                        corners.append(_fractional(box.corners(), width, height))
                 if words:
-                    lines.append(" ".join(words))
+                    lines.append(
+                        ReadLine(
+                            text=" ".join(words),
+                            confidence=min(confidences),
+                            boxes=tuple(corners),
+                            box_texts=tuple(words),
+                        )
+                    )
         except RunStoppedError, OCRError:
             raise
         except Exception as exc:  # cv2.error and shape errors from the models
@@ -91,7 +118,7 @@ class PpOcrProcessor(OCRProcessor):
             detected - started,
             time.perf_counter() - detected,
         )
-        return "\n".join(lines)
+        return PageReading("\n".join(line.text for line in lines), tuple(lines))
 
     def _read(self, recogniser: OnnxNet, line: np.ndarray) -> tuple[str, float]:
         output = recogniser.run(recogniser_input(line))
@@ -115,3 +142,8 @@ class PpOcrProcessor(OCRProcessor):
                 self._detector = self._recogniser = None
                 raise OCRError(reader_model_mismatch(message_of(exc))) from exc
         return self._detector, self._recogniser
+
+
+def _fractional(points: np.ndarray, width: int, height: int) -> Box:
+    """Return *points* (page pixels) as fractions of a *width* x *height* page."""
+    return tuple((float(x) / width, float(y) / height) for x, y in points)

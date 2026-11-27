@@ -66,6 +66,23 @@ def test_ollama_process_image_returns_extracted_text(
     assert result == "extracted text"
 
 
+def test_ollama_read_page_returns_the_text_and_no_lines(
+    mocker,
+    sample_png: Path,
+) -> None:
+    """
+    Given  an Ollama reader, whose reading has no layout
+    When   the page is read with read_page
+    Then   the text comes back and the lines are empty
+    """
+    mocker.patch.object(OllamaClient, "chat", return_value="extracted text")
+
+    reading = _make_ollama_proc().read_page(sample_png, language="English")
+
+    assert reading.text == "extracted text"
+    assert reading.lines == ()
+
+
 def test_ollama_process_image_sends_correct_model(
     mocker,
     sample_png: Path,

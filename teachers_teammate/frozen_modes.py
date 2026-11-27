@@ -63,6 +63,7 @@ _LAZY_MODULES: tuple[str, ...] = (
     "markdown_it",
     "platformdirs",
     "qdarkstyle",
+    "rapidfuzz",
 )
 
 # Image formats the app reads (infrastructure/input_providers.py). A bundle diet that drops
@@ -321,6 +322,16 @@ def _check_reader_runtime() -> str | None:
     return None
 
 
+def _check_scan_places() -> str | None:
+    """Align two short texts by their characters, as the scan's marks are made."""
+    from teachers_teammate.infrastructure.text_alignment import opcodes  # noqa: PLC0415
+
+    found = opcodes("Die Katze", "Die Kotze")
+    if [tag for tag, *_ in found] != ["equal", "replace", "equal"]:
+        return f"the character alignment gave {found}"
+    return None
+
+
 def _check_pdf() -> str | None:
     """Create a PDF page with pypdfium2."""
     import pypdfium2  # noqa: PLC0415
@@ -520,6 +531,7 @@ def _checks() -> list[tuple[str, Check]]:
         ("stylesheet", _check_stylesheet),
         ("setup assistant", _check_setup_assistant),
         ("reader", _check_reader_runtime),
+        ("scan places", _check_scan_places),
         ("pdf", _check_pdf),
         ("docx", _check_docx),
         ("providers", _check_providers),

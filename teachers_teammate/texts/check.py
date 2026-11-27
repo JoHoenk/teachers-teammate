@@ -91,6 +91,12 @@ SCAN_FIT_WIDTH = "Fit width"
 SCAN_FIT_WIDTH_TIP = "Make the page as wide as the pane; scroll down to read it"
 """The scan's zoom buttons and their tooltips; the checked one says which fit is on."""
 
+SCAN_MARK_TIP = (
+    "The shaded place on the page belongs to the sentence the cursor is in; the stronger the "
+    "shade, the harder the line was to read."
+)
+"""What the scan says about the mark of the sentence under the cursor of the text."""
+
 TEXT_ZOOM_IN = "T+"
 TEXT_ZOOM_IN_TIP = "Larger text (Ctrl + mouse wheel)"
 TEXT_ZOOM_OUT = "T\u2212"

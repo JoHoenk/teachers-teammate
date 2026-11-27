@@ -165,6 +165,21 @@ def _placeholder_spans(plain: str, placeholders: Sequence[str]) -> tuple[tuple[i
     return tuple((match.start(), match.end(), match.group(0)) for match in pattern.finditer(plain))
 
 
+def _spread(inserted: Sequence[tuple[int, int, int]]) -> tuple[tuple[int, int, int], ...]:
+    """Return the inserted runs at the positions the document has once all of them are in.
+
+    Each of *inserted* is ``(position, length, corrected_start)`` as the document was before any
+    of them was put in — they go in last hunk first — so every run before one moves it on by its
+    own length.
+    """
+    shift = 0
+    runs: list[tuple[int, int, int]] = []
+    for position, length, corrected_start in sorted(inserted):
+        runs.append((position + shift, position + shift + length, corrected_start))
+        shift += length
+    return tuple(runs)
+
+
 class _ZoomWheel(QObject):
     """Ctrl+wheel on a text view changes its text size instead of scrolling."""
 
@@ -232,6 +247,11 @@ class CheckTextView(FormattedTextEdit):
         """Whether the document reproduces the plain text, so marks can be placed."""
         return self._map is not None
 
+    @property
+    def plain(self) -> str:
+        """The plain text the view shows: what its offsets are in."""
+        return self._plain
+
     def set_editable(self, editable: bool, *, reason: str = "") -> None:
         """Allow or refuse typing in the view; *reason* is what a keystroke is answered with."""
         self.setReadOnly(not editable)
@@ -291,6 +311,15 @@ class CheckTextView(FormattedTextEdit):
         if self._map is None:
             return None
         return self._map.offset(self.textCursor().position())
+
+    def corrected_offset(self) -> int | None:
+        """Return where the cursor stands in the plain text of the corrected text it shows.
+
+        *With corrections* puts the student's words in front of the words that replaced them and
+        says itself where its cursor stands; the other views show the corrected text itself, so
+        their plain offset is the answer.
+        """
+        return self.plain_offset()
 
     def _key_at(self, point: QPoint) -> str:
         """Return the key of the innermost mark at *point*, or ``""``."""
@@ -591,9 +620,14 @@ class MarkedView(CheckTextView):
     inserted in front of the words that replaced them.  Nothing is ever converted back from it.
     """
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._struck: tuple[tuple[int, int, int], ...] = ()
+
     def show_document(self, doc: CheckDocument, masking: Masking, *, chosen: str = "") -> None:
         """Show *doc*: the corrected text, the student's words, and the marks of the review."""
         text = masking.mask(doc.corrected_text)
+        self._struck = ()
         self.set_text(text, doc.text_format)
         self._chosen = chosen
         if self._map is None:
@@ -608,6 +642,25 @@ class MarkedView(CheckTextView):
         self._mark_cursors = cursors
         self._apply_marks()
 
+    def corrected_offset(self) -> int | None:
+        """Return where the cursor stands in the corrected text the view shows.
+
+        A cursor inside the words inserted for the student stands where the words they replaced
+        begin: those are the words the sentence is about.
+        """
+        if self._map is None:
+            return None
+        position = self.textCursor().position()
+        shift = 0
+        for start, end, corrected_start in self._struck:
+            if end <= position:
+                shift += end - start
+                continue
+            if start < position:
+                return corrected_start
+            break
+        return self._map.offset(position - shift)
+
     def _insert_struck_words(self, doc: CheckDocument, masking: Masking) -> None:
         """Put the student's words in front of the words that replaced them, last hunk first."""
         if self._map is None or doc.aligned is None:
@@ -615,6 +668,7 @@ class MarkedView(CheckTextView):
         hunks = sorted(doc.aligned.changes, key=lambda change: change.hunk.corrected_start)
         cursor = QTextCursor(self.document())
         cursor.beginEditBlock()
+        inserted: list[tuple[int, int, int]] = []
         for change in reversed(hunks):
             hunk = change.hunk
             if not hunk.original:
@@ -624,12 +678,12 @@ class MarkedView(CheckTextView):
             )
             position = self._map.insertion(start)
             cursor.setPosition(position)
-            words = masking.mask(hunk.original)
-            cursor.insertText(
-                self._space_before(position) + words + self._space_after(position),
-                _struck_format(),
-            )
+            words = self._space_before(position) + masking.mask(hunk.original)
+            words += self._space_after(position)
+            cursor.insertText(words, _struck_format())
+            inserted.append((position, len(words), start))
         cursor.endEditBlock()
+        self._struck = _spread(inserted)
 
     def _space_before(self, position: int) -> str:
         """One space in front of the student's words unless a separator is already there."""

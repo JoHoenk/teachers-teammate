@@ -249,6 +249,17 @@ bisects.
 - Where a document breaks the invariant, the view shows it without marks and says so — a wrong mark
   is worse than none.
 
+### The scan follows the cursor
+
+`CheckBody` connects `cursorPositionChanged` of the three views and hands the offset of the view in
+front to `gui/check/_scan_link.py`: *What was read* is diffed against the transcription once per
+pair of texts (the string a request is made from included), the corrected views go through
+`Masking.back` and `mark_for_cursor` (`corrected=True`). `MarkedView` records the runs it inserts
+for the student's words, so a cursor inside one stands where the words it replaced begin.
+`ScanView.mark()` draws the polygons in the wash of the mark's shade (`_style.scan_wash`) and
+scrolls only to a new mark, and only when it is out of view; nothing is drawn on *Original*, whose
+geometry is not the one the places were made on.
+
 ### Every action is a text edit in plain offsets
 
 `domain/proofreading/text_edits.py` holds `TextEdit(start, end, text)`; `domain/teacher_work.py`

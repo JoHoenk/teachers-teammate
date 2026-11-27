@@ -11,10 +11,12 @@ from teachers_teammate.application.check_document import (
     PreprocessInfo,
     SentKind,
     check_document_of,
+    mark_for_cursor,
     sent_view_of,
 )
 from teachers_teammate.application.check_items import ItemKind
 from teachers_teammate.domain.data_location import SentRecord, SentStatus
+from teachers_teammate.domain.page_layout import ScanBox, shade
 from teachers_teammate.domain.proofreading.edits import edits
 from teachers_teammate.domain.proofreading.review import CorrectionReview, align, edit_note
 from teachers_teammate.domain.stages import Stage
@@ -419,3 +421,172 @@ def test_the_box_of_what_was_read_follows_one_rule(case: dict) -> None:
 
     assert sent.kind is case["kind"]
     assert sent.text == case.get("text", RAW)
+
+
+# ── Where the scan marks ──────────────────────────────────────────────────────
+
+READ = "Der bunte Hund bellt laut."
+"""The transcription as the recognition read it."""
+FIXED = "Der bunte Hund bellt sehr laut."
+"""The same reading after the teacher inserted a word."""
+
+
+def _corners() -> tuple[tuple[float, float], ...]:
+    """Return the four corners of one line, as fractions of the page."""
+    return ((0.1, 0.1), (0.9, 0.1), (0.9, 0.2), (0.1, 0.2))
+
+
+def _place(start: int, end: int, confidence: float, page: int = 0) -> ScanBox:
+    """Return one placed line of the scan, standing on *start*..*end* of the reading."""
+    return ScanBox(page=page, start=start, end=end, confidence=confidence, boxes=(_corners(),))
+
+
+def _placed(*, raw_text: str, **overrides: object) -> CheckDocument:
+    """Return the Check tab's data for a reading placed in two lines, the second one barely read."""
+    places = (_place(0, 14, 0.9), _place(14, 26, 0.4))
+    return check_document_of(
+        _view(raw_text=raw_text, machine_raw_text=READ, raw_layout=places, **overrides)
+    )
+
+
+def test_the_places_are_the_stored_ones_when_nothing_was_fixed() -> None:
+    """
+    Given  a stored reading with its places, and no fix of it
+    When   the Check tab's data is built
+    Then   the places are the stored ones, unchanged
+    """
+    doc = _placed(raw_text=READ)
+
+    assert [(box.start, box.end) for box in doc.scan_boxes] == [(0, 14), (14, 26)]
+
+
+def test_the_places_move_with_the_teacher_s_fix() -> None:
+    """
+    Given  a stored reading with its places, and a fix that inserted a word before the last line
+    When   the Check tab's data is built
+    Then   the line after the fix moved with it, and the line before it did not
+    """
+    doc = _placed(raw_text=FIXED)
+
+    assert [(box.start, box.end) for box in doc.scan_boxes] == [(0, 14), (14, 31)]
+
+
+def test_without_places_the_scan_marks_nothing() -> None:
+    """
+    Given  a stored document whose reading was never placed
+    When   a mark is asked for the cursor
+    Then   there is none, and the window shows the page
+    """
+    doc = check_document_of(_view(raw_text=READ))
+
+    assert doc.scan_boxes == ()
+    assert mark_for_cursor(doc, 6) is None
+
+
+def test_the_cursor_marks_the_sentence_it_stands_in() -> None:
+    """
+    Given  a document whose two lines are placed, one sure and one barely read
+    When   the mark is asked for an offset inside its one sentence
+    Then   the mark holds the corners of both lines, shaded by how hard they were to read
+    """
+    mark = mark_for_cursor(_placed(raw_text=READ), 6)
+
+    assert mark is not None
+    assert len(mark.polygons) == 2
+    assert mark.confidence == pytest.approx(0.65)
+    assert mark.shade == shade(0.65)
+
+
+def test_a_stretch_no_sentence_closes_is_marked_by_the_line_it_stands_on() -> None:
+    """
+    Given  a transcription ending in a stretch no sentence mark closes, over two lines
+    When   the mark is asked for a cursor inside that stretch
+    Then   only the line the cursor stands on is marked, not the whole stretch
+    """
+    reading = f"{READ} Und noch\netwas dazu"
+    opening = reading.index("Und noch")
+    second = reading.index("etwas")
+    doc = check_document_of(
+        _view(
+            raw_text=reading,
+            machine_raw_text=reading,
+            correction_text=reading,
+            raw_layout=(
+                _place(0, 14, 0.9),
+                _place(14, 26, 0.4),
+                _place(opening, second, 0.5),
+                _place(second, len(reading), 0.2),
+            ),
+        )
+    )
+
+    mark = mark_for_cursor(doc, opening + 2)
+
+    assert mark is not None
+    assert len(mark.polygons) == 1
+    assert mark.confidence == pytest.approx(0.5)
+
+
+def test_the_corrected_cursor_marks_the_sentence_it_came_from() -> None:
+    """
+    Given  a proofreading that changed the words of the transcription's one sentence
+    When   the mark is asked for an offset of the corrected text
+    Then   the sentence of the transcription that change stands in is marked
+    """
+    doc = _placed(raw_text=READ, correction_text="Der braune Hund bellt sehr laut.")
+
+    mark = mark_for_cursor(doc, 6, corrected=True)
+
+    assert mark is not None
+    assert len(mark.polygons) == 2
+    assert mark.confidence == pytest.approx(0.65)
+
+
+def test_the_sentence_is_the_corrected_text_s_where_the_transcription_has_none() -> None:
+    """
+    Given  a transcription without full stops over three lines, and a proofreading that set them
+    When   the mark is asked for a cursor on the last line, in either text
+    Then   the corrected text's second sentence is marked, over the lines it stands on
+    """
+    raw = "der hund bellt die\nkatze mauzt und\ndie maus läuft"
+    fixed = "Der Hund bellt. Die\nKatze mauzt und\ndie Maus läuft."
+    second, third = raw.index("katze"), raw.index("die maus")
+    doc = check_document_of(
+        _view(
+            raw_text=raw,
+            machine_raw_text=raw,
+            correction_text=fixed,
+            raw_layout=(
+                _place(0, second - 1, 0.9),
+                _place(second, third - 1, 0.9),
+                _place(third, len(raw), 0.9),
+            ),
+        )
+    )
+
+    in_raw = mark_for_cursor(doc, raw.index("maus"))
+    in_fixed = mark_for_cursor(doc, fixed.index("Maus"), corrected=True)
+
+    assert in_raw is not None
+    assert in_fixed is not None
+    assert len(in_raw.polygons) == 3
+    assert in_fixed.polygons == in_raw.polygons
+
+
+def test_the_reading_is_rendered_in_its_own_format() -> None:
+    """
+    Given  a reading stored as Markdown, and the teacher's transcription of it stored as plain text
+    When   the Check tab's data is built
+    Then   the places stand where they were made: the reading's plain text is its own
+    """
+    doc = check_document_of(
+        _view(
+            raw_text=READ,
+            raw_text_format="plain",
+            machine_raw_text=f"**Der** {READ[4:]}",
+            machine_raw_text_format="markdown",
+            raw_layout=(_place(0, 14, 0.9), _place(14, 26, 0.4)),
+        )
+    )
+
+    assert [(box.start, box.end) for box in doc.scan_boxes] == [(0, 14), (14, 26)]

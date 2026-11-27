@@ -1387,6 +1387,33 @@ def test_the_keep_awake_flags_reach_the_config(tmp_path: Path, flags, expected) 
     assert captured[0].keep_awake is expected
 
 
+@pytest.mark.use_case("Headless_CLI_Batch")
+@pytest.mark.parametrize(
+    ("flags", "expected"),
+    [([], True), (["--no-scan-marks"], False), (["--no-scan-marks", "--scan-marks"], True)],
+)
+def test_the_scan_marks_flags_reach_the_config(tmp_path: Path, flags, expected) -> None:
+    """
+    Given  no flag, --no-scan-marks, or both flags (the last one wins)
+    When   run_cli() is called
+    Then   the config the run gets keeps the scan's places accordingly (on by default)
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    captured: list = []
+
+    class _FakeAppService(_AppServiceStub):
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
+            captured.append(config)
+            return RunSummary()
+
+    run_cli(
+        argv=["-i", str(tmp_path), "--no-docx", *flags], app_service=services_of(_FakeAppService())
+    )
+
+    assert captured[0].scan_marks is expected
+
+
 @pytest.mark.use_case("Runtime_Addon_Installation")
 def test_main_injects_the_add_on_folder_before_it_runs(monkeypatch) -> None:
     """

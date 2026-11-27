@@ -78,6 +78,28 @@ CHIP_BACKGROUND = "#34393e"
 CHIP_TEXT = "#d3d8dc"
 """A badge in the list and a chip in the card: neutral grey, whatever the category says."""
 
+#: The wash the scan draws over a marked sentence, one per band: the surest read first.  The
+#: page shows through it, so the words stay readable while the shade says how hard they were.
+SCAN_WASHES: tuple[tuple[str, int], ...] = (
+    ("#8bc34a", 34),
+    ("#ffc107", 58),
+    ("#ff9800", 86),
+    ("#f44336", 120),
+)
+
+
+def scan_wash(shade: int) -> QColor:
+    """Return the colour the scan draws a marked sentence in for *shade*.
+
+    *shade* is the band of the lines' mean confidence, 0 for the surest read: it steps through
+    :data:`SCAN_WASHES`, and anything wider than the steps is drawn in the last one.
+    """
+    colour, alpha = SCAN_WASHES[min(max(shade, 0), len(SCAN_WASHES) - 1)]
+    wash = QColor(colour)
+    wash.setAlpha(alpha)
+    return wash
+
+
 #: The bullet in front of a row the teacher has not looked at yet.
 TODO_DOT = "\u2022"
 

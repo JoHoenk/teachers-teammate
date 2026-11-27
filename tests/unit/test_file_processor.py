@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass, field
 import json
+import logging
 import threading
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from teachers_teammate.domain.proofreading.edits import EditPart, edits
 from teachers_teammate.domain.evaluation import EvaluationOutcome
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote, edit_note
+from teachers_teammate.domain.page_layout import LAYOUT_VERSION, PageReading, ReadLine
 from teachers_teammate.domain.performance_estimate import SpeedStep
 from teachers_teammate.domain.teacher_work import text_identity
 from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
@@ -31,8 +33,10 @@ from teachers_teammate.infrastructure.speed_store import RunSample, SampleKey
 from teachers_teammate.domain.document_state import DocumentState
 from teachers_teammate.infrastructure.workflow.cache_service import CacheContext
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
+from teachers_teammate.infrastructure.workflow.scan_places import ScanPlaces
 from teachers_teammate.exceptions import (
     FILE_GONE_MESSAGE,
+    OCRError,
     RunStoppedError,
     StageError,
     StageErrorKind,
@@ -42,6 +46,7 @@ from teachers_teammate.infrastructure.workflow.file_processor import (
     FileProcessorDeps,
 )
 from teachers_teammate.interfaces import Corrector
+from teachers_teammate.texts import report as report_text
 from teachers_teammate.texts.review import REVIEW_DOES_NOT_FIT, REVIEW_UNMATCHED
 from teachers_teammate.infrastructure.proofreading.port import PortAnswer, StepRequest
 from tests.fakes.fake_port import FakePort, answer
@@ -64,6 +69,7 @@ class _StubReturns:
         tuple[list[Path], list[str], Path | None, str | None] | PreparedInput | None
     ) = None
     ocr_return: list[str] = field(default_factory=lambda: ["extracted text"])
+    ocr_lines: tuple[ReadLine, ...] = ()
 
 
 def _make_state(
@@ -105,12 +111,16 @@ def _make_ctx(state: DocumentState) -> CacheContext:
 
 
 def _record_ocr(_file: Path, ctx: CacheContext, **kwargs: Any) -> CacheContext:
+    layout = kwargs.get("layout", ())
     return _make_ctx(
         dataclasses.replace(
             ctx.state,
             ocr_done=True,
             raw_text=kwargs["raw_text"],
             raw_text_format=kwargs.get("raw_text_format", "plain"),
+            raw_layout=[box.to_dict() for box in layout],
+            layout_version=LAYOUT_VERSION if layout else 0,
+            layout_source=text_identity(kwargs["raw_text"]) if layout else "",
         )
     )
 
@@ -193,7 +203,9 @@ def _make_processor(
         )
     preprocess_service.preprocess_input.return_value = prepared
 
-    ocr_stage_service.run_pages.return_value = returns.ocr_return
+    ocr_stage_service.read_pages.return_value = [
+        PageReading(text=text, lines=returns.ocr_lines) for text in returns.ocr_return
+    ]
 
     cfg = FileProcessorDeps(
         output_dir=tmp_path / "output",
@@ -264,7 +276,7 @@ def test_cache_hit_skips_ocr_and_returns_cached_text(tmp_path: Path) -> None:
     assert result.ok is True
     assert result.raw_text == "cached text"
     preprocess_svc.preprocess_input.assert_not_called()
-    ocr_svc.run_pages.assert_not_called()
+    ocr_svc.read_pages.assert_not_called()
 
 
 def test_cache_hit_invokes_on_ocr_done_callback(tmp_path: Path) -> None:
@@ -409,7 +421,7 @@ def test_stop_event_before_ocr_returns_stopped(tmp_path: Path) -> None:
     assert result.raw_text == ""
     assert result.correction_text == ""
     assert result.evaluation_text == ""
-    ocr_svc.run_pages.assert_not_called()
+    ocr_svc.read_pages.assert_not_called()
 
 
 def test_stop_during_ocr_request_returns_stopped(tmp_path: Path) -> None:
@@ -419,7 +431,7 @@ def test_stop_during_ocr_request_returns_stopped(tmp_path: Path) -> None:
     Then   the file is stopped before recognition, with the preview kept, and nothing is stored
     """
     fp, cache_svc, _, ocr_svc = _make_processor(tmp_path)
-    ocr_svc.run_pages.side_effect = RunStoppedError
+    ocr_svc.read_pages.side_effect = RunStoppedError
 
     result = fp.process(tmp_path / "doc.png")
 
@@ -626,11 +638,11 @@ def test_a_stop_before_proofreading_does_not_wait_for_the_anonymizer(tmp_path: P
         tmp_path, stop_event=stop, corrector=corrector, anonymizer=anonymizer
     )
 
-    def read(*_args: object, **_kwargs: object) -> list[str]:
+    def read(*_args: object, **_kwargs: object) -> list[PageReading]:
         stop.set()
-        return ["extracted text"]
+        return [PageReading(text="extracted text")]
 
-    ocr.run_pages.side_effect = read
+    ocr.read_pages.side_effect = read
 
     result = fp.process(tmp_path / "doc.png")
 
@@ -676,7 +688,7 @@ def test_the_anonymizer_pre_pass_is_skipped_when_stopping(tmp_path: Path) -> Non
     stop = threading.Event()
     anonymizer = MagicMock()
     fp, _, _, ocr = _make_processor(tmp_path, stop_event=stop, anonymizer=anonymizer)
-    ocr.run_pages.side_effect = lambda *_a, **_k: (stop.set(), ["text"])[1]
+    ocr.read_pages.side_effect = lambda *_a, **_k: (stop.set(), [PageReading(text="text")])[1]
 
     fp.process(tmp_path / "doc.png")
 
@@ -691,7 +703,7 @@ def test_text_input_skips_ocr_stage(tmp_path: Path) -> None:
     """
     Given  preprocess_service returns a raw_text_hint (text input, not image)
     When   process() is called
-    Then   ocr_stage_service.run_pages is NOT called and the hint text is used
+    Then   ocr_stage_service.read_pages is NOT called and the hint text is used
     """
     file = tmp_path / "doc.txt"
     preprocess_return = ([], [], None, "plain text content")
@@ -703,7 +715,7 @@ def test_text_input_skips_ocr_stage(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert result.raw_text == "plain text content"
-    ocr_svc.run_pages.assert_not_called()
+    ocr_svc.read_pages.assert_not_called()
 
 
 @pytest.mark.use_case("Batch_OCR_Processing")
@@ -725,7 +737,7 @@ def test_pdf_text_layer_skips_ocr_and_reports_embedded_text(tmp_path: Path) -> N
 
     assert result.ok is True
     assert result.raw_text == "typed worksheet text"
-    ocr_svc.run_pages.assert_not_called()
+    ocr_svc.read_pages.assert_not_called()
     assert "→ Embedded PDF text used (OCR skipped)" in reporter.lines
 
 
@@ -754,7 +766,7 @@ def test_pdf_text_layer_fallback_reports_reason_before_ocr(tmp_path: Path) -> No
     result = fp.process(tmp_path / "doc.pdf")
 
     assert result.ok is True
-    ocr_svc.run_pages.assert_called_once()
+    ocr_svc.read_pages.assert_called_once()
     assert "→ PDF page 2: contains images (scanned or pasted) — using OCR" in reporter.lines
 
 
@@ -798,13 +810,13 @@ def test_fresh_ocr_multi_page_joins_with_prefix(tmp_path: Path) -> None:
 
 def test_fresh_ocr_error_returns_false(tmp_path: Path) -> None:
     """
-    Given  ocr_stage_service.run_pages raises the failure of the reading stage
+    Given  ocr_stage_service.read_pages raises the failure of the reading stage
     When   process() is called
     Then   the file fails with that sentence and carries no texts
     """
     file = tmp_path / "doc.png"
     fp, _, _, ocr_svc = _make_processor(tmp_path)
-    ocr_svc.run_pages.side_effect = StageError(
+    ocr_svc.read_pages.side_effect = StageError(
         "OCR model timed out", kind=StageErrorKind.ENGINE, stage="ocr"
     )
 
@@ -817,7 +829,7 @@ def test_fresh_ocr_error_returns_false(tmp_path: Path) -> None:
 
 def test_empty_ocr_response_returns_false(tmp_path: Path) -> None:
     """
-    Given  ocr_stage_service.run_pages returns a list with an empty string
+    Given  ocr_stage_service.read_pages returns a list with an empty string
     When   process() is called
     Then   result is (False, 'Empty response from OCR model.', ...)
     """
@@ -1446,7 +1458,7 @@ def test_no_doc_creator_returns_results_cached_message(tmp_path: Path) -> None:
     )
 
     ocr_svc = MagicMock()
-    ocr_svc.run_pages.return_value = ["text"]
+    ocr_svc.read_pages.return_value = [PageReading(text="text")]
 
     (tmp_path / "output").mkdir(parents=True, exist_ok=True)
     cfg = FileProcessorDeps(
@@ -1865,15 +1877,15 @@ def test_process_multi_page_passes_page_progress_callback(tmp_path: Path) -> Non
         tmp_path, returns=_image_returns(tmp_path, ["grayscale"], pages=2), reporter=reporter
     )
 
-    def _run_pages(inputs, _language, on_page=None, on_page_done=None):
+    def _read_pages(inputs, _language, on_page=None, on_page_done=None):
         for i in range(len(inputs)):
             if on_page is not None:
                 on_page(i + 1, len(inputs))
             if on_page_done is not None:
                 on_page_done("page text")
-        return ["a", "b"]
+        return [PageReading(text="a"), PageReading(text="b")]
 
-    ocr_svc.run_pages.side_effect = _run_pages
+    ocr_svc.read_pages.side_effect = _read_pages
 
     fp.process(tmp_path / "doc.pdf")
 
@@ -1893,15 +1905,15 @@ def test_process_single_page_logs_no_page_number(tmp_path: Path) -> None:
         tmp_path, returns=_image_returns(tmp_path, ["grayscale"]), reporter=reporter
     )
 
-    def _run_pages(inputs, _language, on_page=None, on_page_done=None):
+    def _read_pages(inputs, _language, on_page=None, on_page_done=None):
         for i in range(len(inputs)):
             if on_page is not None:
                 on_page(i + 1, len(inputs))
             if on_page_done is not None:
                 on_page_done("page text")
-        return ["a"]
+        return [PageReading(text="a")]
 
-    ocr_svc.run_pages.side_effect = _run_pages
+    ocr_svc.read_pages.side_effect = _read_pages
 
     fp.process(tmp_path / "doc.png")
 
@@ -2472,7 +2484,7 @@ def test_scan_is_skipped_when_recognition_is_off(tmp_path: Path) -> None:
     assert not result.ok
     assert "switched off" in result.message
     preprocess_svc.preprocess_input.assert_called_once_with(file, allow_images=False)
-    ocr_svc.run_pages.assert_not_called()
+    ocr_svc.read_pages.assert_not_called()
     cache_svc.record_ocr.assert_not_called()
 
 
@@ -2814,3 +2826,276 @@ def test_personal_data_left_hidden_becomes_a_warning() -> None:
 
     assert "[PERSON_1]" in FileProcessor._left_hidden("Hallo [PERSON_1].", mapping)
     assert FileProcessor._left_hidden("Hallo Anna.", mapping) == ""
+
+
+# ── The places of the scan ─────────────────────────────────────────────────
+
+
+def _lines(text: str, *, confidence: float = 0.9) -> tuple[ReadLine, ...]:
+    """Return one read line, standing on a box in the top left of the page."""
+    box = ((0.1, 0.1), (0.9, 0.1), (0.9, 0.2), (0.1, 0.2))
+    return (ReadLine(text=text, confidence=confidence, boxes=(box,)),)
+
+
+def _reader_with_lines(*texts: str) -> MagicMock:
+    """Return a built-in reader that gives each of *texts* as one page of one line."""
+    reader = MagicMock()
+    reader.read_page.side_effect = [PageReading(text=text, lines=_lines(text)) for text in texts]
+    return reader
+
+
+def _places_stored(cache_svc: MagicMock) -> tuple[Any, ...]:
+    """Return the places the file processor asked the cache to keep with the reading."""
+    return cache_svc.record_ocr.call_args.kwargs["layout"]
+
+
+def _alongside_threads() -> list[threading.Thread]:
+    """Return the threads that read pages alongside and are still running."""
+    return [thread for thread in threading.enumerate() if thread.name == "scan-places"]
+
+
+def test_the_reader_lines_are_placed_in_the_text_that_was_read(tmp_path: Path) -> None:
+    """
+    Given  the built-in reader, which gives the lines of the page with their boxes
+    When   process() reads the file
+    Then   the places it stores with the reading are those lines' ranges in that text
+    """
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=["extracted text"], ocr_lines=_lines("extracted text")),
+        scan_places=ScanPlaces(None),
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    (place,) = _places_stored(cache_svc)
+    assert (place.page, place.start, place.end) == (0, 0, len("extracted text"))
+    assert place.confidence == 0.9
+
+
+def test_places_switched_off_are_not_made(tmp_path: Path) -> None:
+    """
+    Given  the built-in reader's lines, and a run that keeps no places (``scan_marks`` off)
+    When   process() reads the file
+    Then   the reading is stored without places
+    """
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=["extracted text"], ocr_lines=_lines("extracted text")),
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    assert _places_stored(cache_svc) == ()
+
+
+def test_a_reader_without_lines_and_no_reader_alongside_keeps_no_places(tmp_path: Path) -> None:
+    """
+    Given  an Ollama reader, whose readings carry no lines, and no built-in reader beside it
+    When   process() reads the file
+    Then   the reading keeps no places, and the file is read as before
+    """
+    fp, cache_svc, _, _ = _make_processor(tmp_path, scan_places=ScanPlaces(None))
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    assert _places_stored(cache_svc) == ()
+
+
+def test_the_built_in_reader_reads_each_page_alongside_an_ollama_reader(tmp_path: Path) -> None:
+    """
+    Given  an Ollama reader of two pages, and the built-in reader beside it
+    When   process() reads the file
+    Then   each page is read a second time by the built-in reader, and each line keeps its page
+    """
+    pages = [tmp_path / "p1.png", tmp_path / "p2.png"]
+    texts = ["Die Katze sitzt.", "Der Hund bellt."]
+    reader = _reader_with_lines(*texts)
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=texts, preprocess_return=(pages, [], pages[0], None)),
+        scan_places=ScanPlaces(reader),
+    )
+
+    result = fp.process(tmp_path / "doc.pdf")
+
+    assert result.ok is True
+    raw = cache_svc.record_ocr.call_args.kwargs["raw_text"]
+    placed = _places_stored(cache_svc)
+    assert [place.page for place in placed] == [0, 1]
+    assert [raw[place.start : place.end] for place in placed] == texts
+    assert [c.args[0] for c in reader.read_page.call_args_list] == pages
+    assert _alongside_threads() == []
+
+
+def test_the_run_says_it_waits_for_the_reading_alongside(tmp_path: Path) -> None:
+    """
+    Given  an Ollama reader that is done while the built-in reader beside it is still on its page
+    When   process() reads the file
+    Then   the run says it is finding the lines before it waits, and keeps the places
+    """
+    said = threading.Event()
+
+    class _Reporter(_ListReporter):
+        def status(self, line: str) -> None:
+            super().status(line)
+            if line == report_text.PLACING_LINES:
+                said.set()
+
+    def _read(*_args: object, **_kwargs: object) -> PageReading:
+        said.wait(5)
+        return PageReading(text="Die Katze sitzt.", lines=_lines("Die Katze sitzt."))
+
+    reader = MagicMock()
+    reader.read_page.side_effect = _read
+    reporter = _Reporter()
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=["Die Katze sitzt."]),
+        scan_places=ScanPlaces(reader),
+        reporter=reporter,
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    assert report_text.PLACING_LINES.strip() in reporter.lines
+    assert len(_places_stored(cache_svc)) == 1
+
+
+def test_a_page_the_built_in_reader_cannot_read_costs_only_the_places(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    Given  an Ollama reader and a built-in reader that fails on the page
+    When   process() reads the file
+    Then   the file is stored as read, with no places, and the log line says why
+    """
+    reader = MagicMock()
+    reader.read_page.side_effect = OCRError("model crashed")
+    fp, cache_svc, _, _ = _make_processor(tmp_path, scan_places=ScanPlaces(reader))
+
+    with caplog.at_level(logging.WARNING):
+        result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    assert _places_stored(cache_svc) == ()
+    assert "A page read for the places failed" in caplog.text
+
+
+def test_a_failure_of_the_placing_costs_only_the_places(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  lines that cannot be placed, because the placing itself fails
+    When   process() reads the file
+    Then   the reading is stored all the same, without places, and the log says so
+    """
+    monkeypatch.setattr(
+        "teachers_teammate.infrastructure.workflow.scan_places.places",
+        MagicMock(side_effect=ValueError("broken")),
+    )
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=["extracted text"], ocr_lines=_lines("extracted text")),
+        scan_places=ScanPlaces(None),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    assert cache_svc.record_ocr.call_args.kwargs["raw_text"] == "extracted text"
+    assert _places_stored(cache_svc) == ()
+    assert "The places of doc.png stay away" in caplog.text
+
+
+def test_a_stop_while_the_built_in_reader_reads_keeps_the_reading(tmp_path: Path) -> None:
+    """
+    Given  an Ollama reader, the built-in reader beside it, and "Stop now" pressed during its read
+    When   process() reads the file
+    Then   the reading the Ollama reader gave is stored, without places
+    """
+    stop = threading.Event()
+
+    def _stopped(*_args: Any, **_kwargs: Any) -> PageReading:
+        stop.set()
+        raise RunStoppedError
+
+    reader = MagicMock()
+    reader.read_page.side_effect = _stopped
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path, stop_event=stop, scan_places=ScanPlaces(reader, stop)
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    assert cache_svc.record_ocr.call_args.kwargs["raw_text"] == "extracted text"
+    assert _places_stored(cache_svc) == ()
+
+
+def test_a_failed_reading_lets_the_reading_alongside_go(tmp_path: Path) -> None:
+    """
+    Given  an Ollama reader that fails, and the built-in reader reading alongside
+    When   process() reads the file
+    Then   the file fails on the Ollama reader's error, and no reading alongside is left running
+    """
+    reader = _reader_with_lines("extracted text")
+    fp, cache_svc, _, ocr_svc = _make_processor(tmp_path, scan_places=ScanPlaces(reader))
+    ocr_svc.read_pages.side_effect = StageError(
+        "the server went away", kind=StageErrorKind.ENGINE, stage="ocr"
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is False
+    cache_svc.record_ocr.assert_not_called()
+    assert _alongside_threads() == []
+
+
+def test_a_stored_reading_without_places_is_not_read_for_them(tmp_path: Path) -> None:
+    """
+    Given  a reading stored without places, and its pages still on disk
+    When   process() finds the reading in the cache
+    Then   nothing is read: the places come only with a new reading
+    """
+    state = _make_state(
+        ocr_done=True, raw_text="extracted text", preview_img=str(tmp_path / "p.png")
+    )
+    reader = _reader_with_lines("extracted text")
+    fp, cache_svc, _, ocr_svc = _make_processor(
+        tmp_path, returns=_StubReturns(cache_ctx=_make_ctx(state)), scan_places=ScanPlaces(reader)
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    ocr_svc.read_pages.assert_not_called()
+    reader.read_page.assert_not_called()
+    cache_svc.record_ocr.assert_not_called()
+
+
+def test_a_text_that_was_not_read_keeps_no_places(tmp_path: Path) -> None:
+    """
+    Given  a PDF with page images that brings its own text layer, and the built-in reader beside
+           the run (the teacher's transcription takes the same way, as the text it brings)
+    When   process() is called
+    Then   nothing is read for places: no page of it was read by an engine
+    """
+    page = tmp_path / "p.png"
+    prepared = PreparedInput([page], [()], page, "plain text content", "pdf_text_layer")
+    reader = _reader_with_lines("plain text content")
+    fp, cache_svc, _, ocr_svc = _make_processor(
+        tmp_path,
+        returns=_StubReturns(preprocess_return=prepared),
+        scan_places=ScanPlaces(reader),
+    )
+
+    result = fp.process(tmp_path / "doc.pdf")
+
+    assert result.ok is True
+    ocr_svc.read_pages.assert_not_called()
+    reader.read_page.assert_not_called()
+    assert _places_stored(cache_svc) == ()

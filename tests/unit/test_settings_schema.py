@@ -49,6 +49,7 @@ _SAMPLES: dict[str, object] = {
     "ollama_url": "http://box:11434",
     "ocr_timeout": 60,
     "recognition_enabled": False,
+    "scan_marks": False,
     "keep_awake": False,
     "check_for_updates": False,
     "results_keep_days": 30,

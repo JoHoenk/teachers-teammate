@@ -31,7 +31,9 @@ from ..domain.document_state import (
     reset_fields,
 )
 from ..domain.freshness import should_invalidate_preview_artifact
+from ..domain.page_layout import LAYOUT_VERSION, ScanBox
 from ..domain.stages import Stage, normalize_stage
+from ..domain.teacher_work import text_identity
 from .storage_root import document_identity, document_stem
 
 _logger = logging.getLogger(__name__)
@@ -90,6 +92,13 @@ class OcrResultRecord:
     ocr_config_hash: str
     preview_config_hash: str
     raw_text_format: str = "plain"
+    layout: tuple[ScanBox, ...] = ()
+    """Where the lines of the reading stand in it; empty when none could be placed."""
+
+
+def _layout_rows(layout: Sequence[ScanBox]) -> list[dict]:
+    """Return *layout* as the cache stores it."""
+    return [box.to_dict() for box in layout]
 
 
 def _inconsistent(state: DocumentState) -> bool:
@@ -297,6 +306,9 @@ class StateRepository:
             source_image=record.source_image,
             raw_text=record.raw_text,
             raw_text_format=record.raw_text_format,
+            raw_layout=_layout_rows(record.layout),
+            layout_version=LAYOUT_VERSION if record.layout else 0,
+            layout_source=text_identity(record.raw_text) if record.layout else "",
             ocr_done=bool(record.raw_text),
             ocr_config_hash=record.ocr_config_hash,
             preview_config_hash=record.preview_config_hash,

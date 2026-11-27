@@ -277,6 +277,44 @@ def test_check_document_answers_for_a_stored_document_and_none_without_one(
     assert svc.documents.check_document(cfg, tmp_path / "other.txt") is None
 
 
+@pytest.mark.parametrize(("scan_marks", "served"), [(True, 1), (False, 0)])
+def test_check_document_serves_the_places_only_with_scan_marks_on(
+    tmp_path: Path, scan_marks: bool, served: int
+) -> None:
+    """
+    Given  a stored reading with the place of its one line
+    When   check_document() is asked with the scan's marks switched on or off
+    Then   the places are served when they are on, and none when they are off
+    """
+    from teachers_teammate.domain.page_layout import ScanBox  # noqa: PLC0415
+
+    source = tmp_path / "note.png"
+    source.write_text("not an image")
+    cfg = make_config(tmp_path, scan_marks=scan_marks)
+    repo = StateRepository(tmp_path / "state")
+    recon = CacheReconciliationService(
+        facts=make_key_facts(),
+        state_repo=repo,
+        artifact_store=PreviewImageStore(tmp_path / "art"),
+        config=cfg,
+    )
+    place = ScanBox(page=0, start=0, end=5, confidence=0.9, boxes=())
+    recon.record_ocr(
+        source,
+        recon.prepare(source),
+        raw_text="hello",
+        preview_img="",
+        source_image="",
+        layout=(place,),
+    )
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    doc = svc.documents.check_document(cfg, source)
+
+    assert doc is not None
+    assert len(doc.scan_boxes) == served
+
+
 # ── _invalidate_from_stage ValueError ────────────────────────────────────
 
 

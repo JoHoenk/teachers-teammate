@@ -15,7 +15,9 @@ from teachers_teammate.domain.data_location import SentRecord
 from teachers_teammate.application.document_view import to_view
 from teachers_teammate.domain.freshness import StageHashes, first_stale_stage_for_hashes
 from teachers_teammate.domain.stages import STAGE_ORDER, Stage
-from teachers_teammate.domain.document_state import DocumentState
+from teachers_teammate.domain.document_state import DocumentState, stored_layout
+from teachers_teammate.domain.page_layout import LAYOUT_VERSION, ScanBox
+from teachers_teammate.domain.teacher_work import text_identity
 from teachers_teammate.domain.freshness import compute_config_hash
 from teachers_teammate.infrastructure.state_repository import (
     OcrResultRecord,
@@ -1395,8 +1397,8 @@ def test_resetting_from_ocr_clears_the_originals(tmp_path: Path) -> None:
 # ── Text notation (raw_text_format) ───────────────────────────────────────
 
 
-def _ocr_record(source_hash: str, **overrides: str) -> OcrResultRecord:
-    fields = {
+def _ocr_record(source_hash: str, **overrides: object) -> OcrResultRecord:
+    fields: dict[str, object] = {
         "source_hash": source_hash,
         "raw_text": "**x**",
         "preview_img": "",
@@ -1405,7 +1407,7 @@ def _ocr_record(source_hash: str, **overrides: str) -> OcrResultRecord:
         "preview_config_hash": "",
     }
     fields.update(overrides)
-    return OcrResultRecord(**fields)
+    return OcrResultRecord(**fields)  # ty: ignore[invalid-argument-type]
 
 
 def _write_legacy_state(repo: StateRepository, src: Path, raw_text: str) -> None:
@@ -1964,3 +1966,95 @@ def test_reconcile_clears_the_stale_stage_and_the_later_ones(tmp_path: Path, sta
     for later in STAGE_ORDER[STAGE_ORDER.index(stage) :]:
         for name in _stage_fields(later):
             assert getattr(reconciled, name) == getattr(blank, name), name
+
+
+# ── The places of the scan (raw_layout) ────────────────────────────────────
+
+
+def _place(start: int = 0, end: int = 3) -> ScanBox:
+    """Return one line of a page, placed in a text and standing on a box."""
+    box = ((0.1, 0.1), (0.9, 0.1), (0.9, 0.2), (0.1, 0.2))
+    return ScanBox(page=0, start=start, end=end, confidence=0.9, boxes=(box,))
+
+
+def _read_with_places(repo: StateRepository, src: Path, text: str, layout: tuple[ScanBox, ...]):
+    """Record *text* read from one page, with *layout* as the places of its lines."""
+    state = repo.create(src, compute_file_hash(src))
+    return repo.record_ocr_result(
+        src,
+        state,
+        _ocr_record(compute_file_hash(src), raw_text=text, layout=layout),
+    )
+
+
+def test_record_ocr_result_persists_the_places_of_the_reading(tmp_path: Path) -> None:
+    """
+    Given  an OCR record that holds where the page's lines stand in the text
+    When   record_ocr_result() is called and the state reloaded
+    Then   the places come back with the box, the confidence and the text they were made from
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+
+    _read_with_places(repo, src, "abc", (_place(),))
+
+    loaded = repo.load_valid(src)
+    assert loaded is not None
+    (place,) = stored_layout(loaded)
+    assert (place.page, place.start, place.end) == (0, 0, 3)
+    assert place.confidence == 0.9
+    assert place.boxes == _place().boxes
+    assert loaded.layout_version == LAYOUT_VERSION
+    assert loaded.layout_source == text_identity("abc")
+
+
+def test_a_layout_of_another_text_is_not_served(tmp_path: Path) -> None:
+    """
+    Given  a reading whose places were made from a text the document no longer has
+    When   the state is reloaded
+    Then   the reading is kept, and no places are served: they come with the next reading
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = _read_with_places(repo, src, "abc", (_place(),))
+
+    repo.save(src, dataclasses.replace(state, raw_text="abc def"))
+
+    loaded = repo.load_valid(src)
+    assert loaded is not None
+    assert loaded.raw_text == "abc def"
+    assert stored_layout(loaded) == ()
+
+
+def test_a_layout_of_another_version_is_not_served(tmp_path: Path) -> None:
+    """
+    Given  a reading whose places were made by a version this build does not know
+    When   the state is reloaded
+    Then   the reading is kept, and no places are served
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = _read_with_places(repo, src, "abc", (_place(),))
+
+    repo.save(src, dataclasses.replace(state, layout_version=LAYOUT_VERSION + 1))
+
+    loaded = repo.load_valid(src)
+    assert loaded is not None
+    assert stored_layout(loaded) == ()
+
+
+def test_an_ocr_reset_drops_the_places(tmp_path: Path) -> None:
+    """
+    Given  a reading with places, and the file to be read again
+    When   the OCR stage is invalidated
+    Then   the places are gone with the reading they were made from
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    _read_with_places(repo, src, "abc", (_place(),))
+
+    cleared = repo.invalidate_from_stage(src, "ocr")
+
+    assert cleared is not None
+    assert cleared.raw_layout == []
+    assert cleared.layout_version == 0

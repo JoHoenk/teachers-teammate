@@ -18,7 +18,9 @@ from pathlib import Path
 
 from ..domain.data_location import SentStatus
 from ..domain.formatted_text import Style, TextFormat, normalize_text_format
+from ..domain.page_layout import Mark, ScanBox, carried, mark_of_line, marks, sentence_at
 from ..domain.proofreading.review import AlignedReview, CorrectionReview, align
+from ..domain.proofreading.word_diff import OffsetMap
 from ..domain.stages import Stage
 from ..domain.teacher_work import WorkStatus, looked_at_progress
 from .check_items import CheckItem, check_items, countable_keys
@@ -92,6 +94,12 @@ class CheckDocument:
     """What the teacher changed and decided about this document."""
     looked_at_progress: tuple[int, int]
     """``(looked at, countable)`` over the items the list counts, the minor group as one."""
+    scan_boxes: tuple[ScanBox, ...] = ()
+    """Where the lines of the scan stand in :attr:`raw_plain`, with their boxes and confidence.
+
+    Empty when the reader gave no layout, its models were not there, or a fix moved the text out
+    from under the places: the scan then marks nothing, and the page says what the text says.
+    """
 
     @property
     def has_proofreading(self) -> bool:
@@ -104,6 +112,10 @@ def check_document_of(view: DocumentStateView) -> CheckDocument:
     text_format = normalize_text_format(view.raw_text_format)
     raw_plain = TextFormatter.plain_text(view.raw_text, text_format)
     corrected_plain = TextFormatter.plain_text(view.correction_text, text_format)
+    reading = TextFormatter.plain_text(
+        view.machine_raw_text or view.raw_text,
+        normalize_text_format(view.machine_raw_text_format or text_format),
+    )
     machine_text = view.machine_correction_text or view.correction_text
     machine_plain = TextFormatter.plain_text(machine_text, text_format)
     review = view.correction_review
@@ -132,7 +144,22 @@ def check_document_of(view: DocumentStateView) -> CheckDocument:
         sent_map=view.sent_map,
         work=view.work,
         looked_at_progress=looked_at_progress(countable_keys(items), view.work.looked_at),
+        scan_boxes=_scan_boxes(view.raw_layout, reading, raw_plain),
     )
+
+
+def _scan_boxes(layout: tuple[ScanBox, ...], reading: str, raw_plain: str) -> tuple[ScanBox, ...]:
+    """Return the places of the scan's lines, carried into *raw_plain* where a fix moved them.
+
+    The places were made against the reading as the reader gave it; the teacher's fix of the
+    transcription moves every character after it.  A box whose range the fix wiped out is
+    dropped: nothing of that line is left to point at.
+    """
+    if not layout or not raw_plain:
+        return ()
+    if reading == raw_plain:
+        return layout
+    return carried(layout, OffsetMap(reading, raw_plain))
 
 
 def _original_pages(view: DocumentStateView, count: int) -> tuple[Path | None, ...]:
@@ -175,6 +202,52 @@ def _align_cached(
 ) -> AlignedReview:
     """Align one pair of texts against one review, once: typing re-aligns on every pause."""
     return align(raw_plain, corrected_plain, review, machine_plain=machine_plain)
+
+
+# ── Where the scan marks ──────────────────────────────────────────────────────
+
+
+def mark_for_cursor(doc: CheckDocument, offset: int, *, corrected: bool = False) -> Mark | None:
+    """Return what the scan draws for the sentence the plain *offset* of *doc* stands in.
+
+    *corrected* says *offset* is one of :attr:`CheckDocument.corrected_plain` — the cursor of
+    *With corrections* and *Final text* — and otherwise one of the transcription.  The sentence
+    is the corrected text's where there is one, whose full stops the proofreading set, carried
+    into the transcription; without one it is the transcription's.  What no sentence closes (a
+    heading, a list item, a date) is marked by its line.  ``None`` when the place is not sure:
+    nothing placed covers the sentence, and the window shows the page instead.
+    """
+    if not doc.scan_boxes:
+        return None
+    raw, fixed = doc.raw_plain, doc.corrected_plain
+    if not fixed.strip() or fixed == raw:
+        return _mark_in(raw, offset, offset, doc.scan_boxes, None)
+    to_raw = _offset_map(fixed, raw)
+    in_fixed = offset if corrected else _offset_map(raw, fixed).forward(offset)
+    in_raw = to_raw.forward(offset) if corrected else offset
+    return _mark_in(fixed, in_fixed, in_raw, doc.scan_boxes, to_raw)
+
+
+def _mark_in(
+    text: str,
+    offset: int,
+    in_raw: int,
+    boxes: tuple[ScanBox, ...],
+    to_raw: OffsetMap | None,
+) -> Mark | None:
+    """Return the mark of the sentence of *text* at *offset*, carried by *to_raw* to the boxes."""
+    sentence = sentence_at(text, offset)
+    if sentence is None or not sentence.closed:
+        return mark_of_line(in_raw, boxes)
+    if to_raw is None:
+        return marks(sentence.start, sentence.end, boxes)
+    return marks(to_raw.forward(sentence.start), to_raw.forward(sentence.end, end=True), boxes)
+
+
+@lru_cache(maxsize=_CACHE_SIZE)
+def _offset_map(text: str, other: str) -> OffsetMap:
+    """Map *text* onto *other*, once per pair: the cursor keeps moving."""
+    return OffsetMap(text, other)
 
 
 # ── What the box of *What was read* holds ─────────────────────────────────────

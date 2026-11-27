@@ -72,7 +72,6 @@ OVERSIZED_FUNCTIONS: dict[str, int] = {
         "teachers_teammate/infrastructure/ollama_utils.py"
         "::_consume_iterator_with_first_token_timeout"
     ): 82,
-    "teachers_teammate/infrastructure/pipeline.py::OCRPipeline._setup_services": 79,
 }
 
 #: The functions still over the branch limit, at the number of branches they have today.

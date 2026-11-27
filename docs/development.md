@@ -777,10 +777,92 @@ character list from `inference.yml` (a base dependency).
 reading order or joining changes what the reader returns; it is part of the cache identity, so
 stored pages are read again.
 
+### The lines of a page
+
+`PpOcrProcessor.read_page` returns a `PageReading` (`domain/page_layout.py`): the text
+`process_image` gives, plus a `ReadLine` per non-empty row — its text, the lowest `ctc_decode`
+confidence of its boxes, and its boxes' corners as fractions of the page's width and height, so
+a mark drawn over a stored image of another size still sits on the line.  `process_image`
+returns `read_page(...).text`.  An engine without a layout of its own — an Ollama reader, a
+PDF's text layer — takes the interface's default and returns the text alone.
+
+**Do the rows line up with the written lines?**  `tools/dev/page_lines.py` measures it:
+
+    bazel run //tools/dev:page_lines -- --pages ~/pages
+
+A folder under `--pages` is a group (`handwritten`, `photographed`, `printed` …); beside every
+page image sits its transcription, one reference line per written line (`s01.png` and
+`s01.gt.txt`).  A PDF is read page by page, each page rendered as a run renders it: a one-page
+PDF takes `s01.gt.txt`, and the pages of a longer one are counted (`scan.pdf` page 2 →
+`scan_p2.gt.txt`).  Each page is read on the automatic preparation (the preset `R`) and the reader's
+words are aligned with the transcription's (`word_diff`).  A row is *lined up* when at least
+90 % of its aligned words come from one reference line and that line sends at least 90 % of its
+own aligned words back to the row; otherwise it is *merged* (one row, two written lines) or
+*split* (one line over two rows), and a row none of whose words matched is *unaligned*.  A row
+*has an error* when any of its words is not read exactly.  The report gives those counts per
+group and, for confidence thresholds 0.50 … 0.95, the share of rows a *Check first* mark would
+show at that threshold, the share of those that hold an error, and the share of error rows it
+would catch.  Numbers only: no page's text is printed.
+
+**Where the references come from.**  They are typed from the page; a Chandra OCR run
+(`datalab-to/chandra`) of the same pages can stand in for the typing:
+
+    bazel run //tools/dev:chandra_gt -- --chandra ~/chandra-out --pages ~/pages
+
+It reads the layout blocks Chandra saved (`<stem>/<stem>_chunks.json`: per page its blocks, their
+labels and their HTML), takes their text in reading order and breaks it where a block breaks a
+line — `<br>`, a paragraph, a list item, a table row — leaving pictures out; a Markdown output is
+the fallback, and only one written with page separators.  It writes the transcription where the
+measure looks for it and keeps one that is already there unless `--overwrite` is given.  Chandra
+joins written lines into paragraphs wherever it can, so a page it read as paragraphs gives a
+reference of paragraphs: that page's rows stay *split* instead of *lined up* and it has to be
+typed by hand.  Such a reference is no truth, only what one other model read.
+
 **Adding an engine** is in {doc}`extension_points` ("New OCR engine").  A settings file that names a
 retired engine (`RETIRED_OCR_ENGINES`: `tesseract`, `paddleocr`) is read as `ppocr` by
 `settings_schema.normalize_ocr_engine`, with a notice that names the engine; an online engine falls
 back to the default.
+
+### Where a sentence stands on the page
+
+The Check tab marks the sentence under the cursor on the scan.  The fuzzy work happens once per
+reading, between two readings of the same page; everything after it is between clean texts:
+
+    boxes ──①── reading (R) ──②── transcription (T) ──③── corrected text (C)
+
+① is `infrastructure/text_alignment.py`: RapidFuzz's character opcodes of the joined pages against
+the plain text of the stored reading, then `domain/page_layout.py:place`, which keeps a line only
+where its stretch of R is at least `PLACE_MIN` similar to what the reader read.  It runs only while
+an engine reads the pages (`infrastructure/workflow/scan_places.py`, built by
+`StageBuilder.build_scan_places`), and the places are stored beside the reading
+(`DocumentState.raw_layout`, `LAYOUT_VERSION`, the identity of R).  They are never made afterwards:
+a reading without them, or with places that are stale or of an older version, shows no mark until
+it is read again.  A PDF's text layer and the teacher's own transcription get none.  An engine
+with no layout of its own (an Ollama reader) is joined by the built-in reader, which reads each
+page on a thread of its own while the engine's requests run; without its models there is no
+layout, no mark and no message.  `Config.scan_marks` switches all of it off, and
+`DocumentService.check_document` then serves no places.
+
+② carries the places into the teacher's transcription (`TextFormatter.plain_text` of
+`DocumentStateView.machine_raw_text` against `raw_text`) and ③ is `mark_for_cursor`
+(`application/check_document.py`): the sentence is the corrected text's where there is one,
+carried into the transcription, and the transcription's otherwise.  A sentence is marked when
+`COVER_MIN` of its characters sit on placed lines; a passage no sentence mark closes falls back to
+the line under the cursor, and everything else shows the page instead.  `page_layout.sentences`
+joins the spans `sentence_spans` splits at a dotted letter, an abbreviation or a day (`15.`), and
+at a year or `usw.` only before a lower-case word — the splitter a stored review numbers its edits
+by does not change.
+
+**Measured on 8 handwritten pages** (4 ink photos, 4 pencil scans, 178 written lines): the
+built-in reader's rows line up with 78 % of the written lines (43/43 printed); how far a row's
+confidence predicts its misread words is the comment on `CONFIDENCE_BANDS`, and which alignment
+holds on misread text, at what cost, the docstring of `infrastructure/text_alignment.py`.
+
+**Not measured:** those figures come from one typed reference beside the pages, not from an Ollama
+reading of a teacher's own scans, and the gate behind the decision — at most 5 % of the shown marks
+wrong while at least 70 % of the sentences are marked — has not been run: no local vision model and
+no corpus were at hand.  The thresholds are the code's (`PLACE_MIN`, `COVER_MIN`,
+`CONFIDENCE_BANDS`).
 
 ### Text recognition switch (`recognition_enabled`)
 

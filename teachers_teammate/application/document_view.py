@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..domain.data_location import SentRecord, SentStatus
-from ..domain.document_state import DocumentState
+from ..domain.document_state import DocumentState, stored_layout
+from ..domain.page_layout import ScanBox
 from ..domain.proofreading.carry import ReadingFix
 from ..domain.proofreading.review import CorrectionReview
 from ..domain.stages import Stage
@@ -42,6 +43,21 @@ class DocumentStateView:
     Equals :attr:`correction_text` when the teacher changed nothing, and is empty for a view
     built by hand that does not say.  It is what tells a change the model made without an
     explanation from one the teacher made."""
+
+    machine_raw_text: str = ""
+    """The transcription as the recognition read it, before the teacher's fix.
+
+    Equals :attr:`raw_text` when they changed nothing, and is empty for a view built by hand
+    that does not say.  :attr:`raw_layout`'s places are offsets in this text."""
+
+    machine_raw_text_format: str = ""
+    """The format of :attr:`machine_raw_text`; empty for a view built by hand that does not say."""
+
+    raw_layout: tuple[ScanBox, ...] = ()
+    """Where the lines of the scan stand in the reading, with their boxes and confidence.
+
+    Empty when the reader had no layout to give, its models were not there, or the places are
+    stale — the scan then marks nothing."""
 
     correction_review: CorrectionReview | None = None
     """Explanations and unclear expressions; ``None`` when the file has no review."""
@@ -94,6 +110,9 @@ def to_view(input_file: Path, state: DocumentState) -> DocumentStateView:
         name=input_file.name,
         preview_img=state.preview_img,
         raw_text=state.raw_text,
+        machine_raw_text=state.raw_text,
+        machine_raw_text_format=state.raw_text_format,
+        raw_layout=stored_layout(state),
         correction_text=state.correction_text,
         evaluation_text=state.evaluation_text,
         ocr_done=state.ocr_done,

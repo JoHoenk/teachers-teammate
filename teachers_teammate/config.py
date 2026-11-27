@@ -154,6 +154,9 @@ class Config:
     # fingerprints the cached text); this says *whether* scans are read at all.  Off, a scan
     # is skipped; text files and PDFs with a text layer are used as they are.
     recognition_enabled: bool = DEFAULTS["recognition_enabled"]
+    # Whether a run keeps where the lines of a scan sit, and the Check tab marks the sentence under
+    # the cursor on the page.  Not in any fingerprint: the text read is the same either way.
+    scan_marks: bool = DEFAULTS["scan_marks"]
 
     # ── Run ──────────────────────────────────────────────────────────────────
     # Keep the computer awake while a run is going.  Not in any fingerprint: it changes how the
@@ -224,6 +227,7 @@ class Config:
             ollama_url=get("ollama_url"),
             ocr_timeout=get("ocr_timeout"),
             recognition_enabled=get("recognition_enabled"),
+            scan_marks=get("scan_marks"),
             keep_awake=get("keep_awake"),
             check_for_updates=get("check_for_updates"),
             results_keep_days=get("results_keep_days"),

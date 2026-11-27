@@ -40,6 +40,7 @@ from teachers_teammate.infrastructure.state_repository import (
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore
 from tests.conftest import make_config, pipeline_dependencies
+from tests.fakes.fake_reader import mock_reader
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -433,7 +434,7 @@ def test_an_emptied_cache_does_not_read_a_scan_the_teacher_transcribed(
     """
     reading = _reading_config(tmp_path)
     scan = _scan(reading.input_dir)
-    reader = MagicMock()
+    reader = mock_reader()
     reader.process_image.return_value = "teh essay"
     assert _run_scans(reading, reader) == 0
     _fix_transcription(reading, scan, "the essay")
@@ -465,7 +466,7 @@ def test_a_changed_reading_setting_does_not_read_a_scan_whose_corrections_were_w
     """
     first = _reading_config(tmp_path, correction_enabled=True, correction_provider="openai")
     scan = _scan(first.input_dir)
-    reader = MagicMock()
+    reader = mock_reader()
     reader.process_image.return_value = "teh essay"
     corrector = MagicMock()
     corrector.pieces.return_value = None

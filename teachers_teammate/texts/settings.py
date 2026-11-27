@@ -122,6 +122,16 @@ LOG_DETAIL_NOTE = (
 # ── Scan quality ──────────────────────────────────────────────────────────────
 
 PREPARING_GROUP = "Preparing scans and photos"
+SCAN_MARKS_GROUP = "Checking a text"
+SCAN_MARKS_LABEL = "Show on the scan where the sentence under the cursor was written"
+SCAN_MARKS_TOOLTIP = (
+    "While you check a text, the page beside it shades the sentence the cursor is in. The "
+    "stronger the shade, the harder that line was to read."
+)
+SCAN_MARKS_NOTE = (
+    "Needs the reading model that comes with the app. With another reader it reads each page a "
+    "second time, alongside. Applies to texts read after it is turned on."
+)
 
 
 def license_tooltip(license_text: str | None) -> str:

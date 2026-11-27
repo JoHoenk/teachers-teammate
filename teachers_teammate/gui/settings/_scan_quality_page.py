@@ -1,4 +1,4 @@
-"""Settings → Scan quality: how a page is prepared before it is read.
+"""Settings → Scan quality: how a page is prepared before it is read, and marked when checked.
 
 The ``debug`` key (keep the images of the preparation steps) is a tool for developers
 (``--debug``): the page shows no switch for it and leaves the key alone.
@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QVBoxLayout, QWidget
 
 from ...config import OcrConfig
 from ...settings_schema import DEFAULTS
@@ -27,9 +27,12 @@ SCAN_KEYS = (
     "pdf_text_layer",
 )
 
+#: The key of the scan's mark of the sentence under the cursor, shown below the preparation.
+_MARKS_KEY = "scan_marks"
+
 
 class ScanQualityPage(SettingsPageBase):
-    """Image preparation (Automatic or Original page); Expert: PDF handling."""
+    """Image preparation (Automatic or Original page), the scan's marks; Expert: PDF handling."""
 
     page = SettingsPage.SCAN_QUALITY
     title = st.PAGE_SCAN_QUALITY
@@ -61,6 +64,17 @@ class ScanQualityPage(SettingsPageBase):
         group_layout.addWidget(self._controls)
         layout.addWidget(group)
 
+        marks_group = QGroupBox(st.SCAN_MARKS_GROUP)
+        marks_layout = QVBoxLayout(marks_group)
+        self._scan_marks = QCheckBox(st.SCAN_MARKS_LABEL)
+        self._scan_marks.setToolTip(st.SCAN_MARKS_TOOLTIP)
+        marks_layout.addWidget(self._scan_marks)
+        marks_note = QLabel(st.SCAN_MARKS_NOTE)
+        marks_note.setWordWrap(True)
+        marks_note.setStyleSheet("color: #888888;")
+        marks_layout.addWidget(marks_note)
+        layout.addWidget(marks_group)
+
         self._expert_section = CollapsibleSection(EXPERT_SETTINGS, collapsed=True)
         expert_layout = QVBoxLayout(self._expert_section.content_widget)
         expert_layout.setContentsMargins(0, 0, 0, 0)
@@ -69,9 +83,12 @@ class ScanQualityPage(SettingsPageBase):
         layout.addStretch(1)
         # Valid right after construction, as the old dialog was: unset keys show the defaults.
         self._controls.load(OcrConfig.from_settings(context.settings))
+        self._scan_marks.setChecked(bool(context.settings.get(_MARKS_KEY, DEFAULTS[_MARKS_KEY])))
 
     def load(self, values: Mapping[str, Any]) -> None:
         self._controls.load(OcrConfig.from_settings(values))
+        if _MARKS_KEY in values:
+            self._scan_marks.setChecked(bool(values[_MARKS_KEY]))
         # A setting the user chose is the reason to open "Expert settings" at all.
         saved = OcrConfig.from_settings(values)
         self._expert_section.set_expanded(
@@ -85,10 +102,11 @@ class ScanQualityPage(SettingsPageBase):
             "preprocess_method": ocr.preprocess_method,
             "pdf_render_dpi": ocr.pdf_render_dpi,
             "pdf_text_layer": ocr.pdf_text_layer,
+            _MARKS_KEY: self._scan_marks.isChecked(),
         }
 
     def owned_keys(self) -> frozenset[str]:
-        return frozenset(SCAN_KEYS)
+        return frozenset((*SCAN_KEYS, _MARKS_KEY))
 
     def ocr_config(self, engine: str, model: str) -> OcrConfig:
         """Return the full :class:`OcrConfig` for *engine*/*model* with this page's choices."""

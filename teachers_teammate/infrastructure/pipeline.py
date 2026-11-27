@@ -450,6 +450,25 @@ class OCRPipeline:
                     report_text.prepared_page(out_path.name, ", ".join(page_steps))
                 )
 
+    def _ollama_client(self, cfg: Config) -> tuple[OllamaClient | None, RunStatsCollector]:
+        """Return the one client every Ollama stage shares, and the collector it reports to.
+
+        Building it here means the address is normalised once and injection is explicit.  The
+        same client reports every request's statistics to the collector, so one sink sees the
+        whole run and can turn each step into a sample of how fast this machine is.
+        """
+        run_stats = RunStatsCollector(cfg.ollama_url, self._samples.add)
+        if not uses_ollama(cfg):
+            return None, run_stats
+        client = OllamaClient(
+            cfg.ollama_url, cancel_event=self._stop_event, stats_sink=run_stats.record
+        )
+        # The client is the only place that sees a request waiting for the server, so it is where
+        # the run learns what the server is doing and when the answer really began.
+        client.detail_sink = self._on_ollama_detail
+        client.first_token_sink = self._on_ollama_first_token
+        return client, run_stats
+
     def _setup_services(
         self,
         tmp_dir: Path,
@@ -463,21 +482,7 @@ class OCRPipeline:
             cfg, self._component_factory, self._model_store, self._reporter, self._hardware
         )
 
-        # Build one shared OllamaClient for all Ollama-backed stages so URL
-        # normalisation happens once and injection is explicit.
-        # The same client reports every request's statistics to the collector, so one sink sees
-        # the whole run and can turn each step into a sample of how fast this machine is.
-        run_stats = RunStatsCollector(cfg.ollama_url, self._samples.add)
-        ollama_client = (
-            OllamaClient(cfg.ollama_url, cancel_event=self._stop_event, stats_sink=run_stats.record)
-            if uses_ollama(cfg)
-            else None
-        )
-        if ollama_client is not None:
-            # The client is the only place that sees a request waiting for the server, so it is
-            # where the run learns what the server is doing and when the answer really began.
-            ollama_client.detail_sink = self._on_ollama_detail
-            ollama_client.first_token_sink = self._on_ollama_first_token
+        ollama_client, run_stats = self._ollama_client(cfg)
 
         ocr = builder.build_ocr(ollama_client, self._stop_event)
 
@@ -520,6 +525,7 @@ class OCRPipeline:
                 evaluation=evaluation,
                 doc_creator=doc_creator,
                 anonymizer=anonymizer,
+                scan_places=builder.build_scan_places(self._stop_event),
                 postprocessor=builder.build_ocr_postprocessor(),
                 recognize=cfg.recognition_enabled,
                 stop_event=self._stop_event,

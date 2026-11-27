@@ -23,7 +23,7 @@ from teachers_teammate.infrastructure.stage_builder import (
     PipelineComponentFactory,
     StageBuilder,
 )
-from tests.conftest import make_config
+from tests.conftest import fake_reader_store, make_config
 
 
 def _stage_builder(tmp_path: Path, *args: Any, **kwargs: Any) -> StageBuilder:
@@ -319,6 +319,101 @@ def test_the_default_reader_builder_constructs_the_processor(tmp_path: Path) -> 
 
     processor.assert_called_once()
     assert processor.call_args.kwargs == {"stop_event": None}
+
+
+def test_the_built_in_reader_is_not_built_alongside_itself(tmp_path: Path) -> None:
+    """
+    Given  the built-in reader chosen, and a store that holds its models
+    When   StageBuilder.build_scan_places() is called
+    Then   the places are kept with no reader alongside: the run's own lines are the places
+    """
+    build_ppocr = MagicMock()
+    builder = _stage_builder(
+        tmp_path,
+        config=make_config(tmp_path, ocr_engine="ppocr"),
+        factory=PipelineComponentFactory(build_ppocr_ocr=build_ppocr),
+        model_store=fake_reader_store(tmp_path),
+    )
+
+    places = builder.build_scan_places()
+
+    assert places is not None
+    assert places._alongside is None
+    build_ppocr.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"ocr_engine": "ppocr", "scan_marks": False},
+        {"ocr_engine": "ollama", "scan_marks": False},
+        {"ocr_engine": "ppocr", "recognition_enabled": False},
+    ],
+)
+def test_no_places_when_the_run_keeps_none(tmp_path: Path, overrides: dict) -> None:
+    """
+    Given  the scan's marks switched off, or a run that reads no page
+    When   StageBuilder.build_scan_places() is called
+    Then   it returns None and builds no reader
+    """
+    build_ppocr = MagicMock()
+    builder = _stage_builder(
+        tmp_path,
+        config=make_config(tmp_path, **overrides),
+        factory=PipelineComponentFactory(build_ppocr_ocr=build_ppocr),
+        model_store=fake_reader_store(tmp_path),
+    )
+
+    assert builder.build_scan_places() is None
+    build_ppocr.assert_not_called()
+
+
+def test_no_reader_alongside_an_online_reader_when_its_models_are_absent(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  an Ollama reader and a store without the built-in reader's models
+    When   StageBuilder.build_scan_places() is called
+    Then   it returns None and builds nothing: no mark, no message, and nothing downloaded
+    """
+    build_ppocr = MagicMock()
+    builder = _stage_builder(
+        tmp_path,
+        config=make_config(tmp_path, ocr_engine="ollama"),
+        factory=PipelineComponentFactory(build_ppocr_ocr=build_ppocr),
+        model_store=fake_reader_store(tmp_path, installed=False),
+    )
+
+    assert builder.build_scan_places() is None
+
+    build_ppocr.assert_not_called()
+
+
+def test_the_built_in_reader_reads_alongside_an_online_reader(tmp_path: Path) -> None:
+    """
+    Given  an Ollama reader and a store that holds the built-in reader's models
+    When   StageBuilder.build_scan_places() is called with a stop event
+    Then   the factory builds the built-in reader with the store and that event, to read alongside
+    """
+    import threading  # noqa: PLC0415
+
+    reader = MagicMock()
+    build_ppocr = MagicMock(return_value=reader)
+    store = fake_reader_store(tmp_path)
+    builder = _stage_builder(
+        tmp_path,
+        config=make_config(tmp_path, ocr_engine="ollama"),
+        factory=PipelineComponentFactory(build_ppocr_ocr=build_ppocr),
+        model_store=store,
+    )
+    stop = threading.Event()
+
+    places = builder.build_scan_places(stop)
+
+    assert places is not None
+    assert places._alongside is reader
+    assert build_ppocr.call_args.kwargs["store"] is store
+    assert build_ppocr.call_args.kwargs["stop_event"] is stop
 
 
 def test_build_text_anonymizer_only_when_enabled(tmp_path: Path) -> None:

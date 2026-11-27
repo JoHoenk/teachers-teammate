@@ -6,11 +6,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QButtonGroup,
     QGraphicsPixmapItem,
+    QGraphicsPolygonItem,
     QGraphicsView,
     QHBoxLayout,
     QLabel,
@@ -19,10 +20,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...domain.page_layout import Mark
 from ...texts import check as check_text
 from ...texts import review as txt
 from .._image_utils import load_pixmap
 from .._image_view import ZoomableImageView
+from . import _style
 
 #: Blank space around and between the pages.
 _MARGIN = 8
@@ -80,6 +83,8 @@ class ScanView(ZoomableImageView):
         self._widths: list[int] = []
         self._layout_key: tuple[int, int] = (0, 0)
         self._fit_page = True
+        self._mark: Mark | None = None
+        self._mark_items: list[QGraphicsPolygonItem] = []
         self.verticalScrollBar().valueChanged.connect(self._refresh_full_pages)
 
     @property
@@ -105,8 +110,20 @@ class ScanView(ZoomableImageView):
         """Show *prepared*, and *originals* where the page as scanned was kept."""
         self._prepared = tuple(prepared)
         self._originals = tuple(originals)
+        self._mark = None  # the mark belongs to the document that was open
         self._reload()
         self._layout()
+
+    def mark(self, mark: Mark | None) -> None:
+        """Draw *mark* over the pages it stands on, or clear the mark with ``None``.
+
+        Nothing is drawn while *Original* is on: those pages have another geometry than the ones
+        the places were made on, and a mark there would sit on words nobody placed.  The scan
+        scrolls only to a new mark, so the teacher's own scrolling stays where it is.
+        """
+        changed = mark != self._mark
+        self._mark = mark
+        self._draw_mark(scroll=changed)
 
     def show_originals(self, on: bool) -> None:
         """Swap every page that has an original for the page as it was scanned."""
@@ -129,6 +146,8 @@ class ScanView(ZoomableImageView):
         self._items = []
         self._widths = []
         self._layout_key = (0, 0)
+        self._mark = None
+        self._mark_items = []
 
     # ── Layout ────────────────────────────────────────────────────────────
 
@@ -170,6 +189,7 @@ class ScanView(ZoomableImageView):
         self._pix_item = None
         self._items = []
         self._widths = []
+        self._mark_items = []  # the scene took the drawn marks with it
         self._layout_key = self._key()
         available_width = max(self.viewport().width() - 2 * _MARGIN, 1)
         available_height = max(self.viewport().height() - 2 * _MARGIN, 1)
@@ -202,6 +222,56 @@ class ScanView(ZoomableImageView):
         self._set_fitted(True)
         self._set_scroll_fraction(fraction)
         self._refresh_full_pages()
+        self._draw_mark()
+
+    # ── The mark of the sentence the cursor is in ─────────────────────────
+
+    def _draw_mark(self, *, scroll: bool = False) -> None:
+        """Draw the mark the scan holds over the pages it stands on, and take the old one away."""
+        for item in self._mark_items:
+            self._scene.removeItem(item)
+        self._mark_items = []
+        mark = self._mark
+        if mark is None or self._showing_originals:
+            return
+        wash = QBrush(_style.scan_wash(mark.shade))
+        for page, corners in mark.polygons:
+            points = self._page_points(page, corners)
+            if len(points) < 3:
+                continue
+            item = self._scene.addPolygon(QPolygonF(points), QPen(Qt.PenStyle.NoPen), wash)
+            if item is None:
+                continue
+            item.setZValue(1)
+            self._mark_items.append(item)
+        if scroll:
+            self._reveal_mark()
+
+    def _page_points(self, page: int, corners: Sequence[tuple[float, float]]) -> list[QPointF]:
+        """Return where the *corners* of page *page* lie in the scene.
+
+        The corners are fractions of the page, so a mark sits on the line however large the page
+        is drawn and whatever size the stored image has.
+        """
+        if not 0 <= page < len(self._items) or self._widths[page] <= 0:
+            return []
+        item = self._items[page]
+        width, height = self._sizes[page]
+        if item is None or width <= 0:
+            return []
+        left, top = item.pos().x(), item.pos().y()
+        drawn = self._widths[page]
+        drawn_height = drawn * height / width
+        return [QPointF(left + x * drawn, top + y * drawn_height) for x, y in corners]
+
+    def _reveal_mark(self) -> None:
+        """Scroll the scan to the mark only when it is out of view, and leave the place otherwise."""
+        if not self._mark_items:
+            return
+        rect = self._mark_items[0].sceneBoundingRect()
+        for item in self._mark_items[1:]:
+            rect = rect.united(item.sceneBoundingRect())
+        self.ensureVisible(rect)
 
     # ── The pages in view keep their own image ────────────────────────────
 
@@ -378,6 +448,7 @@ class ScanPane(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.view = ScanView()
+        self.view.setToolTip(check_text.SCAN_MARK_TIP)
         self._steps: Sequence[str] | None = None
 
         self._build_switch()

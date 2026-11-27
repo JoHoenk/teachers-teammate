@@ -38,6 +38,7 @@ from ..domain.data_location import (
     llm_stage_location,
     online_ocr_reason,
 )
+from ..domain.local_models import READER_MODELS
 from ..domain.model_catalog import HardwareDetection, RequestProfile
 from ..exceptions import OnlineOcrNotAllowedError, ProviderNotAvailableError
 from ..interfaces import (
@@ -71,6 +72,7 @@ from .reporting import StdoutReporter
 from .spacy_models import installed_spacy_models
 from .system_locale import system_language
 from .workflow.preprocess_service import PreprocessService
+from .workflow.scan_places import ScanPlaces
 
 # ── Default constructors ───────────────────────────────────────────────────
 
@@ -437,6 +439,23 @@ class StageBuilder:
         return factory.build_ollama_ocr(
             model=ocr.model, client=client, timeout=cfg.ocr_timeout, temperature=ocr.temperature
         )
+
+    def build_scan_places(self, stop_event: threading.Event | None = None) -> ScanPlaces | None:
+        """Build what keeps the places of a scan's lines, or ``None`` when the run keeps none.
+
+        Off with the setting, or when no page is read.  With the built-in reader its own lines
+        are used; another reader is joined by the built-in one, which reads each page alongside —
+        and when its models are not there nothing is read: no mark, no message, no download.
+        """
+        cfg = self.config
+        if not (cfg.scan_marks and cfg.recognition_enabled):
+            return None
+        if cfg.ocr.engine == ENGINE_PPOCR:
+            return ScanPlaces(None, stop_event)
+        if self.model_store.missing(READER_MODELS):
+            return None
+        reader = self.factory.build_ppocr_ocr(store=self.model_store, stop_event=stop_event)
+        return ScanPlaces(reader, stop_event)
 
     def build_corrector(self, ollama_client: OllamaClient | None = None) -> Corrector | None:
         """Build the corrector of this run, or ``None`` when proofreading is off.

@@ -9,9 +9,8 @@ workflow hands to ``makensis`` — and, failing that, from the stamped
 ``teachers_teammate.__version__``.  The file goes to
 ``teachers_teammate/_build/version_info.txt`` by default, which the spec reads on Windows.
 
-Why the strings are what they are: a code-signing service checks that the product name and the
-product version are the same in the app exe, the setup and the uninstaller, so the values here
-are the ones ``tools/packaging/windows.nsi`` compiles in.  ``ProductVersion`` is therefore the
+Why the strings are what they are: the product name and the product version are the same in the
+app exe, the setup and the uninstaller, so the values here are the ones ``tools/packaging/windows.nsi`` compiles in.  ``ProductVersion`` is therefore the
 release string (``0.5.7-rc.1``), not the PEP 440 form of the stamped version (``0.5.7rc1``);
 only the four-number fixed fields are derived from it.
 """

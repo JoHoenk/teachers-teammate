@@ -8,4 +8,4 @@ Only the latest release gets fixes.
 
 A download from anywhere but the [releases page](https://github.com/JoHoenk/teachers-teammate/releases)
 is not ours; how to check one is in the
-[code signing policy](docs/code_signing_policy.md).
+[deployment guide](docs/deployment.md#checksums-and-provenance).

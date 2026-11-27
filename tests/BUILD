@@ -727,11 +727,11 @@ app_test(
 app_test(
     "unit/test_windows_installer_script.py",
     data = [
-        "//docs:code_signing_policy.md",
+        "//docs:privacy.md",
         "//tools/packaging:windows.nsi",
     ],
     env = {
-        "CODE_SIGNING_POLICY": "$(rlocationpath //docs:code_signing_policy.md)",
+        "PRIVACY_PAGE": "$(rlocationpath //docs:privacy.md)",
         "WINDOWS_NSI": "$(rlocationpath //tools/packaging:windows.nsi)",
     },
 )

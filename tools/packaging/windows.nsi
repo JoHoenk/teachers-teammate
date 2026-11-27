@@ -37,19 +37,15 @@ SetCompressor /SOLID lzma
 !define UNINST_KEY    "Software\Microsoft\Windows\CurrentVersion\Uninstall\TeachersTeammate"
 
 ; What the second page says about the one thing the app sends on its own: the update check.
-; The signing terms want the disclosure shown during installation, with the way to turn it off:
-; the check box is that way, and the link opens the page that says what is sent, and when.
-!define PRIVACY_URL "${APP_URL}/blob/main/docs/code_signing_policy.md#privacy-statement"
+; The check box turns it off; the link opens the page that says what is sent, and when.
+!define PRIVACY_URL "${APP_URL}/blob/main/docs/privacy.md"
 
 Name    "${APP_NAME} ${APP_VERSION}"
 
 ; ── Two passes: the uninstaller is a file of its own ─────────────────────────
-; A remote signer cannot sign inside makensis (!uninstfinalize needs a local signing tool), so
 ; Uninstall.exe has to exist before the setup is compiled and be packed with File instead of
 ; being written by WriteUninstaller.  Pass 1 (/DBUILD_UNINSTALLER) compiles a helper that only
-; writes the uninstaller and quits; pass 2 compiles the setup.  Nothing is signed yet, so the
-; setup packs the unsigned helper output: the flow is the same with and without signing.
-; https://nsis.sourceforge.io/Signing_an_Uninstaller
+; writes the uninstaller and quits; pass 2 compiles the setup.
 ; Where the helper writes itself, where it puts the uninstaller, and where the setup packs
 ; that file from.  The first two are runtime paths ($EXEDIR is the helper's own folder, so a
 ; hand-run does not depend on the folder it is started from); the third is a compile-time
@@ -292,7 +288,7 @@ UninstPage custom un.UnDataPageCreate un.UnDataPageLeave
 ; Both passes carry this block: NSIS copies the installer it runs into the uninstaller and
 ; replaces only the icon and the installation data, so the uninstaller gets these keys from
 ; the helper that wrote it.  ProductName and ProductVersion are the ones the app exe's version
-; resource carries (tools/build/make_version_resource.py), which a code-signing service checks.
+; resource carries (tools/build/make_version_resource.py).
 
 VIProductVersion "${APP_VERSION_WIN}"
 VIAddVersionKey "ProductName"     "${APP_NAME}"

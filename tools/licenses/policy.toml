@@ -14,7 +14,7 @@
 # whole download undistributable, in whatever scope it sits.
 [[deny]]
 pattern = '\bAGPL|\bAffero\b'
-reason = "AGPL: GPL-3.0 section 13 would let it in, but its network clause passes to anyone serving the app, many schools ban it, and its packages are usually commercially dual-licensed (SignPath)"
+reason = "AGPL: GPL-3.0 section 13 would let it in, but its network clause passes to anyone serving the app, many schools ban it, and its packages are usually commercially dual-licensed"
 
 [[deny]]
 # Version 2 is the one GPL that GPL-3.0 cannot take along: an "or later" is what makes it compatible.

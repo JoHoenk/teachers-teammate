@@ -12,8 +12,8 @@ load("@sphinxdocs//sphinxdocs:sphinx.bzl", "sphinx_build_binary", "sphinx_docs")
 exports_files(
     [
         "advanced_user_guide.md",
-        "code_signing_policy.md",
         "index.md",
+        "privacy.md",
         "using_the_app.md",
     ],
     visibility = [

@@ -11,7 +11,7 @@
     tools/packaging/windows.nsi fails the build instead of a teacher's computer.
 
     The first step also reads the version resource of the setup, the app exe and the
-    uninstaller: a code-signing service checks that the three carry one product name and one
+    uninstaller: the three carry one product name and one
     product version, and the uninstaller is a file of its own (two-pass build).
 
     The shortcuts are read with the WScript.Shell COM object, which works on a runner without
@@ -412,7 +412,7 @@ $uninstallString = Get-UninstallValue "HKCU:\$UninstKey" 'UninstallString'
 Assert-Equal "`"$(Join-Path $UserDir 'Uninstall.exe')`"" $uninstallString `
     'UninstallString is the quoted path of the installed uninstaller'
 
-# The three files a code-signing service checks: one product name, one product version. The
+# The three files carry one product name and one product version. The
 # uninstaller gets its keys from the helper that wrote it, the exe from its version resource.
 foreach ($file in @('teachers-teammate.exe', 'Uninstall.exe')) {
     $info = (Get-Item -LiteralPath (Join-Path $UserDir $file)).VersionInfo
@@ -420,7 +420,7 @@ foreach ($file in @('teachers-teammate.exe', 'Uninstall.exe')) {
     Assert-Equal $Version $info.ProductVersion "$file carries the product version"
     Assert-Equal 'Teacher''s Teammate Contributors' $info.CompanyName "$file carries the publisher"
 }
-# The signing check reads the Apps entry's Publisher and the exe's company; they must agree.
+# The Apps entry's Publisher and the exe's company must agree.
 $company = (Get-Item -LiteralPath (Join-Path $UserDir 'teachers-teammate.exe')).VersionInfo.CompanyName
 Assert-Equal $company (Get-UninstallValue "HKCU:\$UninstKey" 'Publisher') `
     'Publisher is the company the version resource carries'

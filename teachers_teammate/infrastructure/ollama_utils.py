@@ -30,6 +30,7 @@ from ..domain.ollama_address import (
     ollama_host,
 )
 from ..domain.ollama_discovery import WaitDetail, WaitKind, is_private_host
+from ..domain.ollama_snapshot import InstalledModel, ServerSnapshot
 from ..exceptions import OllamaUnreachableError, RunStoppedError, stop_requested
 from ..interfaces import ConnectionCheck, Reporter
 from ..messages import (
@@ -535,6 +536,33 @@ def _http_json(url: str, timeout: float) -> dict:
         return json.loads(answer.read().decode("utf-8") or "{}")
 
 
+#: The words a transport error uses when the server could not be reached at all.
+_CONNECT_WORDS = ("connect", "refused", "network", "unreachable")
+
+
+def _trouble_kind(exc: BaseException) -> str:
+    """Return why a request stayed unanswered: ``connect``, ``timeout`` or ``other``.
+
+    Read from the message, because the ``ollama`` client raises its own types for all three
+    and the wording is the only thing that tells them apart.  It decides which sentence a
+    teacher reads, so a caller of a different kind of request keeps its own wording.
+    """
+    reason = str(exc).lower()
+    if any(word in reason for word in _CONNECT_WORDS):
+        return "connect"
+    return "timeout" if "timeout" in reason or "timed out" in reason else "other"
+
+
+def _trouble_message(base_url: str, exc: BaseException) -> str:
+    """Return the check line for a request to *base_url* that *exc* kept from being answered."""
+    kind = _trouble_kind(exc)
+    if kind == "connect":
+        return check_cannot_connect(base_url)
+    if kind == "timeout":
+        return check_timed_out(base_url)
+    return check_unexpected(exc)
+
+
 @dataclass(frozen=True)
 class ServerActivity:
     """What the server is doing right now, as far as ``/api/ps`` can tell.
@@ -636,21 +664,46 @@ class OllamaClient:
 
     # ── Model discovery ────────────────────────────────────────────────────
 
-    def list_models(self) -> list[str]:
-        """Return model names from Ollama, or ``[]`` on any error."""
-        try:
-            resp = self._client().list()
-            return [m.model for m in resp.models if m.model]
-        except Exception:  # noqa: BLE001  # Ollama client/transport may raise anything; degrade to an empty list
-            return []
+    def _listed_or_reason(self) -> tuple[tuple[InstalledModel, ...], BaseException | None]:
+        """Return the installed models, or the failure that kept them from being read.
 
-    def list_models_with_size(self) -> list[tuple[str, int]]:
-        """Return ``[(name, size_bytes)]`` for installed models, or ``[]`` on any error."""
+        One request to ``/api/tags``, with this client's timeout.  The caller decides how to
+        word the failure: the connection check and a run's start say it differently.
+        """
         try:
             resp = self._client().list()
-            return [(m.model, int(m.size or 0)) for m in resp.models if m.model]
-        except Exception:  # noqa: BLE001  # Ollama client/transport may raise anything; degrade to an empty list
-            return []
+        except Exception as exc:  # noqa: BLE001  # any client error means the server is unreachable
+            return (), exc
+        return (
+            tuple(
+                InstalledModel(
+                    tag=str(m.model),
+                    digest=str(m.digest or ""),
+                    size_bytes=int(m.size or 0),
+                )
+                for m in resp.models
+                if m.model
+            ),
+            None,
+        )
+
+    def snapshot(self) -> ServerSnapshot:
+        """Return one answer of the server: its version, its models, their digests and sizes.
+
+        Never raises: a server that cannot be asked says why in
+        :attr:`~teachers_teammate.domain.ollama_snapshot.ServerSnapshot.unreachable` instead,
+        which is what tells "no connection" apart from "no model downloaded".  Two requests:
+        ``/api/tags`` for what it holds and ``/api/version`` for what it is.
+        """
+        models, trouble = self._listed_or_reason()
+        if trouble is not None:
+            return ServerSnapshot(unreachable=_trouble_message(self.base_url, trouble))
+        return ServerSnapshot(version=self.server_version(), models=models)
+
+    def list_models(self) -> list[str]:
+        """Return model names from Ollama, or ``[]`` on any error (one request)."""
+        models, _trouble = self._listed_or_reason()
+        return [model.tag for model in models]
 
     # ── Server facts ───────────────────────────────────────────────────────
 
@@ -660,18 +713,6 @@ class OllamaClient:
             return str(_http_json(f"{self.base_url}/api/version", self._timeout).get("version", ""))
         except Exception:  # noqa: BLE001  # an old server or a hiccup: the version is optional
             return ""
-
-    def model_digests(self) -> dict[str, str]:
-        """Return ``{tag: digest}`` of the installed models, or ``{}`` on any error.
-
-        The digest pins the weights: a tag is a name that can be re-pointed, so a measurement
-        of ``gemma4:e4b`` says nothing about a later pull of the same tag.
-        """
-        try:
-            resp = self._client().list()
-            return {m.model: str(m.digest or "") for m in resp.models if m.model}
-        except Exception:  # noqa: BLE001  # Ollama client/transport may raise anything
-            return {}
 
     def _ps_models(self) -> tuple[LoadedModel, ...] | None:
         """Return the models in memory, or ``None`` when the server could not be asked."""
@@ -731,34 +772,13 @@ class OllamaClient:
 
         Never raises: a server that answers only part of it gives what it gave.  The caller
         decides what a missing version or digest means (a measurement without them cannot be
-        told apart from one of another build).
+        told apart from one of another build).  The version and the digests come from one
+        answer (:meth:`snapshot`); what is in memory is asked separately, because it changes
+        with every request.
         """
-        return ServerFacts(
-            version=self.server_version(),
-            digests=self.model_digests(),
-            loaded=self.loaded_models(),
-        )
+        return self.snapshot().facts(loaded=self.loaded_models())
 
     # ── Connectivity checks ────────────────────────────────────────────────
-
-    def list_models_or_error(self) -> tuple[list[str], str]:
-        """Return ``(models, error)`` from a single request to the server.
-
-        *error* is ``""`` when the server answered (even with no model downloaded)
-        and a user-facing message when it could not be reached.  Unlike
-        :meth:`list_models` this tells "unreachable" apart from "no models" without
-        a second round-trip, which matters when the server times out.
-        """
-        try:
-            resp = self._client().list()
-            return [m.model for m in resp.models if m.model], ""
-        except Exception as exc:  # noqa: BLE001  # any client error means unreachable; the message is classified below
-            exc_str = str(exc).lower()
-            if any(w in exc_str for w in ("connect", "refused", "network", "unreachable")):
-                return [], check_cannot_connect(self.base_url)
-            if "timeout" in exc_str:
-                return [], check_timed_out(self.base_url)
-            return [], check_unexpected(exc)
 
     def check_connection(self, model: str = "") -> ConnectionCheck:
         """Return ``(connected, model_ok, message)`` for the Ollama server.
@@ -769,10 +789,12 @@ class OllamaClient:
         * ``connected=True, model_ok=True`` — server is up and *model* is
           available (or no model was requested).
         """
-        models, error = self.list_models_or_error()
-        if error:
-            return ConnectionCheck(False, False, error)
+        # Only /api/tags: the readiness line asks every few seconds and needs no version.
+        listed, trouble = self._listed_or_reason()
+        if trouble is not None:
+            return ConnectionCheck(False, False, _trouble_message(self.base_url, trouble))
 
+        models = [model.tag for model in listed]
         if not models:
             return ConnectionCheck(True, False, CHECK_NO_MODELS)
         if not model:
@@ -823,7 +845,8 @@ class OllamaClient:
         """Verify the server is reachable and *model_name* is available.
 
         Also warns when the model does not appear vision-capable, and notes
-        when the model is not yet loaded (first request will be slow).  Advisory
+        when the model is not yet loaded (first request will be slow).  Both requests are bound
+        by the client's timeout, so a server that hangs fails the check instead of the run start.  Advisory
         lines go through *reporter* (defaulting to :class:`StdoutReporter`, i.e.
         stderr) so adapters can route them into the log file.
 
@@ -831,22 +854,20 @@ class OllamaClient:
             :exc:`~teachers_teammate.exceptions.OllamaUnreachableError`: Server
                 is unreachable, or the model is not available.
         """
-        import ollama  # noqa: PLC0415
-
         reporter = reporter or StdoutReporter()
-        client = ollama.Client(host=self.base_url)
+        models, trouble = self._listed_or_reason()
 
-        try:
-            resp = client.list()
-            available = [m.model for m in resp.models if m.model]
-        except Exception as exc:
-            exc_str = str(exc).lower()
-            if any(w in exc_str for w in ("connect", "refused", "network", "unreachable")):
-                raise OllamaUnreachableError(cannot_connect(self.base_url)) from exc
-            if "timeout" in exc_str:
-                raise OllamaUnreachableError(connection_timed_out(self.base_url)) from exc
-            raise OllamaUnreachableError(contact_failed(self.base_url, message_of(exc))) from exc
+        if trouble is not None:
+            kind = _trouble_kind(trouble)
+            if kind == "connect":
+                raise OllamaUnreachableError(cannot_connect(self.base_url)) from trouble
+            if kind == "timeout":
+                raise OllamaUnreachableError(connection_timed_out(self.base_url)) from trouble
+            raise OllamaUnreachableError(
+                contact_failed(self.base_url, message_of(trouble))
+            ) from trouble
 
+        available = [model.tag for model in models]
         if not available:
             raise OllamaUnreachableError(no_models_installed(self.base_url))
 
@@ -862,7 +883,7 @@ class OllamaClient:
             reporter.warn(vision_not_supported(model_name))
 
         try:
-            ps_resp = client.ps()
+            ps_resp = self._client().ps()
             running = [m.model for m in ps_resp.models if m.model]
             if running and model_name not in running:
                 reporter.warn(model_not_loaded(model_name))

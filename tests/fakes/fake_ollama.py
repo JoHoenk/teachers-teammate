@@ -31,6 +31,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hashlib
 import json
 import re
 import threading
@@ -179,6 +180,11 @@ class Request:
     body: dict[str, Any]
 
 
+def _digest_of(tag: str) -> str:
+    """Return the digest the fake reports for *tag*: one per model, as a real server has."""
+    return "sha256:" + hashlib.sha256(tag.encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class _Model:
     """One installed model: what ``/api/tags`` and ``/api/show`` say about it."""
@@ -187,6 +193,7 @@ class _Model:
     capabilities: tuple[str, ...]
     families: tuple[str, ...]
     size: int
+    digest: str = PULL_DIGEST
 
 
 class FakeOllama:
@@ -221,6 +228,8 @@ class FakeOllama:
         self._ps_calls = 0
         #: What ``/api/chat`` answers; ``None`` is :data:`CHAT_ANSWER`.
         self._chat_answer: ChatAnswer | None = None
+        #: How long ``/api/tags`` waits before it answers, in seconds.
+        self._tags_delay = 0.0
         self._lock = threading.Lock()
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _handler_for(self))
         self._thread = threading.Thread(
@@ -243,19 +252,31 @@ class FakeOllama:
         *,
         families: Iterable[str] | None = None,
         size: int = MODEL_SIZE,
+        digest: str = "",
     ) -> None:
         """Pretend *tag* is downloaded, with *capabilities*, *families* and *size* in bytes.
 
         The families default to the vision family for a model that can read images and to the
-        text family otherwise, so a test only says what it cares about.
+        text family otherwise, so a test only says what it cares about.  *digest* is the layer
+        the server reports for it, one per model unless a test says otherwise: that is what
+        tells a model from another, and what a re-pull of a tag changes.
         """
         caps = tuple(capabilities)
         if families is None:
             families = VISION_FAMILIES if "vision" in caps else TEXT_FAMILIES
         with self._lock:
             self._models[tag] = _Model(
-                tag=tag, capabilities=caps, families=tuple(families), size=size
+                tag=tag,
+                capabilities=caps,
+                families=tuple(families),
+                size=size,
+                digest=digest or _digest_of(tag),
             )
+
+    def uninstall(self, tag: str) -> None:
+        """Pretend *tag* was removed (``ollama rm``): ``/api/tags`` no longer lists it."""
+        with self._lock:
+            self._models.pop(tag, None)
 
     def loaded(self, tag: str) -> None:
         """Pretend *tag* is in memory and idle: ``/api/ps`` lists it, its expiry does not move."""
@@ -281,6 +302,20 @@ class FakeOllama:
         """
         with self._lock:
             self._loading = (tag, time.monotonic() + seconds)
+
+    def answers_tags_after(self, seconds: float) -> None:
+        """Make ``/api/tags`` wait *seconds* before it answers.
+
+        That is a server that is busy, and it is what tells a lock held during a request from one
+        held around the dict it guards.
+        """
+        with self._lock:
+            self._tags_delay = seconds
+
+    def tags_delay(self) -> float:
+        """Return how long ``/api/tags`` waits before it answers."""
+        with self._lock:
+            return self._tags_delay
 
     def answer_chats(self, answer: ChatAnswer) -> None:
         """Answer every ``/api/chat`` request with *answer* instead of :data:`CHAT_ANSWER`.
@@ -352,7 +387,7 @@ class FakeOllama:
                 "model": model.tag,
                 "modified_at": MODIFIED_AT,
                 "size": model.size,
-                "digest": PULL_DIGEST,
+                "digest": model.digest,
                 "details": _details(model),
             }
             for model in models
@@ -450,6 +485,7 @@ def _handler_for(fake: FakeOllama) -> type[BaseHTTPRequestHandler]:
             if method == "GET" and self.path == "/api/version":
                 self._json({"version": fake.version})
             elif method == "GET" and self.path == "/api/tags":
+                time.sleep(fake.tags_delay())
                 self._json({"models": fake.tags()})
             elif method == "GET" and self.path == "/api/ps":
                 self._json({"models": fake.ps()})

@@ -306,17 +306,18 @@ class PerformanceProbe:
         """
         if stop_requested(self._cancel_event):
             raise RunStoppedError
-        # One request tells "unreachable" from "no model installed": a server that cannot be
+        # One answer tells "unreachable" from "no model installed": a server that cannot be
         # reached must not look like a test that found every model missing.
-        installed, unreachable = self._client.list_models_or_error()
-        if unreachable:
-            _logger.info("speed test: server unreachable: %s", unreachable)
+        snapshot = self._client.snapshot()
+        if snapshot.unreachable:
+            _logger.info("speed test: server unreachable: %s", snapshot.unreachable)
             return ProbeResult(
                 on_battery=self._on_battery,
                 gpu_found=self._gpu_found,
-                error=unreachable.removeprefix("✗").strip(),
+                error=snapshot.reason,
             )
-        before = self._client.server_facts()
+        installed = snapshot.tags
+        before = snapshot.facts(loaded=self._client.loaded_models())
         tested = {normalize_tag(tag) for tag in request.models()}
         shared = any(normalize_tag(name) not in tested for name in before.loaded_names())
         try:

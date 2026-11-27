@@ -539,13 +539,21 @@ app_test(
     deps = _IMAGE_DEPS + _CV_DEPS + _INFRASTRUCTURE_LIB,
 )
 
+# The fake Ollama server: what the service remembers is what the server answered, so the test
+# asks a server over loopback rather than a client of its own.
 app_test(
     "unit/test_ollama_server.py",
-    deps = _APPLICATION_LIB,
+    extra_srcs = ["fakes/fake_ollama.py"],
+    deps = _REQUESTS_DEPS + ["@ocr_test_dependencies//ollama:pkg"] + _APPLICATION_LIB,
 )
 
 app_test(
     "unit/test_ollama_address.py",
+    deps = _DOMAIN_LIB,
+)
+
+app_test(
+    "unit/test_ollama_snapshot.py",
     deps = _DOMAIN_LIB,
 )
 

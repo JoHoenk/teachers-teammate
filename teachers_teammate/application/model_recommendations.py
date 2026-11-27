@@ -5,12 +5,10 @@ nobody else has to remember to invalidate them:
 
 * the **local hardware probe** (``nvidia-smi`` / ``rocm-smi`` / Apple memory) runs
   at most once per process — it describes *this* computer and does not depend on
-  the Ollama URL, so editing the URL never re-probes;
-* the **model classification** cache (the uses — reading and/or writing — per
-  tag, per normalised Ollama URL) only stores *definite* answers, so a model that
-  could not be inspected (not pulled yet, server hiccup) is asked again next time;
-* :meth:`on_ollama_models_changed` is the one call to make after a pull
-  finished: it evicts the model list *and* the classifications for that server.
+  the Ollama URL, so editing the URL never re-probes.
+
+What a model can do is not kept here: the service that owns the server holds it, per
+digest, so a tag pulled again is asked again.
 
 All methods are thread-safe; the slow ones (probe, classification over the
 network) are meant to run in a background thread — see ``cached_only`` for the
@@ -90,8 +88,6 @@ class ModelRecommendationService:
         self,
         *,
         effective_model: Callable[[str, str, str], str],
-        invalidate_model_list: Callable[[str], None] | None = None,
-        invalidate_speed_facts: Callable[[str], None] | None = None,
         machine_factor: Callable[[str, ModelCategory], float | None] | None = None,
         hardware: HardwareProbe,
         ollama: OllamaServer,
@@ -102,12 +98,6 @@ class ModelRecommendationService:
             effective_model: ``(provider, model, task)`` → the model a run would
                 use; :meth:`context_choice` needs it to promise the window a run
                 really uses.
-            invalidate_model_list: Evicts the cached list of installed Ollama
-                models for a (normalised) server URL.  Supplied by the owner of
-                that list; called by :meth:`on_ollama_models_changed`.
-            invalidate_speed_facts: Forgets the stored server facts of a URL: a
-                pull changes the digest a measurement is keyed by.  Called by
-                :meth:`on_ollama_models_changed`, which is what a pull triggers.
             machine_factor: ``(ollama_url, category)`` → how much slower this
                 computer is than the reference machine, for the speed a rating
                 of :meth:`rate_ollama_models` may carry.
@@ -118,16 +108,11 @@ class ModelRecommendationService:
         """
         self._effective_model = effective_model
         self._ollama = ollama
-        self._invalidate_model_list = invalidate_model_list or (lambda _url: None)
-        self._invalidate_speed_facts = invalidate_speed_facts or (lambda _url: None)
         self._machine_factor_of = machine_factor or (lambda _url, _category: None)
         self._hardware = hardware
         self._probe: _LocalProbe | None = None
         self._probe_lock = threading.Lock()
         self._system_memory: tuple[float | None] | None = None  # read once, a 1-tuple when read
-        self._cache_lock = threading.RLock()
-        # normalised URL -> {tag -> definite category}; unknown results are never stored.
-        self._classification: dict[str, dict[str, ModelUses]] = {}
 
     # ── this computer ──────────────────────────────────────────────────────
 
@@ -304,8 +289,9 @@ class ModelRecommendationService:
 
         The catalog decides first; only unknown tags are asked to the server via
         ``show().capabilities``: a model that can read images may be used for
-        reading *and* writing, a text-only model for writing only.  Only definite
-        answers are cached.  After the first connection failure the remaining
+        reading *and* writing, a text-only model for writing only.  What a model was
+        asked once is kept by the service that owns the server, per digest, so a tag
+        pulled again is asked again.  After the first connection failure the remaining
         tags are not asked, so an unreachable server costs one timeout, not one
         per model.
 
@@ -318,24 +304,13 @@ class ModelRecommendationService:
         url = normalize_ollama_url(ollama_url)
         result: dict[str, ModelUses | None] = {}
         unknown: list[str] = []
-        with self._cache_lock:
-            cache = self._classification.setdefault(url, {})
-            for tag in tags:
-                cached = cache.get(tag)
-                if cached is not None:
-                    result[tag] = cached
-                    continue
-                spec = find_spec(tag)
-                if spec is not None:
-                    cache[tag] = catalog_uses(spec)
-                    result[tag] = cache[tag]
-                else:
-                    unknown.append(tag)
-
+        for tag in tags:
+            spec = find_spec(tag)
+            if spec is not None:
+                result[tag] = catalog_uses(spec)
+            else:
+                unknown.append(tag)
         if not unknown:
-            return result
-        if cached_only:
-            result.update(dict.fromkeys(unknown, None))
             return result
 
         reachable = True
@@ -343,17 +318,17 @@ class ModelRecommendationService:
             uses: ModelUses | None = None
             if reachable:
                 try:
-                    capabilities = self._ollama.model_capabilities(
-                        url, normalize_tag(tag), timeout=_CLASSIFY_TIMEOUT_S
+                    capabilities = self._ollama.capabilities(
+                        url,
+                        normalize_tag(tag),
+                        timeout=_CLASSIFY_TIMEOUT_S,
+                        cached_only=cached_only,
                     )
                 except OllamaUnreachableError:
                     reachable = False
                 else:
                     if capabilities is not None:
                         uses = uses_from_capabilities(capabilities)
-            if uses is not None:
-                with self._cache_lock:
-                    self._classification.setdefault(url, {})[tag] = uses
             result[tag] = uses
         return result
 
@@ -425,22 +400,3 @@ class ModelRecommendationService:
             system_memory_gb=detection.system_memory_gb if detection is not None else None,
             card_gb=detection.card_gb if detection is not None else None,
         )
-
-    # ── invalidation ───────────────────────────────────────────────────────
-
-    def invalidate_classification(self, ollama_url: str) -> None:
-        """Forget the classifications for *ollama_url* only."""
-        with self._cache_lock:
-            self._classification.pop(normalize_ollama_url(ollama_url), None)
-
-    def on_ollama_models_changed(self, ollama_url: str) -> None:
-        """Evict everything derived from the installed-model list of *ollama_url*.
-
-        Call this after a pull finished (or a model was removed): the model list,
-        the classifications and the stored server facts are stale from that moment
-        on — a pull changes the digest a measurement is keyed by.
-        """
-        url = normalize_ollama_url(ollama_url)
-        self._invalidate_model_list(url)
-        self.invalidate_classification(url)
-        self._invalidate_speed_facts(url)

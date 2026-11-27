@@ -21,6 +21,7 @@ from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     HardwareProfile,
 )
+from teachers_teammate.domain.ollama_snapshot import ServerSnapshot
 from teachers_teammate.domain.performance_estimate import (
     ProbeResult,
     SpeedBand,
@@ -79,7 +80,7 @@ class _FakeService:
         self.fail_with = fail_with
         self.settings: dict[str, object] = {}
         self.tested: list[SpeedChoices] = []
-        self.facts_urls: list[str] = []
+        self.snapshot_urls: list[str] = []
         self.cancel_event: threading.Event | None = None
         self.started = threading.Event()
         self.release = threading.Event()
@@ -93,13 +94,15 @@ class _FakeService:
         choices: SpeedChoices,
         *,
         hardware: HardwareDetection | None = None,
-        cached_only: bool = True,
     ) -> SpeedSummary:
-        _ = (choices, hardware, cached_only)
+        _ = (choices, hardware)
         return self.summary
 
-    def refresh_server_facts(self, ollama_url: str) -> None:
-        self.facts_urls.append(ollama_url)
+    def snapshot(self, url: str, *, max_age: float = 0.0) -> ServerSnapshot:
+        """Record the address the panel asked about and answer with an empty server."""
+        _ = max_age
+        self.snapshot_urls.append(url)
+        return ServerSnapshot()
 
     def test_speed(
         self,
@@ -653,22 +656,22 @@ def test_a_test_that_could_not_run_says_why(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_the_panel_asks_for_the_server_facts_once_per_address(qtbot) -> None:
+def test_the_panel_asks_the_server_each_time_it_is_drawn(qtbot) -> None:
     """
     Given  the panel on a page with one server address
     When   it is drawn twice and then pointed at another server
-    Then   the facts are asked for once per address, because they decide whether a stored
-           measurement is still current
+    Then   every drawing asks about the server that is shown, so a model pulled or an Ollama
+           upgraded in a terminal is not compared with a figure of the last session
     """
     service = _FakeService(_summary(), _choices())
     panel = _panel(qtbot, service)
     panel.refresh()
 
-    qtbot.waitUntil(lambda: service.facts_urls == [_URL], timeout=5000)
+    qtbot.waitUntil(lambda: service.snapshot_urls == [_URL, _URL], timeout=5000)
     panel.set_ollama_url("http://gpu-server:11434")
 
-    qtbot.waitUntil(lambda: len(service.facts_urls) == 2, timeout=5000)
-    assert service.facts_urls[-1] == "http://gpu-server:11434"
+    qtbot.waitUntil(lambda: len(service.snapshot_urls) == 3, timeout=5000)
+    assert service.snapshot_urls[-1] == "http://gpu-server:11434"
 
 
 # ── the wording ─────────────────────────────────────────────────────────────

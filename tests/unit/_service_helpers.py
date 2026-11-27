@@ -184,10 +184,19 @@ def _ollama_config(tmp_path: Path, **overrides):
 
 
 def _server_answers(models: list[str], error: str = ""):
-    """Patch the single Ollama request that lists models with ``(models, error)``."""
+    """Patch the single Ollama request that reads a server's models with ``(models, error)``."""
+    from teachers_teammate.domain.ollama_snapshot import (  # noqa: PLC0415
+        InstalledModel,
+        ServerSnapshot,
+    )
+
     return patch(
-        "teachers_teammate.infrastructure.ollama_utils.OllamaClient.list_models_or_error",
-        return_value=(models, error),
+        "teachers_teammate.infrastructure.ollama_utils.OllamaClient.snapshot",
+        return_value=ServerSnapshot(
+            version="0.12.3",
+            models=tuple(InstalledModel(tag=tag) for tag in models),
+            unreachable=error,
+        ),
     )
 
 

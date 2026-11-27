@@ -1,7 +1,9 @@
-"""The Ollama server: discovery, status, model sizes and pulls.
+"""The Ollama server: discovery, status, model sizes, pulls and what it has installed.
 
 One place asks the server anything, so the address a teacher typed is used everywhere and
-never replaced by a default of this computer.
+never replaced by a default of this computer.  What the server answered is kept here too: its
+version and what it has installed are one answer, and a pull or a restart changes all of it at
+once.
 """
 
 from __future__ import annotations
@@ -9,8 +11,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import threading
+import time
+from typing import TYPE_CHECKING
 
-from ..domain.model_catalog import ServerFacts
 from ..domain.ollama_address import is_local_ollama_url, normalize_ollama_url
 from ..domain.ollama_discovery import (
     DiscoveredServer,
@@ -20,6 +23,8 @@ from ..domain.ollama_discovery import (
     WaitKind,
     ollama_state,
 )
+from ..domain.ollama_snapshot import SNAPSHOT_TTL_S, ServerSnapshot
+from ..exceptions import OllamaUnreachableError
 from ..infrastructure.ollama_utils import (
     OllamaClient,
     ServerActivity,
@@ -28,6 +33,10 @@ from ..infrastructure.ollama_utils import (
 )
 from ..infrastructure.wsl import windows_host_addresses
 from ..interfaces import ConnectionCheck
+from ..messages import cannot_reach, detail
+
+if TYPE_CHECKING:
+    from .ports import OllamaClientFactory
 
 
 @dataclass(frozen=True)
@@ -43,8 +52,139 @@ class OllamaStatus:
     can_start: bool = False
 
 
+def ollama_client(
+    url: str, *, cancel_event: threading.Event | None = None, timeout: float | None = None
+) -> OllamaClient:
+    """Build the Ollama client of one address: the one factory the app uses.
+
+    *cancel_event* makes a waiting request abandonable (a run or a speed test the teacher
+    stopped), *timeout* bounds a request that has to answer (``None``: the client's own).
+    """
+    if timeout is None:
+        return OllamaClient(url, cancel_event=cancel_event)
+    return OllamaClient(url, cancel_event=cancel_event, timeout=timeout)
+
+
 class OllamaServerService:
-    """Asks the Ollama server at the configured address what it has and what it is doing."""
+    """Asks the Ollama server at the configured address what it has and what it is doing.
+
+    It also remembers the answer: which models are installed, their digests and the server's
+    version are one snapshot, taken again when it is older than ``SNAPSHOT_TTL_S``, when it
+    listed no model, or when something changed the server (a pull).  What is in memory
+    (``/api/ps``) is never kept.
+    """
+
+    def __init__(
+        self,
+        *,
+        client_factory: OllamaClientFactory[OllamaClient] = ollama_client,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Create the service.
+
+        Args:
+            client_factory: Builds the client of one address.  One factory is shared with the
+                speed test, so a test replaces it once and nothing else builds a client of its
+                own.
+            clock: What the age of a snapshot is measured with; a test replaces it.
+        """
+        self._client = client_factory
+        self._clock = clock
+        # One lock around the dicts, never held during a request: the GUI thread reads what is
+        # held while a background thread asks the server.
+        self._lock = threading.Lock()
+        self._snapshots: dict[str, tuple[float, ServerSnapshot]] = {}
+        # Counts the forgets per address: an answer asked for before a forget is not kept.
+        self._generations: dict[str, int] = {}
+        self._capabilities: dict[tuple[str, str], frozenset[str]] = {}
+
+    # ── what the server answered ───────────────────────────────────────────
+
+    def snapshot(
+        self, url: str, *, max_age: float = SNAPSHOT_TTL_S, timeout: float | None = None
+    ) -> ServerSnapshot:
+        """Return what the server at *url* has, asking it when the held answer is too old.
+
+        Blocking network call: run it on a background thread.  ``max_age=0`` always asks;
+        *timeout* bounds the request (``None``: the client's own).  The latest answer is always
+        held, but one that lists no model — nothing downloaded, or no connection — is asked
+        again on the next look, so a model pulled in a terminal or a server started a moment
+        later is noticed.
+        """
+        key = normalize_ollama_url(url)
+        held = self._held(key, max_age)
+        if held is not None and held.models:
+            return held
+        with self._lock:
+            generation = self._generations.get(key, 0)
+        snapshot = self._client(key, timeout=timeout).snapshot()
+        with self._lock:
+            if self._generations.get(key, 0) == generation:
+                self._snapshots[key] = (self._clock(), snapshot)
+        return snapshot
+
+    def cached_snapshot(self, url: str, *, max_age: float | None = None) -> ServerSnapshot | None:
+        """Return the latest answer held for *url* without asking the server, or ``None``.
+
+        ``None`` means the app has not asked the server yet, or what it holds is older than
+        *max_age* (``None``: any age).  The answer may be an unreachable one: that is how a
+        reader tells "the server is gone" from "not asked yet".  Safe on the GUI thread.
+        """
+        return self._held(normalize_ollama_url(url), max_age)
+
+    def forget(self, url: str) -> None:
+        """Forget what the app knows about the server at *url*.
+
+        For a pull (also one that failed or was stopped: it installed part of a model) and for
+        a server that was restarted.  What a model can do is kept: a digest does not change
+        meaning.
+        """
+        key = normalize_ollama_url(url)
+        with self._lock:
+            self._snapshots.pop(key, None)
+            self._generations[key] = self._generations.get(key, 0) + 1
+
+    def _held(self, key: str, max_age: float | None) -> ServerSnapshot | None:
+        """Return the snapshot held for *key* if it is younger than *max_age* (``None``: any)."""
+        with self._lock:
+            entry = self._snapshots.get(key)
+        if entry is None:
+            return None
+        return entry[1] if max_age is None or self._clock() - entry[0] < max_age else None
+
+    def capabilities(
+        self, url: str, tag: str, *, timeout: float, cached_only: bool = False
+    ) -> frozenset[str] | None:
+        """Return what *tag* can do on the server at *url*, or ``None`` when it cannot say.
+
+        Held per digest of the tag: a tag is a name that can be re-pointed, so what an earlier
+        pull of it could do says nothing about this one.  A tag the server reports no digest
+        for is asked every time, and an unknown answer is never held.
+
+        Raises:
+            :exc:`~teachers_teammate.exceptions.OllamaUnreachableError`: *url* is unreachable,
+                so a caller asking about several tags can stop asking.
+        """
+        key = normalize_ollama_url(url)
+        if cached_only:
+            snapshot = self.cached_snapshot(key)
+        else:
+            snapshot = self.snapshot(key, timeout=timeout)
+            if snapshot.unreachable:
+                raise OllamaUnreachableError(cannot_reach(key, detail(snapshot.reason)))
+        digest = "" if snapshot is None else snapshot.digest_of(tag)
+        if digest:
+            with self._lock:
+                known = self._capabilities.get((key, digest))
+            if known is not None:
+                return known
+        if cached_only:
+            return None
+        capabilities = self._client(key, timeout=timeout).model_capabilities(tag)
+        if capabilities is not None and digest:
+            with self._lock:
+                self._capabilities[(key, digest)] = capabilities
+        return capabilities
 
     def discover_ollama_servers(
         self,
@@ -108,44 +248,22 @@ class OllamaServerService:
 
     def list_ollama_model_sizes(self, url: str) -> dict[str, int]:
         """Return ``{model_name: size_bytes}`` for models installed in Ollama."""
-        return dict(OllamaClient(url).list_models_with_size())
-
-    def listed_models(self, url: str) -> tuple[list[str], str]:
-        """Return ``(installed, unreachable)`` for the server at *url*, asking it now.
-
-        *unreachable* is ``""`` when the server answered — also when it has no model
-        downloaded yet — and the connection message otherwise.  Makes one request: a caller
-        that asks repeatedly keeps the answer.
-        """
-        return OllamaClient(url).list_models_or_error()
+        return self.snapshot(url).sizes()
 
     def activity(self, url: str, model: str = "") -> ServerActivity:
         """Return what the server at *url* holds in memory, and whether *model* is there.
 
         Never raises: an unreachable server reports nothing loaded and nothing busy.
         """
-        return OllamaClient(url).activity(model)
+        return self._client(url).activity(model)
 
     def unload(self, url: str, model: str) -> None:
         """Drop *model* out of the server's memory at *url*, so it costs no memory any more."""
-        OllamaClient(url).unload(model)
+        self._client(url).unload(model)
 
     def check_connection(self, url: str, model: str = "") -> ConnectionCheck:
         """Return ``(connected, model_ok, message)`` for the server at *url*."""
-        return OllamaClient(url).check_connection(model)
-
-    def model_capabilities(self, url: str, tag: str, *, timeout: float) -> frozenset[str] | None:
-        """Return what *tag* can do on the server at *url*, or ``None`` when it cannot say.
-
-        Raises:
-            :exc:`~teachers_teammate.exceptions.OllamaUnreachableError`: *url* is unreachable,
-                so a caller asking about several tags can stop asking.
-        """
-        return OllamaClient(url, timeout=timeout).model_capabilities(tag)
-
-    def server_facts(self, url: str) -> ServerFacts:
-        """Return the version, the model digests and the loaded models of the server at *url*."""
-        return OllamaClient(url).server_facts()
+        return self._client(url).check_connection(model)
 
     def wait_for(self, url: str, model: str) -> WaitDetail:
         """Return why *model* has to wait for another one at *url*, or nothing.
@@ -168,8 +286,15 @@ class OllamaServerService:
         progress_cb: Callable[[str, float, float], None] | None = None,
         abort_event: threading.Event | None = None,
     ) -> None:
-        """Pull (download) *model_name* from Ollama at *url*."""
-        OllamaClient(url).pull(model_name, progress_cb, abort_event)
+        """Pull (download) *model_name* from Ollama at *url*.
+
+        The server is forgotten afterwards, whatever came of the pull: a pull that failed or
+        was stopped can still have installed part of it.
+        """
+        try:
+            self._client(url).pull(model_name, progress_cb, abort_event)
+        finally:
+            self.forget(url)
 
     @staticmethod
     def program_found() -> bool:

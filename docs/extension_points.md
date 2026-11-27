@@ -76,6 +76,11 @@ so background thread only. See {doc}`development` → "Text recognition switch".
   fix rows in `gui/_fix_targets.py`. `RequirementIssue.startable` is `False` on Linux (the
   tooltip names the service command). The readiness line re-checks every 10 s for all three
   Ollama kinds; `gui/_ollama_status_line.py` shows the same state on *This computer*.
+- What the server answered — its version, the installed models with their digests and sizes, and
+  what a model can do — is held by `OllamaServerService` alone: `snapshot(url)` asks when the held
+  answer is older than `SNAPSHOT_TTL_S` (`domain/ollama_snapshot.py`) or lists no model,
+  `cached_snapshot(url)` never asks, `forget(url)` drops it and a pull forgets by itself. Nothing
+  else caches an answer of the server.
 
 ## Stopping a run / its result
 

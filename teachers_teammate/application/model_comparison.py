@@ -433,7 +433,7 @@ class ModelComparisonService:
         """Return the digest of *candidate* on its server; ``""`` for an online provider."""
         if candidate.provider != PROVIDER_OLLAMA:
             return ""
-        return self._ollama.server_facts(ollama_url).digest_of(candidate.model)
+        return self._ollama.snapshot(ollama_url).digest_of(candidate.model)
 
     # ── what the models loaded ─────────────────────────────────────────────
 

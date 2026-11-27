@@ -204,19 +204,19 @@ def test_a_list_entry_carries_the_fields_a_real_server_always_sends(fake: FakeOl
     assert entry["details"]["parent_model"] == ""
 
 
-def test_the_size_of_an_installed_model_reaches_the_list(fake: FakeOllama) -> None:
+def test_the_size_of_an_installed_model_reaches_the_snapshot(fake: FakeOllama) -> None:
     """
     Given  one model installed with a size and one without
-    When   the app's client lists them with their sizes
+    When   the app's client asks the server about itself
     Then   the first has its own size and the second the default one
     """
     fake.install("small:latest", size=1_000_000)
     fake.install("big:latest")
 
-    assert OllamaClient(fake.url).list_models_with_size() == [
-        ("small:latest", 1_000_000),
-        ("big:latest", MODEL_SIZE),
-    ]
+    assert OllamaClient(fake.url).snapshot().sizes() == {
+        "small:latest": 1_000_000,
+        "big:latest": MODEL_SIZE,
+    }
 
 
 # ── what the server is doing while a request has no answer yet ─────────────

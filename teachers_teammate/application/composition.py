@@ -28,7 +28,6 @@ from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.gpu_detector import SystemHardwareProbe
 from ..infrastructure.key_facts import MachineKeyFacts
-from ..infrastructure.ollama_utils import OllamaClient
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.option_mark_store import OptionMarkStore, default_marks_root
 from ..infrastructure.performance_probe import PerformanceProbe
@@ -53,7 +52,7 @@ from .documents import DocumentQueries
 from .export import ExportService
 from .model_comparison import ComparisonParts, ModelComparisonService
 from .model_recommendations import ModelRecommendationService
-from .ollama_server import OllamaServerService
+from .ollama_server import OllamaServerService, ollama_client
 from .providers import ProviderService
 from .reader import ReaderService
 from .releases import ReleaseService
@@ -261,7 +260,7 @@ def _speed_estimates(parts: _Parts, providers: ProviderService) -> SpeedEstimate
     return SpeedEstimateService(
         effective_model=providers.effective_model,
         ollama=parts.ollama,
-        client_factory=lambda url, cancel_event: OllamaClient(url, cancel_event=cancel_event),
+        client_factory=ollama_client,
         samples=parts.samples,
         # The reading step prepares its test page with the page models a run reads with.
         probe_factory=functools.partial(PerformanceProbe, model_store=parts.model_store),
@@ -296,18 +295,13 @@ def _data_flow(providers: ProviderService, anonymization: AnonymizationService) 
 def _recommendations(
     parts: _Parts, providers: ProviderService, speeds: SpeedEstimateService
 ) -> ModelRecommendationService:
-    """Return the model advice, and have it forget a classification when the provider does."""
-    recommendations = ModelRecommendationService(
+    """Return the model advice: hardware detection, classification and ratings."""
+    return ModelRecommendationService(
         effective_model=providers.effective_model,
-        invalidate_model_list=providers.forget_ollama_model_list,
-        invalidate_speed_facts=speeds.forget_server_facts,
         machine_factor=lambda url, task: speeds.machine_factors(url).for_category(task),
         hardware=parts.hardware,
         ollama=parts.ollama,
     )
-    # Refreshing a server's model list also drops what was classified from it.
-    providers.watch_classifications(recommendations.invalidate_classification)
-    return recommendations
 
 
 def _setup(

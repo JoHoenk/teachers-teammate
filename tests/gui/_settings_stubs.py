@@ -237,7 +237,9 @@ class ProviderAppService(CachingDummyAppService):
         return super().get_provider_info(provider)
 
     def list_provider_models_checked(self, provider: str, *, base_url: str = "") -> ModelListing:
-        self.checked_calls.append(provider)
+        # Ollama's list comes from the service that owns the server, not from a checked answer.
+        if provider != "ollama":
+            self.checked_calls.append(provider)
         return self.listing
 
     def invalidate_model_cache(self, provider: str, base_url: str = "") -> None:

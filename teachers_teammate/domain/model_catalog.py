@@ -19,7 +19,7 @@ widgets only render the results.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
@@ -720,6 +720,20 @@ def normalize_tag(tag: str) -> str:
     if ":" in cleaned:
         return cleaned
     return f"{cleaned}:latest"
+
+
+def digest_in(digests: Iterable[tuple[str, str]], tag: str) -> str:
+    """Return the digest listed for *tag* among ``(tag, digest)`` pairs, or ``""``.
+
+    Compared over :func:`normalize_tag`, so ``"gemma4"`` and ``"gemma4:latest"`` are one model.
+    The digest pins the weights: a tag is a name that can be re-pointed, so it is what tells a
+    measurement of an earlier pull from one of this.
+    """
+    wanted = normalize_tag(tag)
+    for name, digest in digests:
+        if normalize_tag(name) == wanted:
+            return digest
+    return ""
 
 
 def short_model_name(tag: str) -> str:
@@ -1484,11 +1498,7 @@ class ServerFacts:
 
     def digest_of(self, tag: str) -> str:
         """Return the digest of *tag*, or ``""`` when the server did not report one."""
-        wanted = normalize_tag(tag)
-        for name, digest in self.digests.items():
-            if normalize_tag(name) == wanted:
-                return digest
-        return ""
+        return digest_in(self.digests.items(), tag)
 
     def loaded_names(self) -> tuple[str, ...]:
         """Return the names of the models the server held in memory."""

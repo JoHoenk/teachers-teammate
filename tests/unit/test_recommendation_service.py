@@ -45,20 +45,30 @@ def _effective_model(provider: str, model: str, task: str) -> str:
 class _FakeServer:
     """An Ollama server as the port shows it: what a model can do, and where it runs.
 
-    *caps* answers ``model_capabilities``; every tag it was asked about is recorded, which is
-    what "the server was not asked twice" means.  ``is_local`` answers as the address rule does
-    when no own names are handed in, and raises when the server is not supposed to be asked.
+    *caps* answers ``capabilities``; every tag it was asked about is recorded, which is what
+    "the server was not asked twice" means.  ``is_local`` answers as the address rule does when
+    no own names are handed in, and raises when the server is not supposed to be asked.
     """
 
     def __init__(self, caps: Callable[[str], frozenset[str] | None] | None = None) -> None:
         self.asked: list[str] = []
         self.timeouts: list[float] = []
+        self.cached_only_calls: list[bool] = []
         self._caps = caps
 
-    def model_capabilities(self, url: str, tag: str, *, timeout: float) -> frozenset[str] | None:
-        """Return what *tag* can do, recording that the server was asked."""
+    def capabilities(
+        self, url: str, tag: str, *, timeout: float, cached_only: bool = False
+    ) -> frozenset[str] | None:
+        """Return what *tag* can do, recording that the server was asked.
+
+        ``cached_only`` answers ``None``, as the real service does when it holds no answer:
+        the server is not contacted.
+        """
         _ = url
         self.timeouts.append(timeout)
+        self.cached_only_calls.append(cached_only)
+        if cached_only:
+            return None
         self.asked.append(tag)
         if self._caps is None:
             raise AssertionError(f"the server was asked about {tag!r}")
@@ -73,16 +83,12 @@ class _FakeServer:
 
 def _service(
     *,
-    forget_models: list[str] | None = None,
-    forget_facts: list[str] | None = None,
     machine_factor: float | None = None,
     server: _FakeServer | None = None,
 ) -> ModelRecommendationService:
     """Return the service, wired as the app wires it, with the calls it makes recorded."""
     return ModelRecommendationService(
         effective_model=_effective_model,
-        invalidate_model_list=(forget_models.append if forget_models is not None else None),
-        invalidate_speed_facts=(forget_facts.append if forget_facts is not None else None),
         machine_factor=(
             (lambda _url, _category: machine_factor) if machine_factor is not None else None
         ),
@@ -360,60 +366,26 @@ def test_the_free_memory_and_the_live_load_are_read_on_demand(monkeypatch) -> No
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
-def test_classify_ollama_models_uses_catalog_and_caches_capabilities() -> None:
+def test_classify_ollama_models_uses_the_catalog_and_asks_about_unknown_tags() -> None:
     """
     Given  a mix of catalogued and custom model tags
-    When   classify_ollama_models is called twice
-    Then   catalogued tags resolve from the catalog, unknown tags via
-           model_capabilities, and the result is cached (no second server call)
+    When   classify_ollama_models is called
+    Then   catalogued tags resolve from the catalog and only the custom ones are asked of the
+           service that owns the server, which is where a capability answer is kept
     """
     server = _FakeServer(
         lambda tag: frozenset({"vision"}) if "vl" in tag else frozenset({"completion"})
     )
     service = _service(server=server)
-    caps_calls = server.asked
 
     tags = ["qwen3-vl:8b", "my-custom-vl:latest", "my-custom-text:latest"]
     result = service.classify_ollama_models(tags, _URL)
+
     assert result["qwen3-vl:8b"] == frozenset({"ocr"})
     # A model that can read images may be used for reading AND writing.
     assert result["my-custom-vl:latest"] == frozenset({"ocr", "general"})
     assert result["my-custom-text:latest"] == frozenset({"general"})
-    assert sorted(caps_calls) == ["my-custom-text:latest", "my-custom-vl:latest"]
-
-    # Second call is fully cached — the server is not asked again.
-    service.classify_ollama_models(tags, _URL)
-    assert len(caps_calls) == 2
-
-    # A pull clears the model list and the classification cache.
-    service.on_ollama_models_changed(_URL)
-    service.classify_ollama_models(tags, _URL)
-    assert len(caps_calls) == 4
-
-    # ... also when the URL is written differently (trailing slash).
-    service.on_ollama_models_changed(f"{_URL}/")
-    service.classify_ollama_models(tags, _URL)
-    assert len(caps_calls) == 6
-
-
-@pytest.mark.use_case("Model_Category_Guidance")
-def test_unknown_classification_is_not_cached() -> None:
-    """
-    Given  a custom model whose capabilities could not be read (None)
-    When   it is classified twice
-    Then   the server is asked both times — "unknown" is never cached, so a
-           model that was not pulled yet is recognised as soon as it is
-    """
-    answers = iter([None, frozenset({"vision"})])
-    server = _FakeServer(lambda _tag: next(answers))
-    service = _service(server=server)
-    asked = server.asked
-
-    assert service.classify_ollama_models(["my-model:latest"], _URL) == {"my-model:latest": None}
-    assert service.classify_ollama_models(["my-model:latest"], _URL) == {
-        "my-model:latest": frozenset({"ocr", "general"})
-    }
-    assert asked == ["my-model:latest", "my-model:latest"]
+    assert sorted(server.asked) == ["my-custom-text:latest", "my-custom-vl:latest"]
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -499,25 +471,6 @@ def test_a_rating_carries_how_much_slower_this_computer_is() -> None:
     assert unknown.speed is None  # nothing measured on this server: no guess
     assert measured.speed is SpeedBand.OK
     assert measured.speed_source is SpeedSource.EXPECTED
-
-
-@pytest.mark.use_case("Model_Category_Guidance")
-def test_on_ollama_models_changed_evicts_list_classification_and_server_facts() -> None:
-    """
-    Given  the caches a pull makes stale: the model list, the classifications, the server facts
-    When   on_ollama_models_changed is called (a pull finished)
-    Then   the owner of the list and of the stored measurements hear of it, so nothing is asked
-           against the digest of the model that was replaced
-    """
-    forget_models: list[str] = []
-    forget_facts: list[str] = []
-    service = _service(forget_models=forget_models, forget_facts=forget_facts)
-
-    service.on_ollama_models_changed(f"{_URL}/")
-
-    # Both are told with the normalised URL, so the cache keys match.
-    assert forget_models == [_URL]
-    assert forget_facts == [_URL]
 
 
 # ── first start ─────────────────────────────────────────────────────────────

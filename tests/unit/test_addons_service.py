@@ -16,6 +16,7 @@ from teachers_teammate.domain.install_item import (
     InstallKind,
 )
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.ollama_snapshot import InstalledModel, ServerSnapshot
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from tests.conftest import fake_bundle, fake_reader_store
 
@@ -101,9 +102,8 @@ def test_installation_status_compares_normalised_tags(monkeypatch) -> None:
     Then   it counts as installed
     """
     monkeypatch.setattr(
-        providers_module,
-        "list_provider_models_checked",
-        _as_listing(lambda p, **kw: ["llama3.2:latest"]),
+        "teachers_teammate.infrastructure.ollama_utils.OllamaClient.snapshot",
+        lambda _self: ServerSnapshot(models=(InstalledModel("llama3.2:latest"),)),
     )
     status = build_app_services().addons.get_installation_status(
         ollama_models=["llama3.2", "other:1b"], ollama_url="http://127.0.0.1:11434"

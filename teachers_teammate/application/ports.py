@@ -33,10 +33,10 @@ if TYPE_CHECKING:
         ModelCategory,
         ModelRating,
         ModelUses,
-        ServerFacts,
         SystemUsage,
     )
     from ..domain.ollama_discovery import WaitDetail
+    from ..domain.ollama_snapshot import ServerSnapshot
     from ..domain.performance_estimate import TimeRange
     from ..domain.proofreading.compared_result import ComparedResult
     from ..domain.proofreading.option_marks import OptionMark
@@ -47,14 +47,36 @@ if TYPE_CHECKING:
 
 
 class OllamaServer(Protocol):
-    """The Ollama server at an address: what it holds, what it is doing, and pulling a model.
+    """The Ollama server at an address: what it has installed, what it is doing, and pulls.
 
     ``OllamaServerService`` implements it: the server's address is an argument of every call, so
     no method of a service works with a default address of this computer.
     """
 
-    def listed_models(self, url: str) -> tuple[list[str], str]:
-        """Return ``(installed, unreachable)`` for the server at *url*."""
+    def snapshot(
+        self, url: str, *, max_age: float = ..., timeout: float | None = None
+    ) -> ServerSnapshot:
+        """Return what the server at *url* has installed, asking it when the answer is old.
+
+        ``max_age=0`` always asks; *timeout* bounds the request.  Blocking network call.
+        """
+        ...
+
+    def cached_snapshot(self, url: str, *, max_age: float | None = None) -> ServerSnapshot | None:
+        """Return the latest answer held for *url* (maybe an unreachable one), or ``None``."""
+        ...
+
+    def forget(self, url: str) -> None:
+        """Forget what the app knows about the server at *url*."""
+        ...
+
+    def capabilities(
+        self, url: str, tag: str, *, timeout: float, cached_only: bool = False
+    ) -> frozenset[str] | None:
+        """Return what *tag* can do at *url*, or ``None`` when it cannot say.
+
+        ``cached_only`` never contacts the server.
+        """
         ...
 
     def list_ollama_model_sizes(self, url: str) -> dict[str, int]:
@@ -87,17 +109,6 @@ class OllamaServer(Protocol):
         """Return ``(connected, model_ok, message)`` for the server at *url*."""
         ...
 
-    def model_capabilities(self, url: str, tag: str, *, timeout: float) -> frozenset[str] | None:
-        """Return the capabilities the server reports for *tag* (``{"completion", "vision"}``, …).
-
-        ``None`` when it cannot say.
-        """
-        ...
-
-    def server_facts(self, url: str) -> ServerFacts:
-        """Return the version, the model digests and the loaded models at *url*."""
-        ...
-
     def is_local(self, url: str, *, include_wsl_host: bool = False) -> bool:
         """Return whether *url* points at this computer (or the Windows host behind WSL)."""
         ...
@@ -111,9 +122,21 @@ class OllamaServer(Protocol):
         ...
 
 
-#: Builds the Ollama client of one address; *cancel_event* makes a waiting request abandonable.
-#: The client is opaque here: only the probe that drives it knows its shape.
-OllamaClientFactory = Callable[[str, threading.Event | None], object]
+class OllamaClientFactory[C](Protocol):
+    """Builds the Ollama client *C* of one address.
+
+    *cancel_event* makes a waiting request abandonable, *timeout* bounds one that must answer.
+    A service that only passes the client on takes it as ``object``: only the code that drives
+    it knows its shape.
+    """
+
+    def __call__(
+        self,
+        url: str,
+        *,
+        cancel_event: threading.Event | None = None,
+        timeout: float | None = None,
+    ) -> C: ...
 
 
 class Credentials(Protocol):

@@ -16,7 +16,7 @@ import time
 from .._model_defaults import default_model_for_task
 from ..domain.data_location import PROVIDER_OLLAMA, StageLocation
 from ..domain.model_listing import ModelListing
-from ..domain.ollama_address import normalize_ollama_url
+from ..domain.ollama_snapshot import SNAPSHOT_TTL_S
 from ..domain.providers import ProviderInfo, display_name_of
 from ..infrastructure.llm_factory import (
     check_provider_connection,
@@ -46,6 +46,7 @@ class ProviderService:
     """Answers what each LLM provider is, needs and offers, and caches the model lists."""
 
     _MODEL_CACHE_TTL_S: float = 300.0
+    """How long an online service's list is used; Ollama's lives as long as its snapshot."""
 
     def __init__(
         self,
@@ -58,21 +59,9 @@ class ProviderService:
         self._credentials = credentials
         self._importable = importable_module or importable
         # The lists are read from a background thread and written from the window's; one lock
-        # covers the dict.  Re-entrant, because invalidating tells the recommender, which asks
-        # this service again.
+        # covers the dict.
         self._cache_lock = threading.RLock()
         self._model_cache: dict[str, tuple[float, ModelListing]] = {}
-        # Told when an Ollama model list is forgotten, so what was derived from it is forgotten
-        # too; the recommender that derives it is built after this service.
-        self._forget_classifications: Callable[[str], None] = lambda _url: None
-
-    def watch_classifications(self, forget: Callable[[str], None]) -> None:
-        """Let *forget* hear when an Ollama model list is forgotten.
-
-        Called once, while the services are built: the model classifications are derived from
-        the list, so they are stale the moment the list is.
-        """
-        self._forget_classifications = forget
 
     # ── the providers ─────────────────────────────────────────────────────────
 
@@ -205,14 +194,7 @@ class ProviderService:
 
     @staticmethod
     def _model_cache_key(provider: str, base_url: str = "") -> str:
-        """Return the cache key for *provider*'s model list.
-
-        Ollama URLs are normalised so ``"http://host:11434/"`` and ``"http://host:11434"`` — and
-        an omitted URL, which means the default server — share one entry; otherwise an
-        invalidation could miss the entry that was cached under the other spelling.
-        """
-        if provider == PROVIDER_OLLAMA:
-            return f"ollama:{normalize_ollama_url(base_url)}"
+        """Return the cache key for *provider*'s model list."""
         return f"{provider}:{base_url}" if base_url else provider
 
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
@@ -224,16 +206,20 @@ class ProviderService:
 
         Only a live or by-design built-in answer is remembered; a failed one (no key, key
         refused, no connection) is asked again next time, so a key entered a moment later
-        is noticed.
+        is noticed.  Ollama is not cached here: the service that owns the server keeps its
+        answer, and a server that cannot be asked says why instead of showing an empty list.
         """
+        if provider == PROVIDER_OLLAMA:
+            answer = self._ollama.snapshot(base_url)
+            if answer.unreachable:
+                return ModelListing([], "failed", answer.reason)
+            return ModelListing(answer.tags)
         cached = self.get_cached_listing(provider, base_url=base_url)
         if cached is not None:
             return cached
-        # Ollama is always asked at a real address; the others take no URL.
-        url = normalize_ollama_url(base_url) if provider == PROVIDER_OLLAMA else ""
-        kwargs: dict[str, str] = {"base_url": url} if url else {}
-        kwargs["api_key"] = self._credentials.key_for(provider) or ""
-        listing = list_provider_models_checked(provider, **kwargs)
+        listing = list_provider_models_checked(
+            provider, api_key=self._credentials.key_for(provider) or ""
+        )
         self.remember_listing(provider, listing, base_url=base_url)
         return listing
 
@@ -252,6 +238,11 @@ class ProviderService:
 
     def get_cached_listing(self, provider: str, *, base_url: str = "") -> ModelListing | None:
         """Return the cached listing for *provider* if still within TTL, else ``None``."""
+        if provider == PROVIDER_OLLAMA:
+            # Within the server's own lifetime, and only an answer that lists models, as for
+            # an online list (``ModelListing.cacheable``).
+            answer = self._ollama.cached_snapshot(base_url, max_age=SNAPSHOT_TTL_S)
+            return None if answer is None or not answer.models else ModelListing(answer.tags)
         with self._cache_lock:
             entry = self._model_cache.get(self._model_cache_key(provider, base_url))
         if entry and (time.monotonic() - entry[0]) < self._MODEL_CACHE_TTL_S:
@@ -266,14 +257,11 @@ class ProviderService:
     def invalidate_model_cache(self, provider: str, base_url: str = "") -> None:
         """Evict the cached model list for *provider* (forces re-fetch on next call).
 
-        For Ollama this also forgets the model classifications of that server.
+        For Ollama this forgets what the server answered: the service that owns the server
+        fetches it again when it is asked.
         """
+        if provider == PROVIDER_OLLAMA:
+            self._ollama.forget(base_url)
+            return
         with self._cache_lock:
             self._model_cache.pop(self._model_cache_key(provider, base_url), None)
-            if provider == PROVIDER_OLLAMA:
-                self._forget_classifications(base_url)
-
-    def forget_ollama_model_list(self, normalized_url: str) -> None:
-        """Drop only the cached Ollama model list (the recommender forgets the rest)."""
-        with self._cache_lock:
-            self._model_cache.pop(self._model_cache_key(PROVIDER_OLLAMA, normalized_url), None)

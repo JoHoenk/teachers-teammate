@@ -40,7 +40,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...application.check_document import CheckDocument
+from ...application.check_document import (
+    CheckDocument,
+    SentKind,
+    SentView,
+    sent_view_of,
+)
 from ...application.check_items import CheckItem, ItemKind, countable_keys, minor_corrections
 from ...domain.proofreading.carry import ReadingFix
 from ...domain.proofreading.review import AlignedReview
@@ -71,6 +76,18 @@ _NARROW_WIDTH = 1200
 #: Share of the width the scan takes, on *What was read* and on the other two views.
 _SCAN_SHARE_READ = 0.45
 _SCAN_SHARE_OTHER = 0.30
+
+#: What the line above the box says, per state of the box.
+_SENT_CAPTIONS: dict[SentKind, str] = {
+    SentKind.SENT: check_text.SENT_CAPTION,
+    SentKind.WILL_BE_SENT: check_text.WILL_BE_SENT_CAPTION,
+    SentKind.AS_WRITTEN: check_text.NAMES_SENT_AS_WRITTEN,
+    SentKind.NAMES_SHOWN: check_text.NAMES_SHOWN_CAPTION,
+    SentKind.UNAVAILABLE: check_text.NAMES_NOT_HIDDEN_CAPTION,
+}
+
+#: The states in which the box holds a text that is not the transcription: it cannot be typed in.
+_SHOWS_SENT = (SentKind.SENT, SentKind.WILL_BE_SENT, SentKind.WORKING)
 
 
 class CopyKind(Enum):
@@ -313,7 +330,7 @@ class CheckBody(QWidget):
         self.final_view.setObjectName(FINAL_VIEW)
         for view in (self.read_view, self.marked_view, self.final_view):
             self._stack.addWidget(view)
-        self._splitter.addWidget(self._stack)
+        self._splitter.addWidget(self._build_text_pane())
 
         self.panel = SidePanel()
         self.panel.setMinimumWidth(_PANEL_MIN_WIDTH)
@@ -327,6 +344,20 @@ class CheckBody(QWidget):
         document = self.final_view.document()
         document.undoAvailable.connect(self._refresh_history_actions)
         document.redoAvailable.connect(self._refresh_history_actions)
+
+    def _build_text_pane(self) -> QWidget:
+        """Return the pane of the three texts: the line about the box, then the box itself."""
+        pane = QWidget()
+        layout = QVBoxLayout(pane)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        self._sent_caption = QLabel()
+        self._sent_caption.setStyleSheet("color: #888;")
+        self._sent_caption.setWordWrap(True)
+        self._sent_caption.setVisible(False)
+        layout.addWidget(self._sent_caption)
+        layout.addWidget(self._stack, 1)
+        return pane
 
     def _connect_views(self) -> None:
         """Pass on what the text views and the side panel report."""
@@ -386,12 +417,27 @@ class CheckBody(QWidget):
         self._masking = masking
         if not (typed and same):
             self.scan.set_pages(doc.pages, doc.original_pages, doc.preprocess.steps)
-            self.read_view.set_text(masking.mask(doc.raw_text), doc.text_format)
+            self.read_view.show_sent(self.sent_view(doc), doc.text_format)
         self.final_view.set_text(masking.mask(doc.corrected_text), doc.text_format)
         self._refresh_marks()
         self.panel.set_document(doc, masking)
         self._refresh()
         self._request_placeholders(doc)
+
+    def sent_view(self, doc: CheckDocument) -> SentView:
+        """Return what the box of *What was read* shows for *doc*.
+
+        The rule itself is in the application layer: the body only says what the window knows
+        about hiding — whether it is possible, whether it is on — and hands the anonymizer's
+        answer along.
+        """
+        masking = self._masking
+        return sent_view_of(
+            doc,
+            available=masking.available,
+            hiding=masking.enabled,
+            preview=masking.preview,
+        )
 
     def _reading_fix_notice(self, typed_here: bool, doc: CheckDocument, fix: ReadingFix) -> str:
         """Return what the strip says about the proofreading a reading fix took, or ``""``.
@@ -444,13 +490,15 @@ class CheckBody(QWidget):
         """Show the texts with the placeholders of *masking*, or with the names again.
 
         Hiding the names is a change of what is shown, not of the text: both editable views
-        are filled again, so the placeholders appear in the text the teacher reads.
+        are filled again, so the placeholders appear in the text the teacher reads.  The box of
+        *What was read* follows the rule for what a request is made from, which is not always a
+        masked copy of the transcription.
         """
         self._masking = masking
         doc = self._doc
         if doc is None:
             return
-        self.read_view.set_text(masking.mask(doc.raw_text), doc.text_format)
+        self.read_view.show_sent(self.sent_view(doc), doc.text_format)
         self.final_view.set_text(masking.mask(doc.corrected_text), doc.text_format)
         self._refresh_marks()
         self.panel.set_document(doc, masking)
@@ -511,6 +559,7 @@ class CheckBody(QWidget):
         self.scan.clear()
         self.panel.clear()
         self.banner.hide_message()
+        self._sent_caption.setVisible(False)
 
     # ── What the body shows ───────────────────────────────────────────────
 
@@ -535,6 +584,7 @@ class CheckBody(QWidget):
     def _refresh(self) -> None:
         """Bring the marks, the editability, the banners and the widths in line with the state."""
         self._refresh_marks()
+        self._refresh_sent_caption()
         self._refresh_editability()
         self._refresh_banner()
         self._refresh_panel_visibility()
@@ -552,6 +602,25 @@ class CheckBody(QWidget):
         self.marked_view.show_document(doc, self._masking, chosen=chosen)
         self.panel.set_note("" if self.final_view.mapped else txt.COULD_NOT_MARK)
 
+    def _refresh_sent_caption(self) -> None:
+        """Say above the box what it holds: how the text was sent, or why the names stand in it.
+
+        Only over *What was read*: the other two views always show the proofread text, with the
+        placeholders of the same map.  A text with crossed-out words gets one line more: those
+        words never leave this computer.
+        """
+        lines: list[str] = []
+        doc = self._doc
+        if doc is not None and self._view is ViewKind.READ:
+            sent = self.sent_view(doc)
+            caption = _SENT_CAPTIONS.get(sent.kind, "")
+            if caption:
+                lines.append(caption)
+            if sent.struck:
+                lines.append(check_text.CROSSED_OUT_NOT_SENT)
+        self._sent_caption.setText("\n".join(lines))
+        self._sent_caption.setVisible(bool(lines))
+
     def _refresh_editability(self) -> None:
         """Let the teacher type where the state allows it, and say why where it does not.
 
@@ -565,15 +634,19 @@ class CheckBody(QWidget):
             return
         locked = bool(self._lock)
         masked = self._masking.enabled
+        sent = self.sent_view(doc).kind in _SHOWS_SENT
         reading_fix = doc.has_proofreading and not self._edit_allowed
         reason = ""
         if locked:
             reason = self._lock
         elif masked:
             reason = txt.SHOW_NAMES_TO_CHANGE
+        # The box holds a text that is not the transcription; typing there would store the
+        # placeholders in what the teacher wrote.
+        read_reason = self._lock if locked else (txt.SHOW_NAMES_TO_CHANGE if sent else "")
         self.read_view.set_editable(
-            not (locked or masked or reading_fix),
-            reason=reason or txt.READING_FIX_WARNING,
+            not (locked or sent or reading_fix),
+            reason=read_reason or txt.READING_FIX_WARNING,
         )
         self.final_view.set_editable(not (locked or masked), reason=reason)
         self.panel.set_editable(not (locked or masked), reason=reason)
@@ -1145,9 +1218,9 @@ class CheckPage(QWidget):
         self._refresh_checked()
         self.body.set_lock(reason)
 
-    def set_anonymization(self, mapping, *, error: str = "") -> None:
-        """Hand over the placeholders of the open document, or why there are none."""
-        self._masking.set_result(mapping, error=error)
+    def set_anonymization(self, mapping, *, text: str = "", error: str = "") -> None:
+        """Hand over the placeholders of the open document and the text they are in, or why not."""
+        self._masking.set_result(mapping, text=text, error=error)
         self.body.set_masking(self._masking)
         self._refresh_hide_names_box()
 

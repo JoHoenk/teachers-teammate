@@ -156,13 +156,15 @@ class PrivacyViewController(QObject):
             )
             self._page.set_anonymization({}, error=reason)
             return
-        _anonymized, raw_mapping = payload
+        anonymized, raw_mapping = payload
         mapping = (
             {str(key): str(value) for key, value in raw_mapping.items()}
             if isinstance(raw_mapping, dict)
             else {}
         )
-        self._page.set_anonymization(mapping)
+        # The text goes with the map: it is the string a request is built from, not a re-masked
+        # copy of the transcription, which would miss a name the model spelled differently.
+        self._page.set_anonymization(mapping, text=str(anonymized or ""))
 
     # ── what is sent for one file ────────────────────────────────────────
 

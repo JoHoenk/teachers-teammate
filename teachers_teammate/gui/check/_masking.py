@@ -1,9 +1,9 @@
 """Whether the Check tab hides names, and the map that hides them.
 
 The window owns the setting and the anonymizer; this holds what the views need to know about it:
-whether the texts are shown with placeholders, whether the result has arrived, why it failed, and
-the map that turns a name into its placeholder.  The views ask it and never touch the anonymizer
-themselves.
+whether the texts are shown with placeholders, whether the result has arrived, why it failed, the
+map that turns a name into its placeholder, and the text the anonymizer made of the open one.  The
+views ask it and never touch the anonymizer themselves.
 
 Pure Python over :mod:`teachers_teammate.domain.anonymization`: no Qt, no I/O.
 """
@@ -24,6 +24,7 @@ class Masking:
         self._available = False
         self._enabled = False
         self._mapping: dict[str, str] = {}
+        self._text = ""
         self._ready = False
         self._error = ""
         self._requested = ""
@@ -40,6 +41,18 @@ class Masking:
     def available(self) -> bool:
         """Whether names can be hidden at all (the Privacy add-on is installed)."""
         return self._available
+
+    @property
+    def preview(self) -> tuple[str, Mapping[str, str]] | None:
+        """The anonymizer's text of the open transcription with its map, or ``None``.
+
+        ``None`` until the answer arrives, after a failure, and when the answer holds no text:
+        then the names stand in what would go out, which is what the box of *What was read*
+        shows.
+        """
+        if not self._ready or self._error or not self._text:
+            return None
+        return self._text, dict(self._mapping)
 
     @property
     def pending(self) -> bool:
@@ -103,14 +116,22 @@ class Masking:
     def forget(self) -> None:
         """Drop the placeholders: they belong to a text that is no longer shown."""
         self._mapping = {}
+        self._text = ""
         self._ready = False
         self._error = ""
         self._requested = ""
         self._masked = {}
 
-    def set_result(self, mapping: Mapping[str, str], *, error: str = "") -> None:
-        """Hand over the placeholder map of the open document, or why there is none."""
+    def set_result(
+        self, mapping: Mapping[str, str], *, text: str = "", error: str = ""
+    ) -> None:
+        """Hand over the placeholder map and the anonymized text of the open document.
+
+        *text* is the string the anonymizer made — the one a request is built from, marks the
+        Markdown shield passes on included.  Empty when there is none, or on *error*.
+        """
         self._mapping = dict(mapping)
+        self._text = text
         self._ready = True
         self._error = error
         self._masked = {}

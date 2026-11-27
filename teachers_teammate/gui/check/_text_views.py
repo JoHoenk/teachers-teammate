@@ -27,9 +27,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QTextEdit, QToolTip, QWidget
 
-from ...application.check_document import CheckDocument
+from ...application.check_document import CheckDocument, SentView
 from ...application.check_items import CheckItem, ItemKind
 from ...application.formatting import TextFormatter
+from ...domain.anonymization import surface_pattern
 from ...domain.formatted_text import FormattedDocument, TextFormat
 from ...domain.proofreading.quotes import map_forward
 from ...domain.proofreading.text_edits import TextEdit
@@ -39,6 +40,7 @@ from .._formatted_text import (
     STUDENT_STRIKE_COLOUR,
     FormattedTextEdit,
     _toggle,
+    chip_placeholders,
     document_from_qt,
     render_html,
 )
@@ -155,6 +157,18 @@ def _is_separator(char: str) -> bool:
     return not char or char == _BOUNDARY or char.isspace()
 
 
+def _placeholder_spans(
+    plain: str, placeholders: Sequence[str]
+) -> tuple[tuple[int, int, str], ...]:
+    """Return every occurrence of *placeholders* in *plain*, as ``(start, end, token)``."""
+    pattern = surface_pattern(placeholders)
+    if pattern is None:
+        return ()
+    return tuple(
+        (match.start(), match.end(), match.group(0)) for match in pattern.finditer(plain)
+    )
+
+
 class _ZoomWheel(QObject):
     """Ctrl+wheel on a text view changes its text size instead of scrolling."""
 
@@ -201,17 +215,16 @@ class CheckTextView(FormattedTextEdit):
         self._plain = TextFormatter.plain_text(text, text_format)
         self._rendering = True
         try:
-            self.setHtml(
-                render_html(
-                    TextFormatter.document(text, text_format),
-                    strike_colour=STUDENT_STRIKE_COLOUR,
-                )
-            )
+            self.setHtml(self._html_of(TextFormatter.document(text, text_format)))
         finally:
             self._rendering = False
         self._map = self._map_of(self._plain)
         self._mark_cursors = []
         self.setExtraSelections([])
+
+    def _html_of(self, doc: FormattedDocument) -> str:
+        """Return the HTML of *doc* as this view shows it; a view with chips adds them here."""
+        return render_html(doc, strike_colour=STUDENT_STRIKE_COLOUR)
 
     def _map_of(self, plain: str) -> PlainMap | None:
         """Return the map of the current document, or ``None`` when it is not *plain*."""
@@ -424,11 +437,54 @@ class _EditableView(CheckTextView):
 
 
 class ReadView(_EditableView):
-    """*What was read*: the transcription, with reading fixes typed into it."""
+    """*What was read*: the transcription, with reading fixes typed into it.
+
+    With names hidden it holds the string a request is made from instead — the anonymizer's
+    text, or the one a stored proofreading was sent with.  Each placeholder is a chip, so the
+    teacher sees which words stand for a name, and hovering one shows the name behind it.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setToolTip(check_text.READ_TIP)
+        self._names: dict[str, str] = {}
+        self._chips: tuple[tuple[int, int, str], ...] = ()
+
+    def show_sent(self, sent: SentView, text_format: TextFormat) -> None:
+        """Fill the box from *sent*: the text it holds, chipped at its placeholders."""
+        self._names = dict(sent.names)
+        super().set_text(sent.text, text_format)
+        self._chips = _placeholder_spans(self._plain, sent.placeholders)
+
+    def set_text(self, text: str, text_format: TextFormat) -> None:
+        """Fill the box from a text without placeholders: the transcription as it is read."""
+        self._names = {}
+        self._chips = ()
+        super().set_text(text, text_format)
+
+    def _html_of(self, doc: FormattedDocument) -> str:
+        """Return the HTML of *doc*, with a chip around every placeholder."""
+        return chip_placeholders(super()._html_of(doc), tuple(self._names))
+
+    def _tip_at(self, point: QPoint) -> str:
+        """Show the name behind the placeholder under the pointer; elsewhere the mark's tip."""
+        token = self.chip_at(point)
+        if token:
+            return self._names.get(token, "")
+        return super()._tip_at(point)
+
+    def chip_at(self, point: QPoint) -> str:
+        """Return the placeholder token at *point*, or ``""``."""
+        if self._map is None:
+            return ""
+        return self.chip_at_offset(self._map.offset(self.cursorForPosition(point).position()))
+
+    def chip_at_offset(self, offset: int | None) -> str:
+        """Return the placeholder token at the plain *offset*, or ``""``."""
+        for start, end, token in self._chips:
+            if offset is not None and start <= offset < end:
+                return token
+        return ""
 
 
 class FinalView(_EditableView):

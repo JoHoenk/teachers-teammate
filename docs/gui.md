@@ -554,8 +554,8 @@ text they belong to. The page keeps texts *unmasked* in its `CheckDocument` and 
   (`CheckTextView.keyPressEvent`) and on the card's buttons (`txt.SHOW_NAMES_TO_CHANGE`).
 - **A failed hide** gets a strip; its button emits `display_anonymized_changed(False)`, the same
   route as the **Hide names** box.
-- **Placeholders** are chips (`gui/_formatted_text.py:chip_placeholders()`, skipping markup). No
-  tooltip names the original.
+- **Placeholders** are chips (`gui/_formatted_text.py:chip_placeholders()`, skipping markup).
+  Hovering one in *What was read* shows the original from the map; the other views name nothing.
 - **Marks** move to the masked text with `Masking.carry(span, text)` via the `OffsetMap` of
   `mask_with_offsets()`, the same map the notes use.
 - **Requests:** `Masking.needs_request(raw_text)`, once per text; `PrivacyViewController` answers
@@ -569,6 +569,34 @@ Personal info: detection*) and the eye button both call
 (`DISPLAY_ANONYMIZED_DEFAULT`). The checkbox is enabled only while
 `AnonymizationService.anonymizer_available(language)` (spaCy and the language's model installed),
 cached per language and refreshed on `data_flow_changed` and after an install.
+
+### What the box of *What was read* holds
+
+`application/check_document.py:sent_view_of()` is the one rule behind the box, and it answers with a
+`SentView`: the text, the placeholders inside it, the map behind them, why (`SentKind`), and whether
+the text has words the student crossed out.
+
+| Situation | `SentKind` | The box holds |
+|---|---|---|
+| proofreading sent with names hidden | `SENT` | `correction_sent_text` as stored, or the transcription when nothing was found |
+| that proofreading, with the names shown again | `NAMES_SHOWN` | the transcription |
+| proofreading sent as written | `AS_WRITTEN` | the transcription |
+| no proofreading, names hidden, answer arrived | `WILL_BE_SENT` | the anonymizer's text of the transcription |
+| no proofreading, answer still out or failed | `WORKING` | the transcription |
+| no proofreading, names shown | `NAMES_SHOWN` | the transcription |
+| no add-on | `UNAVAILABLE` | the transcription |
+
+The sent text is the string the request was made from, so a name the model spelled differently is
+hidden there while `mask()` cannot find it in the transcription. *Final text*, *With corrections*
+and the side panel keep `mask()`: they show the corrected text, which was restored and has no sent
+string.
+
+`CheckBody._sent_caption` words the line above the box from `texts/check.py`, and adds that
+crossed-out words stay on this computer when the sent text has them.
+
+A `SENT`, `WILL_BE_SENT` or `WORKING` box is read-only: typing there would store placeholders in
+what the teacher writes. `AS_WRITTEN` holds the transcription itself, so it stays editable once the
+teacher accepts a reading fix.
 
 ## Remembered "don't ask again" answers
 

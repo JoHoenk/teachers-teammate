@@ -30,6 +30,25 @@ READ_TIP = (
 )
 """Says what typing into *What was read* costs, next to the banner that says it again."""
 
+SENT_CAPTION = "As it was sent"
+WILL_BE_SENT_CAPTION = "As it will be sent"
+"""What the line above *What was read* says while names are hidden: the box holds the string a
+request is made from, not a re-masked copy of the transcription."""
+
+NAMES_SENT_AS_WRITTEN = "Names are sent as written"
+"""The box holds the transcription because nothing is hidden in what goes out."""
+
+NAMES_SHOWN_CAPTION = "Names are shown here: hiding is off"
+"""Hiding is off, so the box holds the transcription with the names in it."""
+
+NAMES_NOT_HIDDEN_CAPTION = (
+    "Names are not hidden: the Privacy add-on or its model for this language is missing"
+)
+"""Hiding is asked for but impossible, so what goes out would carry the names."""
+
+CROSSED_OUT_NOT_SENT = "Words crossed out are not sent"
+"""Said under the caption when the text holds words the student crossed out: they stay here."""
+
 SCAN_PREPARED = "Prepared"
 SCAN_PREPARED_TIP = "Show the pages as they were fixed for reading"
 SCAN_ORIGINAL = "Original"

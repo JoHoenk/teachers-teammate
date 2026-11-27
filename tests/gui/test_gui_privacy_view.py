@@ -465,7 +465,7 @@ def test_the_string_language_without_spacy_disables_the_choice(
 @pytest.mark.gui
 def test_the_placeholders_arrive_from_the_service(main_window, monkeypatch, tmp_path: Path) -> None:
     """
-    Given  a window whose Check tab shows a text
+    Given  a window whose Check tab shows a text that is not proofread yet
     When   the page asks for placeholders
     Then   the service is asked once and the tab shows its result
     """
@@ -476,7 +476,7 @@ def test_the_placeholders_arrive_from_the_service(main_window, monkeypatch, tmp_
         return ANONYMIZED, MAPPING
 
     monkeypatch.setattr(AnonymizationService, "anonymize_text", _fake_anonymize)
-    _open_document(main_window, monkeypatch, tmp_path, RAW, CORRECTED)
+    _open_document(main_window, monkeypatch, tmp_path, RAW)
     main_window._privacy_controller.apply_display_anonymized(True)
 
     _wait_for(lambda: not main_window._check_controller.page._masking.pending)

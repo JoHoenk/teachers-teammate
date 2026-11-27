@@ -4,15 +4,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from teachers_teammate.application.check_document import PreprocessInfo, check_document_of
+import pytest
+
+from teachers_teammate.application.check_document import (
+    CheckDocument,
+    PreprocessInfo,
+    SentKind,
+    check_document_of,
+    sent_view_of,
+)
 from teachers_teammate.application.check_items import ItemKind
 from teachers_teammate.domain.data_location import SentRecord, SentStatus
 from teachers_teammate.domain.proofreading.edits import edits
 from teachers_teammate.domain.proofreading.review import CorrectionReview, align, edit_note
+from teachers_teammate.domain.stages import Stage
 from teachers_teammate.application.document_view import DocumentStateView
 
 RAW = "Der bunte Hund bellt laut."
 CORRECTED = "Der braune Hund bellt laut."
+SENT = "Der <PERSON_1> bellt laut."
+"""What the anonymizer made of :data:`RAW` when the proofreading went out."""
+SENT_MAP = {"<PERSON_1>": "bunten Hund"}
+PREVIEW = "Der <PERSON_2> bellt laut."
+"""What the anonymizer makes of the transcription now, in another numbering."""
 
 
 def _review() -> CorrectionReview:
@@ -259,3 +273,104 @@ def test_the_original_of_a_page_that_was_not_kept_is_none() -> None:
 
     assert doc.original_pages == (None,)
     assert doc.preprocess == PreprocessInfo("", ())
+
+
+# ── What the box of *What was read* holds ─────────────────────────────────
+
+
+def _sent_doc(
+    *, proofread: bool = True, hiding_on: bool = True, sent_text: str = "", map: bool = True
+) -> CheckDocument:
+    """Return the tab's data for a stored document and how its proofreading was sent."""
+    return check_document_of(
+        _view(
+            correction_text=CORRECTED if proofread else "",
+            correction_review=_review() if proofread else None,
+            correction_done=proofread,
+            sent_text=sent_text,
+            sent_map=dict(SENT_MAP) if map and sent_text else {},
+            sent={
+                Stage.CORRECTION: SentStatus(
+                    SentRecord(provider="ollama", names_hidden=1, hiding_on=hiding_on)
+                )
+            }
+            if proofread
+            else {},
+        )
+    )
+
+
+def test_a_stored_sent_text_comes_with_the_map_of_its_placeholders() -> None:
+    """
+    Given  a stored proofreading that went out with a name replaced
+    When   the Check tab's data is built
+    Then   it carries the text that was sent and the map of its placeholder
+    """
+    doc = _sent_doc(sent_text=SENT)
+
+    assert doc.sent_text == SENT
+    assert dict(doc.sent_map) == SENT_MAP
+
+
+def test_the_box_holds_the_stored_string_and_not_a_remasked_copy() -> None:
+    """
+    Given  a proofreading stored with the text it was sent as, where the model read the name
+    differently from the transcription and so a re-masking would miss it
+    When   the box of *What was read* is asked what it shows with names hidden
+    Then   it holds exactly the stored string, with the name that was found behind its chip
+    """
+    doc = _sent_doc(sent_text=SENT)
+
+    sent = sent_view_of(doc, available=True, hiding=True)
+
+    assert sent.kind is SentKind.SENT
+    assert sent.text == SENT
+    assert sent.placeholders == ("<PERSON_1>",)
+    assert dict(sent.names) == SENT_MAP
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        {"proofread": True, "hiding": True, "sent": SENT, "kind": SentKind.SENT, "text": SENT},
+        {"proofread": True, "hiding": True, "kind": SentKind.SENT, "text": RAW},
+        {"proofread": True, "hiding": False, "sent": SENT, "kind": SentKind.NAMES_SHOWN},
+        {"proofread": True, "hiding_on": False, "hiding": True, "kind": SentKind.AS_WRITTEN},
+        {"proofread": False, "preview": True, "kind": SentKind.WILL_BE_SENT, "text": PREVIEW},
+        {"proofread": False, "kind": SentKind.WORKING},
+        {"proofread": False, "hiding": False, "kind": SentKind.NAMES_SHOWN},
+        {"proofread": False, "available": False, "kind": SentKind.UNAVAILABLE},
+    ],
+    ids=[
+        "sent-nothing-hidden",
+        "sent-nothing-found",
+        "sent-but-names-shown",
+        "sent-as-written",
+        "not-sent-yet-the-preview",
+        "not-sent-yet-working",
+        "names-shown-hiding-off",
+        "names-cannot-be-hidden",
+    ],
+)
+def test_the_box_of_what_was_read_follows_one_rule(case: dict) -> None:
+    """
+    Given  a stored document, and what the window knows about hiding
+    When   the box of *What was read* is asked what it shows
+    Then   it holds the one text and names the one reason the rule gives for it
+    """
+    doc = _sent_doc(
+        proofread=case.get("proofread", True),
+        hiding_on=case.get("hiding_on", True),
+        sent_text=case.get("sent", ""),
+    )
+    preview = (PREVIEW, {"<PERSON_2>": "bunte Hund"}) if case.get("preview") else None
+
+    sent = sent_view_of(
+        doc,
+        available=case.get("available", True),
+        hiding=case.get("hiding", True),
+        preview=preview,
+    )
+
+    assert sent.kind is case["kind"]
+    assert sent.text == case.get("text", RAW)

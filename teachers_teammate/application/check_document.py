@@ -2,8 +2,8 @@
 
 This module is the one place that reads a stored document and says what the tab shows — the
 texts, the review aligned with them, the items the list numbers, the pages of the scan, how the
-results were sent.  The window asks for it once per document and once per stored edit; nothing
-else assembles that state.
+results were sent, and what the box of *What was read* holds.  The window asks for it once per
+document and once per stored edit; nothing else assembles that state.
 
 Pure apart from the state it is built from: no Qt, no I/O of its own.
 """
@@ -12,12 +12,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
 from ..domain.data_location import SentStatus
-from ..domain.formatted_text import TextFormat, normalize_text_format
+from ..domain.formatted_text import Style, TextFormat, normalize_text_format
 from ..domain.proofreading.review import AlignedReview, CorrectionReview, align
+from ..domain.stages import Stage
 from ..domain.teacher_work import WorkStatus, looked_at_progress
 from .check_items import CheckItem, check_items, countable_keys
 from .document_view import DocumentStateView
@@ -78,6 +80,13 @@ class CheckDocument:
     """The stored content review, as Markdown; empty when there is none."""
     sent: Mapping[str, SentStatus]
     """How each stored result was sent, keyed by stage."""
+    sent_text: str
+    """The text the stored proofreading was sent as, in the notation of the document.
+
+    Empty when names were hidden but nothing was found, and when they were not hidden at all;
+    :attr:`sent` tells those two apart, and :func:`sent_view_of` reads it."""
+    sent_map: Mapping[str, str]
+    """The placeholder map of :attr:`sent_text`: placeholder → the original the model found."""
     work: WorkStatus
     """What the teacher changed and decided about this document."""
     looked_at_progress: tuple[int, int]
@@ -118,6 +127,8 @@ def check_document_of(view: DocumentStateView) -> CheckDocument:
         preprocess=PreprocessInfo(view.original_img, view.preprocess_steps),
         content_review=view.evaluation_text,
         sent=view.sent,
+        sent_text=view.sent_text,
+        sent_map=view.sent_map,
         work=view.work,
         looked_at_progress=looked_at_progress(countable_keys(items), view.work.looked_at),
     )
@@ -163,3 +174,104 @@ def _align_cached(
 ) -> AlignedReview:
     """Align one pair of texts against one review, once: typing re-aligns on every pause."""
     return align(raw_plain, corrected_plain, review, machine_plain=machine_plain)
+
+
+# ── What the box of *What was read* holds ─────────────────────────────────────
+
+
+class SentKind(StrEnum):
+    """Why the box of *What was read* holds the text it holds."""
+
+    SENT = "sent"
+    """The text of a stored proofreading went out like this."""
+    WILL_BE_SENT = "will_be_sent"
+    """Names are replaced here, and the proofreading has not run yet — this is what it gets."""
+    WORKING = "working"
+    """The names are being replaced; until they are, the box shows the text as read."""
+    AS_WRITTEN = "as_written"
+    """Names go out as written, so there is nothing to show but the transcription."""
+    NAMES_SHOWN = "names_shown"
+    """Names are hidden when sent, but the teacher reads them here: hiding is off."""
+    UNAVAILABLE = "unavailable"
+    """Names cannot be hidden at all: the Privacy add-on is missing."""
+
+
+@dataclass(frozen=True)
+class SentView:
+    """What the box of *What was read* shows, and what its placeholders stand for."""
+
+    text: str
+    """The text to show, in the notation of the document."""
+    placeholders: tuple[str, ...]
+    """The placeholder tokens inside :attr:`text`, in map order."""
+    names: Mapping[str, str]
+    """Placeholder → the original text, for a tooltip and for reading a chip."""
+    kind: SentKind
+    struck: bool
+    """Whether :attr:`text` holds words the student crossed out; they are not sent."""
+
+
+def sent_view_of(
+    doc: CheckDocument,
+    *,
+    available: bool,
+    hiding: bool,
+    preview: tuple[str, Mapping[str, str]] | None = None,
+) -> SentView:
+    """Return what the box of *What was read* shows for *doc*.
+
+    The one rule behind the box, so a window cannot guess and a test needs no spaCy.  What a
+    request is made from beats what the box could reconstruct: a proofreading that went out with
+    names hidden is shown as it was stored, a name the model spelled differently included.
+
+    *available* says names can be hidden at all and *hiding* whether the texts are shown with
+    placeholders.  *preview* is the anonymizer's ``(text, map)`` of the current transcription —
+    ``None`` until it arrives, and after a failure, when the names stand in what would go out.
+    """
+    if doc.has_proofreading:
+        if not _sent_hidden(doc):
+            return _shown(doc.raw_text, doc, SentKind.AS_WRITTEN)
+        if hiding:
+            return _shown(doc.sent_text or doc.raw_text, doc, SentKind.SENT, doc.sent_map)
+        return _shown(doc.raw_text, doc, SentKind.NAMES_SHOWN)
+    if not available:
+        return _shown(doc.raw_text, doc, SentKind.UNAVAILABLE)
+    if not hiding:
+        return _shown(doc.raw_text, doc, SentKind.NAMES_SHOWN)
+    if preview is None:
+        return _shown(doc.raw_text, doc, SentKind.WORKING)
+    text, names = preview
+    return _shown(text, doc, SentKind.WILL_BE_SENT, names)
+
+
+def _shown(
+    text: str,
+    doc: CheckDocument,
+    kind: SentKind,
+    names: Mapping[str, str] | None = None,
+) -> SentView:
+    """Return *text* as the box shows it, with the placeholders of *names* inside it."""
+    found = {token: original for token, original in (names or {}).items() if token in text}
+    return SentView(text, tuple(found), found, kind, _struck(text, doc.text_format))
+
+
+def _sent_hidden(doc: CheckDocument) -> bool:
+    """Whether the request behind the proofreading of *doc* carried placeholders.
+
+    The stored record answers, and that answer does not change when the teacher changes the
+    settings afterwards.  Without a record — an older store — nothing was found to hide, so the
+    transcription went as written.
+    """
+    status = doc.sent.get(Stage.CORRECTION)
+    return bool(status is not None and status.record.hiding_on)
+
+
+def _struck(text: str, text_format: TextFormat) -> bool:
+    """Whether *text* holds words the student crossed out, which never leave this computer."""
+    if text_format != "markdown":
+        return False
+    for block in TextFormatter.document(text, text_format).blocks:
+        cells = [span for row in block.rows for cell in row for span in cell]
+        if any(Style.STRIKE in span.style for span in (*block.spans, *cells)):
+            return True
+    return False

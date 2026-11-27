@@ -107,6 +107,9 @@ class RunSession:
     steps_per_file: int = 1
     """How many steps of the bar one file has: reading, and proofreading when it runs."""
 
+    file_steps_done: int = 0
+    """How many steps of the current file are over: 1 once its reading is."""
+
     from_check: bool = False
     """A run was asked for in the Check tab: the tab stays when the run starts."""
 
@@ -130,6 +133,7 @@ class RunSession:
         self.stop_stage = StopStage.RUNNING
         self.progress_base = f"Selected {len(source_ids)} file(s) — Starting…"
         self.step = ""
+        self.file_steps_done = 0
         self.file_label = ""
         self.stage_step = ""
         self.stage_label = ""
@@ -163,6 +167,7 @@ class RunSession:
         self.progress_base = f"{self.file_label} — starting…"
         self.current = source_id
         self.step = ""
+        self.file_steps_done = 0
         self.stage_step = ""
         self.stage_label = ""
         self.wait_shown = False
@@ -221,6 +226,7 @@ class RunSession:
     def ocr_done(self) -> None:
         """The reading is over: what goes on now is the proofreading."""
         self.step = ""
+        self.file_steps_done = 1
         self.stage_step = ""
         self.stage_label = check_text.PROGRESS_CORRECTING
         self.wait_shown = False
@@ -246,3 +252,4 @@ class RunSession:
         self.source_ids = []
         self.pending = set()
         self.current = ""
+        self.file_steps_done = 0

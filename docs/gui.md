@@ -345,7 +345,8 @@ says hidden, so the strip says so and offers to show them.
 
 Other strips (`gui/check/_run_strip.py`): `NextStepStrip` over an unproofread transcription
 (*Proofread*, or *Set up proofreading…* via `set_proofreading_ready`), and `RunStrip` while the
-open document is in a run (`CheckController.refresh_run`). A run started from the Check header
+open document is in a run (`CheckController.refresh_run`); with proofreading on, it counts the
+document's two steps (`RunSession.file_steps_done`). A run started from the Check header
 keeps the tab (`RunSession.from_check`).
 
 ### The questions

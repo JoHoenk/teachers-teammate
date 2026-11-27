@@ -93,7 +93,11 @@ class RunState:
     text: str
     """What is being done, or why the document waits."""
     busy: bool = True
-    """Whether the document itself is being worked on (the bar moves) or still waits."""
+    """Whether the document itself is being worked on (the bar shows) or still waits."""
+    steps: int = 1
+    """How many steps the run takes with the document; one is not counted."""
+    steps_done: int = 0
+    """How many of them are over."""
     time_left: str = ""
     """The remaining time as the pace estimate gives it, or ``""`` while nothing is known."""
     time_left_tip: str = ""
@@ -102,7 +106,7 @@ class RunState:
 
 
 class RunStrip(QWidget):
-    """An indeterminate bar, what is going on, the time left and *Stop*."""
+    """A bar over the document's steps, what is going on, the time left and *Stop*."""
 
     stop_requested = Signal()
 
@@ -113,7 +117,6 @@ class RunStrip(QWidget):
         layout.setSpacing(8)
 
         self._bar = QProgressBar()
-        self._bar.setRange(0, 0)  # the run reports files, not steps: the bar has no end
         self._bar.setTextVisible(False)
         self._bar.setFixedWidth(120)
         self._bar.setFixedHeight(10)
@@ -133,6 +136,12 @@ class RunStrip(QWidget):
             self.setVisible(False)
             return
         text = state.text
+        if state.steps > 1:
+            text = check_text.run_step(state.steps_done + 1, state.steps, text)
+            self._bar.setRange(0, state.steps)
+            self._bar.setValue(state.steps_done)
+        else:
+            self._bar.setRange(0, 0)  # one step: nothing to count, the bar only moves
         if state.time_left:
             text += check_text.RUN_TIME_LEFT_SEPARATOR + state.time_left
         self._label.setText(text)

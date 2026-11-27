@@ -227,3 +227,21 @@ def test_the_preprocessing_names_the_step_of_the_check_strip(tmp_path: Path) -> 
 
     assert session.step == session.stage_step
     assert session.step != ""
+
+
+def test_the_end_of_the_reading_counts_one_step_of_the_file(tmp_path: Path) -> None:
+    """
+    Given  a run that reads and proofreads
+    When   a file starts, its reading ends, and the next file starts
+    Then   the file's steps done go from 0 to 1 and back to 0
+    """
+    config = make_config(tmp_path, correction_enabled=True, correction_model="gemma4:e4b")
+    session = RunSession()
+    session.start(config, ["/q/a.png", "/q/b.png"])
+
+    session.file_started("/q/a.png", "a.png", 1, 2)
+    assert session.file_steps_done == 0
+    session.ocr_done()
+    assert session.file_steps_done == 1
+    session.file_started("/q/b.png", "b.png", 2, 2)
+    assert session.file_steps_done == 0

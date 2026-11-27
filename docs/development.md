@@ -1551,7 +1551,8 @@ once more.  A second answer that added text fails the piece like a cut-off.  A s
 words or more is written back from the student's text, and the repaired text is judged again (still
 not the text: it fails as before).  The file is stored with a warning, its review is made from the
 repaired text (so it fits), and each stretch is an `UnclearNote(left_out=True)`, listed in Check as
-`ItemKind.LEFT_OUT`.  It is a note for the teacher: the Word files and the unclear badge skip it.
+*not proofread* (`ItemKind.LEFT_OUT`).  It is a note for the teacher: the Word files and the unclear
+badge skip it, so its `why` is stored empty.
 `CorrectionOutcome.left_out` makes the outcome `fell_back` (no speed sample), and the evaluation
 tools count the row as lost text although the stored output is whole.  Marks are not words, and a text under `MIN_RATIO_WORDS`
 words is not judged by the ratio: correcting "ich bin müde" into "Ich bin müde." changes its

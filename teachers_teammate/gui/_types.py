@@ -50,6 +50,7 @@ class SettingsDict(TypedDict, total=False):
     keep_awake: bool
     check_for_updates: bool
     results_keep_days: int
+    log_detail: str
     preprocess_method: str
     pdf_render_dpi: int
     pdf_text_layer: str

@@ -1,7 +1,7 @@
 """The command line's reporter: status to stdout, warnings and errors to stderr.
 
 The seam itself (:class:`~teachers_teammate.interfaces.Reporter`) and the GUI's
-:class:`~teachers_teammate.interfaces.CallbackReporter` live in ``interfaces``, because the
+:class:`~teachers_teammate.interfaces.LoggingReporter` live in ``interfaces``, because the
 pipeline is given them; only the console sink is infrastructure.
 """
 

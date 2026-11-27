@@ -54,6 +54,14 @@ HELP_OUTPUT = "Output folder for generated .docx files (cache state is stored se
 HELP_RECURSIVE = "Scan subfolders recursively."
 HELP_NO_RECURSIVE = "Do not scan subfolders recursively."
 HELP_VERSION = "Show the version, the copyright and the license, then exit."
+HELP_LOG_LEVEL = (
+    "How much the app writes into its log file: errors, normal (every warning and what a run "
+    "did) or detailed (everything, for whoever helps you read it).  Overrides the setting in "
+    "the window; TEACHERS_TEAMMATE_LOG_LEVEL does the same."
+)
+HELP_VERBOSE = (
+    "Print the log lines on stderr while the command runs.  The file is written either way."
+)
 HELP_DEBUG = "Keep preprocessed temp files after the run (useful for inspecting OCR inputs)."
 HELP_NO_DEBUG = "Do not keep preprocessing temp files after the run."
 HELP_KEEP_AWAKE = "Keep the computer from going to sleep during the run (default)."

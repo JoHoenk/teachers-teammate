@@ -24,6 +24,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, NamedTuple, Protocol, runtime_checkable
 
@@ -426,23 +427,30 @@ class Reporter(Protocol):
         """Report a line about something that went wrong."""
 
 
-class CallbackReporter:
-    """Routes every line (status and warning alike) to a single callback.
+#: The logger a run's own story is written to: the window reads it while the run goes, and the
+#: log file keeps it afterwards.
+RUN_LOGGER = "teachers_teammate.run"
 
-    Used by the GUI worker to feed both progress and warnings into the log pane.
+
+class LoggingReporter:
+    """Writes the pipeline's narrative to the log: status at INFO, warning at WARNING.
+
+    The log file is where a run's story is kept, so a run that stopped early can still be read
+    afterwards.  The window shows the same lines while it runs; the teacher hears about a
+    failure from the row and the end-of-run line, never from these.
     """
 
-    def __init__(self, sink: Callable[[str], None]) -> None:
-        self._sink = sink
+    def __init__(self, logger: logging.Logger | None = None) -> None:
+        self._logger = logging.getLogger(RUN_LOGGER) if logger is None else logger
 
     def status(self, line: str) -> None:
-        self._sink(line)
+        self._logger.info("%s", line.rstrip("\n"))
 
     def warn(self, line: str) -> None:
-        self._sink(line)
+        self._logger.warning("%s", line.rstrip("\n"))
 
     def error(self, line: str) -> None:
-        self._sink(f"ERROR: {line}")
+        self._logger.error("%s", line.rstrip("\n"))
 
 
 @dataclass(frozen=True)

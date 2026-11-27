@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from teachers_teammate.interfaces import INPUT_KINDS, SUPPORTED_SUFFIXES
+import logging
+
+import pytest
+
+from teachers_teammate.interfaces import (
+    INPUT_KINDS,
+    RUN_LOGGER,
+    SUPPORTED_SUFFIXES,
+    LoggingReporter,
+)
 
 
 def test_supported_suffixes_is_the_table_of_what_reads_each_one() -> None:
@@ -21,3 +30,26 @@ def test_supported_suffixes_contains_all_accepted_extensions() -> None:
     Then   all accepted input extensions (.pdf, .png, .jpg, .jpeg, .txt) are present
     """
     assert {".pdf", ".png", ".jpg", ".jpeg", ".txt"} <= SUPPORTED_SUFFIXES
+
+
+def test_the_logging_reporter_writes_each_line_at_its_level(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Given  a reporter that writes the pipeline's narrative to the log
+    When   it reports a status, a warning and an error
+    Then   the run's logger holds them at INFO, WARNING and ERROR, without the newline a
+           console line carries
+    """
+    caplog.set_level(logging.INFO, logger=RUN_LOGGER)
+    reporter = LoggingReporter()
+
+    reporter.status("reading anna.png\n")
+    reporter.warn("the page models are missing")
+    reporter.error("the reader found no text")
+
+    assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
+        (logging.INFO, "reading anna.png"),
+        (logging.WARNING, "the page models are missing"),
+        (logging.ERROR, "the reader found no text"),
+    ]

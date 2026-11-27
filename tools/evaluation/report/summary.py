@@ -15,11 +15,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from teachers_teammate.domain.proofreading.edit_agreement import DEFAULT_BETA, EditScore
+
 from ..core.constants import TextKind
 from ..core.languages import ordered
 from ..metrics import text_loss
 from ..metrics.gleu import SOURCE_PREFIX, add, from_scores, gleu
-from ..metrics.quality import DEFAULT_BETA, EditScore
 from . import pooled
 from .pooled import ItemFacts
 

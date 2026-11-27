@@ -76,6 +76,12 @@ class DocumentStateView:
     Filled by the application layer, which is the only place that reads the teacher's work; a
     view built straight from the cache says they did nothing."""
 
+    correction_config_hash: str = ""
+    """The proofreading key the stored answer was made with; empty when there is no answer.
+
+    What the comparison reads: a model whose key is this one has already answered this document,
+    so trying it costs no request."""
+
     reading_fix: ReadingFix = ReadingFix.NONE
     """What the fix of the reading that this view is the result of did to the proofreading;
     ``NONE`` for a view of anything else."""
@@ -106,6 +112,7 @@ def to_view(input_file: Path, state: DocumentState) -> DocumentStateView:
         sent_map=dict(state.correction_sent_map or {}),
         page_images=state.pages,
         original_images=state.originals,
+        correction_config_hash=state.correction_config_hash,
     )
 
 

@@ -27,7 +27,13 @@ from ._types import (
     yes_no,
 )
 from .app import NAME
-from .settings import WHERE_ADDONS, WHERE_PRIVACY, WHERE_READING_MODELS, WHERE_RESULTS
+from .settings import (
+    WHERE_ADDONS,
+    WHERE_AI_MODELS,
+    WHERE_PRIVACY,
+    WHERE_READING_MODELS,
+    WHERE_RESULTS,
+)
 
 #: The name filter of the main window's input picker.
 SUPPORTED_FILES_FILTER = (
@@ -161,10 +167,11 @@ def settings_file_not_replaced(name: str) -> Notice:
 
 
 def busy_with_run() -> Notice:
-    """Tell the teacher that a run or a requirement check is already going."""
+    """Tell the teacher that a run, a model comparison or a requirement check is already going."""
     return Notice(
         "Please wait",
-        "A run or requirement check is still in progress. Try again when it has finished.",
+        "A run, a model comparison or a requirement check is still in progress. Try again when "
+        "it has finished.",
     )
 
 
@@ -284,6 +291,15 @@ def checked_not_saved() -> Notice:
     )
 
 
+def marks_not_saved() -> Notice:
+    """Tell the teacher that a verdict on a compared change could not be stored."""
+    return Notice(
+        "Not saved",
+        "Your verdict on this change could not be saved. The change counts as unmarked.",
+        NoticeKind.WARNING,
+    )
+
+
 def work_not_saved(name: str, *, too_new: bool) -> Notice:
     """Tell the teacher that what they did to a document could not be stored.
 
@@ -374,11 +390,6 @@ def key_not_in_keychain(services: str) -> Notice:
     )
 
 
-def no_document() -> Notice:
-    """Tell the teacher that the Benchmark window has no document yet."""
-    return Notice("No document", "Choose a document first.")
-
-
 def ollama_not_started(reason: str) -> Notice:
     """Tell the teacher that Ollama did not start when they asked for it."""
     return Notice(
@@ -387,11 +398,6 @@ def ollama_not_started(reason: str) -> Notice:
         "Start it yourself, then choose Check again.",
         NoticeKind.WARNING,
     )
-
-
-def benchmark_run_failed(reason: str) -> Notice:
-    """Tell the teacher that a benchmark run stopped without a stored result."""
-    return Notice("The benchmark could not run", reason, NoticeKind.WARNING)
 
 
 def first_start_models(reading_model: str, writing_model: str | None, profile: str) -> Notice:
@@ -560,6 +566,47 @@ def proofread_again(names: Sequence[str]) -> Question:
     )
 
 
+#: The answer of :func:`use_compared_model`.
+USE_MODEL = "use-model"
+
+
+def stop_comparison() -> Question:
+    """Ask whether closing the compare window may stop the models that are being asked."""
+    return Question(
+        "Models are still being asked",
+        "Closing this window stops the comparison. A model that is answering is interrupted and "
+        "its answer is not kept; the answers already stored stay.",
+        (
+            Choice("Stop and close", role=ChoiceRole.DESTRUCTIVE),
+            Choice("Keep running", role=ChoiceRole.REJECT, default=True),
+        ),
+    )
+
+
+def close_during_comparison() -> Question:
+    """Ask whether to stop the model comparison and close; the default keeps it going."""
+    return Question(
+        "Models are still being asked",
+        f"Stop the comparison and close {NAME}?\n\n"
+        "A model that is answering is interrupted and its answer is not kept; the answers "
+        "already stored stay.",
+        (
+            Choice("Stop and close", role=ChoiceRole.DESTRUCTIVE),
+            Choice("Keep running", role=ChoiceRole.REJECT, default=True),
+        ),
+    )
+
+
+def use_compared_model(model: str) -> Question:
+    """Ask before a compared model becomes the one that proofreads."""
+    return Question(
+        f"Use {model} for proofreading?",
+        f"{WHERE_AI_MODELS} will proofread with {model} from now on. The proofreading this "
+        "document has stays as it is.",
+        (Choice("Use it", default=True, id=USE_MODEL), cancel()),
+    )
+
+
 def read_again(names: Sequence[str]) -> Question:
     """Ask before an explicit re-read replaces the teacher's transcription."""
     return Question(
@@ -649,21 +696,6 @@ def restore_all_settings() -> Question:
     )
 
 
-def clear_all_runs(name: str) -> Question:
-    """Ask before the Benchmark window deletes every stored run of a document."""
-    return Question("Clear all runs", f"Delete all stored runs for {name}?", yes_no())
-
-
-def benchmark_still_running() -> Question:
-    """Ask before the Benchmark window closes while a run is going."""
-    return Question(
-        "Benchmark still running",
-        "A benchmark run is still going. Closing this window stops it.\n\n"
-        "Stop the run and close the window?",
-        yes_no(),
-    )
-
-
 def search_network() -> Question:
     """Ask before the app asks every computer in the network whether it runs Ollama."""
     return Question(
@@ -720,11 +752,6 @@ def save_export_to_folder(label: str, start: str = "") -> FilePrompt:
 def select_image_or_pdf(supported_glob: str) -> FilePrompt:
     """The picker for a page image or a PDF, in the image-preparation preview."""
     return FilePrompt("Select image or PDF", name_filter=f"Images & PDFs ({supported_glob})")
-
-
-def choose_document(pattern: str) -> FilePrompt:
-    """The picker for the document the Benchmark window runs."""
-    return FilePrompt("Choose document", name_filter=f"Supported files ({pattern})")
 
 
 def answerer_gave_no_answer(type_name: str) -> str:

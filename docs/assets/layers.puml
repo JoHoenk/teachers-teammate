@@ -36,7 +36,7 @@ CORE --> DOMAIN
 TEXTS --> DOMAIN
 DOMAIN --> PKG
 
-rectangle "composition modules\ngui/composition.py · gui/__main__.py · gui/benchmark/composition.py ·\ngui/benchmark/__main__.py · cli_composition.py · __main__.py ·\nfrozen_entry.py · frozen_modes.py" as COMP #FFF3E0
+rectangle "composition modules\ngui/composition.py · gui/__main__.py · cli_composition.py ·\n__main__.py · frozen_entry.py · frozen_modes.py" as COMP #FFF3E0
 COMP .down.> INFRA : the only adapter modules\nthat import infrastructure
 
 legend right

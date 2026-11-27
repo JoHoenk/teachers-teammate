@@ -31,8 +31,9 @@ class MenuHooks:
 
     quit_requested: Callable[[], None]
     open_settings: Callable[[SettingsPage], None]
-    open_benchmark: Callable[[], None]
     open_monitor: Callable[[], None]
+    open_compare: Callable[[], None]
+    """Open the compare window on the document the teacher has in front."""
     open_setup_assistant: Callable[[], None]
     open_log_folder: Callable[[], None]
 
@@ -58,8 +59,8 @@ class MenuBar(QObject):
         #: "All settings…", which opens the window where the teacher left it.
         self.all_settings_action: QAction
         #: The Tools entries; the window's tests click them to open what they show.
-        self.benchmark_action: QAction
         self.monitor_action: QAction
+        self.compare_action: QAction
         self.setup_action: QAction
         #: Help's entry to the log folder, which the window opens for the teacher.
         self.log_folder_action: QAction
@@ -120,20 +121,20 @@ class MenuBar(QObject):
         self.all_settings_action = all_act
 
     def _build_tools_menu(self, bar: QMenuBar) -> None:
-        """Tools: things that are not part of a batch (Benchmark, System Monitor, Setup)."""
+        """Tools: things that are not part of a batch (System Monitor, comparing, Setup)."""
         tools_menu = present(bar.addMenu(menus.TOOLS), "Tools menu")
-        benchmark_act = QAction(menus.BENCHMARK, self)
-        benchmark_act.setObjectName(_handles.BENCHMARK)
-        benchmark_act.setToolTip(menus.BENCHMARK_TIP)
-        benchmark_act.triggered.connect(self._hooks.open_benchmark)
-        tools_menu.addAction(benchmark_act)
         monitor_act = QAction(menus.SYSTEM_MONITOR, self)
         monitor_act.setObjectName(_handles.SYSTEM_MONITOR)
         monitor_act.setToolTip(menus.SYSTEM_MONITOR_TIP)
         monitor_act.triggered.connect(self._hooks.open_monitor)
         tools_menu.addAction(monitor_act)
-        self.benchmark_action = benchmark_act
         self.monitor_action = monitor_act
+        compare_act = QAction(menus.COMPARE_MODELS, self)
+        compare_act.setObjectName(_handles.COMPARE_MODELS)
+        compare_act.setToolTip(menus.COMPARE_MODELS_TIP)
+        compare_act.triggered.connect(lambda _checked=False: self._hooks.open_compare())
+        tools_menu.addAction(compare_act)
+        self.compare_action = compare_act
         tools_menu.addSeparator()
         self.setup_action = QAction(menus.SETUP_ASSISTANT, self)
         self.setup_action.setObjectName(_handles.SETUP_ASSISTANT)

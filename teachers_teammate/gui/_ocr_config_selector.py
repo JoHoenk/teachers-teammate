@@ -8,7 +8,7 @@ Three widgets, one per question:
   or Original page, PDF DPI and the PDF text layer (and, where the owner has no Expert
   section of its own, the recognition temperature).
 - :class:`OcrConfigSelector` — the two side by side, producing one :class:`OcrConfig`.
-  Kept for the benchmark app, which needs the whole configuration in one place.
+  Kept for the pages that need the whole configuration in one place.
 
 All discovery (engines, models, where an engine runs) is delegated to
 the injected application service — the widgets contain presentation only, no business
@@ -609,8 +609,8 @@ class ScanQualityControls(QWidget):
 class OcrConfigSelector(QWidget):
     """Engine/model/preprocess/temperature picker producing an :class:`OcrConfig`.
 
-    Composes :class:`OcrModelPicker` and :class:`ScanQualityControls`; the benchmark app
-    drives OCR selection through this one widget.
+    Composes :class:`OcrModelPicker` and :class:`ScanQualityControls`; a page that owns the
+    whole scan quality drives it through this one widget.
     """
 
     preprocess_preview_requested = Signal(object)  # emits the current OcrConfig

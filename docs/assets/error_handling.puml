@@ -12,6 +12,7 @@ class Exception #DDDDDD
 class ValueError #DDDDDD
 class RuntimeError #DDDDDD
 class FileNotFoundError #DDDDDD
+class OSError #DDDDDD
 
 package "teachers_teammate.exceptions" {
   class PipelineError
@@ -30,6 +31,7 @@ package "teachers_teammate.exceptions" {
   class OnlineOcrNotAllowedError
   class ConfigFileNotFoundError
   class ConfigFileParseError
+  class MarksKeptError
   class StorageResolutionError
   class ProviderNotAvailableError
   class ModelDownloadError
@@ -53,11 +55,13 @@ Exception <|-- RunStoppedError
 Exception <|-- ValueError
 Exception <|-- RuntimeError
 Exception <|-- FileNotFoundError
+Exception <|-- OSError
 ValueError <|-- PipelineInputError
 ValueError <|-- OnlineOcrNotAllowedError
 ValueError <|-- ConfigFileParseError
 PipelineInputError <|-- RecognitionSwitchedOffError
 FileNotFoundError <|-- ConfigFileNotFoundError
+OSError <|-- MarksKeptError
 RuntimeError <|-- StorageResolutionError
 RuntimeError <|-- ProviderNotAvailableError
 RuntimeError <|-- ModelDownloadError

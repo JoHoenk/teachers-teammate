@@ -58,9 +58,16 @@ from ...domain.teacher_work import (
     use_suggestion,
 )
 from ...texts import check as check_text
+from ...texts import compare as compare_text
 from ...texts import review as txt
 from .._export_menu import ExportKind
-from .._handles import CHECKED_BUTTON, FINAL_VIEW, FINAL_VIEW_BUTTON, READ_VIEW
+from .._handles import (
+    CHECK_COMPARE_BUTTON,
+    CHECKED_BUTTON,
+    FINAL_VIEW,
+    FINAL_VIEW_BUTTON,
+    READ_VIEW,
+)
 from .._qt import present
 from ._masking import Masking
 from ._run_strip import PRIMARY_STYLE, NextStepStrip, RunState, RunStrip
@@ -926,6 +933,8 @@ class CheckPage(QWidget):
     raw_text_edited = Signal(str)
     corrected_text_edited = Signal(str)
     proofread_requested = Signal()
+    compare_requested = Signal()
+    """The teacher wants to see several models on this document's text."""
     proofreading_setup_requested = Signal()
     """Proofreading is not set up, and the teacher pressed the strip's button."""
     read_settings_requested = Signal()
@@ -1048,6 +1057,13 @@ class CheckPage(QWidget):
         self._again_btn.clicked.connect(self.proofread_requested)
         self._again_btn.setVisible(False)
         layout.addWidget(self._again_btn)
+
+        self._compare_btn = QPushButton(compare_text.COMPARE_MODELS)
+        self._compare_btn.setObjectName(CHECK_COMPARE_BUTTON)
+        self._compare_btn.setToolTip(compare_text.COMPARE_MODELS_TIP)
+        self._compare_btn.clicked.connect(self.compare_requested)
+        self._compare_btn.setVisible(False)
+        layout.addWidget(self._compare_btn)
 
         self._hide_names_box = QCheckBox(txt.HIDE_PERSONAL_INFO_BUTTON)
         self._hide_names_box.setToolTip(txt.HIDE_PERSONAL_INFO_BUTTON_TIP)
@@ -1187,8 +1203,10 @@ class CheckPage(QWidget):
             self._put_in_front(ViewKind.READ)
 
     def _show_again(self, doc: CheckDocument) -> None:
-        """Offer *Proofread again* over a proofread document, unless a run holds it."""
-        self._again_btn.setVisible(doc.has_proofreading and not self._lock)
+        """Offer *Proofread again* and *Compare models…* over a proofread document."""
+        offer = doc.has_proofreading and not self._lock
+        self._again_btn.setVisible(offer)
+        self._compare_btn.setVisible(offer)
 
     def _show_next_step(self, doc: CheckDocument) -> None:
         """Offer the next step over a transcription that has not been proofread yet.
@@ -1352,6 +1370,7 @@ class CheckPage(QWidget):
         self._switch.setVisible(False)
         self._next_step.setVisible(False)
         self._again_btn.setVisible(False)
+        self._compare_btn.setVisible(False)
         self._run_strip.show_state(None)
         self._refresh_checked()
         self.body.clear()

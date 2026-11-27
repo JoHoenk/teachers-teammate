@@ -23,8 +23,8 @@ from tools.evaluation.core.manifest import Manifest, ManifestItem
 from tools.evaluation.core.modes import ALL_STEPS, Exchange
 from tools.evaluation.core.performance import LoadedModel, RequestStats
 from tools.evaluation.core.records import TestRecord, key_sha256, question_sha256
-from tools.evaluation.metrics.offsets import token_offsets
-from tools.evaluation.metrics.quality import ordered_edits
+from teachers_teammate.domain.proofreading.word_diff import text_offsets
+from teachers_teammate.domain.proofreading.edit_agreement import ordered_edits
 from tools.evaluation.report import compare, gates, groups, load
 from tools.evaluation.run import protocol, runner
 from tools.evaluation.store import validate, writer
@@ -57,7 +57,7 @@ def _spans(text: str) -> tuple[tuple[int, int], ...]:
 
 def _label(source: str, reference: str, code: str) -> ReferenceLabel:
     """Return the first edit of *reference* against *source* as a label, in characters."""
-    offsets = token_offsets(source)
+    offsets = text_offsets(source)
     start, end, replacement = ordered_edits(source, reference)[0]
     return ReferenceLabel(
         start=offsets[start],
@@ -170,7 +170,7 @@ class _Client:
 
 def _review(source: str, reference: str) -> CorrectionReview:
     """Return the review of one text: its one edit, explained."""
-    offsets = token_offsets(source)
+    offsets = text_offsets(source)
     start, end, replacement = ordered_edits(source, reference)[0]
     return CorrectionReview(
         edits=(

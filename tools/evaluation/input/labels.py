@@ -28,11 +28,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from teachers_teammate.domain.proofreading.word_diff import tokenize
+from teachers_teammate.domain.proofreading.edit_agreement import edits, spans_touch, word_positions
+from teachers_teammate.domain.proofreading.sentences import Span
+from teachers_teammate.domain.proofreading.word_diff import text_offsets, tokenize
 
 from ..core.labels import ReferenceLabel
-from ..metrics.offsets import token_offsets
-from ..metrics.quality import Span, edits, spans_touch, word_positions
 
 _NORMALISE = str.maketrans(
     {
@@ -200,7 +200,7 @@ def label_reference(
         A change no annotated edit lies within one word of keeps an empty code.
     """
     tokens = tokenize(source)
-    offsets = token_offsets(source)
+    offsets = text_offsets(source)
     positions = word_positions(tokens)
 
     annotated: list[tuple[Span, str]] = []

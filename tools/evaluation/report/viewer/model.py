@@ -5,7 +5,7 @@ compute.  Three things are assembled here that the store does not hold:
 
 * **The rows of a text.**  A text is shown sentence by sentence, and every version of it in the
   same rows, so an edit that runs past a sentence boundary merges the sentences it covers
-  (:func:`~.outcomes.sentence_rows`).
+  (:func:`~teachers_teammate.domain.proofreading.sentences.sentence_rows`).
 * **The complete sentence of every version.**  A list of diff fragments is hard to judge: a reader
   needs the whole corrected sentence, with the changes marked on top.  So each row carries the text
   of the source, of the reference and of every version, and the character offsets of the changes
@@ -22,18 +22,21 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from teachers_teammate.domain.proofreading.edit_agreement import (
+    DEFAULT_BETA,
+    ordered_edits,
+    token_spans,
+)
+from teachers_teammate.domain.proofreading.sentences import SentenceRow, row_of, sentence_rows
 from teachers_teammate.domain.proofreading.word_diff import tokenize
 
 from ...core import languages, protocol_table
 from ...core.labels import UNLABELLED
 from ...core.records import text_id
-from ...metrics import quality
-from ...metrics.offsets import char_to_token
-from ...metrics.quality import DEFAULT_BETA
 from .. import pooled
 from ..load import Loaded, LoadedItem, LoadedRun, Skipped
 from . import numbers, outcomes, prompts, variants
-from .outcomes import ModelEdit, Orphan, Outcomes, SentenceRow
+from .outcomes import ModelEdit, Orphan, Outcomes
 from .variants import Variant
 
 Span4 = tuple[int, int, tuple[str, ...], int]
@@ -392,13 +395,13 @@ def _texts(loaded: Loaded, by_text: Mapping[str, Sequence[LoadedItem]]) -> dict[
             )
             # A row is wide enough for every edit of every version and of the reference, so a
             # reference edit that runs past a sentence boundary never lands outside its row.
-            rows = outcomes.sentence_rows(
-                _token_spans(record.source, record.sentence_spans),
+            rows = sentence_rows(
+                token_spans(record.source, record.sentence_spans),
                 [
                     *(
                         edit
                         for item in versions
-                        for edit in quality.ordered_edits(record.source, item.output)
+                        for edit in ordered_edits(record.source, item.output)
                     ),
                     *(edit for edit, _, _ in reference_changes),
                 ],
@@ -414,7 +417,7 @@ def _texts(loaded: Loaded, by_text: Mapping[str, Sequence[LoadedItem]]) -> dict[
                     code=code,
                     category=category,
                     main_type=by_edit[edit].main_type if edit in by_edit else UNLABELLED,
-                    row=outcomes.row_of(rows, edit[0], edit[1]),
+                    row=row_of(rows, edit[0], edit[1]),
                 )
                 for index, (edit, code, category) in enumerate(reference_changes)
             )
@@ -439,21 +442,6 @@ def _texts(loaded: Loaded, by_text: Mapping[str, Sequence[LoadedItem]]) -> dict[
                 ref_edits=ref_edits,
             )
     return found
-
-
-def _token_spans(source: str, spans: Sequence[tuple[int, int]]) -> tuple[tuple[int, int], ...]:
-    """Return the token span of every character span of the corpus's sentence segmentation.
-
-    A span that does not lie on token boundaries names no row and is left out, so the sentence
-    merges with its neighbour instead of the text losing a row.
-    """
-    found: list[tuple[int, int]] = []
-    for start, end in spans:
-        first = char_to_token(source, start)
-        last = char_to_token(source, end)
-        if first is not None and last is not None and last >= first:
-            found.append((first, last))
-    return tuple(found)
 
 
 def _items(

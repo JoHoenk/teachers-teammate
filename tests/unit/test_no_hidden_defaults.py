@@ -22,7 +22,6 @@ COMPOSITION = f"{PACKAGE}/application/composition.py"
 ENTRY_POINTS = (
     COMPOSITION,
     f"{PACKAGE}/gui/composition.py",
-    f"{PACKAGE}/gui/benchmark/composition.py",
     f"{PACKAGE}/cli.py",
     f"{PACKAGE}/cli_composition.py",
 )
@@ -35,8 +34,6 @@ WIRING = (
     COMPOSITION,
     f"{PACKAGE}/gui/composition.py",
     f"{PACKAGE}/gui/__main__.py",
-    f"{PACKAGE}/gui/benchmark/composition.py",
-    f"{PACKAGE}/gui/benchmark/__main__.py",
     f"{PACKAGE}/cli_composition.py",
     f"{PACKAGE}/__main__.py",
     f"{PACKAGE}/frozen_modes.py",

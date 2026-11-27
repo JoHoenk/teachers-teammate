@@ -2,15 +2,16 @@
 
 The app talks to Ollama through the ``ollama`` client, so a test that wants to see the real
 client, the real threads and the real pull stream needs a server that answers like one.  This
-fake answers the six requests the app makes — ``/api/version``, ``/api/tags``, ``/api/ps``,
-``/api/show``, ``/api/pull`` and ``/api/chat`` — on ``127.0.0.1:0``, so it never clashes with an
-Ollama running on the developer's computer.
+fake answers the seven requests the app makes — ``/api/version``, ``/api/tags``, ``/api/ps``,
+``/api/show``, ``/api/pull``, ``/api/chat`` and ``/api/generate`` — on ``127.0.0.1:0``, so it never
+clashes with an Ollama running on the developer's computer.
 
 It is threaded on purpose: the GUI lists the models while a pull is streaming, and a
 single-threaded server would answer the second request only after the first had finished.
 
 What it records is what the tests assert on: :attr:`FakeOllama.requests` (every request, in
-order) and :attr:`FakeOllama.pulled` (the tags a pull really installed, in order).
+order), :attr:`FakeOllama.pulled` (the tags a pull really installed, in order) and
+:attr:`FakeOllama.unloaded` (the tags the app dropped out of memory, in order).
 
 It is the one Ollama stand-in of the test suite: a test that needs a server over HTTP uses this,
 a test that needs another answer teaches this one a switch instead of writing a second server.
@@ -101,7 +102,8 @@ class ProofreadingAnswers:
 
     ``edits`` are the word pairs it changes (``{"have": "has"}``), and ``last_word`` replaces the
     last word of every text it is sent, whatever that word is: a test that cannot know what a
-    reader made of a page still gets exactly one change per document.  A document with neither
+    reader made of a page still gets exactly one change per document; ``last_words`` gives a model
+    of its own tag another such word, so two models disagree about it.  A document with neither
     comes back as it was sent.  ``category`` and ``explanation`` are what it says about every
     change.  The two
     structured steps answer in the app's own answer shapes, so a renamed field or a new required
@@ -110,6 +112,7 @@ class ProofreadingAnswers:
 
     edits: tuple[tuple[str, str], ...] = ()
     last_word: str = ""
+    last_words: tuple[tuple[str, str], ...] = ()
     explanation: str = "The spelling was corrected."
     category: Category = PROOFREADING_CATEGORY
 
@@ -121,7 +124,7 @@ class ProofreadingAnswers:
             return self._explained(schema)
         if "unclear" in properties:
             return UnclearAnswer(unclear=[]).model_dump_json()
-        return self._corrected(_asked_text(body))
+        return self._corrected(_asked_text(body), str(body.get("model") or ""))
 
     def _explained(self, schema: dict[str, Any]) -> str:
         """Answer step ②: one note per edit number the request pinned."""
@@ -133,12 +136,13 @@ class ProofreadingAnswers:
         )
         return answer.model_dump_json()
 
-    def _corrected(self, text: str) -> str:
-        """Answer step ①/③: the text the request carried, with the words it changes."""
+    def _corrected(self, text: str, model: str) -> str:
+        """Answer step ①/③: the text the request carried, with the words *model* changes."""
         for original, corrected in self.edits:
             text = text.replace(original, corrected)
-        if self.last_word:
-            text = re.sub(r"\S+(\s*)$", lambda found: self.last_word + found.group(1), text)
+        last = dict(self.last_words).get(model, self.last_word)
+        if last:
+            text = re.sub(r"\S+(\s*)$", lambda found: last + found.group(1), text)
         return text
 
 
@@ -201,6 +205,8 @@ class FakeOllama:
         self.requests: list[Request] = []
         #: The tags a pull really installed, in order.
         self.pulled: list[str] = []
+        #: The tags the app dropped out of memory with ``keep_alive: 0``, in order.
+        self.unloaded: list[str] = []
         #: Tags whose pull answers an error line instead of a stream that ends in ``success``.
         self.fail_pull: set[str] = set()
         self._models: dict[str, _Model] = {}
@@ -365,6 +371,14 @@ class FakeOllama:
             self.pulled.append(tag)
         self.install(tag)
 
+    def drop(self, tag: str) -> None:
+        """Drop *tag* out of memory, as a generate request with ``keep_alive: 0`` does."""
+        with self._lock:
+            self.unloaded.append(tag)
+            self._loaded.discard(tag)
+            if self._busy is not None and self._busy[0] == tag:
+                self._busy = None
+
     def paths(self) -> list[str]:
         """Return the paths the app asked for, in order."""
         with self._lock:
@@ -418,7 +432,7 @@ def _handler_for(fake: FakeOllama) -> type[BaseHTTPRequestHandler]:
     """Return a handler class that answers for *fake*."""
 
     class _Handler(BaseHTTPRequestHandler):
-        """Answers the six requests the app makes of an Ollama server."""
+        """Answers the seven requests the app makes of an Ollama server."""
 
         def do_GET(self) -> None:  # BaseHTTPRequestHandler's spelling
             self._dispatch("GET")
@@ -445,8 +459,16 @@ def _handler_for(fake: FakeOllama) -> type[BaseHTTPRequestHandler]:
                 self._show(str(body.get("model") or ""))
             elif method == "POST" and self.path == "/api/pull":
                 self._pull(str(body.get("model") or ""))
+            elif method == "POST" and self.path == "/api/generate":
+                self._generate(body)
             else:
                 self._json({"error": f"no such route: {method} {self.path}"}, status=404)
+
+        def _generate(self, body: dict[str, Any]) -> None:
+            """Answer a generate request: an empty prompt with ``keep_alive: 0`` drops the model."""
+            model = str(body.get("model") or "")
+            fake.drop(model)
+            self._json({"model": model, "created_at": MODIFIED_AT, "response": "", "done": True})
 
         def _read_body(self) -> dict[str, Any]:
             """Return the JSON body of the request, or ``{}`` when it has none."""

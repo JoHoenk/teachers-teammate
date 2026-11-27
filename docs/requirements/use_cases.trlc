@@ -106,19 +106,4 @@ section "Functional Requirements" {
         description = "As an automation user I want to run the full pipeline from the command line using a settings file so that batch processing can be scripted and reproduced without the graphical interface."
     }
 
-    UseCase OCR_Benchmark_Run {
-        description = "As a user I want to run a single document through a chosen text-recognition configuration in the benchmark app and store the result so that I can build up a set of outputs to compare."
-    }
-
-    UseCase OCR_Run_History {
-        description = "As a user I want each benchmark run kept as a separate timestamped entry per document, with old entries pruned automatically beyond a recent limit, so that I can revisit and compare earlier results without the history growing without bound."
-    }
-
-    UseCase OCR_Run_Comparison {
-        description = "As a user I want to compare two stored runs of the same document side-by-side — the recognised texts, their differences, and an agreement score — so that I can judge text-recognition quality without a ground-truth transcript."
-    }
-
-    UseCase Benchmark_Run_Deletion {
-        description = "As a user I want to delete individual benchmark runs or clear all runs for a document so that I can keep only the results that matter to me."
-    }
 }

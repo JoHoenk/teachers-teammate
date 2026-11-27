@@ -8,7 +8,7 @@ and offers the best model via one button — selecting it when it is installed, 
 to Settings → Add-ons when it is not.
 
 The widget never talks to the Ollama server: ratings come from
-``rate_ollama_models(..., cached_only=True)`` after a background thread
+``rate_for(..., cached_only=True)`` after a background thread
 classified the models, so the GUI thread cannot block on network requests.
 """
 
@@ -192,32 +192,26 @@ class OllamaModelGuidance(QWidget):
 
     def _rate(self, tags: list[str]) -> None:
         """(Re-)rate *tags* for the active profile; cache hits only, no network."""
-        ratings = self._service.recommendations.rate_ollama_models(
-            tags,
-            self._category,
-            self.active_profile(),
-            self._ollama_url,
-            cached_only=True,
-            system_memory_gb=self.active_system_memory_gb(),
-            card_gb=self.active_card_gb(),
-        )
-        self._ratings = {rating.tag: rating for rating in ratings}
+        self._ratings = {rating.tag: rating for rating in self._rated(tags)}
 
     def _rating_for(self, tag: str) -> ModelRating:
         """Return the rating of *tag*, rating a typed, not-listed tag on demand."""
         rating = self._ratings.get(tag)
         if rating is None:
-            rating = self._service.recommendations.rate_ollama_models(
-                [tag],
-                self._category,
-                self.active_profile(),
-                self._ollama_url,
-                cached_only=True,
-                system_memory_gb=self.active_system_memory_gb(),
-                card_gb=self.active_card_gb(),
-            )[0]
+            rating = self._rated([tag])[0]
             self._ratings[tag] = rating
         return rating
+
+    def _rated(self, tags: Sequence[str]) -> list[ModelRating]:
+        """Return the ratings of *tags* on the computer the selector stands for; no network."""
+        return self._service.recommendations.rate_for(
+            tags,
+            self._category,
+            self._selector.resolved(),
+            self._selector.setting(),
+            self._ollama_url,
+            cached_only=True,
+        )
 
     def _sort_key(self, tag: str) -> tuple[int, str]:
         return (suitability_rank(self._rating_for(tag).suitability), tag)

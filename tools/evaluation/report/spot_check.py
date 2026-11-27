@@ -36,12 +36,12 @@ import math
 import random
 import re
 
+from teachers_teammate.domain.proofreading.edit_agreement import char_edits
 from teachers_teammate.domain.proofreading.review import EditNote
 
 from ..core.axes import run_key_sha256
 from ..core.hashing import sha256_text
 from ..core.records import MARK_VALUES, Mark, TestRecord, text_id
-from ..metrics.quality import char_edits
 from . import groups
 from .load import LoadedItem, LoadedRun
 

@@ -19,7 +19,6 @@ package "application/  (AppServices: one instance per process)" {
   [DocumentQueries\n(reads)] as QUERY
   [DocumentCommands\n(writes)] as CMD
   [ProviderService · ReaderService · AddonService ·\nAnonymizationService · DataFlowService · ...] as OTHER
-  [BenchmarkApplicationService] as BENCH
 }
 
 package "infrastructure/workflow" {
@@ -29,7 +28,6 @@ package "infrastructure/workflow" {
   [CacheReconciliationService] as CACHE
   [PreprocessService] as PREP
   [OCRStageService] as OCRSVC
-  [run_ocr()\nbenchmark/runner.py] as BRUN
 }
 
 package "Stages" {
@@ -41,13 +39,11 @@ package "Stores" {
   database "StateRepository\nthe cache: what the models made" as STATE
   database "TeacherWorkStore\nwhat the teacher changed and decided\n(one writer: DocumentCommands)" as WORK
   database "PreviewImageStore" as IMG
-  database "BenchmarkRunStore\n(append-only)" as BSTORE
 }
 
 GUI --> RUN
 GUI --> QUERY
 GUI --> CMD
-GUI --> BENCH : Benchmark
 WORKER --> RUN : run_selected()
 CLI --> RUN
 GUI ..> WORKER : starts
@@ -71,12 +67,5 @@ QUERY --> STATE : reads
 QUERY --> WORK : reads
 CMD --> WORK : writes
 CMD --> STATE : invalidates
-
-
-
-BENCH --> BSTORE
-BENCH --> BRUN : OCR only
-BRUN --> PREP
-BRUN --> OCRSVC
 
 @enduml

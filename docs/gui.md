@@ -182,13 +182,12 @@ problem, no documents, no files, nothing selected, "Checking…", ready).
 ### Tools menu
 
 - **System Monitor** (`gui/_system_monitor.py:SystemMonitorWindow`) is built at start-up and kept
-  hidden so the chart collects every run; `SystemStatsWidget` polls only while shown.
-- **Benchmark…** builds `build_benchmark_window()` in-process (lazy import; a hidden import in the
-  packaged build). It is kept between uses; showing it again calls `reload_settings()`. A user
-  close during a run asks first (`event.spontaneous()`); the app quitting does not.
-- Both are **parentless** windows (an owned window stays on top on Windows), so they can sit next
-  to the main window. `MainWindow.closeEvent` closes them; for Benchmark only `close()` runs the
-  `closeEvent` that stops its worker.
+  hidden so the chart collects every run; `SystemStatsWidget` polls only while shown. It is
+  **parentless** (an owned window stays on top on Windows), so it can sit next to the main window.
+  `MainWindow.closeEvent` closes it.
+- **Compare proofreading models…** (`gui/compare/_window.py:CompareWindow`) is one window, built
+  parentless like the monitor, opened by that action and by the Check tab's *Compare models…*
+  button, which passes the document. `MainWindow.closeEvent` closes it too.
 
 ## The window tabs and the Check page
 
@@ -411,7 +410,7 @@ position found that way, not by emitting signals.
   folders keep their own pages. `prune_page_images()` removes pages a shorter document no longer
   has; `cleanup_intermediate_images()` treats them as intermediate.
 - **Original pages**, when the preparation changed a page: `persist_original_images()` writes
-  `<stem>_original.<ext>` (`original_img`, read by Benchmark and the Word builder) and
+  `<stem>_original.<ext>` (`original_img`, the page the Check tab's scan view shows) and
   `<stem>_o<N>.<ext>`, listed in `DocumentState.original_images`. `prune_original_images()` matches
   exact names, so a document called `Anna_o2` keeps its files.
 - `DocumentState.load_valid()` drops the list when a file is missing: a deleted cache costs a
@@ -426,6 +425,45 @@ position found that way, not by emitting signals.
   scanned pixels, up to `_ZOOM_NATIVE` / `_ZOOM_MAX`. Only pages in view and their neighbours are
   held at full size (`_pages_in_view`); others are thumbnails (`_THUMBNAIL_WIDTH`), swapped by
   `_refresh_full_pages` on scroll or zoom.
+
+## The compare window
+
+`gui/compare/` shows what several writing models make of one transcription. It lists models
+through `ComparisonCandidates`, reads and asks through `ModelComparisonService`, and runs in
+`CompareJob`; nothing of it is a stage or a run.
+
+- `CompareHooks` (`_window.py`) is what the window is handed: the service, the candidates, the
+  settings as they stand, the documents that have been read, `use_model`, `say`, `busy` and
+  `warn_busy`. `gui/_compare_launcher.py:CompareLauncher` builds them and owns the one window, as
+  `SetupLauncher` does for the assistant; `use_model` writes the two keys through the main window's
+  panel. `MainWindow._open_compare(source_id="")` opens it: the Check tab's button passes its
+  document, the Tools action passes none and the header's document combo decides.
+- `reload()` is the one read: the source of the open document, its candidates and the stored
+  answers, then the three tabs. The candidates come from the model lists the app holds, which
+  expire; `refresh_models` asks for them again on the network pool, and the rows are drawn again
+  when the fresh lists differ. A document that was never read shows `NOT_READ` and no candidates.
+- `_job.py:CompareJob` is a `LongJobThread` around one `ModelComparisonService.run()` over the
+  ticked models. Per model it emits `line` and `row_done(ComparedRun)`, so a row gets its state
+  (running with the step, done with the time, the model's `Message`, `STOPPED`) while the job goes
+  on. A stop ends the job with `RunStoppedError`; the window shows `STOPPED`, not a failure.
+- `_Reporter` carries the unit's progress lines to the label under the buttons through a queued
+  signal, since the job reports from its own thread. Warnings and errors go to the log, never to a
+  dialog: a model's row says what became of it.
+- *Run again* asks the chosen model once more and keeps both answers (`CompareJob(repeat=...)`,
+  `ModelComparisonService.next_repeat()`): the *Overview* then says how many of its changes came in both
+  runs and how many in one only, and *Changes* writes "(only once)" beside a wording one answer
+  alone made.
+- The row the teacher chose in *Changes* shows one line per option, each with the two verdicts; the
+  panel emits `mark_requested(option, verdict | None)` and holds no verdict itself.
+  `CompareWindow._on_mark_requested` writes it through the service and asks for a fresh
+  `comparison()`, so the checked button and the Overview's counts both come from the domain. A store
+  that cannot write shows `marks_not_saved()` through `_errors.show_failure`; nothing is marked.
+- The panels hold no comparison of their own: `_rows.py` turns a `Comparison` into rows
+  (`change_rows`, `side_rows`, `overview_cells`) and the panels only draw them.
+  `_models.py:ModelsPanel` is the only panel that owns state — the ticks, the chosen row, the
+  per-row line and which models answered, which is what the footer's *Use…* and *Run again* read.
+- Words are `texts/compare.py`, the confirm dialog is `_dialogs.ask`, and the success line
+  (`compare_done`) goes to the main window's status bar.
 
 ## Setup Assistant
 
@@ -719,5 +757,5 @@ class _PipInstallThread(LongJobThread):
 - It holds every started job until it ends (destroying a running `QThread` aborts the process); the
   app waits a bounded moment on close (`wait_for_long_jobs`).
 
-`tests/unit/test_thread_kinds.py` refuses any other `QThread` subclass, except `OCRWorker` and
-`BenchmarkWorker`, which run and stop as a whole.
+`tests/unit/test_thread_kinds.py` refuses any other `QThread` subclass, except `OCRWorker`,
+which runs and stops as a whole.

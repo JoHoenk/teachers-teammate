@@ -26,7 +26,6 @@ _UNWORDED = "download_damaged: name=reader.onnx"
 ENTRY_POINTS = (
     "__main__.py",
     "gui/__main__.py",
-    "gui/benchmark/__main__.py",
 )
 
 

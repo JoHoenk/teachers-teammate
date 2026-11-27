@@ -36,6 +36,8 @@ HANG_WALK_S = 60.0
 #: The model tag the proofreading stand-in serves.  Not in the catalog, so no run warns about the
 #: memory it would need and nothing is downloaded.
 PROOFREADING_MODEL = "walkthrough-proofreader:1b"
+#: The second model the compare window asks beside it; it writes another word in the same place.
+COMPARE_MODEL = "walkthrough-second:1b"
 
 #: The servers a walk talks to, kept open for as long as the walk runs.
 _SERVERS: list[FakeOllama] = []
@@ -91,10 +93,16 @@ def _proofreading() -> walkthrough.ProofreadingSetup:
     server = FakeOllama()
     _SERVERS.append(server)
     server.install(PROOFREADING_MODEL)
-    setup = walkthrough.ProofreadingSetup(url=server.url, model=PROOFREADING_MODEL)
+    server.install(COMPARE_MODEL)
+    setup = walkthrough.ProofreadingSetup(
+        url=server.url, model=PROOFREADING_MODEL, compare_model=COMPARE_MODEL
+    )
     server.answer_chats(
         ProofreadingAnswers(
-            last_word=setup.word, explanation=setup.explanation, category=setup.category
+            last_word=setup.word,
+            last_words=((setup.compare_model, setup.compare_word),),
+            explanation=setup.explanation,
+            category=setup.category,
         )
     )
     return setup

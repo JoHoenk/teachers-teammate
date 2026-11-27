@@ -28,7 +28,7 @@ class SystemMonitorWindow(QWidget):
     It is a window of its own that can stay open next to the main window while a batch runs.
     The main window does not own it (no ``parent``): an owned window stays on top of its
     owner on Windows and could never be placed behind it.  The main window closes it when it
-    quits, like the Benchmark window.
+    quits.
     """
 
     def __init__(

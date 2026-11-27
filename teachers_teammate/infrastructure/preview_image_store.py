@@ -78,9 +78,9 @@ class PreviewImageStore:
     def paths_for_page(self, stem: str, number: int) -> Path:
         """Return the canonical path of page *number* (1-based) of *stem*.
 
-        Page 1 keeps the name it always had (``<stem>_preprocessed.png``): the benchmark, the
-        results table and the Word builder read it, and a document recognized before this
-        existed has only that page.
+        Page 1 keeps the name it always had (``<stem>_preprocessed.png``): the results table
+        and the Word builder read it, and a document recognized before this existed has only
+        that page.
         """
         if number == 1:
             return self.paths_for_stem(stem).preview_img

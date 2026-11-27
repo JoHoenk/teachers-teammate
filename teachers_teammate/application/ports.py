@@ -13,18 +13,36 @@ names — stays a module, and a service keeps importing it.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
 import threading
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ..config import Config
     from ..domain.anonymization import AnonymizerConfig
     from ..domain.credentials import KeyLocation
-    from ..domain.model_catalog import GpuInfo, GpuUsage, ServerFacts
+    from ..domain.data_location import StageLocation
+    from ..domain.formatted_text import TextFormat
+    from ..domain.model_catalog import (
+        GpuInfo,
+        GpuUsage,
+        HardwareDetection,
+        HardwareProfileSetting,
+        ModelCategory,
+        ModelRating,
+        ModelUses,
+        ServerFacts,
+    )
     from ..domain.ollama_discovery import WaitDetail
+    from ..domain.performance_estimate import TimeRange
+    from ..domain.proofreading.compared_result import ComparedResult
+    from ..domain.proofreading.option_marks import OptionMark
+    from ..domain.proofreading.result import CorrectionOutcome
+    from ..domain.proofreading.review import CorrectionReview
     from ..infrastructure.ollama_utils import ServerActivity
-    from ..interfaces import Anonymizer, ConnectionCheck
+    from ..interfaces import Anonymizer, ConnectionCheck, Reporter
 
 
 class OllamaServer(Protocol):
@@ -213,4 +231,207 @@ class ReleaseFeed(Protocol):
 
     def latest(self) -> tuple[str, str]:
         """Return the ``(tag, url)`` of the newest release, or raise the failure of the ask."""
+        ...
+
+
+class RunSession(RunActivity, Protocol):
+    """What a comparison does to the run: it counts as one while it asks a model."""
+
+    def running(self) -> AbstractContextManager[None]:
+        """Count the caller as a run for as long as the block lasts."""
+        ...
+
+
+class CompareResults(Protocol):
+    """The stored answers of the comparison: one per text and model, on disk.
+
+    ``CompareStore`` implements it.  A comparison reads what an earlier one stored, so a model
+    the teacher tries again costs no request; the analysed result is never logged and never
+    leaves the cache the retention already empties.
+    """
+
+    def results(self, text_sha: str) -> dict[str, ComparedResult]:
+        """Return every stored answer about the text *text_sha*, by the name of its file.
+
+        A model that answered twice has two entries: ``key`` and ``key~2``.
+        """
+        ...
+
+    def load(self, text_sha: str, key: str, repeat: int = 0) -> ComparedResult | None:
+        """Return the stored answer of the settings *key* and its run *repeat* about the text."""
+        ...
+
+    def save(self, result: ComparedResult) -> None:
+        """Write *result*, replacing a stored answer of the same settings, text and run.
+
+        Raises:
+            OSError: the file cannot be written; the caller shows the model as failed.
+        """
+        ...
+
+
+class OptionMarks(Protocol):
+    """The teacher's verdicts on compared changes: one file per text, in the data root.
+
+    ``OptionMarkStore`` implements it.  A mark is the teacher's work and can never be made again,
+    so it does not go into the cache with the answers it judges.
+    """
+
+    def marks(self, text_sha: str) -> tuple[OptionMark, ...]:
+        """Return the verdicts about the text *text_sha*: none when nothing is stored."""
+        ...
+
+    def save(self, text_sha: str, marks: tuple[OptionMark, ...]) -> None:
+        """Write *marks* as the verdicts about the text *text_sha*; none deletes the file.
+
+        Raises:
+            OSError: the file cannot be written; the caller tells the teacher.
+        """
+        ...
+
+
+class ProofreadAnswer(Protocol):
+    """One text's answer, as a comparison reads it: the texts, the review and what went wrong.
+
+    ``workflow/proofread_text.py``'s outcome satisfies it, and this layer sees only this much of
+    it: what a comparison says about an answer, and nothing about how it was made.  Its members
+    are read-only, because the outcome is a value: nothing below writes into an answer.
+    """
+
+    @property
+    def outcome(self) -> CorrectionOutcome:
+        """The corrector's answer as it came back: the failure flags are read here."""
+        ...
+
+    @property
+    def text(self) -> str:
+        """The answer, with the real names back."""
+        ...
+
+    @property
+    def review(self) -> CorrectionReview | None:
+        """The explanations, with the real names back, or ``None`` when they were dropped."""
+        ...
+
+    @property
+    def stored_warning(self) -> str:
+        """What a stored result keeps of the answer: its warning and names left hidden."""
+        ...
+
+    @property
+    def names_hidden(self) -> int:
+        """How many places were hidden before the request; ``0`` when nothing was sent hidden."""
+        ...
+
+
+class ProofreadingUnit(Protocol):
+    """One text, proofread: hide its names, answer, put the names back."""
+
+    def __call__(
+        self,
+        text: str,
+        text_format: TextFormat = "plain",
+        *,
+        name: str = "",
+        stop_requested: Callable[[], bool] | None = None,
+    ) -> ProofreadAnswer:
+        """Proofread *text* and return its answer with the names restored."""
+        ...
+
+
+class ProofreadUnitBuilder(Protocol):
+    """Builds the unit that proofreads one text with one model: a run's, or a comparison's."""
+
+    def __call__(
+        self, config: Config, *, reporter: Reporter, stop_event: threading.Event | None = None
+    ) -> ProofreadingUnit:
+        """Return the unit of *config*, writing its narrative and its warnings to *reporter*.
+
+        Setting *stop_event* abandons the request that is waiting, which raises
+        :exc:`~teachers_teammate.exceptions.RunStoppedError`.
+        """
+        ...
+
+
+class ModelAdvice(Protocol):
+    """What this computer makes of a model: the profile it is rated against, and the rating.
+
+    ``ModelRecommendationService`` implements it.  A comparison reads the ratings it already
+    worked out on the GUI thread, and classifies the models it lists only off that thread.
+    """
+
+    def cached_hardware_profile(
+        self, setting: HardwareProfileSetting, ollama_url: str
+    ) -> HardwareDetection | None:
+        """Resolve *setting* without probing this computer, or ``None`` while it is unknown."""
+        ...
+
+    def classify_ollama_models(
+        self, tags: Sequence[str], ollama_url: str, *, cached_only: bool = False
+    ) -> dict[str, ModelUses | None]:
+        """Return what each Ollama model tag may be used for, ``None`` when it is unknown."""
+        ...
+
+    def rate_for(
+        self,
+        tags: Sequence[str],
+        task: ModelCategory,
+        detection: HardwareDetection | None,
+        setting: HardwareProfileSetting,
+        ollama_url: str,
+        *,
+        cached_only: bool = False,
+    ) -> list[ModelRating]:
+        """Return a :class:`~teachers_teammate.domain.model_catalog.ModelRating` per tag."""
+        ...
+
+
+class PageTimes(Protocol):
+    """What this computer measured on a server: the seconds a page takes with a model.
+
+    ``SpeedEstimateService`` implements it.  A comparison asks it for the models it lists, so a
+    row says how long a text will take before the teacher starts it.
+    """
+
+    def page_times(
+        self,
+        tags: Sequence[str],
+        category: ModelCategory,
+        ollama_url: str,
+        *,
+        hardware: HardwareDetection | None = None,
+    ) -> dict[str, TimeRange]:
+        """Return the measured seconds per page of *tags*, keyed by tag; unmeasured ones are out."""
+        ...
+
+
+class ProviderCatalogue(Protocol):
+    """The models to choose from: what is installed or listed, and where each one runs.
+
+    ``ProviderService`` implements it.  ``get_cached_models`` is the list the app already holds,
+    which a window reads; ``list_provider_models`` may ask the provider, off the GUI thread.
+    """
+
+    def list_providers(self) -> list[str]:
+        """Return the available LLM providers."""
+        ...
+
+    def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
+        """Return the models of *provider*, asking for them when the held list has expired."""
+        ...
+
+    def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None:
+        """Return the model list of *provider* the app holds, or ``None`` when it holds none."""
+        ...
+
+    def provider_key_missing(self, provider: str) -> bool:
+        """Return whether *provider* needs an API key the app has none of."""
+        ...
+
+    def missing_provider_package(self, provider: str) -> str | None:
+        """Return the package *provider* needs but the app cannot import, else ``None``."""
+        ...
+
+    def describe_llm_location(self, provider: str, model: str, ollama_url: str) -> StageLocation:
+        """Return where proofreading with *provider* and *model* runs."""
         ...

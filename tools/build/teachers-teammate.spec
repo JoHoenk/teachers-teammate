@@ -220,7 +220,6 @@ hiddenimports = [
     *_PROVIDER_MODULES,
     # Menu actions open these in-process through a lazy import.
     "teachers_teammate.gui",
-    "teachers_teammate.gui.benchmark",
     "teachers_teammate.gui.setup",
     # Pipeline modules the GUI reaches through a lazy import.
     "cv2",

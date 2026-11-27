@@ -22,10 +22,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from teachers_teammate.domain.proofreading.edit_agreement import (
+    ordered_edits,
+    spans_touch,
+    word_positions,
+)
 from teachers_teammate.domain.proofreading.word_diff import tokenize
 
 from ..core.text import word_count
-from .quality import ordered_edits, spans_touch, word_positions
 
 LOST_RATIO = 0.80
 """Below this share of the reference's words an answer has lost text."""

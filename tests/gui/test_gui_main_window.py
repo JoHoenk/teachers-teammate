@@ -1477,15 +1477,20 @@ def test_help_opens_the_folder_the_log_is_written_to(main_window, monkeypatch, t
 
 
 @pytest.mark.gui
-def test_tools_menu_lists_benchmark_and_the_system_monitor(main_window) -> None:
+def test_tools_menu_lists_the_system_monitor(main_window) -> None:
     """
     Given  the main window
     When   its Tools menu is read
-    Then   it offers Benchmark… and System Monitor, then the Setup Assistant on its own
+    Then   it offers System Monitor and the comparison, then the Setup Assistant on its own
     """
     labels = [a.text() for a in _menu(main_window, "Tools").actions()]
 
-    assert labels == ["Benchmark\u2026", "System Monitor", "", "Setup Assistant\u2026"]
+    assert labels == [
+        "System Monitor",
+        "Compare proofreading models\u2026",
+        "",
+        "Setup Assistant\u2026",
+    ]
 
 
 @pytest.mark.gui
@@ -1583,117 +1588,6 @@ def test_a_run_that_ends_before_the_open_document_shows_it_again(
     main_window._run_controller._on_run_finished(RunSummary())
 
     assert seen == [a]
-
-
-class _FakeBenchmarkWindow(QWidget):
-    """A Benchmark window that records how often it was shown and closed."""
-
-    created: ClassVar[list[_FakeBenchmarkWindow]] = []
-
-    def __init__(self, *, app_services: object = None) -> None:
-        super().__init__()
-        self.app_services = app_services
-        self.closed = 0
-        self.shown = 0
-        self.reloaded = 0
-        _FakeBenchmarkWindow.created.append(self)
-
-    def reload_settings(self) -> None:
-        self.reloaded += 1
-
-    def show(self) -> None:
-        self.shown += 1
-        super().show()
-
-    def close(self) -> bool:
-        self.closed += 1
-        return super().close()
-
-
-@pytest.fixture
-def fake_benchmark(monkeypatch):
-    """Replace the Benchmark window factory with a recording stand-in."""
-    from teachers_teammate.gui.benchmark import composition  # noqa: PLC0415
-
-    _FakeBenchmarkWindow.created = []
-    monkeypatch.setattr(composition, "build_benchmark_window", _FakeBenchmarkWindow)
-    return _FakeBenchmarkWindow
-
-
-@pytest.mark.gui
-def test_tools_benchmark_opens_one_window_and_a_second_click_reuses_it(
-    qtbot, main_window, fake_benchmark
-) -> None:
-    """
-    Given  the main window
-    When   Tools > Benchmark… is chosen twice
-    Then   one parentless Benchmark window exists and was shown both times
-    """
-    main_window._menu_bar.benchmark_action.trigger()
-    main_window._menu_bar.benchmark_action.trigger()
-
-    assert len(fake_benchmark.created) == 1
-    window = fake_benchmark.created[0]
-    qtbot.addWidget(window)
-    assert window.shown == 2
-    assert window.parent() is None
-    assert window.reloaded == 0  # it never went away: nothing to reload
-
-
-@pytest.mark.gui
-def test_the_benchmark_window_shares_the_main_windows_service(
-    qtbot, main_window, fake_benchmark
-) -> None:
-    """
-    Given  the main window
-    When   Tools > Benchmark… opens the Benchmark window
-    Then   it is built with the main window's own application service, so both share one set of
-           caches
-    """
-    main_window._menu_bar.benchmark_action.trigger()
-
-    window = fake_benchmark.created[0]
-    qtbot.addWidget(window)
-    assert window.app_services is main_window._app_service
-
-
-@pytest.mark.gui
-def test_reopening_a_closed_benchmark_window_follows_the_settings_again(
-    qtbot, main_window, fake_benchmark
-) -> None:
-    """
-    Given  a Benchmark window the teacher closed
-    When   Tools > Benchmark… is chosen again
-    Then   the same window is shown again after it reloaded the saved server and profile
-    """
-    main_window._menu_bar.benchmark_action.trigger()
-    window = fake_benchmark.created[0]
-    qtbot.addWidget(window)
-    window.hide()  # closed by the teacher
-
-    main_window._menu_bar.benchmark_action.trigger()
-
-    assert len(fake_benchmark.created) == 1
-    assert window.reloaded == 1
-    assert window.isVisible()
-
-
-@pytest.mark.gui
-def test_closing_the_main_window_closes_the_benchmark_window(
-    qtbot, main_window, fake_benchmark
-) -> None:
-    """
-    Given  an open Benchmark window
-    When   the main window is closed
-    Then   the Benchmark window's close() ran, so its worker is stopped
-    """
-    main_window._menu_bar.benchmark_action.trigger()
-    window = fake_benchmark.created[0]
-    qtbot.addWidget(window)
-
-    main_window.close()
-
-    assert window.closed == 1
 
 
 @pytest.mark.gui
@@ -5613,7 +5507,6 @@ _WALKTHROUGH_WIDGETS = (
 #: The menu entries it triggers.
 _WALKTHROUGH_ACTIONS = (
     _handles.ALL_SETTINGS,
-    _handles.BENCHMARK,
     _handles.SYSTEM_MONITOR,
     _handles.SETUP_ASSISTANT,
     _handles.USER_GUIDE,

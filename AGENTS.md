@@ -24,9 +24,8 @@ teacher reads) and core (`config.py`, `interfaces.py`, `cache_keys.py`, `run_rul
 service per topic; the only entry for GUI and CLI; does not import `texts/`) → `gui/`, `cli.py`.
 
 - `gui/` and `cli.py` never import `infrastructure`. Only the composition modules wire concrete
-  classes: `gui/composition.py`, `gui/__main__.py`, `gui/benchmark/composition.py`,
-  `gui/benchmark/__main__.py`, `cli_composition.py`, `__main__.py`, `frozen_entry.py`,
-  `frozen_modes.py`.
+  classes: `gui/composition.py`, `gui/__main__.py`, `cli_composition.py`, `__main__.py`,
+  `frozen_entry.py`, `frozen_modes.py`.
 - A name has one home; no module re-exports a name it does not define.
 - Stages are ABCs in `interfaces.py`. `OCRPipeline` wires them, `FileProcessor` runs one file,
   `run_files()` the list.

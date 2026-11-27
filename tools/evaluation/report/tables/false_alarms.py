@@ -23,13 +23,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 import re
 
-from teachers_teammate.domain.proofreading.word_diff import tokenize
+from teachers_teammate.domain.proofreading.edit_agreement import edits, spans_touch, word_positions
+from teachers_teammate.domain.proofreading.word_diff import text_offsets, tokenize
 
 from ...core.constants import TextKind
 from ...core.languages import name as language_name
 from ...core.languages import ordered
-from ...metrics.offsets import token_offsets
-from ...metrics.quality import edits, spans_touch, word_positions
 from .. import groups
 from ..pooled import TextItem
 
@@ -151,7 +150,7 @@ def classify(item: TextItem) -> list[FalseAlarm]:
     tokens = tokenize(source)
     positions = word_positions(tokens)
     reference_spans = [(positions[start], positions[end]) for start, end, _ in reference]
-    offsets = token_offsets(source)
+    offsets = text_offsets(source)
     unchanged = set(item.record.unchanged_sentences)
     found: list[FalseAlarm] = []
     for edit in sorted(edits(source, item.output)):

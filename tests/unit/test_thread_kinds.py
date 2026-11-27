@@ -19,7 +19,6 @@ ALLOWED: frozenset[tuple[str, str]] = frozenset(
     {
         ("gui/_long_job.py", "LongJobThread"),
         ("gui/_worker.py", "OCRWorker"),
-        ("gui/benchmark/_benchmark_worker.py", "BenchmarkWorker"),
     }
 )
 

@@ -14,7 +14,8 @@ edit
 ``extra``           touches no reference edit                    ``missed``
 =================  ============================================  ==============================
 
-The rules are :func:`~...metrics.quality.match_edits` and :func:`~...metrics.quality.spans_touch`,
+The rules are :func:`~teachers_teammate.domain.proofreading.edit_agreement.match_edits` and
+:func:`~teachers_teammate.domain.proofreading.edit_agreement.spans_touch`,
 unchanged, so on a text with errors the outcomes add up to the row's stored ``tp`` and ``fp``.  A
 text without a reference error stores neither (it is scored by what is left alone), so there every
 edit is ``extra``.
@@ -27,17 +28,26 @@ row, so every version of a text is shown in the same rows.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from teachers_teammate.domain.proofreading.edit_agreement import (
+    char_to_token,
+    edits,
+    ordered_edits,
+    spans_touch,
+    word_positions,
+)
 from teachers_teammate.domain.proofreading.review import CorrectionReview
-from teachers_teammate.domain.proofreading.word_diff import tokenize
+from teachers_teammate.domain.proofreading.sentences import (
+    SentenceRow,
+    Span,
+    row_of,
+)
+from teachers_teammate.domain.proofreading.word_diff import Edit, tokenize
 
 from ...core.labels import ReferenceLabel
-from ...metrics import quality
-from ...metrics.offsets import char_to_token
-from ...metrics.quality import Edit, Span
 from ..score import notes_of
 
 EXACT = "exact"
@@ -45,19 +55,6 @@ LOCATED = "located"
 EXTRA = "extra"
 FIXED = "fixed"
 MISSED = "missed"
-
-Span3 = tuple[int, int, tuple[str, ...]]
-
-
-@dataclass(frozen=True)
-class SentenceRow:
-    """One row of the text view: a sentence, or several when an edit crosses a boundary."""
-
-    start: int
-    """First token of the row, an index into ``tokenize(source)``."""
-
-    end: int
-    """One past the last token; the rows of a text are contiguous and cover it."""
 
 
 @dataclass(frozen=True)
@@ -137,74 +134,6 @@ class Outcomes:
         )
 
 
-def sentence_rows(
-    spans: Sequence[Span], edits: Iterable[Span3], total: int
-) -> tuple[SentenceRow, ...]:
-    """Return the rows of a text's view, from its sentence spans and every version's edits.
-
-    Args:
-        spans: The token span of every sentence of the corpus's segmentation, in text order.
-        edits: The ``(start, end, replacement)`` of every version, so that a row is wide enough
-            for the widest edit any version makes.
-        total: How many tokens the text has, so the last row reaches the end.
-
-    Returns:
-        The rows, contiguous and covering the text.  A text without sentence spans is one row.
-    """
-    if not spans:
-        return (SentenceRow(0, total),)
-    owner = [_owner(spans, start, end) for start, end, _ in edits]
-    ends = [end for _, end in spans]
-    for index, (_, end, _) in enumerate(edits):
-        sentence = owner[index]
-        if sentence is not None:
-            ends[sentence] = max(ends[sentence], end)
-    merged: list[SentenceRow] = []
-    index = 0
-    while index < len(spans):
-        start, end = spans[index][0], ends[index]
-        following = index + 1
-        while following < len(spans) and spans[following][0] < end:
-            end = max(end, ends[following])
-            following += 1
-        merged.append(SentenceRow(start, end))
-        index = following
-    # The whitespace between two sentences belongs to the row before it, so the rows cover the
-    # text and a version's rows join to the version's whole text.
-    rows: list[SentenceRow] = []
-    for number, row in enumerate(merged):
-        following = merged[number + 1].start if number + 1 < len(merged) else total
-        rows.append(SentenceRow(row.start, max(row.end, following)))
-    return tuple(rows)
-
-
-def _owner(spans: Sequence[Span], start: int, end: int) -> int | None:
-    """Return the sentence an edit starting at *start* belongs to, or ``None``."""
-    if start == end:
-        for index, (_, sentence_end) in enumerate(spans):
-            if sentence_end == start:
-                return index
-    for index, (sentence_start, sentence_end) in enumerate(spans):
-        if sentence_start <= start < sentence_end:
-            return index
-    for index in range(len(spans) - 1, -1, -1):
-        if spans[index][0] <= start:
-            return index
-    return None
-
-
-def row_of(rows: Sequence[SentenceRow], start: int, end: int) -> int:
-    """Return the row an edit starting at *start* is shown in."""
-    for index, row in enumerate(rows):
-        if row.start <= start < row.end:
-            return index
-    if start == end:
-        for index, row in enumerate(rows):
-            if row.end == start:
-                return index
-    return len(rows) - 1
-
-
 def edits_by_label(source: str, labels: Sequence[ReferenceLabel]) -> dict[Edit, ReferenceLabel]:
     """Return the reference's changes keyed by the token edit each label names.
 
@@ -235,7 +164,7 @@ def reference_edits(
         return ()
     by_edit = edits_by_label(source, labels)
     found: list[tuple[Edit, str, str]] = []
-    for edit in sorted(quality.edits(source, reference)):
+    for edit in sorted(edits(source, reference)):
         label = by_edit.get(edit)
         found.append((edit, label.code if label else "", label.category if label else ""))
     return tuple(found)
@@ -256,7 +185,7 @@ def changes_of(
         output: The version's text, without the marks the model added.
         review: The model's explanations, or ``None`` in corrections-only mode.
     """
-    made = quality.ordered_edits(source, output)
+    made = ordered_edits(source, output)
     found: list[dict[str, Any]] = []
     for index, category, explanation, _orphan in notes_of(source, output, review):
         edit = None if index is None else [made[index][0], made[index][1], "".join(made[index][2])]
@@ -285,11 +214,11 @@ def outcomes(
         rows: The rows of the text view, shared by every version of the text
             (:func:`sentence_rows`).
     """
-    positions = quality.word_positions(tokenize(source))
+    positions = word_positions(tokenize(source))
     expected = reference_edits(source, reference, labels)
     expected_set = {edit for edit, _, _ in expected}
     expected_spans = [_words(positions, edit) for edit, _, _ in expected]
-    made = quality.ordered_edits(source, corrected)
+    made = ordered_edits(source, corrected)
     made_set = set(made)
     made_spans = [_words(positions, edit) for edit in made]
     notes, orphans = _notes(changes)
@@ -297,11 +226,7 @@ def outcomes(
     for edit, span in zip(made, made_spans, strict=True):
         start, end, replacement = edit
         touched = next(
-            (
-                index
-                for index, other in enumerate(expected_spans)
-                if quality.spans_touch(span, other)
-            ),
+            (index for index, other in enumerate(expected_spans) if spans_touch(span, other)),
             None,
         )
         category, explanation = notes.get(edit, ("", ""))
@@ -330,11 +255,7 @@ def outcomes(
             outcome=(
                 FIXED
                 if edit in made_set
-                else (
-                    LOCATED
-                    if any(quality.spans_touch(span, other) for other in made_spans)
-                    else MISSED
-                )
+                else (LOCATED if any(spans_touch(span, other) for other in made_spans) else MISSED)
             ),
             row=row_of(rows, edit[0], edit[1]),
         )
@@ -394,11 +315,8 @@ __all__ = [
     "Orphan",
     "Outcomes",
     "ReferenceEdit",
-    "SentenceRow",
     "changes_of",
     "edits_by_label",
     "outcomes",
     "reference_edits",
-    "row_of",
-    "sentence_rows",
 ]

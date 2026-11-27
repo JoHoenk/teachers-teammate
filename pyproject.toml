@@ -79,7 +79,6 @@ dev = [
 [project.scripts]
 teachers-teammate = "teachers_teammate.cli:main"
 teachers-teammate-gui = "teachers_teammate.gui:main_gui"
-teachers-teammate-benchmark = "teachers_teammate.gui.benchmark:main_benchmark"
 
 [build-system]
 # `wheel` is not needed: setuptools builds wheels itself since 70.1.  `license` as an SPDX

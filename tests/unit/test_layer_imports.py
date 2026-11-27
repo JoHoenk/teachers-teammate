@@ -29,8 +29,6 @@ _COMPOSITION_MODULES: frozenset[str] = frozenset(
         "frozen_entry.py",
         "frozen_modes.py",
         "gui/__main__.py",
-        "gui/benchmark/__main__.py",
-        "gui/benchmark/composition.py",
         "gui/composition.py",
     }
 )

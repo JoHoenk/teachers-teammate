@@ -714,7 +714,7 @@ def test_a_failed_pip_install_names_the_first_package(qtbot, fake_threads) -> No
 @pytest.mark.use_case("Runtime_Addon_Installation")
 def test_without_a_manager_the_round_pulls_by_itself(qtbot, fake_threads) -> None:
     """
-    Given  a round with no pull manager (tests, Benchmark)
+    Given  a round with no pull manager (as in a test)
     When   it pulls two models
     Then   it runs the pulls itself, one after the other, and reports each arrival
     """

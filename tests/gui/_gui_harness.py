@@ -36,7 +36,6 @@ from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.application.run import RunPreflight, RunService
 from teachers_teammate.application.stored_results import StoredSummary
 from teachers_teammate.domain.anonymization import AnonymizerConfig
-from teachers_teammate.domain.benchmark import PairComparison, compare_pair
 from teachers_teammate.domain.model_catalog import (
     OLLAMA_CATALOG,
     DetectionReason,
@@ -187,6 +186,19 @@ class FakeGuiService(LocalDataFlowStub):
             for tag in tags
         ]
 
+    def rate_for(self, tags, task, detection, setting, ollama_url, *, cached_only: bool = False):
+        from teachers_teammate.domain.model_catalog import active_profile  # noqa: PLC0415
+
+        return self.rate_ollama_models(
+            tags,
+            task,
+            active_profile(detection, setting),
+            ollama_url,
+            cached_only=cached_only,
+            system_memory_gb=detection.system_memory_gb if detection is not None else None,
+            card_gb=detection.card_gb if detection is not None else None,
+        )
+
     def on_ollama_models_changed(self, ollama_url: str) -> None:
         _ = ollama_url
 
@@ -212,20 +224,6 @@ class FakeGuiService(LocalDataFlowStub):
     def anonymize_text(self, text: str, language: str, config: AnonymizerConfig | None = None):
         _ = (language, config)
         return text, {}
-
-    # ── benchmark operations ─────────────────────────────────────────────────
-    def list_runs(self, source: Path) -> list:
-        _ = source
-        return []
-
-    def delete_run(self, source: Path, run_id: str) -> None:
-        _ = (source, run_id)
-
-    def delete_all_runs(self, source: Path) -> None:
-        _ = source
-
-    def compare(self, a: Any, b: Any) -> PairComparison:
-        return compare_pair(getattr(a, "raw_text", ""), getattr(b, "raw_text", ""))
 
     # ── the results kept for earlier runs (Settings → Privacy) ───────────────
     stored_summary = StoredSummary(documents=0, bytes_taken=0)

@@ -18,8 +18,9 @@ from dataclasses import dataclass
 from enum import Enum
 import random
 
+from teachers_teammate.domain.proofreading.edit_agreement import EditScore
+
 from ..core.constants import TextKind
-from ..metrics.quality import EditScore
 from . import groups, pooled, summary
 
 BOOTSTRAP_DRAWS = 2000

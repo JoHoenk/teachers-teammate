@@ -28,9 +28,6 @@ from teachers_teammate.gui._image_view import ZoomableImageView
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._stats_widget import SystemStatsWidget
 from teachers_teammate.gui._system_monitor import SystemMonitorWindow
-from teachers_teammate.gui.benchmark._compare_view import CompareView
-from teachers_teammate.gui.benchmark._runs_list import RunsList
-from teachers_teammate.gui.benchmark.composition import build_benchmark_window
 from teachers_teammate.gui.composition import build_main_window
 from teachers_teammate.gui.settings import SettingsPage, SettingsWindow
 
@@ -46,7 +43,6 @@ _FAKE = FakeGuiService()
 
 WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
     ("main_window", lambda: build_main_window()),
-    ("benchmark_window", lambda: build_benchmark_window()),
     # One Settings window per page: each page builds its own widgets and background work.
     *[
         (
@@ -75,8 +71,6 @@ WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
     ("system_monitor", lambda: SystemMonitorWindow(lambda: None)),
     ("collapsible", lambda: CollapsibleSection("Section")),
     ("ocr_config_selector", lambda: OcrConfigSelector(app_service=services_of(_FAKE))),
-    ("compare_view", lambda: CompareView()),
-    ("runs_list", lambda: RunsList()),
 ]
 
 

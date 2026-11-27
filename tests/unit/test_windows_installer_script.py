@@ -127,7 +127,8 @@ def test_the_settings_box_removes_the_teachers_own_work() -> None:
     Given  the installer script
     When   the uninstaller's data page and its Uninstall section are read
     Then   the box names the corrections and checks, and ticking it removes work\\ beside the
-           results cache, the benchmark history and the speed data
+           results cache, the speed data, the marks on compared changes and what an older
+           version left behind
     """
     script = _script()
 
@@ -137,7 +138,7 @@ def test_the_settings_box_removes_the_teachers_own_work() -> None:
     start = script.index('Section "Uninstall"')
     uninstall = script[start : script.index("SectionEnd", start)]
     settings = uninstall[uninstall.index("$DoDelCache == ${BST_CHECKED}") :]
-    for folder in ("Cache", "benchmark", "speed", "work"):
+    for folder in ("Cache", "benchmark", "speed", "work", "compare_marks"):
         assert f'RMDir /r "$LOCALAPPDATA\\teachers_teammate\\{folder}"' in settings
 
 

@@ -1,9 +1,8 @@
-"""Shared QApplication bootstrap for the GUI apps.
+"""Shared QApplication bootstrap for the GUI.
 
-Both the main window (:func:`teachers_teammate.gui._main_window.main_gui`) and the
-benchmark window (:func:`teachers_teammate.gui.benchmark.main_benchmark`) need the
-same QApplication setup: application name/icon, the Linux desktop-file hint, and
-the qdarkstyle theme.  Centralising it keeps the two entry points consistent.
+The main window (:func:`teachers_teammate.gui._main_window.main_gui`) needs the
+application name/icon, the Linux desktop-file hint and the qdarkstyle theme before it
+builds a widget.
 
 Qt's own messages go into the log file rather than to a stderr the window lacks.
 

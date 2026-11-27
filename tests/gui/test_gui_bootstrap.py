@@ -1,23 +1,19 @@
-"""Entry-point / bootstrap regression guards for the GUI apps.
+"""Entry-point / bootstrap regression guards for the GUI.
 
 These cover the seams that previously shipped untested and let launch-time aborts
-through: ``create_app`` icon/theme ordering, the ``main_gui`` / ``main_benchmark``
-launch path, and the windows' ``closeEvent`` thread teardown.
+through: ``create_app`` icon/theme ordering, the ``main_gui`` launch path, and the
+window's ``closeEvent`` thread teardown.
 """
 
 from __future__ import annotations
 
 import sys
-import threading
 
 import pytest
 from PySide6.QtWidgets import QApplication, QWidget
 
 from teachers_teammate.gui import _main_window
 from teachers_teammate.gui._app_bootstrap import create_app, finish_process
-from teachers_teammate.gui.benchmark import _benchmark_window
-from teachers_teammate.gui.benchmark._benchmark_window import main_benchmark
-from teachers_teammate.gui.benchmark.composition import build_benchmark_window
 from teachers_teammate.gui._main_window import main_gui
 from teachers_teammate.gui.composition import build_main_window
 
@@ -93,27 +89,6 @@ def test_main_gui_constructs_and_shows_window(qtbot, monkeypatch) -> None:
 
 
 @pytest.mark.gui
-def test_main_benchmark_constructs_and_shows_window(qtbot, monkeypatch) -> None:
-    """
-    Given  exec/exit stubbed so launch does not block
-    When   main_benchmark() runs with an injected window factory
-    Then   it constructs and shows the benchmark window without raising
-    """
-    monkeypatch.setattr(QApplication, "exec", lambda self: 0)
-    monkeypatch.setattr(sys, "exit", lambda *a: None)
-    shown: list[QWidget] = []
-
-    def factory():
-        win = build_benchmark_window()
-        qtbot.addWidget(win)
-        shown.append(win)
-        return win
-
-    main_benchmark(window_factory=factory)
-    assert shown and shown[0].isVisible()
-
-
-@pytest.mark.gui
 def test_main_window_close_saves_settings_and_stops_threads(qtbot, monkeypatch) -> None:
     """
     Given  an open main window
@@ -130,37 +105,6 @@ def test_main_window_close_saves_settings_and_stops_threads(qtbot, monkeypatch) 
     qtbot.wait(20)
     assert saved == [True]
     assert_no_running_threads(win)
-
-
-@pytest.mark.gui
-def test_benchmark_window_close_stops_running_worker(qtbot) -> None:
-    """
-    Given  a benchmark window with a running worker
-    When   the window is closed
-    Then   the worker's stop_event is set and it is waited on
-    """
-    win = build_benchmark_window()
-    qtbot.addWidget(win)
-
-    class _FakeWorker:
-        def __init__(self) -> None:
-            self.stop_event = threading.Event()
-            self.waited = False
-
-        def isRunning(self) -> bool:
-            return True
-
-        def wait(self, _ms: int) -> bool:
-            self.waited = True
-            return True
-
-    worker = _FakeWorker()
-    win._worker = worker  # ty: ignore[invalid-assignment]  # test injects a running worker stub
-    win.show()
-    qtbot.wait(20)
-    win.close()
-    assert worker.stop_event.is_set()
-    assert worker.waited is True
 
 
 @pytest.mark.gui
@@ -227,41 +171,36 @@ def test_a_detached_worker_that_finished_does_not_force_a_hard_exit(monkeypatch)
 
 
 @pytest.mark.gui
-@pytest.mark.parametrize("entry", ["main_gui", "main_benchmark"])
-def test_the_gui_entry_points_inject_the_add_on_folder_first(qtbot, monkeypatch, entry) -> None:
+def test_the_gui_entry_point_injects_the_add_on_folder_first(qtbot, monkeypatch) -> None:
     """
     Given  a wheel install, where nothing else put the add-on folder on sys.path
-    When   main_gui() or main_benchmark() starts
+    When   main_gui() starts
     Then   the add-on folder is injected before the window is built
     """
     calls: list[str] = []
-    for module in (_main_window, _benchmark_window):
-        monkeypatch.setattr(module, "inject_addon_packages_dir", lambda: calls.append("inject"))
+    monkeypatch.setattr(_main_window, "inject_addon_packages_dir", lambda: calls.append("inject"))
     monkeypatch.setattr(QApplication, "exec", lambda self: 0)
     monkeypatch.setattr(sys, "exit", lambda *a: None)
 
     def factory():
         calls.append("window")
-        win = build_main_window() if entry == "main_gui" else build_benchmark_window()
+        win = build_main_window()
         qtbot.addWidget(win)
         return win
 
-    {"main_gui": main_gui, "main_benchmark": main_benchmark}[entry](window_factory=factory)
+    main_gui(window_factory=factory)
 
     assert calls[:2] == ["inject", "window"]
 
 
 @pytest.mark.gui
-def test_the_default_window_factories_build_their_windows(qtbot) -> None:
+def test_the_default_window_factory_builds_the_window(qtbot) -> None:
     """
-    Given  the console scripts, which start main_gui() and main_benchmark() with no factory
-    When   the default factories run
-    Then   each builds its window with services of its own, with nothing looked up globally
+    Given  the console script, which starts main_gui() with no factory
+    When   the default factory runs
+    Then   it builds the window with services of its own, with nothing looked up globally
     """
     main = _main_window._default_window_factory()
     qtbot.addWidget(main)
-    bench = _benchmark_window._default_window_factory()
-    qtbot.addWidget(bench)
 
     assert isinstance(main, _main_window.MainWindow)
-    assert isinstance(bench, _benchmark_window.BenchmarkWindow)

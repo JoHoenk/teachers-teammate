@@ -288,7 +288,7 @@ scope, and survive an update.
 | `/D=<folder>` | install folder of a fresh install (last argument, not quoted) |
 
 A silent uninstall keeps all user data unless `/DELDATA` (add-ons and models) or `/DELSETTINGS`
-(settings, saved keys, the teacher's corrections, benchmark history, results cache) is given.
+(settings, saved keys, the teacher's corrections, the speed measurements, results cache) is given.
 
 | Exit code | Meaning |
 |---|---|

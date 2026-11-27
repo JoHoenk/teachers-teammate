@@ -89,6 +89,8 @@ class CheckHooks:
     """Whether names can be hidden for the current document language."""
     export: Callable[[list[str], ExportKind], None]
     """Save the texts of these documents the way the window saves them."""
+    open_compare: Callable[[str], None]
+    """Open the compare window on one document, which the teacher has read."""
 
 
 class CheckController(QObject):
@@ -149,6 +151,7 @@ class CheckController(QObject):
         self._page.next_requested.connect(self.next_document)
         self._page.back_requested.connect(self.show_documents)
         self._page.proofread_requested.connect(self.on_proofread_requested)
+        self._page.compare_requested.connect(self._on_compare_requested)
         self._page.proofreading_setup_requested.connect(
             lambda: self._hooks.open_settings(SettingsPage.AI_MODELS, FOCUS_PROOFREADING)
         )
@@ -359,6 +362,15 @@ class CheckController(QObject):
             return
         self._session.from_check = True
         self._hooks.run_stage([self._open], Stage.CORRECTION)
+
+    def _on_compare_requested(self) -> None:
+        """Show the open document's text to several models: the header's *Compare models…*."""
+        if not self._open:
+            return
+        if self._hooks.run_busy():
+            self._hooks.warn_busy()
+            return
+        self._hooks.open_compare(self._open)
 
     # ── The two tab labels ───────────────────────────────────────────────
 

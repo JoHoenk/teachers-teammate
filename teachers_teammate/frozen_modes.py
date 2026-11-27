@@ -53,7 +53,6 @@ if TYPE_CHECKING:
 _LAZY_MODULES: tuple[str, ...] = (
     "teachers_teammate.gui._main_window",
     "teachers_teammate.gui.setup",
-    "teachers_teammate.gui.benchmark",
     "teachers_teammate.gui.settings",
     "cv2",
     "pypdfium2",

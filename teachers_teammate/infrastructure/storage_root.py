@@ -7,10 +7,11 @@ Responsibilities
   priority order: env-var override → OS user-cache directory.
 - `compute_cache_key(value)` — produce a short stable identifier from a string.
 - `artifacts_root()` — the folder the per-output-folder caches live in, one keyed folder each.
+- `compare_root()` — the folder the compared proofreading results live in, one per text.
 - `document_stem(path)` — the name a document's stored files carry: its stem and that key.
   Used by `StateRepository` for the JSON state file and by the cache service for the images.
 - `resolve_config_root()` / `resolve_data_root()` — where the teacher's *own* data lives
-  (settings; benchmark history and speed measurements), apart from the cache.
+  (settings and speed measurements), apart from the cache.
 - `resolve_data_folder(name)` — one folder of the data root, moved there from the cache the
   first time it is asked for.
 - `default_config_path()` — canonical path of the default ``ocr.toml`` file.
@@ -24,9 +25,8 @@ Storage root candidates (in priority order)
 Settings and history are not cache
 ----------------------------------
 The cache (results, previews) may be deleted by cleanup tools at any time and costs nothing
-but time to rebuild.  Settings, benchmark history and speed measurements cannot be rebuilt,
-so they live in the per-user *config* and *data* folders (``platformdirs.user_config_dir`` /
-``user_data_dir``).  With ``TEACHERS_TEAMMATE_TMPDIR`` set all three roots are that one folder.
+but time to rebuild.  Settings and speed measurements cannot be rebuilt, so they live in the
+per-user *config* and *data* folders (``platformdirs.user_config_dir`` / ``user_data_dir``).  With ``TEACHERS_TEAMMATE_TMPDIR`` set all three roots are that one folder.
 Files an earlier version wrote into the cache are moved over once.
 
 What this module does NOT do
@@ -58,6 +58,7 @@ from ..messages import config_file_missing, storage_root_unresolved
 __all__ = [
     "StorageRoot",
     "artifacts_root",
+    "compare_root",
     "compute_cache_key",
     "default_config_path",
     "document_stem",
@@ -268,6 +269,16 @@ def artifacts_root() -> Path:
     is what "delete stored results" removes.
     """
     return resolve_storage_root().path / "artifacts"
+
+
+def compare_root() -> Path:
+    """Return the folder of the compared proofreading results: ``<storage_root>/compare``.
+
+    One folder per text sits inside it, keyed by the text's hash, and one file per model in it.
+    A compared result holds student text and can be rebuilt by running the comparison again, so
+    it is cache: *Delete stored results* removes it and the retention expires it.
+    """
+    return resolve_storage_root().path / "compare"
 
 
 def resolve_artifact_dir(output_dir: Path) -> Path:

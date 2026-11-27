@@ -133,7 +133,7 @@ def test_the_run_keys_are_the_config_fields() -> None:
     When   its run and app keys are compared with the fields of Config and OcrConfig
     Then   they are the same set: every field a run or the window reads is a setting, and every
            setting a field (the folders, ``recursive`` and the OCR slice are the caller's; the
-           OCR temperature is fixed for the app and only the Benchmark varies it)
+           OCR temperature is fixed for the app)
     """
     config_fields = frozenset(field.name for field in dataclasses.fields(Config))
     ocr_fields = frozenset(

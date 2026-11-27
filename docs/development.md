@@ -74,12 +74,11 @@ The parts, innermost first. A part imports only from the parts in its row
 
 The presentation layer never imports `infrastructure`. The modules that wire concrete classes
 are the exception, and the only one: `gui/composition.py`, `gui/__main__.py`,
-`gui/benchmark/composition.py`, `gui/benchmark/__main__.py`, `cli_composition.py`,
-`__main__.py` and `frozen_modes.py`. `tests/unit/test_layer_imports.py` holds both rules, and a
-third: a module publishes only the names it defines, neither with `from … import Name as Name`
-nor as an `__all__` entry it imported from another layer (a subpackage's `__init__.py` lists the
-names of its own modules, which is that package's API) — a name has one home, and a caller
-imports it from there.
+`cli_composition.py`, `__main__.py` and `frozen_modes.py`. `tests/unit/test_layer_imports.py`
+holds both rules, and a third: a module publishes only the names it defines, neither with
+`from … import Name as Name` nor as an `__all__` entry it imported from another layer (a
+subpackage's `__init__.py` lists the names of its own modules, which is that package's API) — a
+name has one home, and a caller imports it from there.
 
 A service in `application/` does not reach into `infrastructure` from a method body. What it
 needs of a module comes in through its constructor, typed by a `Protocol` in
@@ -173,7 +172,7 @@ with, `texts/` and the interface use the one a teacher knows.
 | anonymization, anonymizer, `AnonymizationMap` | removing personal info: `[PERSON_1]` in place of a name |
 | OCR, `Stage.OCR`, recognition | text recognition — the write-up read into text |
 | review | three things: the *correction review* is the explanations of one proofreading (`domain/proofreading/review.py`), the *content review* is the evaluation, a *stored review* is what a run stored about a file, which the Check tab reads back. The module says which |
-| run | one start over the selected files; the Benchmark app calls the same thing a *batch* |
+| run | a batch — one start over the selected files |
 
 ### Where text lives
 
@@ -195,7 +194,6 @@ reference everywhere else. The package is Qt-free, so `gui/`, `cli.py` and
 | `texts/credentials.py` | The Settings list of access keys (API keys): its buttons, placeholder and the notes under the group and each key. |
 | `texts/menus.py` | The main window's menu bar: the four menus, their entries and what each entry offers. |
 | `texts/app.py` | The app's name, the update banner, and the Help, About and licence windows. |
-| `texts/benchmark.py` | The Benchmark window: the document, the configuration, the runs list and the comparison. |
 | `texts/setup.py` | Every sentence of the Setup Assistant's pages. |
 | `texts/issues.py` | One sentence per unmet requirement of a step or a run, worded from a `RequirementIssue`. |
 | `texts/run.py` | What a run says: the battery warning, a file it cannot use, a stage that failed, the output files it could not write, where they go. |
@@ -279,41 +277,6 @@ cache key — moving text changes cache keys), the developer log (`logging`, `lo
 exceptions that never reach a teacher, `tools/`, tests and docs. The Word output's en/de
 label tables follow the *document* language, not the UI language, and stay in
 `docx_builder.py` / `docx_comments.py`.
-
-### Benchmark app
-
-A second GUI app, **Benchmark** (`teachers-teammate-benchmark`, entry point
-`teachers_teammate.gui.benchmark:main_benchmark`; also **Tools → Benchmark…** in the main
-window), helps judge OCR quality for a
-single document. It runs the document through an OCR configuration, stores the
-result in an append-only history, and lets the user compare two stored runs
-side-by-side (image · text A · text B · diff + similarity). It follows the same
-layering:
-
-- **Domain** `domain/benchmark.py` — pure pairwise comparison metrics (similarity
-  via stdlib `difflib`, text statistics); no I/O.
-- **Infrastructure** `infrastructure/benchmark/` — `BenchmarkRunStore` (the
-  append-only run store, see below) and `runner.py` (an OCR-only path that reuses
-  `StageBuilder`, `PreprocessService`, and `OCRStageService`).
-- **Application** `application/benchmark_service.py` — `BenchmarkApplicationService`
-  answers the OCR discovery queries through the services it is given and adds
-  `run_and_store` / `list_runs` / `delete_run` / `compare`. The GUI talks only to
-  this service.
-- **Presentation** `gui/benchmark/` — a thin window reusing shared widgets
-  (`_ocr_config_selector.OcrConfigSelector`, `_image_view.ZoomableImageView`,
-  `_diff_widget.DiffWidget`, `_app_bootstrap.create_app`). The main window's Check tab has its
-  own views
-  (`gui/check/_text_views.py`, see *The window tabs and the Check page* below); plain
-  `DiffWidget` is what the benchmark compare view and the privacy preview dialog show.
-
-The OCR-only fields live in the nested `Config.ocr` value object
-(`config.py:OcrConfig`), which both the pipeline and the benchmark vary.
-
-```{uml} assets/sequence_benchmark_compare.puml
-:align: center
-:alt: Benchmark run and compare sequence
-:width: 100%
-```
 
 ## Ollama model catalog
 
@@ -576,7 +539,7 @@ and `report --performance --catalog-lines` prints the `answer_length` lines for 
 | Decisions (best model, suitability, hardware profile, `rate_model`) | `domain/model_catalog.py` | Pure functions, no I/O — table-test them. |
 | Caches (local hardware probe, model classification) | `application/model_recommendations.py` | One owner. Call `on_ollama_models_changed(url)` after every pull; it evicts the model list, the classifications and the server's speed facts. Only definite classifications are cached. The memory and GPU readers and the context choice live here too (`available_memory_gb`, `read_gpu_usage`, `context_choice`). |
 | Texts a teacher reads | `teachers_teammate/texts/` | Qt-free; widgets never build these sentences themselves. See "Where text lives" above. |
-| Widgets | `gui/_hardware_profile_selector.py`, `gui/_model_guidance.py`, `gui/settings/_addons_page.py` | Presentation only. They rate models through `rate_ollama_models(..., cached_only=True)` — never contacting Ollama on the GUI thread. |
+| Widgets | `gui/_hardware_profile_selector.py`, `gui/_model_guidance.py`, `gui/settings/_addons_page.py` | Presentation only. They rate models through `rate_for(..., cached_only=True)` — never contacting Ollama on the GUI thread. |
 
 Details that are easy to get wrong:
 
@@ -704,9 +667,9 @@ Rules that keep a stop honest:
   `request_stop(now=True)`, disconnects the worker's signals (no dialog on a hidden window) and
   waits at most `CLOSE_GRACE_MS`.  A worker still running after that is detached
   (`_worker.detach_running_worker`) and `_app_bootstrap.finish_process` ends the process with
-  `os._exit` instead of destroying a running `QThread` (which aborts).  The Benchmark window
-  does the same after its 2 s wait.  `StateRepository.save` writes a temporary file and swaps
-  it in (`os.replace`), because the process may now end during a save.
+  `os._exit` instead of destroying a running `QThread` (which aborts).
+  `StateRepository.save` writes a temporary file and swaps it in (`os.replace`), because the
+  process may now end during a save.
 
 ## Keeping the computer awake
 
@@ -995,18 +958,18 @@ Persistent data lives in three per-user places, resolved by `infrastructure/stor
 |---|---|---|---|
 | cache (**storage root**) | `resolve_storage_root()` | results, previews, the cache of every run; may be deleted by cleanup tools | `~/.cache/teachers_teammate` / `%LOCALAPPDATA%\teachers_teammate\Cache` / `~/Library/Caches/teachers_teammate` |
 | config | `resolve_config_root()` | `ocr.toml` | `~/.config/teachers_teammate` / `%LOCALAPPDATA%\teachers_teammate` / `~/Library/Application Support/teachers_teammate` |
-| data | `resolve_data_root()` | `benchmark/`, `speed/`, `work/` (next to `packages/` and `models/`, which have their own lookup) | `~/.local/share/teachers_teammate` / `%LOCALAPPDATA%\teachers_teammate` / `~/Library/Application Support/teachers_teammate` |
+| data | `resolve_data_root()` | `speed/`, `work/`, `compare_marks/` (next to `packages/` and `models/`, which have their own lookup) | `~/.local/share/teachers_teammate` / `%LOCALAPPDATA%\teachers_teammate` / `~/Library/Application Support/teachers_teammate` |
 
 The `TEACHERS_TEAMMATE_TMPDIR` environment variable, when set, replaces all three with that one
-folder (tests, portable use). The rule: what a teacher cannot rebuild (settings, benchmark
-history, speed measurements, their own corrections) never goes into the cache.
+folder (tests, portable use). The rule: what a teacher cannot rebuild (settings, speed
+measurements, their own corrections, their marks on a comparison) never goes into the cache.
 
 **Moving from the cache.** `resolve_config_path(None)` and `resolve_data_folder(name)` move an
-`ocr.toml`, `benchmark/` or `speed/` found in the cache folder to its own place the first time they
+`ocr.toml`, `speed/` or `work/` found in the cache folder to its own place the first time they
 are asked for (`migrate_once`: only when the new one is missing; when
 both exist the new one wins and the old one stays; a move that fails is logged and the old file
 is still read). On Windows the config and data folders are the same, so the uninstaller's
-settings switch removes `ocr.toml`, `benchmark\`, `speed\` and `work\` there.
+settings switch removes `ocr.toml`, `speed\` and `work\` there.
 
 ```
 <storage_root>/                                    # the cache
@@ -1016,16 +979,15 @@ settings switch removes `ocr.toml`, `benchmark\`, `speed\` and `work\` there.
 │       ├── <stem>_<key>_p<N>.png                  # prepared pages 2..N, listed in DocumentState.page_images
 │       ├── <stem>_<key>_original.<ext>            # page before preprocessing (only if steps changed it)
 │       └── state/<stem>_<key>.json                # CACHE: one DocumentState per (output_dir, path)
+├── compare/
+│   └── <text sha>/<key>.json                      # CACHE: one model's answer in a comparison
 <config_root>/ocr.toml                             # configuration (the pipeline config)
 <data_root>/
+├── compare_marks/
+│   └── <text sha>.json                          # WORK: the teacher's verdicts on one text's comparison
 ├── speed/                                         # measured speeds (samples.json, measurements.json)
-├── work/
-│   └── <sha256>.json                              # WORK: one TeacherWork per essay, keyed by its content
-└── benchmark/
-    └── <document_hash>/                           # compute_file_hash(document)
-        ├── document.json                          # {document_hash, display_name, last_path}
-        ├── <UTC-ts>-<ocr_cfg_hash[:8]>.json       # StoredRun (self-describing)
-        └── images/<UTC-ts>-<ocr_cfg_hash[:8]>.png
+└── work/
+    └── <sha256>.json                              # WORK: one TeacherWork per essay, keyed by its content
 ```
 
 ### Hashing scheme
@@ -1046,8 +1008,8 @@ store, and `tests/unit/test_cache_keys_golden.py` holds the digests that must no
   temperature slots are constants: the reader reads every language with one model, so a
   changed language or Ollama model never re-reads a page, while a new model revision or
   `READER_VERSION` does. A test pins an Ollama key, so the Ollama shape cannot drift.
-  The models themselves live in the user data folder (`models/`), not in the cache. Used by the cache to detect stale stages and by the benchmark store to label
-  runs.
+  The models themselves live in the user data folder (`models/`), not in the cache. Used by the
+  cache to detect stale stages.
 - `review_key` hashes the review's instructions and the wording the app adds around them
   (`review_wording()`: the message and the Markdown hint), so changed wording sends a review again.
 - `correction_key` / `review_key` deliberately leave the
@@ -1267,17 +1229,11 @@ so it is stored with the result:
   `GUI` writes the cells' lines from `view.sent` after every load, including the one after a file is done; the dialog shows one line per stored result in a grey block at the
   top of the *What is sent* tab (`stored_lines()`, `objectName="stored_results"`).
 
-### Cache vs benchmark store
+### The cache's shape
 
-These two stores have deliberately opposite shapes:
-
-| | Pipeline **cache** (`StateRepository`) | Benchmark **run store** (`BenchmarkRunStore`) |
-|---|---|---|
-| Purpose | memoize/resume the latest result | keep an experiment history to compare |
-| Cardinality | one entry per `(output_dir, path)`, **overwritten** | **many** entries per document, **append-only** |
-| Keyed by | file *path* (+ output dir) | document *content hash* (global) |
-| Config awareness | stores only a *hash* to detect staleness | stores the full `OcrConfig` to label runs |
-| Expiry | `results_keep_days` at start (default: keep everything) + manual deletion | keep-last-N cap + manual deletion |
+The pipeline **cache** (`StateRepository`) memoizes the latest result: one entry per
+`(output_dir, path)`, keyed by the file *path*. It stores only a *hash* of the settings, enough
+to detect a stale stage.
 
 > **Note:** the pipeline cache is bounded on **Settings → Privacy**. The retention
 > `results_keep_days` (default `0`, keep everything) drops the state of documents untouched for
@@ -1287,15 +1243,20 @@ These two stores have deliberately opposite shapes:
 > images (`*_step*.jpg`, `*_page*.png`) are cleaned, and a preview image is removed when its state
 > is invalidated by a config change.
 
-### Benchmark run retention
+**Comparisons use the same cache.** A model's answer in a comparison is
+`<storage root>/compare/<text sha>/<key>.json` (`infrastructure/compare_store.py`), keyed by the
+text and by the proofreading key of that model's settings, so a model the teacher compared twice
+costs one request. *Run again* keeps the second answer beside the first (`<key>~2.json`), so the
+window can say which of the model's changes came in both runs. It holds the student's text and can be made again, so it is a cache file: the
+retention expires it and *Delete stored results…* removes it.
 
-Because the benchmark store is append-only, it bounds growth two ways:
-
-- **Manual deletion** — delete a single run, or all runs for a document, from the
-  GUI (`delete_run` / `delete_all_runs`).
-- **Keep-last-N cap** — `BENCHMARK_KEEP_LAST_N` (in
-  `infrastructure/benchmark/run_store.py`). On each save, runs for that document
-  beyond the newest N are evicted (both the JSON and its preview image).
+**The marks on a comparison go the other way.** What a teacher calls right or wrong is their own
+work and holds no text: `compare_marks/<text sha>.json` in `resolve_data_folder("compare_marks")`,
+one file per text, each mark the character span of the student's words plus the hash of the
+replacement (`domain/proofreading/option_marks.py`,
+`infrastructure/option_mark_store.py:OptionMarkStore`). Neither the retention nor *Delete stored
+results…* touches it: a mark survives a re-run of a model and a lost answer, and a text that
+changes is another text with no marks.
 
 ## PDF embedded text
 
@@ -1329,8 +1290,7 @@ Where the setting applies:
   image/TXT result, stay valid.
 - `InputPayload.text_origin` says whether text came from a TXT file or a PDF text layer; the
   `FileProcessor` status message uses it.
-- `BenchmarkApplicationService` forces `never` (embedded text would make every engine return
-  the same text), and the preprocessing preview always renders an image.
+- The preprocessing preview always renders an image.
 
 ## OCR output formats & formatted text
 
@@ -1386,7 +1346,7 @@ is recorded only where counting from 1 would be wrong).
 |---|---|
 | Corrector | the stored text with its marks stripped and crossed-out words held back, restored afterwards (`domain/proofreading/markdown_shield.py`) |
 | Evaluator | the stored text; for Markdown the system prompt gains a notation hint (`domain/review_prompts.py`): crossed-out words are not evaluated; inserted words belong to the sentence |
-| Diff tab, benchmark similarity/word counts | `PlainTextRenderer` output — formatting marks never count as differences, crossed-out words are kept |
+| Diff tab | `PlainTextRenderer` output — formatting marks never count as differences, crossed-out words are kept |
 | DOCX | Word runs (bold, italic, underline, strikethrough, super-/subscript), headings, indented lists, nested tables |
 | Check tab | formatted rich text (`gui/check/_text_views.py`); **⋯ → Show Markdown source** shows the stored Markdown of the view in front |
 
@@ -1944,7 +1904,7 @@ OpenCV) is deleted by its `RECORD` files only; numpy is left alone.  It is then 
 
 It is idempotent.  Every entry point calls it first
 (`application/composition.inject_addon_packages_dir()`): `frozen_entry.py` and `__main__.py`,
-and `main_gui()`, `main_benchmark()` and `cli.main()` for a wheel install, so a spaCy model
+and `main_gui()` and `cli.main()` for a wheel install, so a spaCy model
 downloaded in one session is found after a restart however the app was started.
 
 ### The bundle's constraints and add-ons after an app update (frozen builds)

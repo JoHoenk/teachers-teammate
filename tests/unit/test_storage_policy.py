@@ -273,10 +273,10 @@ def test_no_config_file_anywhere_gives_none(monkeypatch, tmp_path: Path) -> None
     assert storage_root.resolve_config_path(None) is None
 
 
-@pytest.mark.parametrize("name", ["benchmark", "speed"])
+@pytest.mark.parametrize("name", ["speed"])
 def test_data_folder_in_the_cache_is_moved_once(monkeypatch, tmp_path: Path, name: str) -> None:
     """
-    Given  a benchmark or speed folder in the cache folder
+    Given  a data folder in the cache folder
     When   resolve_data_folder() is called twice
     Then   the folder, with its content, moves to the data folder the first time and stays there
     """

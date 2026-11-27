@@ -218,3 +218,59 @@ def test_a_computer_without_a_writable_cache_folder_has_nothing_stored(
     assert stored.summary() == StoredSummary(documents=0, bytes_taken=0)
     stored.delete()
     assert stored.expire(30) == 0
+
+
+def test_a_models_compared_answers_expire_together(tmp_path: Path) -> None:
+    """
+    Given  one model's first answer from forty days ago and its second from yesterday, and
+           another model's two answers from forty days ago
+    When   the results older than thirty days expire
+    Then   the first model keeps both answers, the second loses both
+    """
+    folder = tmp_path / "compare" / "sha-1"
+    folder.mkdir(parents=True)
+    forty_days_ago = time.time() - 40 * 86_400
+    yesterday = time.time() - 86_400
+    for stem, written in (
+        ("kept", forty_days_ago),
+        ("kept~2", yesterday),
+        ("gone", forty_days_ago),
+        ("gone~2", forty_days_ago),
+    ):
+        path = folder / f"{stem}.json"
+        path.write_text("{}", encoding="utf-8")
+        os.utime(path, (written, written))
+    stored = StoredResults(
+        activity=_Activity(),
+        work_store=TeacherWorkStore(tmp_path / "work"),
+        root=_cache(tmp_path),
+        compare=lambda: tmp_path / "compare",
+    )
+
+    assert stored.expire(30) == 2
+
+    assert sorted(path.name for path in folder.iterdir()) == ["kept.json", "kept~2.json"]
+
+
+def test_the_work_choice_deletes_the_verdicts_on_compared_changes_too(tmp_path: Path) -> None:
+    """
+    Given  the teacher's verdicts on compared changes, in a folder beside their other work
+    When   the stored results are deleted with the teacher's work, and then without it
+    Then   only the deletion with the work takes the verdicts
+    """
+    marks = tmp_path / "compare_marks"
+    marks.mkdir()
+    verdicts = marks / "sha-1.json"
+    verdicts.write_text("{}", encoding="utf-8")
+    stored = StoredResults(
+        activity=_Activity(),
+        work_store=TeacherWorkStore(tmp_path / "work"),
+        root=_cache(tmp_path),
+        own_work=lambda: (marks,),
+    )
+
+    stored.delete()
+    assert verdicts.exists()
+
+    stored.delete(include_work=True)
+    assert not verdicts.exists()

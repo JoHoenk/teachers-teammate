@@ -26,10 +26,6 @@ load(":defs.bzl", "app_test")
 filegroup(
     name = "use_case_test_files",
     srcs = [
-        "gui/test_benchmark_integration.py",
-        "gui/test_benchmark_widgets.py",
-        "gui/test_benchmark_window.py",
-        "gui/test_benchmark_worker.py",
         "gui/test_gui_addon_installer_dialog.py",
         "gui/test_gui_addons_page.py",
         "gui/test_gui_addons_tabs.py",
@@ -58,10 +54,6 @@ filegroup(
         "unit/test_anonymization_service.py",
         "unit/test_anonymizer.py",
         "unit/test_api_keys.py",
-        "unit/test_benchmark_domain.py",
-        "unit/test_benchmark_run_store.py",
-        "unit/test_benchmark_runner.py",
-        "unit/test_benchmark_service.py",
         "unit/test_cache_service.py",
         "unit/test_cli.py",
         "unit/test_commands_service.py",
@@ -314,26 +306,6 @@ app_test(
 )
 
 app_test(
-    "unit/test_benchmark_domain.py",
-    deps = _DOMAIN_LIB,
-)
-
-app_test(
-    "unit/test_benchmark_run_store.py",
-    deps = _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
-)
-
-app_test(
-    "unit/test_benchmark_runner.py",
-    deps = _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
-)
-
-app_test(
-    "unit/test_benchmark_service.py",
-    deps = _PIPELINE_DEPS + _APPLICATION_LIB,
-)
-
-app_test(
     "unit/test_cli.py",
     deps = _PIPELINE_DEPS + _CLI_LIB,
 )
@@ -365,6 +337,48 @@ app_test(
 
 app_test(
     "unit/test_edits.py",
+    deps = _DOMAIN_LIB,
+)
+
+app_test(
+    "unit/test_edit_agreement.py",
+    deps = _DOMAIN_LIB,
+)
+
+app_test(
+    "unit/test_model_comparison.py",
+    deps = _DOMAIN_LIB,
+)
+
+# The compared results on disk: what went in comes back, and a file of another shape is no
+# result.  The cache's count, the retention and *Delete stored results* cover its folder.
+app_test(
+    "unit/test_compare_store.py",
+    deps = _INFRASTRUCTURE_LIB,
+)
+
+# The teacher's verdicts on compared changes: one file per text in the data root, holding a span,
+# a hash and a verdict, never a word of the document.
+app_test(
+    "unit/test_option_mark_store.py",
+    deps = _INFRASTRUCTURE_LIB,
+)
+
+# The service behind the comparison window: the models to choose from, one model's answer (with
+# the server's memory watched through the fake), and the comparison of the stored ones.
+app_test(
+    "unit/test_comparison_service.py",
+    extra_srcs = ["fakes/fake_ollama.py"],
+    deps = _PIPELINE_DEPS + ["@ocr_test_dependencies//ollama:pkg"] + _APPLICATION_LIB,
+)
+
+app_test(
+    "unit/test_proofread_text.py",
+    deps = _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+app_test(
+    "unit/test_added_marks.py",
     deps = _DOMAIN_LIB,
 )
 
@@ -1792,6 +1806,13 @@ app_test(
 )
 
 app_test(
+    "gui/test_gui_compare_window.py",
+    size = "medium",
+    extra_srcs = ["gui/_gui_harness.py"],
+    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+app_test(
     "gui/test_gui_long_job.py",
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
@@ -2102,11 +2123,6 @@ app_test(
 )
 
 app_test(
-    "gui/test_benchmark_window.py",
-    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
-)
-
-app_test(
     "gui/test_gui_lifecycle.py",
     size = "medium",
     extra_srcs = ["gui/_gui_harness.py"],
@@ -2116,22 +2132,6 @@ app_test(
 app_test(
     "gui/test_gui_bootstrap.py",
     size = "medium",
-    extra_srcs = ["gui/_gui_harness.py"],
-    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
-)
-
-app_test(
-    "gui/test_benchmark_widgets.py",
-    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
-)
-
-app_test(
-    "gui/test_benchmark_worker.py",
-    deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
-)
-
-app_test(
-    "gui/test_benchmark_integration.py",
     extra_srcs = ["gui/_gui_harness.py"],
     deps = _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )

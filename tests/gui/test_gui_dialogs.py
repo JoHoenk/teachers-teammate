@@ -73,7 +73,7 @@ def test_a_yes_no_question_reports_the_button_clicked(qtbot, monkeypatch) -> Non
     When   the teacher clicks Yes, and in a second run No
     Then   ``ask`` returns True, then False
     """
-    question = dlg.clear_all_runs("essay.png")
+    question = dlg.search_network()
 
     _click(monkeypatch, _standard(QMessageBox.StandardButton.Yes))
     yes = _dialogs.ask(None, question)
@@ -92,7 +92,7 @@ def test_a_question_closed_with_the_window_button_is_not_confirmed(qtbot, monkey
     """
     _click(monkeypatch, lambda _box: None)
 
-    answer = _dialogs.choose(None, dlg.clear_all_runs("essay.png"))
+    answer = _dialogs.choose(None, dlg.search_network())
 
     assert answer.choice is None
     assert not answer.accepted
@@ -176,7 +176,7 @@ def test_a_question_without_a_tick_box_reports_unchecked(qtbot, monkeypatch) -> 
     """
     _click(monkeypatch, _standard(QMessageBox.StandardButton.Yes))
 
-    assert _dialogs.choose(None, dlg.clear_all_runs("x")).checked is False
+    assert _dialogs.choose(None, dlg.search_network()).checked is False
 
 
 @pytest.mark.gui
@@ -287,7 +287,7 @@ def _answering_everything(asked: _dialogs.Asked) -> object:
     """Answer each call kind the way the walkthrough does: a choice, a path, nothing."""
     return {
         "notify": None,
-        "choose": Answer(dlg.clear_all_runs("x").choices[0], checked=True),
+        "choose": Answer(dlg.search_network().choices[0], checked=True),
         "pick_folder": Path("/chosen"),
         "pick_file": Path("/chosen/a.png"),
         "pick_files": [Path("/chosen/a.png"), Path("/chosen/b.png")],
@@ -307,8 +307,8 @@ def test_an_answerer_answers_every_box_and_picker_instead_of_showing_it(qtbot, m
 
     with _dialogs.answering(_answering_everything) as asked:
         _dialogs.notify(None, Notice("Save failed", "Disk full", NoticeKind.WARNING))
-        answer = _dialogs.choose(None, dlg.clear_all_runs("x"))
-        accepted = _dialogs.ask(None, dlg.clear_all_runs("x"))
+        answer = _dialogs.choose(None, dlg.search_network())
+        accepted = _dialogs.ask(None, dlg.search_network())
         folder = _dialogs.pick_folder(None, prompt)
         one = _dialogs.pick_file(None, prompt)
         several = _dialogs.pick_files(None, prompt)
@@ -340,13 +340,13 @@ def test_the_innermost_answerer_answers_and_the_outer_one_still_counts(qtbot, mo
     When   a question is asked inside the inner block and again after it
     Then   the inner answer wins while it is open, and the outer one takes over afterwards
     """
-    yes = Answer(dlg.clear_all_runs("x").choices[0])
-    no = Answer(dlg.clear_all_runs("x").choices[1])
+    yes = Answer(dlg.search_network().choices[0])
+    no = Answer(dlg.search_network().choices[1])
 
     with _dialogs.answering(lambda _asked: no) as outer:
         with _dialogs.answering(lambda _asked: yes) as inner:
-            inside = _dialogs.choose(None, dlg.clear_all_runs("x"))
-        after = _dialogs.choose(None, dlg.clear_all_runs("x"))
+            inside = _dialogs.choose(None, dlg.search_network())
+        after = _dialogs.choose(None, dlg.search_network())
 
     assert (inside.accepted, after.accepted) == (True, False)
     assert len(inner) == 1
@@ -382,7 +382,7 @@ def test_an_answerer_that_declines_and_cancels_says_so(qtbot, monkeypatch) -> No
     prompt = FilePrompt("Title")
 
     with _dialogs.answering(lambda _asked: None):
-        answer = _dialogs.choose(None, dlg.clear_all_runs("x"))
+        answer = _dialogs.choose(None, dlg.search_network())
         folder = _dialogs.pick_folder(None, prompt)
         several = _dialogs.pick_files(None, prompt)
 
@@ -399,7 +399,7 @@ def test_the_same_answerer_can_be_open_twice(qtbot, monkeypatch) -> None:
     Then   the outer record gets it, the stack is clean after both blocks, and the real box is
            back
     """
-    yes = Answer(dlg.clear_all_runs("x").choices[0])
+    yes = Answer(dlg.search_network().choices[0])
 
     def answerer(_asked: _dialogs.Asked) -> Answer:
         return yes
@@ -407,7 +407,7 @@ def test_the_same_answerer_can_be_open_twice(qtbot, monkeypatch) -> None:
     with _dialogs.answering(answerer) as outer:
         with _dialogs.answering(answerer):
             pass
-        _dialogs.choose(None, dlg.clear_all_runs("x"))
+        _dialogs.choose(None, dlg.search_network())
 
     assert len(outer) == 1
     assert _dialogs._ANSWERING == []
@@ -426,4 +426,4 @@ def test_an_answerer_must_answer_a_question_with_an_answer(qtbot, wrong: object)
     """
     with _dialogs.answering(lambda _asked: wrong):
         with pytest.raises((TypeError, ValueError)):
-            _dialogs.choose(None, dlg.clear_all_runs("x"))
+            _dialogs.choose(None, dlg.search_network())

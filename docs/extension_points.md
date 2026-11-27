@@ -121,7 +121,7 @@ new kind, a builder to `_BUILDERS` in `infrastructure/input_provider_factory.py`
 
 PDF embedded text: thresholds/modes in `domain/pdf_text_layer.py`; measurement in
 `PdfInputProvider` (`infrastructure/input_providers.py`); the setting is
-`OcrConfig.pdf_text_layer` (default `auto`), passed via `InputOptions`; the benchmark always OCRs.
+`OcrConfig.pdf_text_layer` (default `auto`), passed via `InputOptions`.
 
 ## New OCR output notation (HTML/Markdown/…)
 
@@ -219,13 +219,6 @@ the selected row, and land in `DocumentCommands` through `CheckController`. Mark
 document formatting. A document the run will redo is read-only from the run's start
 (`CheckPage.set_lock()`). See {doc}`gui` → "The window tabs and the Check page"
 
-## Benchmark app changes
-
-Domain metrics in `domain/benchmark.py`; run persistence in
-`infrastructure/benchmark/run_store.py`; OCR-only run in `infrastructure/benchmark/runner.py`;
-orchestration in `application/benchmark_service.py`; GUI in `gui/benchmark/` (reuse
-`gui/_ocr_config_selector.py`). The OCR config slice is `Config.ocr` (`config.py:OcrConfig`).
-
 ## Model temperatures
 
 Teachers set none. `domain/model_catalog.py` holds `STEP_ONE_TEMPERATURES` (measured per model,
@@ -271,6 +264,55 @@ through `align()` (CLI, queue, export, both Word layouts, evaluation tools). The
 review lives only in `tools/evaluation/run/one_request/sentence_review.py`; no module of
 `teachers_teammate/` may import it (`tests/tools/test_no_sentence_review_in_the_app.py`). See
 {doc}`development` → "Correction review"
+
+## Comparing models
+
+One text, several writing models, side by side. Not a stage and not a run: it asks several
+correctors about the same transcription, one after another.
+
+- `domain/proofreading/model_comparison.py:compare(source_plain, versions)` is pure: the edits of
+  every version (`ordered_edits`) grouped where their word spans touch (`spans_touch`) into a
+  `ChangeSite` with one `Option` per replacement, the `Row`s through `sentence_spans`, and a
+  `VersionFigures` per version (changes, shared, alone, explained of needed, orphans, unclear,
+  added marks, text loss, failed, fell back, seconds, and what the teacher's verdicts come to). A
+  new figure is a `VersionFigures` field plus a line in `gui/compare/_rows.py:_CELLS`.
+- A version is one **model**, not one answer: `Version.repeats` holds the answers of a second run,
+  so a change the model made twice is *in both runs* and one it made in one answer only is *once*
+  (`VersionFigures.in_every_run` / `.once`, `Option.once`). The counts stay those of the first
+  answer; the sites are built from every run.
+- `application/model_comparison.py:ModelComparisonService` is the entry the GUI has for the text,
+  the answers and the comparison. It imports nothing from `infrastructure`: `ComparisonParts`
+  brings the store (`CompareResults`), the unit builder (`ProofreadUnitBuilder`), the documents,
+  the key of a config, the key facts, the run session and the Ollama server. `run()` asks a list
+  of models inside one `running()`, skips a model that answered already, builds each model's
+  `Config` variant, unloads what it loaded and stores the answer.
+- `application/compare_candidates.py:ComparisonCandidates` lists the models to tick: the installed
+  ones rated through `ModelRecommendationService.rate_for` (the rating the AI models page shows)
+  and the online ones whose key and package are there. `candidates()` reads only the lists the
+  app holds; `refresh()` asks for expired ones again and runs off the GUI thread.
+- `domain/proofreading/option_marks.py` says what a teacher called right or wrong: a mark is on
+  the option (the wording at one place), keyed by the text's hash, the character span and the hash
+  of the replacement, so it holds no text; `MarkCount` holds right, wrong, unmarked and missed per
+  version (counted in `model_comparison.py`) and gives F0.5 once every change of that version is
+  marked.
+  `infrastructure/option_mark_store.py:OptionMarkStore` keeps `compare_marks/<text sha>.json` in
+  the data root, where the retention does not reach; only *Delete stored results* with the
+  teacher's work deletes it.
+- `infrastructure/compare_store.py:CompareStore` keeps one JSON file per answer under
+  `<cache>/compare/<text sha>/<key>.json`, beside `<key>~2.json` when the model ran twice, writes
+  atomically and counts into the retention and
+  *Delete stored results*. The retention expires one model's answers together. It is the only place that writes `ComparedResult`
+  (`domain/proofreading/compared_result.py`); the answer holds the text and is never logged.
+- `infrastructure/workflow/proofread_unit.py:proofread_unit_for` is the one unit that hides names,
+  proofreads and restores them; a comparison and `FileProcessor` share it, so a compared answer
+  goes the way a run's text goes (`SentRecord` included).
+- `gui/compare/` is the window: `_window.py:CompareWindow` and `CompareHooks`, `_job.py` the models
+  in a `LongJobThread`, `_models.py` the ticks and row states, `_changes.py` / `_side_by_side.py` /
+  `_overview.py` the three tabs, `_rows.py` the `Comparison` turned into rows. Words are
+  `texts/compare.py`. See {doc}`gui` → "The compare window"
+
+A new model appears by itself: the list of models is the installed Ollama models rated for writing
+plus the online providers with a key, so a new provider only has to be in `PROVIDERS`.
 
 ## New evaluation corpus
 

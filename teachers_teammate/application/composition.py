@@ -13,21 +13,24 @@ infrastructure classes, and the one place a service is constructed.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import functools
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import teachers_teammate
 
+from ..cache_keys import correction_key
 from ..infrastructure import logging_setup, power, qt_log
 from ..infrastructure.addon_manager import AddonPackages
+from ..infrastructure.compare_store import CompareStore
 from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.gpu_detector import SystemHardwareProbe
 from ..infrastructure.key_facts import MachineKeyFacts
 from ..infrastructure.ollama_utils import OllamaClient
 from ..infrastructure.onnx.store import ModelStore
+from ..infrastructure.option_mark_store import OptionMarkStore, default_marks_root
 from ..infrastructure.performance_probe import PerformanceProbe
 from ..infrastructure.pipeline import OCRPipeline
 from ..infrastructure.release_feed import GitHubReleaseFeed
@@ -35,16 +38,20 @@ from ..infrastructure.spacy_models import SpacyModels
 from ..infrastructure.speed_store import SampleStore
 from ..infrastructure.stage_builder import LlmBuilderWithKeys, PipelineComponentFactory
 from ..infrastructure.state_repository import StateRepository
+from ..infrastructure.storage_root import compare_root, resolve_data_root
 from ..infrastructure.teacher_work_store import TeacherWorkStore
+from ..infrastructure.workflow.proofread_unit import proofread_unit_for
 from ..interfaces import SleepBlocker
 from ..settings_schema import LogDetail
 from .addons import AddonService
 from .anonymization import AnonymizationService
 from .api_keys import ApiKeys
 from .commands import DocumentCommands
+from .compare_candidates import ComparisonCandidates
 from .data_flow import DataFlowService
 from .documents import DocumentQueries
 from .export import ExportService
+from .model_comparison import ComparisonParts, ModelComparisonService
 from .model_recommendations import ModelRecommendationService
 from .ollama_server import OllamaServerService
 from .providers import ProviderService
@@ -56,8 +63,13 @@ from .speed_estimates import SpeedEstimateService
 from .stored_results import StoredResults
 
 if TYPE_CHECKING:
+    import threading
+
+    from ..config import Config
     from ..domain.key_facts import KeyFacts
     from ..infrastructure.diagnostics import Diagnostics
+    from ..interfaces import Reporter
+    from .ports import ProofreadingUnit
 
 
 @dataclass(frozen=True)
@@ -93,6 +105,10 @@ class AppServices:
     """What the Setup Assistant asks the computer, and the settings file of a first start."""
     documents: DocumentQueries
     """What the store says about a document."""
+    comparison: ModelComparisonService
+    """Comparing writing models on one document: its text, each model's answer, the differences."""
+    compare_candidates: ComparisonCandidates
+    """The writing models a comparison can ask, and what this computer makes of each."""
     export: ExportService
     """The Word file, the text file and the text for the clipboard."""
     commands: DocumentCommands
@@ -161,6 +177,9 @@ def build_app_services(
     run = _run(
         parts, providers, reader, recommendations, anonymization, addons, documents, key_facts
     )
+    comparison, compare_candidates = _comparison(
+        parts, providers, speeds, recommendations, anonymization, documents, run, key_facts
+    )
     return AppServices(
         run=run,
         ollama=parts.ollama,
@@ -177,9 +196,16 @@ def build_app_services(
         data_flow=data_flow,
         setup=setup,
         documents=documents,
+        comparison=comparison,
+        compare_candidates=compare_candidates,
         export=ExportService(documents=documents, anonymization=anonymization),
         commands=commands,
-        stored=StoredResults(activity=run, work_store=parts.work_store),
+        stored=StoredResults(
+            activity=run,
+            work_store=parts.work_store,
+            compare=compare_root,
+            own_work=_own_work_beside_the_store,
+        ),
         work_store=parts.work_store,
         model_store=parts.model_store,
         sleep_blocker=parts.sleep_blocker,
@@ -365,6 +391,73 @@ def _run(
             documents=documents,
         ),
     )
+
+
+def _comparison(
+    parts: _Parts,
+    providers: ProviderService,
+    speeds: SpeedEstimateService,
+    recommendations: ModelRecommendationService,
+    anonymization: AnonymizationService,
+    documents: DocumentQueries,
+    run: RunService,
+    facts: KeyFacts,
+) -> tuple[ModelComparisonService, ComparisonCandidates]:
+    """Return the model comparison and the models it can ask, over one store of answers.
+
+    A comparison proofreads like a run does and builds its corrector the same way, so the shared
+    anonymizer comes in as it does for a run: the same text costs one spaCy pass per session.
+    """
+    factory = replace(
+        parts.component_factory, build_anonymizer=anonymization.build_cached_anonymizer
+    )
+
+    def unit_for(
+        config: Config, *, reporter: Reporter, stop_event: threading.Event | None = None
+    ) -> ProofreadingUnit:
+        """Return the unit that proofreads one text with *config*, as a run's does."""
+        return proofread_unit_for(
+            config,
+            factory=factory,
+            model_store=parts.model_store,
+            reporter=reporter,
+            samples=parts.samples,
+            stop_event=stop_event,
+            # The window a run with these settings would use: the key computed here is its key.
+            hardware=recommendations.cached_hardware_profile(
+                config.hardware_profile, config.ollama_url
+            ),
+        )
+
+    def key_of(config: Config) -> str:
+        """Return the proofreading key a run with *config* would write on this computer."""
+        return correction_key(config, windows_for(config, recommendations=recommendations), facts)
+
+    store = CompareStore()
+    service = ModelComparisonService(
+        ComparisonParts(
+            store=store,
+            option_marks=OptionMarkStore(),
+            unit_for=unit_for,
+            documents=documents.load_view,
+            key_of=key_of,
+            facts=facts,
+            run=run,
+            ollama=parts.ollama,
+        )
+    )
+    candidates = ComparisonCandidates(
+        store=store, key_of=key_of, advice=recommendations, providers=providers, speeds=speeds
+    )
+    return service, candidates
+
+
+def _own_work_beside_the_store() -> tuple[Path, ...]:
+    """Return the folders of the teacher's own work that ``TeacherWorkStore`` does not hold.
+
+    Their verdicts on compared changes, and ``benchmark``: run history no part of the app reads.
+    """
+    return (default_marks_root(), resolve_data_root() / "benchmark")
 
 
 def inject_addon_packages_dir() -> None:

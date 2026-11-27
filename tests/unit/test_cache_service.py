@@ -1578,5 +1578,5 @@ def test_the_correction_key_of_the_default_profile_is_pinned(tmp_path: Path) -> 
     """
     assert (
         _correction_key(make_config(tmp_path))
-        == "9b95c89d1b6f679277f7b3d19565e3e49873a04cf524f1834f517e08eef9cfe7"
+        == "9c37ff17e56f8e8a7844b8119d6846f8ab51836aba2c1f4e43dfd8f88e302042"
     )

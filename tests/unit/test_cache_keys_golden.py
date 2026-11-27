@@ -52,20 +52,20 @@ _OCR_KEYS: dict[str, str] = {
 
 #: ``name -> digest`` of every proofreading key of the matrix.
 _CORRECTION_KEYS: dict[str, str] = {
-    "ollama/no-windows": "15a614dc400bb2fcfc823bc0e77ec918f03f84e0c9b4509770e8af4ac8b17cc4",
-    "ollama/windows-base": "15a614dc400bb2fcfc823bc0e77ec918f03f84e0c9b4509770e8af4ac8b17cc4",
-    "ollama/windows-wide": "ddb4655a89e05abbdbb123b8b2e0bdf339d00f7c07953ad1adf70036528fc7fe",
-    "ollama/notes": "429de267db1935d58bd32a150c36ad805ec55adefaf055dcdf8a7ac101f68a0e",
-    "ollama/text-output": "7e0c653dbe507a749583495a30ac5d1eca146162534c6b71522b31443b3bd6c1",
-    "openai/no-windows": "9b95c89d1b6f679277f7b3d19565e3e49873a04cf524f1834f517e08eef9cfe7",
-    "openai/text-output": "8900d9121de10969c822df715f197615a5801e0c26ecf16ecafb7c948878efa5",
+    "ollama/no-windows": "0106e1f68710073cc5bb967eb92a85706cdc922cba32f7b70bb4b373107bc963",
+    "ollama/windows-base": "0106e1f68710073cc5bb967eb92a85706cdc922cba32f7b70bb4b373107bc963",
+    "ollama/windows-wide": "d4b3fcadac944d2497bc1f474e3406c5f24d0d82b113ca4dd635f559a7812065",
+    "ollama/notes": "27c3c63e171d625114abeeb23a72066e5cf01d2da8ff69f6154be65183fd22a9",
+    "ollama/text-output": "7da7c04522040cee7d321562d38235ee00468e4a336a454c047efd7180c28271",
+    "openai/no-windows": "9c37ff17e56f8e8a7844b8119d6846f8ab51836aba2c1f4e43dfd8f88e302042",
+    "openai/text-output": "c5790cdb9090adf9471db6f3e761b6f3e011df5e3ec5d9f23dcaa6173e926228",
 }
 
 #: ``name -> digest`` of every content-review key of the matrix.
 _REVIEW_KEYS: dict[str, str] = {
-    "ollama/no-windows": "1977e91072484ac3a6bcbb718965a64c2e0b94870961b1510a0b011d5da243f4",
-    "ollama/windows-wide": "83485bcdc2b108294e6ee5f670f2fdc2793a0859380edcca629e55c56bf36e99",
-    "openai/no-windows": "199359f19f608908ce4472ac81f0dd12e76c5065278c7f7f8fa488665f8c0440",
+    "ollama/no-windows": "ab86335b6af98d84b773be708abdacd259f55b31407e06c013a5fd35c539568c",
+    "ollama/windows-wide": "e75d968f5506adba7dffe7a6bffadf762245713a395fd4e2d9a3ce2f423feeb7",
+    "openai/no-windows": "d7bb7e7b9f6325deb24bdfbd98e684ef1fc215a40f4a3db7c33ece55b9195d27",
 }
 
 #: ``name -> digest`` of every privacy fingerprint of the matrix.

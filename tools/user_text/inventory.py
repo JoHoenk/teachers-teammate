@@ -177,8 +177,7 @@ NON_TEXT_CONSTANTS: frozenset[tuple[str, str]] = frozenset(
         ("teachers_teammate/domain/correction_prompts.py", "NOTES_HEADING"),
         ("teachers_teammate/domain/local_models.py", "PAGE_MODELS_SIZE_LABEL"),
         ("teachers_teammate/domain/local_models.py", "READER_SIZE_LABEL"),
-        ("teachers_teammate/domain/notation.py", "_CORRECTION_HINT"),
-        ("teachers_teammate/domain/notation.py", "_EVALUATION_HINT"),
+        ("teachers_teammate/domain/review_prompts.py", "_NOTATION_HINT"),
     }
 )
 

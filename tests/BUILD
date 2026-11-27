@@ -449,6 +449,11 @@ app_test(
 )
 
 app_test(
+    "unit/test_prompt_pin.py",
+    deps = _INFRASTRUCTURE_LIB,
+)
+
+app_test(
     "unit/test_exchange_corrector.py",
     deps = _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )

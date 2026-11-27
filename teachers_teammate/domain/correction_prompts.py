@@ -19,7 +19,7 @@ from .proofreading.word_diff import Hunk
 
 # ── The fixed prompts of the exchange ─────────────────────────────────────────
 
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 """Version of the fixed prompts and answer shapes; part of the cache key and of the evaluation
 protocol.  Bumped whenever a prompt or a schema changes, because an answer of another version is
 not comparable."""
@@ -195,6 +195,18 @@ def correct_system(variant: str = "") -> str:
     except KeyError:
         known = ", ".join(sorted(CORRECT_VARIANTS))
         raise ValueError(f"no step ① prompt variant {variant!r} (known: {known})") from None
+
+
+def repair_message(error: str) -> str:
+    """Return what is appended to a request to ask for the same answer again, valid this time.
+
+    *error* names the failing field and its value, so the rejected answer is not sent back.
+    """
+    return (
+        "Your previous answer was not accepted.\n\n"
+        f"Reason:\n{error}\n\n"
+        "Answer the request again. Fix that and nothing else, and send only the answer itself."
+    )
 
 
 EXPLAIN_SYSTEM = """\

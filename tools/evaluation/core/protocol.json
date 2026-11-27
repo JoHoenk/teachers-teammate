@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "current": 4,
+  "current": 5,
   "versions": [
     {
       "version": 1,
@@ -34,6 +34,14 @@
         "e8bec644cb5f69c9ff437f0e2c1e1a813aade338fb56d5b14146cabe4417260d"
       ],
       "why": "Additive: step 1 of the exchange may send a named variant of its system prompt (keep, find, shot; StepProfile.prompt, run --prompt), and the fingerprint covers each variant's text in the exchange and correct-only modes. Every request that existed in version 3 hashes as it did (the version 3 fingerprint is the hash of this one without the three prompt variants, checked on 2026-11-16), so version 3 runs are re-stamped as version 4 after that check. On 2026-11-20 the fingerprint's keys were renamed from the answer modes to the setups they stand for (review -> one-request-review, text -> one-request-text, exchange -> text-first, correct-only -> text-first/correct); every request hashes as it did, checked by renaming the keys back."
+    },
+    {
+      "version": 5,
+      "date": "2026-11-27",
+      "fingerprints": [
+        "f037208052b37496a2c9f694d868e0a3b54f6db54a795ec0571320d04aaedc3f"
+      ],
+      "why": "Additive: the repair message after an invalid answer names the reason and no longer quotes the rejected answer. Only the repair part of the fingerprint changes; every request hashes as in version 4 (checked on 2026-11-27 by hashing with the old message), so version 4 runs are re-stamped as version 5 when no answer in them was repaired."
     }
   ]
 }

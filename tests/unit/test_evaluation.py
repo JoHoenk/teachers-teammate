@@ -11,8 +11,7 @@ from langchain_core.messages import AIMessage
 
 from teachers_teammate.domain.context_budget import EVALUATION_ANSWER_TOKENS
 from teachers_teammate.domain.evaluation import EvaluationOutcome
-from teachers_teammate.domain.notation import with_notation_hint
-from teachers_teammate.domain.stages import Stage
+from teachers_teammate.domain.review_prompts import review_system
 from teachers_teammate.infrastructure.evaluation import PortEvaluator
 from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClient
 from teachers_teammate.infrastructure.proofreading.port import (
@@ -110,7 +109,7 @@ def test_the_review_carries_the_notation_hint_a_markdown_text_needs(mocker) -> N
     _evaluator(port).evaluate("a b", LANGUAGE)
 
     markdown, plain = (request.system for request in port.requests)
-    assert markdown == with_notation_hint("Grade it.", "markdown", task=Stage.EVALUATION)
+    assert markdown == review_system("Grade it.", "markdown")
     assert "not part of the submission" in markdown
     assert plain == "Grade it."
 
@@ -129,7 +128,7 @@ def test_a_local_review_and_an_online_review_send_the_same_messages(mocker) -> N
     _evaluator(LangChainPort(FakeListChatModel(responses=["ok"]))).evaluate(TEXT, LANGUAGE)
 
     assert chain.messages == [
-        ("system", with_notation_hint("Grade it.", "plain", task=Stage.EVALUATION)),
+        ("system", review_system("Grade it.", "plain")),
         ("human", "{text}"),
     ]
     assert local_chat.call_args.kwargs["system"] == chain.messages[0][1]

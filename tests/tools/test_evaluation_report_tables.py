@@ -1152,7 +1152,7 @@ def test_a_comparison_refuses_a_prompt_that_changed_without_its_axis(store):
         ),
     )
 
-    with pytest.raises(ValueError, match=r"the prompt text differs \(protocol version 1 vs 4\)"):
+    with pytest.raises(ValueError, match=r"the prompt text differs \(protocol version 1 vs 5\)"):
         compare.compare(_groups(root), along=compare.Along(axes=("temperature",), where={}))
 
 

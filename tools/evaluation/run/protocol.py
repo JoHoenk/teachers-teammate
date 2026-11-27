@@ -39,7 +39,7 @@ from teachers_teammate.domain.context_budget import (
     answers_with_the_same_text,
 )
 from teachers_teammate.domain.correction_policy import DEFAULT_LEVEL
-from teachers_teammate.domain.correction_prompts import CORRECT_VARIANTS
+from teachers_teammate.domain.correction_prompts import CORRECT_VARIANTS, repair_message
 from teachers_teammate.domain.formatted_text import PLAIN, TextFormat
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_REQUEST_PROFILE,
@@ -49,7 +49,6 @@ from teachers_teammate.domain.model_catalog import (
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 from teachers_teammate.infrastructure.proofreading.corrector import ollama_exchange_corrector
 from teachers_teammate.infrastructure.proofreading.port import PortAnswer, StepRequest
-from teachers_teammate.infrastructure.proofreading.runner import repair_message
 
 from ..core import protocol_table
 from ..core.hashing import sha256_text
@@ -429,7 +428,7 @@ def fingerprint() -> dict:
     return {
         "requests": requests,
         "text_budget": budgets,
-        "repair": sha256_text(repair_message("{previous}", "{error}")),
+        "repair": sha256_text(repair_message("{error}")),
         "repair_answer_tokens": answers_with_the_same_text(NUM_CTX),
         "answer_format_version": ANSWER_FORMAT_VERSION,
     }

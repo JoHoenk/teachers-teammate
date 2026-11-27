@@ -26,6 +26,7 @@ from .domain.local_models import auto_identity, reader_fingerprint
 from .domain.ocr_prompt import get_ocr_prompt
 from .domain.ollama_address import ollama_host
 from .domain.pdf_text_layer import input_fingerprint
+from .domain.review_prompts import review_wording
 from .domain.stages import Stage
 
 
@@ -233,6 +234,7 @@ def review_key(config: Config, windows: RunWindows | None = None) -> str:
         config.effective_evaluate_model,
         config.language,
         config.evaluate_prompt,
+        review_wording(),
         format(config.evaluate_temperature, "g"),
         str(config.evaluate_think),
         *evaluation_window_fingerprint(config, windows),

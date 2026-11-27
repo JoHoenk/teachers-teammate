@@ -1043,6 +1043,8 @@ store, and `tests/unit/test_cache_keys_golden.py` holds the digests that must no
   `READER_VERSION` does. A test pins an Ollama key, so the Ollama shape cannot drift.
   The models themselves live in the user data folder (`models/`), not in the cache. Used by the cache to detect stale stages and by the benchmark store to label
   runs.
+- `review_key` hashes the review's instructions and the wording the app adds around them
+  (`review_wording()`: the message and the Markdown hint), so changed wording sends a review again.
 - `correction_key` / `review_key` deliberately leave the
   anonymizer settings out: a text proofread with names hidden is the same text, so
   switching *Remove personal information* on or off does not send it again.  What was sent
@@ -1377,7 +1379,8 @@ is recorded only where counting from 1 would be wrong).
 
 | Consumer | Receives |
 |---|---|
-| Corrector / evaluator | the stored text; for Markdown the system prompt gains a notation hint (`domain/notation.py`): crossed-out words are context, not to be corrected; inserted words belong to the sentence |
+| Corrector | the stored text with its marks stripped and crossed-out words held back, restored afterwards (`domain/proofreading/markdown_shield.py`) |
+| Evaluator | the stored text; for Markdown the system prompt gains a notation hint (`domain/review_prompts.py`): crossed-out words are not evaluated; inserted words belong to the sentence |
 | Diff tab, benchmark similarity/word counts | `PlainTextRenderer` output — formatting marks never count as differences, crossed-out words are kept |
 | DOCX | Word runs (bold, italic, underline, strikethrough, super-/subscript), headings, indented lists, nested tables |
 | Check tab | formatted rich text (`gui/check/_text_views.py`); **⋯ → Show Markdown source** shows the stored Markdown of the view in front |
@@ -1475,7 +1478,7 @@ message is the complete "Correction failed (…)." sentence, and it becomes the 
 ends the file.
 `unsupported`: the model or provider cannot bind a schema at all; no repair is attempted.
 `invalid`: it answered, but not in the schema. An invalid answer with some text gets one
-repair request that quotes the validation error. Unsupported, invalid-and-empty and
+repair request that quotes the validation error, not the rejected answer. Unsupported, invalid-and-empty and
 still-invalid answers all end in the corrections-only fallback for that file, with the
 fixed fallback warning; the raw validation error is only ever sent back to the model.
 A `transport` failure raises a `StageError` for that file; a step ① answer that cannot be used
@@ -1521,7 +1524,7 @@ stores and every reader reads.
 | `domain/proofreading/quotes.py` | `find_spans()` for the quotes of step ③, `map_back()` through the hunks |
 | `domain/proofreading/markdown_shield.py` | `shield()` / `restore()`: strip the notation before the request, put it back after it |
 | `domain/proofreading/text_loss.py` | `measure()` / `dropped_text()`: what an answer kept of the text it was sent, for the guard of step ① |
-| `domain/correction_prompts.py` | the fixed English system prompts of the three steps, the parameter and notes blocks, the batch body of step ②, `PROMPT_VERSION` |
+| `domain/correction_prompts.py` | the fixed English system prompts of the three steps, the parameter and notes blocks, the batch body of step ②, the repair message, `PROMPT_VERSION` |
 | `infrastructure/proofreading/port.py` | `ModelPort` (Bridge): `OllamaPort`, `LangChainPort` |
 | `infrastructure/proofreading/runner.py` | `StepRunner`: cut-off tries, one repair, window check, timeout |
 | `infrastructure/proofreading/schemas.py` | the answer schemas of steps ② and ③ with their parsers |

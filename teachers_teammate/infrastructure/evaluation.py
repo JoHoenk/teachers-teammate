@@ -16,12 +16,11 @@ if TYPE_CHECKING:
 
 from ..domain.context_budget import EVALUATION_ANSWER_TOKENS
 from ..domain.evaluation import EvaluationOutcome
-from ..domain.notation import with_notation_hint
 from ..domain.proofreading.result import FailureKind
-from ..domain.stages import Stage
+from ..domain.review_prompts import review_message, review_system
 from ..interfaces import Evaluator
 from ..settings_schema import DEFAULTS
-from ..texts.review import TOO_LONG_FOR_REVIEW_WARNING, evaluation_failed, review_message
+from ..texts.review import TOO_LONG_FOR_REVIEW_WARNING, evaluation_failed
 from .proofreading.port import StepRequest
 
 
@@ -54,7 +53,7 @@ class PortEvaluator(Evaluator):
         answer = self._port.ask_text(
             StepRequest(
                 step="review",
-                system=with_notation_hint(self._prompt, text_format, task=Stage.EVALUATION),
+                system=review_system(self._prompt, text_format),
                 user=review_message(language, corrected_text),
                 temperature=self._temperature,
                 think=self._think,

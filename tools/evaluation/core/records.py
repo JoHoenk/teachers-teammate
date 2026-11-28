@@ -718,6 +718,11 @@ class Answer:
     (:func:`~..metrics.text_loss.is_lost`).
     """
 
+    step_one_answers: tuple[str, ...] = ()
+    """The model's own step-① answers of a text that failed, fell back or lost text, as it gave
+    them; empty for every other text.  The output is what the teacher got, so a failure is read
+    here."""
+
     review: CorrectionReview | None = None
     """The app's own review, offsets in characters of the source; ``None`` without explanations."""
 
@@ -766,6 +771,7 @@ class Answer:
         "fallback",
         "warning",
         "left_out",
+        "step_one_answers",
         "review",
         "review_unreadable",
         "unclear_count",
@@ -794,6 +800,8 @@ class Answer:
             record["warning"] = self.warning
         if self.left_out:
             record["left_out"] = self.left_out
+        if self.step_one_answers:
+            record["step_one_answers"] = list(self.step_one_answers)
         if self.review is not None:
             record["review"] = self.review.to_dict()
         if self.unclear_count:
@@ -841,6 +849,7 @@ class Answer:
             fallback=bool(record.get("fallback", False)),
             warning=str(record.get("warning", "")),
             left_out=int(record.get("left_out", 0)),
+            step_one_answers=tuple(str(item) for item in record.get("step_one_answers", ())),
             review=review,
             review_unreadable=review_unreadable,
             unclear_count=int(record.get("unclear_count", 0)),

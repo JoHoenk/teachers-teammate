@@ -22,6 +22,7 @@ from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.exceptions import StageError
 
 from ..core.languages import LANGUAGE_NAMES
+from ..core.modes import Step
 from ..core.performance import Performance
 from ..core.records import Answer, text_id
 from .app_corrector import CorrectorFactory, pieces_of
@@ -122,14 +123,17 @@ class WritingModelComparison:
             failure = outcome.warning or ""
         seconds = self._clock() - started
         performance = self._instrumentation.end() if self._instrumentation is not None else None
+        failed = bool(failure) or outcome.failed
+        kept = failed or outcome.fell_back or outcome.left_out > 0
         return Answer(
             text=key,
             text_sha256=record.text_sha256,
             output=outcome.text,
-            failed=bool(failure) or outcome.failed,
+            failed=failed,
             fallback=outcome.fell_back,
             warning=failure or outcome.warning or "",
             left_out=outcome.left_out,
+            step_one_answers=_step_one_answers(performance) if kept else (),
             review=outcome.review,
             requests=performance.requests if performance is not None else (),
             loaded=performance.loaded if performance is not None else (),
@@ -139,6 +143,20 @@ class WritingModelComparison:
             pieces=pieces_of(corrector, record.source, language),
             seconds=round(seconds, 1),
         )
+
+
+def _step_one_answers(performance: Performance | None) -> tuple[str, ...]:
+    """Return what the model answered to step ① of one text, every try, in order.
+
+    A one-request exchange tags its requests with no step: its one request is the correction.
+    """
+    if performance is None:
+        return ()
+    return tuple(
+        request.answer
+        for request in performance.requests
+        if request.step in {Step.CORRECT.value, ""} and request.answer
+    )
 
 
 def text_of(record: TestRecord) -> str:

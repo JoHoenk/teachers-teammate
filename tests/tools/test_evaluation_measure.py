@@ -123,7 +123,8 @@ def test_every_request_is_recorded_with_the_durations_the_server_reported() -> N
     """
     Given  a request that Ollama answered with token counts and durations
     When   the recorded requests are drained
-    Then   the record has the tokens, the durations in seconds and the tool's own waiting time
+    Then   the record has the tokens, the durations in seconds, the tool's own waiting time and
+           the answer, which the run keeps only for a text that failed or lost text
     """
     ticks = iter([10.0, 14.5])
     client = RecordingClient("http://x:11434", clock=lambda: next(ticks))
@@ -135,6 +136,7 @@ def test_every_request_is_recorded_with_the_durations_the_server_reported() -> N
     assert (request.load_s, request.prompt_eval_s, request.generation_s) == (1.0, 0.5, 3.0)
     assert request.wall_s == 4.5
     assert request.done_reason == "stop"
+    assert request.answer == "answer"
 
 
 @pytest.mark.use_case("Model_Eval_Measure")

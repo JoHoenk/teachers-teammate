@@ -300,6 +300,7 @@ def pipeline_dependencies(tmp_path: Path, **fields: object):
     point at empty temporary folders: a run and the test that set the work up see one folder.
     """
     from teachers_teammate.infrastructure.key_facts import MachineKeyFacts  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_client import OllamaClient  # noqa: PLC0415
     from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
     from teachers_teammate.infrastructure.pipeline import PipelineDependencies  # noqa: PLC0415
     from teachers_teammate.infrastructure.speed_store import SampleStore  # noqa: PLC0415
@@ -311,6 +312,7 @@ def pipeline_dependencies(tmp_path: Path, **fields: object):
         "samples": SampleStore(tmp_path / "samples.json"),
         "work_store": TeacherWorkStore(),
         "model_store": ModelStore(),
+        "client_factory": OllamaClient,
     }
     values.update(fields)
     values.setdefault("key_facts", MachineKeyFacts(values["model_store"]))

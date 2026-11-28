@@ -393,6 +393,12 @@ app_test(
 )
 
 app_test(
+    "unit/test_proofread_unit.py",
+    extra_srcs = ["fakes/fake_client_factory.py"],
+    deps = _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+app_test(
     "unit/test_proofread_text.py",
     deps = _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
@@ -708,7 +714,10 @@ app_test(
 
 app_test(
     "integration/test_pipeline_run.py",
-    extra_srcs = ["fakes/fake_reader.py"],
+    extra_srcs = [
+        "fakes/fake_reader.py",
+        "fakes/fake_client_factory.py",
+    ],
     deps = _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 

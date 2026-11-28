@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import threading
 from pathlib import Path
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from teachers_teammate.application.ollama_server import OllamaServerService, ollama_client
+from teachers_teammate.application.ollama_server import OllamaServerService
 from teachers_teammate.application.speed_estimates import (
     CLASS_SET_FILES,
     CLASS_SET_PAGES,
@@ -42,6 +42,8 @@ from teachers_teammate.domain.performance_estimate import (
     proofreading_time,
 )
 from teachers_teammate.domain.proofreading.result import StepName
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
+from teachers_teammate.infrastructure.ollama_request import ChatStats
 from teachers_teammate.infrastructure.proofreading.corrector import exchange_cost
 from teachers_teammate.infrastructure.performance_probe import PerformanceProbe
 from teachers_teammate.infrastructure.speed_store import (
@@ -259,10 +261,14 @@ class _FakeClient:
 
 
 def _client_factory(
-    url: str, *, cancel_event: threading.Event | None = None, timeout: float | None = None
+    url: str,
+    *,
+    cancel_event: threading.Event | None = None,
+    timeout: float | None = None,
+    stats_sink: Callable[[str, ChatStats], None] | None = None,
 ) -> object:
     """Return the client the probe of a speed test drives; a fake probe never reads it."""
-    _ = url, cancel_event, timeout
+    _ = url, cancel_event, timeout, stats_sink
     return _FakeClient()
 
 
@@ -322,7 +328,7 @@ def _real_probe_service(tmp_path: Path) -> SpeedEstimateService:
     return SpeedEstimateService(
         effective_model=_effective_model,
         ollama=OllamaServerService(),
-        client_factory=ollama_client,
+        client_factory=OllamaClient,
         store=SpeedStore(tmp_path / "measurements.json"),
         samples=SampleStore(tmp_path / "samples.json"),
         probe_factory=lambda client, **kwargs: PerformanceProbe(
@@ -644,9 +650,13 @@ def test_the_client_of_the_test_gets_the_stop_event(tmp_path: Path) -> None:
     seen: list[threading.Event | None] = []
 
     def client_factory(
-        url: str, *, cancel_event: threading.Event | None = None, timeout: float | None = None
+        url: str,
+        *,
+        cancel_event: threading.Event | None = None,
+        timeout: float | None = None,
+        stats_sink: Callable[[str, ChatStats], None] | None = None,
     ) -> object:
-        _ = url, timeout
+        _ = url, timeout, stats_sink
         seen.append(cancel_event)
         return _FakeClient()
 

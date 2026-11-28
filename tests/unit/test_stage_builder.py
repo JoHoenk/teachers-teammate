@@ -161,7 +161,7 @@ def test_build_ocr_refuses_online_engines(tmp_path: Path, engine: str) -> None:
     builder = _stage_builder(tmp_path, config=config, factory=factory)
 
     with pytest.raises(OnlineOcrNotAllowedError, match="whole page"):
-        builder.build_ocr()
+        builder.build_ocr(ollama_client=MagicMock())
 
     build_llm.assert_not_called()
 
@@ -185,7 +185,7 @@ def test_build_ocr_refuses_ollama_cloud(tmp_path: Path, model: str, url: str) ->
     builder = _stage_builder(tmp_path, config=config, factory=factory)
 
     with pytest.raises(OnlineOcrNotAllowedError, match="Ollama's servers"):
-        builder.build_ocr(MagicMock())
+        builder.build_ocr(ollama_client=MagicMock())
 
     build_ollama_ocr.assert_not_called()
 
@@ -206,7 +206,9 @@ def test_build_ocr_refuses_ollama_on_the_internet(tmp_path: Path, url: str) -> N
     )
 
     with pytest.raises(OnlineOcrNotAllowedError, match="over the internet"):
-        _stage_builder(tmp_path, config=config, factory=factory).build_ocr(MagicMock())
+        _stage_builder(tmp_path, config=config, factory=factory).build_ocr(
+            ollama_client=MagicMock()
+        )
 
     build_ollama_ocr.assert_not_called()
 
@@ -234,7 +236,7 @@ def test_build_ocr_allows_downloaded_ollama_model_on_another_computer(
         tmp_path, ocr=OcrConfig(engine="ollama", model="deepseek-ocr:latest"), ollama_url=url
     )
 
-    _stage_builder(tmp_path, config=config, factory=factory).build_ocr(MagicMock())
+    _stage_builder(tmp_path, config=config, factory=factory).build_ocr(ollama_client=MagicMock())
 
     build_ollama_ocr.assert_called_once()
 
@@ -297,7 +299,7 @@ def test_build_ocr_builds_the_built_in_reader_with_the_stop_event(tmp_path: Path
     )
     stop = threading.Event()
 
-    assert builder.build_ocr(None, stop) is reader
+    assert builder.build_ocr(ollama_client=MagicMock(), stop_event=stop) is reader
 
     assert build_ppocr.call_args.kwargs["store"] is store
     assert build_ppocr.call_args.kwargs["stop_event"] is stop
@@ -315,7 +317,7 @@ def test_the_default_reader_builder_constructs_the_processor(tmp_path: Path) -> 
             tmp_path,
             config=make_config(tmp_path, ocr_engine="ppocr"),
             factory=PipelineComponentFactory(),
-        ).build_ocr()
+        ).build_ocr(ollama_client=MagicMock())
 
     processor.assert_called_once()
     assert processor.call_args.kwargs == {"stop_event": None}
@@ -550,7 +552,7 @@ def test_anonymizer_is_built_when_only_anonymization_is_on(tmp_path: Path) -> No
 
     correction, built = _stage_builder(
         tmp_path, config=config, factory=factory
-    ).build_correction_and_anonymizer()
+    ).build_correction_and_anonymizer(ollama_client=MagicMock())
 
     assert correction is None
     assert built is anonymizer
@@ -568,7 +570,7 @@ def test_anonymizer_is_not_built_without_anonymization(tmp_path: Path) -> None:
 
     _, built = _stage_builder(
         tmp_path, config=config, factory=factory
-    ).build_correction_and_anonymizer()
+    ).build_correction_and_anonymizer(ollama_client=MagicMock())
 
     assert built is None
     build_anonymizer.assert_not_called()
@@ -594,7 +596,7 @@ def test_missing_spacy_without_proofreading_warns_and_continues(tmp_path: Path) 
 
     correction, built = _stage_builder(
         tmp_path, config=config, factory=_failing_anonymizer_factory(), reporter=reporter
-    ).build_correction_and_anonymizer()
+    ).build_correction_and_anonymizer(ollama_client=MagicMock())
 
     assert correction is None
     assert built is None
@@ -619,7 +621,7 @@ def test_missing_spacy_with_proofreading_stops_the_run(tmp_path: Path) -> None:
     with pytest.raises(ProviderNotAvailableError):
         _stage_builder(
             tmp_path, config=config, factory=_failing_anonymizer_factory()
-        ).build_correction_and_anonymizer()
+        ).build_correction_and_anonymizer(ollama_client=MagicMock())
 
 
 def _hardware() -> HardwareDetection:
@@ -654,7 +656,7 @@ def test_the_resolved_window_reaches_the_correction_request(tmp_path: Path) -> N
     )
 
     windows = builder.resolved_windows()
-    correction = builder.build_corrector(MagicMock())
+    correction = builder.build_corrector(ollama_client=MagicMock())
 
     assert isinstance(correction, ChunkingCorrector)
     port = correction.inner.exchange._port
@@ -686,7 +688,7 @@ def test_the_resolved_window_reaches_the_evaluator(tmp_path: Path) -> None:
         tmp_path, config=config, factory=PipelineComponentFactory(), hardware=_hardware()
     )
 
-    evaluator = builder.build_evaluation(MagicMock(), MagicMock())
+    evaluator = builder.build_evaluation(MagicMock(), ollama_client=MagicMock())
 
     windows = builder.resolved_windows()
     port = evaluator._port
@@ -830,7 +832,7 @@ def test_a_local_corrector_runs_the_exchange_on_the_local_server(tmp_path: Path)
     )
     builder = _stage_builder(tmp_path, config=config, factory=PipelineComponentFactory())
 
-    correction, _ = builder.build_correction_and_anonymizer(MagicMock())
+    correction, _ = builder.build_correction_and_anonymizer(ollama_client=MagicMock())
 
     assert isinstance(correction, ChunkingCorrector)
     assert isinstance(correction.inner, ExchangeCorrector)
@@ -863,7 +865,7 @@ def test_an_online_corrector_runs_the_exchange_on_the_provider(tmp_path: Path) -
 
     correction, _ = _stage_builder(
         tmp_path, config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
-    ).build_correction_and_anonymizer()
+    ).build_correction_and_anonymizer(ollama_client=MagicMock())
 
     assert isinstance(correction, ExchangeCorrector)
     assert not isinstance(correction, ChunkingCorrector)
@@ -889,7 +891,7 @@ def test_a_provider_without_a_strict_schema_is_asked_without_one(tmp_path: Path)
 
     correction, _ = _stage_builder(
         tmp_path, config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
-    ).build_correction_and_anonymizer()
+    ).build_correction_and_anonymizer(ollama_client=MagicMock())
 
     port = correction.exchange._port
     assert isinstance(port, LangChainPort)
@@ -906,7 +908,7 @@ def test_no_corrector_is_built_when_proofreading_is_off(tmp_path: Path) -> None:
 
     correction, _ = _stage_builder(
         tmp_path, config=config, factory=PipelineComponentFactory()
-    ).build_correction_and_anonymizer()
+    ).build_correction_and_anonymizer(ollama_client=MagicMock())
 
     assert correction is None
 
@@ -944,7 +946,7 @@ def test_only_a_model_that_is_not_billed_is_asked_again_after_a_cut_off(
 
     correction, _ = _stage_builder(
         tmp_path, config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
-    ).build_correction_and_anonymizer(MagicMock())
+    ).build_correction_and_anonymizer(ollama_client=MagicMock())
 
     assert correction is not None
     corrector = correction.inner if isinstance(correction, ChunkingCorrector) else correction
@@ -974,10 +976,10 @@ def test_the_request_profile_reaches_every_kind_of_corrector(tmp_path: Path) -> 
 
     local_corrector, _ = _stage_builder(
         tmp_path, config=local, factory=factory
-    ).build_correction_and_anonymizer(MagicMock())
+    ).build_correction_and_anonymizer(ollama_client=MagicMock())
     online_corrector, _ = _stage_builder(
         tmp_path, config=online, factory=factory
-    ).build_correction_and_anonymizer()
+    ).build_correction_and_anonymizer(ollama_client=MagicMock())
 
     assert local_corrector.inner._profile == request_profile("gemma4:e4b")
     assert online_corrector._profile == request_profile("gpt-4o", "openai")
@@ -1005,7 +1007,7 @@ def test_the_teacher_settings_reach_the_exchange(tmp_path: Path) -> None:
 
     correction, _ = _stage_builder(
         tmp_path, config=config, factory=PipelineComponentFactory()
-    ).build_correction_and_anonymizer(MagicMock())
+    ).build_correction_and_anonymizer(ollama_client=MagicMock())
 
     context = correction.inner._context("English", "plain")
     assert context.level == "B2"

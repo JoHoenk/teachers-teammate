@@ -30,6 +30,7 @@ from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.gpu_detector import SystemHardwareProbe
 from ..infrastructure.key_facts import MachineKeyFacts
+from ..infrastructure.ollama_client import OllamaClient
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.option_mark_store import OptionMarkStore, default_marks_root
 from ..infrastructure.performance_probe import PerformanceProbe
@@ -54,7 +55,7 @@ from .documents import DocumentQueries
 from .export import ExportService
 from .model_comparison import ComparisonParts, ModelComparisonService
 from .model_recommendations import ModelRecommendationService
-from .ollama_server import OllamaServerService, ollama_client
+from .ollama_server import OllamaServerService
 from .providers import ProviderService
 from .reader import ReaderService
 from .releases import ReleaseService
@@ -267,7 +268,7 @@ def _speed_estimates(parts: _Parts, providers: ProviderService) -> SpeedEstimate
     return SpeedEstimateService(
         effective_model=providers.effective_model,
         ollama=parts.ollama,
-        client_factory=ollama_client,
+        client_factory=OllamaClient,
         samples=parts.samples,
         # The reading step prepares its test page with the page models a run reads with.
         probe_factory=functools.partial(PerformanceProbe, model_store=parts.model_store),
@@ -400,6 +401,7 @@ def _run(
             key_facts=key_facts,
             work_store=parts.work_store,
             samples=parts.samples,
+            client_factory=OllamaClient,
         ),
         recommendations=recommendations,
         anonymization=anonymization,
@@ -435,6 +437,7 @@ def _comparison(
             model_store=parts.model_store,
             reporter=reporter,
             samples=parts.samples,
+            client_factory=OllamaClient,
             stop_event=stop_event,
             # The window a run with these settings would use: the key computed here is its key.
             hardware=recommendations.cached_hardware_profile(

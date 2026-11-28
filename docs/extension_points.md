@@ -84,6 +84,9 @@ so background thread only. See {doc}`development` → "Text recognition switch".
   answer is older than `SNAPSHOT_TTL_S` (`domain/ollama_snapshot.py`) or lists no model,
   `cached_snapshot(url)` never asks, `forget(url)` drops it and a pull forgets by itself. Nothing
   else caches an answer of the server.
+- Every client comes from the factory composition passes in (`infrastructure/ollama_client.py`,
+  `ClientFactory`): `OllamaClient` itself, with the run's stop event and statistics sink. A stage
+  is given the run's client and never builds one.
 
 ## Stopping a run / its result
 

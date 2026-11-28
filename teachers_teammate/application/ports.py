@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 import threading
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -126,9 +126,9 @@ class OllamaServer(Protocol):
 class OllamaClientFactory[C](Protocol):
     """Builds the Ollama client *C* of one address.
 
-    *cancel_event* makes a waiting request abandonable, *timeout* bounds one that must answer.
-    A service that only passes the client on takes it as ``object``: only the code that drives
-    it knows its shape.
+    *cancel_event* makes a waiting request abandonable, *timeout* bounds one that must answer,
+    *stats_sink* is told what every chat request cost.  A service that only passes the client on
+    takes it as ``object``: only the code that drives it knows its shape.
     """
 
     def __call__(
@@ -137,6 +137,7 @@ class OllamaClientFactory[C](Protocol):
         *,
         cancel_event: threading.Event | None = None,
         timeout: float | None = None,
+        stats_sink: Callable[[str, Any], None] | None = None,
     ) -> C: ...
 
 

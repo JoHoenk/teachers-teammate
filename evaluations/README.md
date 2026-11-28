@@ -68,6 +68,7 @@ change. Definitions: `tools/evaluation/metrics/`.
 | Metric | Purpose |
 |---|---|
 | **F0.5** | Precision weighted twice as much as recall: a wrong change costs a teacher more than a missed one. Exact match, so only comparisons count, not absolute values. |
+| **F0.5 lenient** | A check beside it: a change that touches a reference change counts as right, so a valid alternative the annotator did not write is not counted as wrong and missed. Never ranks. |
 | **GLEU** | Against the unchanged source as a guard: below the source means the text got worse. |
 | **Left alone**, **coverage** | Correct sentences stay unchanged; sentences with an error get looked at. |
 | **Lost text, added marks, failed and fallback answers** | Sentences dropped, Markdown added, no usable answer. |

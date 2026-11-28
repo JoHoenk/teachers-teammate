@@ -23,6 +23,7 @@ from ..metrics import text_loss
 from ..metrics.gleu import SOURCE_PREFIX, add, from_scores, gleu
 from . import pooled
 from .pooled import ItemFacts
+from .score import LENIENT_TRUE_POSITIVES
 
 BAND_ORDER: tuple[str, ...] = ("short", "page", "pages")
 """The bands of the recipe, in the order of the table; a band it does not know comes last."""
@@ -108,6 +109,8 @@ class ModelSummary:
     """The model plus the axes that vary within the selection, so two prompt variants are two rows."""
     explanations_unknown: int = 0
     """Texts left out of :attr:`explained` and :attr:`needed`: their review could not be read."""
+    lenient_tp: int = 0
+    """The model's changes that touch a reference change or are an accepted alternative."""
     located_fixed: int = 0
     """Reference changes fixed exactly, counted over the rows that store ``located`` only.
 
@@ -124,6 +127,22 @@ class ModelSummary:
         the count was stored.
         """
         return share_of(self.located, self.ref_edits)
+
+    def lenient_f_beta(self, beta: float = DEFAULT_BETA) -> float | None:
+        """Return the F-score that counts a change at a reference change's place as right.
+
+        Precision counts the model's changes that touch a reference change, recall the reference
+        changes the model touched (:attr:`located`).  A check beside the exact F-score, which
+        counts a valid alternative the annotator did not write as wrong and as missed; ``None``
+        when nothing was scored.
+        """
+        made = self.score.true_positives + self.score.false_positives
+        precision = share_of(self.lenient_tp, made)
+        recall = self.recall_located
+        if precision is None or recall is None:
+            return None
+        weighted = beta**2 * precision + recall
+        return (1 + beta**2) * precision * recall / weighted if weighted else 0.0
 
     @property
     def noticed_gap(self) -> float | None:
@@ -248,6 +267,7 @@ def _summary(
         orphans_per_text=sum(row.orphans for row in rows) / len(rows),
         seconds_per_text=sum(row.seconds for row in sent) / len(sent),
         located_fixed=sum(row.true_positives for row in rows if "located" in row.scores),
+        lenient_tp=sum(_count(row, LENIENT_TRUE_POSITIVES) for row in rows),
     )
 
 

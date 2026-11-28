@@ -80,6 +80,9 @@ class RequestStats:
     extra: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
     """Fields a newer writer added; kept and written back."""
 
+    answer: str = field(default="", compare=False, repr=False)
+    """What the model answered, while the run holds it; never written with the request."""
+
     _KNOWN: ClassVar[tuple[str, ...]] = (
         "model",
         "prompt_tokens",
@@ -96,9 +99,9 @@ class RequestStats:
 
     @classmethod
     def from_stats(
-        cls, model: str, stats: ChatStats, wall_s: float, step: str = ""
+        cls, model: str, stats: ChatStats, wall_s: float, step: str = "", answer: str = ""
     ) -> RequestStats:
-        """Build the record of a finished request from Ollama's statistics."""
+        """Build the record of a finished request from Ollama's statistics and its *answer*."""
         return cls(
             model=model,
             prompt_tokens=stats.prompt_eval_count,
@@ -110,6 +113,7 @@ class RequestStats:
             wall_s=wall_s,
             done_reason=stats.done_reason,
             step=step,
+            answer=answer,
         )
 
     @classmethod
@@ -121,6 +125,7 @@ class RequestStats:
         """Return a JSON-serialisable record (a request without a step tag does not list one)."""
         record = asdict(self)
         del record["extra"]
+        del record["answer"]
         if not record["step"]:
             del record["step"]
         return {**self.extra, **record}

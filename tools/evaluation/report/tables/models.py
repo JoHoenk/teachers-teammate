@@ -91,11 +91,12 @@ def model_table(summaries: Iterable[ModelSummary]) -> str:
     """
     rows = [summary for summary in summaries if not summary.band]
     lines = [
-        "| Model | T | Mode | Language | P | R | Found the spot | F0.5 | GLEU | Left alone "
+        "| Model | T | Mode | Language | P | R | Found the spot | F0.5 | F0.5 lenient | GLEU "
+        "| Left alone "
         "| Coverage | Recall 1st / 2nd half | Fixed/page | Wrong/page | Missed/page | Failed "
         "| Fallback | Lost / added | Added marks | Explained | Orphans/text | s/text |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for summary in rows:
         lines.append(
@@ -103,7 +104,7 @@ def model_table(summaries: Iterable[ModelSummary]) -> str:
             f"| {language_name(summary.language)} "
             f"| {_share(summary.precision)} | {_share(summary.recall)} "
             f"| {_located_cell(summary)} | {_share(summary.f_beta)} "
-            f"| {_gleu_cell(summary)} "
+            f"| {_share(summary.lenient_f_beta())} | {_gleu_cell(summary)} "
             f"| {summary.alone}/{summary.alone_of} | {_coverage_cell(summary)} "
             f"| {_halves_cell(summary)} "
             f"| {_per_page_cell(summary.fixed_per_page)} "
@@ -160,7 +161,8 @@ def _deciding_lines(summaries: Sequence[ModelSummary]) -> list[str]:
         scored = groups.deciding_rows(part)
         lines.append(
             f"- `{label}` at {temperature:g} ({mode}): "
-            f"F0.5 {_share(groups.deciding_mean_f_beta(part))}, "
+            f"F0.5 {_share(groups.deciding_mean_f_beta(part))} "
+            f"(lenient {_share(groups.deciding_mean_lenient_f_beta(part))}), "
             f"GLEU {_share(groups.deciding_mean_gleu(part))} ({len(scored)} languages)"
         )
     lines += ["", "French is reported only: it has no band and does not decide."]

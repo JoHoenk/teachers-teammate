@@ -168,7 +168,9 @@ class RecordingClient(OllamaClient):
         except Exception:
             self._requests.append(RequestStats.failure(model, self._clock() - started, step))
             raise
-        self._requests.append(RequestStats.from_stats(model, stats, self._clock() - started, step))
+        self._requests.append(
+            RequestStats.from_stats(model, stats, self._clock() - started, step, content)
+        )
         return content, stats
 
     def _repeat_of(

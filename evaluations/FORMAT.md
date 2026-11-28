@@ -107,6 +107,10 @@ review.
 **`instructions`** is the SHA-256 of each language's policy and answer format as sent, so a run with
 a since-changed prompt is recognisable.
 
+**`step_one_answers`** on an answer line holds the model's own step-① answers, every try, when the
+text failed, fell back or lost text; `output` is what the teacher got, so this is where a failure is
+read. Absent on every other line.
+
 ## Marks
 
 Written by `store marks SHEET.md --marker <name>`. The file holds no text (the sheet does, and is not

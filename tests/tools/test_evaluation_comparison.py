@@ -420,3 +420,57 @@ def test_without_an_instrumentation_the_answer_has_no_performance() -> None:
     assert answer.requests == ()
     assert answer.vram_peak_mb is None
     assert answer.shared is False
+
+
+def _request(step: str, answer: str) -> RequestStats:
+    """Return one finished request of *step* that answered *answer*."""
+    return RequestStats("gemma4:e4b", 100, 50, 0.1, 0.2, 0.3, 0.6, 0.7, step=step, answer=answer)
+
+
+@pytest.mark.use_case("Model_Eval_Comparison")
+def test_a_text_that_lost_text_keeps_the_models_own_step_one_answers() -> None:
+    """
+    Given  a text whose two step-① answers left a stretch out, which the app put back, and whose
+           step ② answered too
+    When   the comparison runs, and the answer is written and read back
+    Then   the answer keeps both step-① answers in order and not step ②'s, the requests are written
+           without their text, and the line reads back the same
+    """
+    record = Performance(
+        requests=(
+            _request("correct", "first try"),
+            _request("correct", "second try"),
+            _request("explain", "{}"),
+        )
+    )
+    comparison = WritingModelComparison(
+        lambda model, temperature: _ScriptedCorrector(_RECORD.reference, left_out=1),
+        clock=lambda: 0.0,
+        instrumentation=_Instrument(record),
+    )
+
+    answer = _single(comparison.run([_RECORD], model="gemma4:e4b", temperature=0.2))
+    line = answer.to_dict()
+
+    assert answer.step_one_answers == ("first try", "second try")
+    assert all("answer" not in request for request in line["requests"])
+    assert Answer.from_dict(line).step_one_answers == ("first try", "second try")
+
+
+@pytest.mark.use_case("Model_Eval_Comparison")
+def test_a_text_that_went_through_keeps_no_step_one_answer() -> None:
+    """
+    Given  a text whose step-① answer was used as it came
+    When   the comparison runs
+    Then   the answer keeps no copy of it: the output is that answer already
+    """
+    comparison = WritingModelComparison(
+        lambda model, temperature: _ScriptedCorrector(_RECORD.reference),
+        clock=lambda: 0.0,
+        instrumentation=_Instrument(Performance(requests=(_request("correct", "the text"),))),
+    )
+
+    answer = _single(comparison.run([_RECORD], model="gemma4:e4b", temperature=0.2))
+
+    assert answer.step_one_answers == ()
+    assert "step_one_answers" not in answer.to_dict()

@@ -422,6 +422,15 @@ all three together.  *Corrections only* sends step ① alone: one copy, one answ
 come from the exchange's `cost_model()` until three samples of the mode the run is set to
 (`exchange` or `text`) say how long this class's answers are.
 
+An answer is measured as a part per text plus a part per word, not as a rate per 100 words: an
+answer restates its finding and its notes whatever the text's length, so a rate per 100 words
+is too much for a short text and too little for a long one.  The estimate is therefore about a
+text of a known length, and passes it in: the compare window sends the opened document's own
+words, the settings panel and the time left of a run keep `TYPICAL_PAGE_WORDS`, because no text
+is known before a file is read.  A file's pages are proofread as one text, so only its first page
+pays the part per text: `StepEstimate.further_page` is what each further page adds, and the class
+set and the time left (once the page counts are known) charge it for every page after the first.
+
 ### What is measured, and with which request
 
 The test sends the app's own requests, so a figure means what a run will cost:
@@ -429,8 +438,8 @@ The test sends the app's own requests, so a figure means what a run will cost:
 | Step | Request | Answer length |
 | --- | --- | --- |
 | Reading | the OCR prompt with a drawn A4 page | tokens per page |
-| Proofreading | step ① of the exchange on a test text | tokens per 100 words |
-| Review | the content-review request on the same text | tokens per 100 words |
+| Proofreading | step ① of the exchange on a test text | tokens for that text |
+| Review | the content-review request on the same text | tokens for that text |
 
 The proofreading step measures step ① because it is the request every run sends, and the test
 measures rates, not answer lengths: a plain rewrite of the paragraph, at that step's temperature
@@ -451,9 +460,12 @@ a run preprocesses a scan, because the image the model sees decides the image to
 | --- | --- |
 | `ModelSpeed(read_tps, write_tps, image_tokens)` | one model on one machine: request tokens per second, answer tokens per second, tokens of one page image |
 | `TimeRange(low_s, high_s, typical_s)` | a duration as a range; `scaled` and `__add__` keep the three figures together |
-| `AnswerLength(low, typical, high)` | how long a model's answers are: per 100 words for a writing model, per page for a reading one |
-| `ExchangeCost(requests_per_page, answer_tokens_per_100_words, text_copies)` | what an exchange costs per step; `DEFAULT_EXCHANGE_COST` holds the text-first exchange's provisional figures |
-| `proofreading_time(speed, words, cost, steps, *, answer=None)` | a proofreading run: the text times the copies of the steps that run, plus their answers |
+| `AnswerLength(low, typical, high)` | an answer length as three figures: one request's answer, or all the steps' answers for one text |
+| `AnswerCurve(fixed, per_word, low, high)` | how long one step's answer is: a part per text and a part per word, with what the runs answered against it as the range |
+| `ExchangeCost(requests_per_page, answers, text_copies)` | what an exchange costs per step; `DEFAULT_EXCHANGE_COST` holds the text-first exchange's figures |
+| `answer_tokens(cost, steps, words)` | the steps' answers for a text of *words* words, as a range |
+| `fit_answer_curve(points, *, narrow)` | the curve through the runs' own `(words, answer tokens)` pairs; `None` without two text lengths to tell the fixed part from the per-word one |
+| `proofreading_time(speed, words, cost, steps, *, answer=None)` | a proofreading run: the text times the copies of the steps that run, plus their answers; *answer* is the tokens a run measured for that text |
 | `band(seconds_per_page)` | `SpeedBand`: `FAST` up to `FAST_LIMIT_S`, `OK` up to `OK_LIMIT_S`, `SLOW` up to `SLOW_LIMIT_S`, else `VERY_SLOW` |
 | `machine_factor(measured, reference)` | how much slower this computer is than the reference machine; `None` when either figure is missing, so "unknown" is never read as "the same" |
 | `median_factor`, `percentile` | the middle of several models' factors; the 10th and 90th percentile of a set of figures |
@@ -465,13 +477,13 @@ The constants that stand in for a measurement, and what their values rest on:
 
 | Constant | Rests on |
 | --- | --- |
-| `TYPICAL_PAGE_WORDS` | a handwritten A4 page of an essay holds 200 to 300 words |
+| `TYPICAL_PAGE_WORDS` | the median of the pages measured, used only where no text is known yet; a run works in pages before a file is read |
 | `CHARS_PER_WORD` | German prose is the longest of the three languages (about 6.2), English the shortest (about 5.5) |
 | `DEFAULT_CHARS_PER_TOKEN` | between the window budget's cautious 3 and the 4.3 to 5 measured on German prose at page length |
 | `DEFAULT_IMAGE_TOKENS` | a full A4 page at 300 DPI; how many tokens a vision model makes of it depends on its own encoder |
-| `TEXT_MODE_ANSWER` | `gemma4:e2b` over nine texts; text mode answers with about the text's own length, so one figure serves every model |
 | `CONTENT_REVIEW_ANSWER` | a review answers with a short assessment; deliberately wide |
 | `DEFAULT_READING_ANSWER` | a page of about 250 words plus the markup a reading model adds |
+| `DEFAULT_EXCHANGE_COST` | the exchange's per-step answers fitted over the runs of the reference machine: a part per text, a part per word, and the 10th to 90th percentile of what the models answered against that line |
 
 A model without an `answer_length` gets the median over the catalogued models of its kind, not a
 constant (`default_answer_length`).
@@ -509,8 +521,10 @@ answered.
 
 `speed_summary` prefers the samples to the stored test, per step and per model:
 
-- from `MIN_ANSWER_SAMPLES` samples the run figures replace the catalog's answer length: they
-  are this class's error level with this model and these instructions, which no test can know.
+- from `MIN_ANSWER_SAMPLES` samples the run's own answer length replaces the exchange's figures:
+  they are this class's error level with this model and these instructions, which no test can
+  know.  A writing model's answers are fitted as a curve, so the samples have to cover two text
+  lengths; one length says nothing about where the line crosses zero.
 - from `PERCENTILE_SAMPLES` the range is the 10th to the 90th percentile, so one runaway
   answer no longer widens it.
 - a step whose samples are missing falls back to the test, and a step with neither keeps its row
@@ -1576,6 +1590,7 @@ stores and every reader reads.
 | `domain/proofreading/review.py` | the stored `CorrectionReview` (`EditNote` with parts, `UnclearNote`), `align()` for display, `fits()` / `merge_reviews()` / `explained_sentences()` |
 | `domain/proofreading/quotes.py` | `find_spans()` for the quotes of step ③, `map_back()` through the hunks |
 | `domain/proofreading/markdown_shield.py` | `shield()` / `restore()`: strip the notation before the request, put it back after it |
+| `domain/proofreading/paragraph_gaps.py` | `collapse()` / `restore_gaps()`: narrow a long run of blank lines before the request, put the student's gaps back after it |
 | `domain/proofreading/text_loss.py` | `measure()` / `dropped_text()`: what an answer kept of the text it was sent, for the guard of step ① |
 | `domain/correction_prompts.py` | the fixed English system prompts of the three steps, the parameter and notes blocks, the batch body of step ②, the repair message, `PROMPT_VERSION` |
 | `infrastructure/proofreading/port.py` | `ModelPort` (Bridge): `OllamaPort`, `LangChainPort` |
@@ -1638,6 +1653,17 @@ inside one styled span takes that style, a replacement across style boundaries l
 counted, an insertion takes a style only when both neighbours share it, and crossed-out words
 are put back exactly where they were. Block boundaries are always the source's. Plain-text
 sources skip the shield.
+
+**Blank-line gaps.** A run of blank lines is the student's layout, and a model reads a wide one
+as a break between two texts: a held-out text of two essays four blank lines apart came back as
+the second essay alone, while the same text with one blank line was answered whole. Step ①
+therefore carries a plain text with every run of three or more line breaks narrowed to one blank
+line (a Markdown request already has one blank line between its blocks), and the answer gets the
+student's own gaps back afterwards (`domain/proofreading/paragraph_gaps.py`). The gaps are
+matched by counting the paragraph breaks of the answer, never by looking for words: a break the
+model kept stands where the student's gap stood, and an answer that merged or split a paragraph
+keeps the breaks it wrote. So the stored corrected text keeps the student's own line breaks
+wherever the model left the paragraph structure alone.
 
 **Corrections only.**  *Corrections only (faster)* sends step ① alone, whatever the model's
 profile says: `ProofreadContext.corrections_only` makes `TextFirstExchange.proofread` return after ① with

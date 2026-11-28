@@ -31,12 +31,13 @@ from statistics import median
 
 from .model_catalog import OLLAMA_CATALOG, AnswerLength, ModelCategory, OllamaModelSpec
 from .ollama_snapshot import ServerSnapshot
-from .proofreading.result import DEFAULT_EXCHANGE_COST, ExchangeCost, StepName
+from .proofreading.result import DEFAULT_EXCHANGE_COST, AnswerCurve, ExchangeCost, StepName
 from .system_facts import ServerFacts
 
 #: Words on a typical page of a student's essay.  Used where a page has to be turned into a
-#: word count (a proofreading estimate for "one page").  An estimate: a handwritten A4 page of
-#: an essay holds 200 to 300 words.
+#: word count before the app knows the text: the run's time left works in pages, and a page of a
+#: scanned document has no text yet.  The median of the pages measured, not the middle of the
+#: 10th and 90th percentile, which a few long pages push up.
 TYPICAL_PAGE_WORDS = 250
 
 #: Characters per word, the space included.  German prose is the longest of the three languages
@@ -54,11 +55,6 @@ DEFAULT_IMAGE_TOKENS = 1500
 
 #: The steps a full proofreading run sends, in order: ① correct, ② explain, ③ unclear.
 PROOFREADING_STEPS: tuple[StepName, ...] = ("correct", "explain", "unclear")
-
-#: Answer tokens per 100 words of student text in **text mode** (corrections only).  Measured
-#: with ``gemma4:e2b`` over 9 texts on 2026-11-13: median 141, 10th to 90th percentile 120 to
-#: 151.  Text mode answers with about the text's own length, so one figure serves every model.
-TEXT_MODE_ANSWER = AnswerLength(low=120, typical=141, high=151)
 
 #: Answer tokens per 100 words of student text for a **content review**.  A review answers with
 #: a short assessment, not with the text again, and its request reserves
@@ -154,6 +150,10 @@ class TimeRange:
         """Return the range of doing both things one after the other."""
         return TimeRange(self.low_s + other.low_s, self.high_s + other.high_s)
 
+    def __sub__(self, other: TimeRange) -> TimeRange:
+        """Return the range left when *other*, a part of this one, is taken off."""
+        return TimeRange(self.low_s - other.low_s, self.high_s - other.high_s)
+
     def scaled(self, factor: float) -> TimeRange:
         """Return this range multiplied by *factor*."""
         return TimeRange(self.low_s * factor, self.high_s * factor)
@@ -209,31 +209,76 @@ def proofreading_time(
         words: Words of the student text.
         cost: What the exchange costs per step (its requests, answer lengths and text copies).
         steps: The steps the run sends — step ① alone for corrections only.
-        answer: The answer length per 100 words the runs measured for these *steps*; ``None``
-            sums the exchange's own figures, spread like :data:`TEXT_MODE_ANSWER`.
+        answer: The answer tokens the runs measured for a text of *words* words, all *steps*
+            together; ``None`` sums the exchange's own curves.
         overhead_chars: Characters of the fixed part of the requests (instructions and notes),
             when the caller knows them.
     """
     copies = sum(cost.text_copies.get(step, 0) for step in steps)
     read_s = _prompt_seconds(speed, overhead_chars + copies * words * CHARS_PER_WORD)
-    per_100 = answer or _summed_answer(cost, steps)
+    tokens = answer or answer_tokens(cost, steps, words)
     return TimeRange(
-        low_s=read_s + words / 100 * per_100.low / speed.write_tps,
-        high_s=read_s + words / 100 * per_100.high / speed.write_tps,
+        low_s=read_s + tokens.low / speed.write_tps,
+        high_s=read_s + tokens.high / speed.write_tps,
     )
 
 
-def _summed_answer(cost: ExchangeCost, steps: Sequence[StepName]) -> AnswerLength:
-    """Return the answer of all *steps* together, spread like :data:`TEXT_MODE_ANSWER`.
+def answer_tokens(cost: ExchangeCost, steps: Sequence[StepName], words: int) -> AnswerLength:
+    """Return the answer tokens *steps* take for a text of *words* words, as a range.
 
-    The exchange's figures are typical values; the range around them is the one real runs
-    measured for an answer that is about as long as the text, because no measurement has
-    compared the spread of the three steps yet.
+    The fixed part of a step is paid once per text, however many pages the text has, and every
+    step brings its own spread: an answer that is mostly notes (:data:`AnswerCurve.fixed`) varies
+    less than one that restates the text.
     """
-    typical = sum(cost.answer_tokens_per_100_words.get(step, 0) for step in steps)
-    low = round(typical * TEXT_MODE_ANSWER.low / TEXT_MODE_ANSWER.typical)
-    high = round(typical * TEXT_MODE_ANSWER.high / TEXT_MODE_ANSWER.typical)
-    return AnswerLength(low=low, typical=typical, high=high)
+    low = typical = high = 0.0
+    for step in steps:
+        curve = cost.answers.get(step)
+        if curve is None:
+            continue
+        tokens = curve.tokens(words)
+        low += tokens * curve.low
+        typical += tokens
+        high += tokens * curve.high
+    return AnswerLength(low=round(low), typical=round(typical), high=round(high))
+
+
+def fit_answer_curve(
+    points: Sequence[tuple[int, int]], *, narrow: bool = False
+) -> AnswerCurve | None:
+    """Return the curve through *points*, ``(words, answer tokens)`` pairs of real runs.
+
+    A straight line through the runs of one model: what an answer writes whatever the text's
+    length, and what one word adds.  ``None`` without two text lengths to tell the two apart —
+    one length says nothing about where the line crosses zero.  The range is what the runs
+    answered against the line; *narrow* takes its 10th to 90th percentile instead of its ends,
+    so one runaway answer no longer widens it.
+    """
+    if len(points) < 2 or len({words for words, _ in points}) < 2:
+        return None
+    mean_x = sum(words for words, _ in points) / len(points)
+    mean_y = sum(tokens for _, tokens in points) / len(points)
+    spread = sum((words - mean_x) ** 2 for words, _ in points)
+    slope = sum((words - mean_x) * (tokens - mean_y) for words, tokens in points) / spread
+    fixed = mean_y - slope * mean_x
+    if fixed < 0:
+        # A step that writes next to nothing beyond the text crosses zero through noise: the
+        # line through zero keeps its per-word part.
+        fixed = 0.0
+        slope = sum(words * tokens for words, tokens in points) / sum(
+            words * words for words, _ in points
+        )
+    if slope < 0:
+        # Longer texts that got shorter answers are noise, not a model: keep the flat middle.
+        fixed, slope = mean_y, 0.0
+    ratios = sorted(tokens / (fixed + slope * words) for words, tokens in points if words > 0)
+    if narrow:
+        return AnswerCurve(
+            fixed=fixed,
+            per_word=slope,
+            low=percentile(ratios, 10),
+            high=percentile(ratios, 90),
+        )
+    return AnswerCurve(fixed=fixed, per_word=slope, low=ratios[0], high=ratios[-1])
 
 
 def content_review_time(speed: ModelSpeed, words: int, *, overhead_chars: int = 0) -> TimeRange:
@@ -254,6 +299,7 @@ def batch_time(
     pages_per_file: int,
     steps: Sequence[TimeRange],
     *,
+    further: Sequence[TimeRange] | None = None,
     swaps: bool = False,
     load_s: Sequence[float] = (),
 ) -> TimeRange:
@@ -267,12 +313,17 @@ def batch_time(
         files: Number of documents in the run.
         pages_per_file: Pages of one document.
         steps: The time one page takes, per step that runs.
+        further: The time each page after the first of a file adds, per step in the order of
+            *steps*; ``None`` when every page costs what the first does.  A proofreading answer
+            is partly paid once per text, so a second page costs less than the first.
         swaps: Whether the models swap between the steps of one file.
         load_s: The load times (seconds) of the models that swap; ignored without *swaps*.
     """
     per_file = TimeRange(0.0, 0.0)
-    for step in steps:
-        per_file = per_file + step.scaled(pages_per_file)
+    more = steps if further is None else further
+    for first, next_page in zip(steps, more, strict=True):
+        if pages_per_file > 0:
+            per_file = per_file + first + next_page.scaled(pages_per_file - 1)
     if swaps:
         per_file = per_file + TimeRange(sum(load_s), sum(load_s))
     return per_file.scaled(files)

@@ -100,6 +100,26 @@ def test_the_estimate_answers_before_the_first_file() -> None:
     assert left.high_s == pytest.approx(400.0)
 
 
+def test_the_estimate_charges_a_file_once_for_what_it_pays_once() -> None:
+    """
+    Given  an estimate of 30 seconds for a file's first page and 10 for each further page
+    When   the time left of 2 files with 6 pages is asked for, before and after the page counts
+    Then   every page counts as a first page until the counts arrive, then each file pays its
+           first page once
+    """
+    pace = RunPace(estimate=TimeRange(30.0, 30.0), further=TimeRange(10.0, 10.0))
+    pace.set_files(2)
+
+    assert pace.per_page() == TimeRange(30.0, 30.0)
+
+    pace.set_pages(6)
+    left = pace.time_left()
+
+    assert left is not None
+    assert left.low_s == pytest.approx(2 * 30.0 + 4 * 10.0)
+    assert left.high_s == pytest.approx(2 * 30.0 + 4 * 10.0)
+
+
 def test_the_run_own_pace_answers_after_the_first_file() -> None:
     """
     Given  a run of 3 files with 6 pages, one file of 2 pages done in 100 seconds, no estimate

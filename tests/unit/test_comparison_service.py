@@ -35,7 +35,7 @@ from teachers_teammate.messages import proofreading_not_compared
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX, RunWindows
 from teachers_teammate.domain.data_location import DataLocation, StageLocation
 from teachers_teammate.domain.model_fit import ModelRating, Suitability
-from teachers_teammate.domain.performance_estimate import TYPICAL_PAGE_WORDS, TimeRange
+from teachers_teammate.domain.performance_estimate import TimeRange
 from teachers_teammate.domain.proofreading.compared_result import ComparedResult, stem_of
 from teachers_teammate.domain.proofreading.option_marks import OptionMark, Verdict
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
@@ -162,12 +162,16 @@ class _Advice:
 
 
 class _Speeds:
-    """What this computer measured: one figure per model."""
+    """What this computer measured: one figure per model and text length."""
 
     def __init__(self, times: dict[str, TimeRange] | None = None) -> None:
         self._times = times or {}
+        self.asked: list[int] = []
 
-    def page_times(self, tags, category, ollama_url, *, hardware=None) -> dict[str, TimeRange]:
+    def page_times(
+        self, tags, category, ollama_url, *, hardware=None, words=0
+    ) -> dict[str, TimeRange]:
+        self.asked.append(words)
         return {tag: self._times[tag] for tag in tags if tag in self._times}
 
 
@@ -346,6 +350,7 @@ def _lister(
     times: dict[str, TimeRange] | None = None,
     providers: _Providers | None = None,
     advice: _Advice | None = None,
+    speeds: _Speeds | None = None,
 ) -> ComparisonCandidates:
     """Return the models to choose from: two installed ones and one online one."""
     return ComparisonCandidates(
@@ -357,7 +362,7 @@ def _lister(
         else _Providers(
             {"ollama": ["gemma3:12b", "qwen3:8b"], "mistral": ["mistral-large-latest"]}
         ),
-        speeds=_Speeds(times),
+        speeds=speeds if speeds is not None else _Speeds(times),
     )
 
 
@@ -450,11 +455,13 @@ def test_the_models_are_the_installed_and_the_online_ones_with_their_times(
         text_sha=text_identity(TEXT),
         words=500,
     )
-    found = _lister(times={"gemma3:12b": TimeRange(60.0, 90.0)}).candidates(config, source)
+    speeds = _Speeds({"gemma3:12b": TimeRange(60.0, 90.0)})
+    found = _lister(speeds=speeds).candidates(config, source)
     rows = {candidate.model: candidate for candidate in found}
 
     assert set(rows) == {"gemma3:12b", "qwen3:8b", "mistral-large-latest"}
-    assert rows["gemma3:12b"].estimated == TimeRange(60.0, 90.0).scaled(500 / TYPICAL_PAGE_WORDS)
+    assert rows["gemma3:12b"].estimated == TimeRange(60.0, 90.0)
+    assert speeds.asked == [500]
     assert rows["qwen3:8b"].estimated is None
     assert rows["gemma3:12b"].location.location is DataLocation.THIS_COMPUTER
     assert rows["mistral-large-latest"].location.location is DataLocation.ONLINE

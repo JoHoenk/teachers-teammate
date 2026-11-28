@@ -30,7 +30,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 from .edit_agreement import (
+    ChangeKey,
     ExplainedCount,
+    change_key,
     count_explained,
     ordered_edits,
     spans_touch,
@@ -339,7 +341,7 @@ def compare(
         len(tokens),
     )
     figures = tuple(
-        _figures(source, version, aligned.get(version.key), found, positions, offsets, sites)
+        _figures(source, version, aligned.get(version.key), found, positions, sites)
         for version in versions
     )
     return Comparison(
@@ -407,7 +409,7 @@ def _sites(
         (key, run, edit, (positions[edit[0]], positions[edit[1]])) for key, run, edit in found
     ]
     return tuple(
-        _site(source, group, offsets, notes, text_sha, verdicts, runs)
+        _site(source, group, positions, offsets, notes, text_sha, verdicts, runs)
         for group in _grouped(sorted(placed, key=lambda item: (item[3], item[2])))
     )
 
@@ -435,6 +437,7 @@ def _grouped(
 def _site(
     source: str,
     group: Sequence[tuple[str, int, Edit, Span]],
+    positions: Sequence[int],
     offsets: Sequence[int],
     notes: dict[str, tuple[Note, ...]],
     text_sha: str,
@@ -452,6 +455,7 @@ def _site(
     end = offsets[max(edit[1] for _, _, edit, _ in group)]
     span: Span = (start, end)
     options: list[Option] = []
+    wordings: list[ChangeKey] = []
     writers: list[dict[str, set[int]]] = []
     for key, run, edit, _ in group:
         replacement = "".join(edit[2])
@@ -463,25 +467,29 @@ def _site(
         option_start, option_end = offsets[edit[0]], offsets[edit[1]]
         verdict = verdicts.get(identity(text_sha, option_start, option_end, replacement))
         for index, option in enumerate(options):
-            if (option.start, option.end, option.replacement) == (
-                option_start,
-                option_end,
-                replacement,
-            ):
+            if wordings[index] == change_key(edit, positions):
                 if option.first_by(key):
                     made = replace(made, first_run=True)
+                # The same change in other spacing: show the wording with the fewest spaces, so
+                # "Ja , das" does not stand for "Ja, das", and keep a verdict on either wording.
+                shown = option
+                if _spaces(replacement) < _spaces(option.replacement):
+                    shown = replace(
+                        option, start=option_start, end=option_end, replacement=replacement
+                    )
                 options[index] = Option(
-                    option.start,
-                    option.end,
-                    option.replacement,
+                    shown.start,
+                    shown.end,
+                    shown.replacement,
                     (*[one for one in option.made_by if one.key != key], made),
-                    verdict,
+                    option.verdict if option.verdict is not None else verdict,
                     option.once,
                 )
                 writers[index].setdefault(key, set()).add(run)
                 break
         else:
             options.append(Option(option_start, option_end, replacement, (made,), verdict))
+            wordings.append(change_key(edit, positions))
             writers.append({key: {run}})
     return ChangeSite(
         start=start,
@@ -507,7 +515,6 @@ def _figures(
     aligned: AlignedReview | None,
     found: Sequence[tuple[str, int, Edit]],
     positions: Sequence[int],
-    offsets: Sequence[int],
     sites: Sequence[ChangeSite],
 ) -> VersionFigures:
     """Return what *version* did with *source*, counted against the other versions' changes.
@@ -527,15 +534,16 @@ def _figures(
     ]
     answers = [version.text, *version.repeats]
     written = [
-        {_option_identity(edit, offsets) for edit in ordered_edits(source, answer)}
+        {change_key(edit, positions) for edit in ordered_edits(source, answer)}
         for answer in answers
     ]
     in_every_run = len(set.intersection(*written))
     made = len(set.union(*written))
+    theirs = {change_key(edit, positions) for edit, _ in others}
     return VersionFigures(
         key=version.key,
         changes=len(mine),
-        shared=sum(1 for edit, _ in mine if any(other == edit for other, _ in others)),
+        shared=sum(1 for edit, _ in mine if change_key(edit, positions) in theirs),
         alone=sum(
             1 for _, span in mine if not any(spans_touch(span, other) for _, other in others)
         ),
@@ -553,6 +561,11 @@ def _figures(
         in_every_run=in_every_run,
         once=made - in_every_run,
     )
+
+
+def _spaces(replacement: str) -> int:
+    """Return how many whitespace characters *replacement* holds."""
+    return sum(1 for char in replacement if char.isspace())
 
 
 def _marked(sites: Sequence[ChangeSite], key: str) -> MarkCount:
@@ -582,11 +595,6 @@ def _marked(sites: Sequence[ChangeSite], key: str) -> MarkCount:
         found=found,
         missed=len(right) - found,
     )
-
-
-def _option_identity(edit: Edit, offsets: Sequence[int]) -> tuple[int, int, str]:
-    """Return what one change is: the characters it replaces and the wording it puts there."""
-    return (offsets[edit[0]], offsets[edit[1]], "".join(edit[2]))
 
 
 def _row_text(tokens: Sequence[str], edits: Sequence[Edit], row: SentenceRow, total: int) -> str:

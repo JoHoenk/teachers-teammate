@@ -12,6 +12,11 @@ The edits are always the diff of the student's text against the corrected text: 
 explains edits, it never places them.  So a note can never point at words the correction did not
 change, and a teacher who edits the text afterwards still sees the notes that still apply.
 
+Before ① a plain text is narrowed to what a model reads as one text: a run of blank lines becomes
+one paragraph break, because a model reads a wide gap as two texts and answers the second one.  The
+student's gaps go back into the answer once it is cleaned
+(:mod:`~teachers_teammate.domain.proofreading.paragraph_gaps`).
+
 What a failure means:
 
 * ① cut off after its tries, a transport error, framing twice, or much more of the text twice —
@@ -53,6 +58,7 @@ from ....domain.proofreading.edits import (
     sentence_groups,
 )
 from ....domain.proofreading.markdown_shield import ShieldMap, restore, shield
+from ....domain.proofreading.paragraph_gaps import collapse, restore_gaps
 from ....domain.proofreading.quotes import find_spans, map_back
 from ....domain.proofreading.result import (
     DEFAULT_EXCHANGE_COST,
@@ -137,12 +143,17 @@ class TextFirstExchange:
         reports: list[StepReport] = []
         warnings: list[str] = []
         request_text, shield_map, document = _shielded(source, ctx.text_format)
-        answer, failure, left_out = self._correct(request_text, ctx, reports)
+        # A Markdown request already has one blank line between its blocks, and its answer
+        # takes the source's block layout back from the shield.
+        sent, gaps = collapse(request_text) if shield_map is None else (request_text, ())
+        answer, failure, left_out = self._correct(sent, ctx, reports)
         if answer is None:
             return ExchangeResult(
                 text=source, failed=True, warnings=(failure,), reports=tuple(reports)
             )
         corrected, unstyled = _restored(source, ctx.text_format, shield_map, document, answer)
+        # After the answer is cleaned, which narrows a long run of blank lines of its own.
+        corrected = restore_gaps(corrected, gaps)
         if unstyled:
             warnings.append(UNSTYLED_WARNING)
         if left_out:
@@ -566,7 +577,7 @@ def _left_out_notes(left_out: Sequence[LeftOut], raw_plain: str) -> list[Unclear
 
 
 def _shielded(source: str, text_format: TextFormat) -> tuple[str, ShieldMap | None, object | None]:
-    """Return the text the request carries, and what restores the notation afterwards.
+    """Return the text the notation leaves for the request, and what restores the notation.
 
     A plain text goes out as it is.  A Markdown text is parsed, its marks are stripped and its
     crossed-out words are held back, because every Markdown failure of the proof of concept was

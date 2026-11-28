@@ -478,6 +478,11 @@ app_test(
 )
 
 app_test(
+    "unit/test_paragraph_gaps.py",
+    deps = _DOMAIN_LIB,
+)
+
+app_test(
     "unit/test_correction_prompts_steps.py",
     deps = _DOMAIN_LIB,
 )
@@ -500,6 +505,13 @@ app_test(
 app_test(
     "unit/test_exchange_text_first.py",
     deps = _FORMAT_DEPS + _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+# Two essays with a long gap between, against a model that reads such a gap as two texts.
+app_test(
+    "unit/test_exchange_paragraph_gaps.py",
+    extra_srcs = ["fakes/fake_ollama.py"],
+    deps = _FORMAT_DEPS + _INFRASTRUCTURE_LIB + ["@ocr_test_dependencies//ollama:pkg"],
 )
 
 app_test(

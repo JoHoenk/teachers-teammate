@@ -29,6 +29,7 @@ from teachers_teammate.domain.proofreading.edit_agreement import (
     edits,
     match_edits,
     ordered_edits,
+    score_sets,
 )
 from teachers_teammate.domain.proofreading.marks import added_marks, strip_added_marks
 from teachers_teammate.domain.proofreading.review import (
@@ -48,7 +49,7 @@ from ..metrics.item_scores import item_scores
 from ..metrics.offsets import char_span_to_tokens
 from ..metrics.quality import unchanged_sentences
 
-SCORER_VERSION = 4
+SCORER_VERSION = 5
 """Version of the numbers :func:`score` returns.  Bumped by hand, pinned by golden numbers."""
 
 
@@ -451,16 +452,7 @@ def _edit_score(
     made = edits(source, output) if made is None else made
     expected = edits(source, reference) if expected is None else expected
     if not options.accepted or not record.accepted:
-        hits = len(made & expected)
-        return (
-            EditScore(
-                true_positives=hits,
-                false_positives=len(made) - hits,
-                found=hits,
-                false_negatives=len(expected) - hits,
-            ),
-            0,
-        )
+        return score_sets(source, made=made, expected=expected), 0
     return apply_alternatives(
         source,
         made=made,

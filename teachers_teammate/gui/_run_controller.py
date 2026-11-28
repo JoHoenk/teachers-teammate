@@ -321,19 +321,24 @@ class RunController(QObject):
         The estimate is read from the store on this thread (a small file); the page counts open
         PDFs, so they are counted in the background and the figure is redrawn when they arrive.
         """
-        self._session.start_pace(self._estimate_per_page(config), len(files))
+        first, further = self._estimate_per_page(config)
+        self._session.start_pace(first, len(files), further)
         if not files:
             return
         service = self._services
         self._pages_task.submit(lambda: service.run.page_counts(files), self._on_pages_known)
 
-    def _estimate_per_page(self, config: Config) -> TimeRange | None:
-        """Return how long one page takes on this computer, or ``None`` when nothing is known."""
+    def _estimate_per_page(self, config: Config) -> tuple[TimeRange | None, TimeRange | None]:
+        """Return how long a file's first page and each further page take on this computer.
+
+        ``(None, None)`` when nothing is known.
+        """
         try:
             choices = self._services.speeds.choices_for_config(config)
-            return self._services.speeds.speed_summary(choices).per_page
+            summary = self._services.speeds.speed_summary(choices)
         except Exception:  # noqa: BLE001  # an estimate must never keep a run from starting
-            return None
+            return None, None
+        return summary.per_page, summary.further_page
 
     def _on_pages_known(self, result: object, error: BaseException | None) -> None:
         """Take the page counts of the run's files and redraw the time left."""

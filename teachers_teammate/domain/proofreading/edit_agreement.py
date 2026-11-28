@@ -13,6 +13,10 @@ both count the same things, so they count them here:
 * **Positions** — the token indices of the diff turned into character offsets, the form a stored
   position takes.
 
+Two changes are the same change where they stand in words and in the words and marks they put
+there (:func:`change_key`), never in the whitespace around them: a comma inserted before a space
+and the same comma inserted after it are one change, and so are ``" of"`` and ``"of "``.
+
 Agreement is reported as precision, recall and the F-beta score.  F0.5 (``beta=0.5``) weights
 precision twice as much as recall: a wrong correction in a teacher's text costs more than a missed
 one, because the teacher has to notice and undo it.
@@ -71,6 +75,31 @@ def ordered_edits(source: str, other: str) -> tuple[Edit, ...]:
         (start, end, tuple(other_tokens[from_:to]))
         for tag, start, end, from_, to in text_opcodes(source, other)
         if tag != "equal"
+    )
+
+
+ChangeKey = tuple[int, int, tuple[str, ...]]
+"""A change as the agreement compares it: its span in words and the words it puts there."""
+
+
+def change_key(edit: Edit, positions: Sequence[int]) -> ChangeKey:
+    """Return the form in which the agreement compares *edit*.
+
+    The span is read through :func:`word_positions`, so an insertion before a space and the same
+    insertion after it are one place, and the replacement leaves the whitespace tokens out, so
+    ``" of"`` and ``"of "`` are one wording.  Two texts that fixed one place in the same words
+    therefore agree however they laid out the spaces between them.
+
+    Args:
+        edit: The change: token indices into the source and the tokens that replace them.
+        positions: The word position of every token boundary of the source, from
+            :func:`word_positions`.
+    """
+    start, end, replacement = edit
+    return (
+        positions[start],
+        positions[end],
+        tuple(token for token in replacement if token.strip()),
     )
 
 
@@ -155,6 +184,29 @@ class EditScore:
         return (1 + squared) * self.precision * self.recall / weighted
 
 
+def score_sets(source: str, *, made: AbstractSet[Edit], expected: AbstractSet[Edit]) -> EditScore:
+    """Return the agreement of two sets of changes of *source*, compared as :func:`change_key`.
+
+    Args:
+        source: The text both sets of changes are changes of.
+        made: The changes of one text.
+        expected: The changes of the other.
+
+    Returns:
+        The :class:`EditScore` of *made* against *expected*.
+    """
+    positions = word_positions(tokenize(source))
+    mine = {change_key(edit, positions) for edit in made}
+    theirs = {change_key(edit, positions) for edit in expected}
+    hits = len(mine & theirs)
+    return EditScore(
+        true_positives=hits,
+        false_positives=len(mine) - hits,
+        found=hits,
+        false_negatives=len(theirs) - hits,
+    )
+
+
 def score_edits(source: str, model_text: str, reference: str) -> EditScore:
     """Return the edit agreement of *model_text* with *reference*, both derived from *source*.
 
@@ -166,15 +218,7 @@ def score_edits(source: str, model_text: str, reference: str) -> EditScore:
     Returns:
         The :class:`EditScore` of the model's changes against the reference's.
     """
-    made = edits(source, model_text)
-    expected = edits(source, reference)
-    hits = len(made & expected)
-    return EditScore(
-        true_positives=hits,
-        false_positives=len(made) - hits,
-        found=hits,
-        false_negatives=len(expected) - hits,
-    )
+    return score_sets(source, made=edits(source, model_text), expected=edits(source, reference))
 
 
 def apply_alternatives(
@@ -204,25 +248,25 @@ def apply_alternatives(
         The score, and how many of the alternatives the answer made that the reference does not.
     """
     positions = word_positions(tokenize(source))
-
-    def span(edit: Edit) -> Span:
-        return positions[edit[0]], positions[edit[1]]
-
-    taken = made & alternatives
-    true_positives = len(made & (expected | alternatives))
+    mine = {change_key(edit, positions) for edit in made}
+    theirs = {change_key(edit, positions) for edit in expected}
+    accepted = {change_key(edit, positions) for edit in alternatives}
+    taken = mine & accepted
+    true_positives = len(mine & (theirs | accepted))
     found = sum(
         1
-        for edit in expected
-        if edit in made or any(spans_touch(span(edit), span(other)) for other in taken)
+        for key in theirs
+        if key in mine
+        or any(spans_touch((key[0], key[1]), (other[0], other[1])) for other in taken)
     )
     return (
         EditScore(
             true_positives=true_positives,
-            false_positives=len(made) - true_positives,
+            false_positives=len(mine) - true_positives,
             found=found,
-            false_negatives=len(expected) - found,
+            false_negatives=len(theirs) - found,
         ),
-        len(taken - expected),
+        len(taken - theirs),
     )
 
 
@@ -322,7 +366,7 @@ class EditMatch:
     """The reference change: tokens ``start`` to ``end`` of the source and their replacement."""
 
     exact: bool
-    """The model made this very change (same words, same replacement)."""
+    """The model made this very change: the same place in words and the same words."""
 
     located: bool
     """The model changed at least some of the same words, with the same or another replacement."""
@@ -354,16 +398,17 @@ def match_edits(
     positions = word_positions(tokenize(source))
     made = edits(source, model_text) if made is None else made
     expected = edits(source, reference) if expected is None else expected
+    made_keys = {change_key(edit, positions) for edit in made}
     made_spans = [(positions[start], positions[end]) for start, end, _ in made]
     matches = []
     for edit in sorted(expected):
-        span = (positions[edit[0]], positions[edit[1]])
-        exact = edit in made
+        key = change_key(edit, positions)
+        exact = key in made_keys
         matches.append(
             EditMatch(
                 edit=edit,
                 exact=exact,
-                located=exact or any(spans_touch(span, other) for other in made_spans),
+                located=exact or any(spans_touch((key[0], key[1]), other) for other in made_spans),
             )
         )
     return matches

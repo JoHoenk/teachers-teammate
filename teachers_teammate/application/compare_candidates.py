@@ -15,7 +15,6 @@ import dataclasses
 from ..config import Config
 from ..domain.data_location import PROVIDER_OLLAMA
 from ..domain.model_fit import Suitability, suitability_rank
-from ..domain.performance_estimate import TYPICAL_PAGE_WORDS, TimeRange
 from .model_comparison import Candidate, CompareSource
 from .ports import CompareResults, ModelAdvice, PageTimes, ProviderCatalogue
 
@@ -75,14 +74,18 @@ class ComparisonCandidates:
         # teacher downloaded for this.  Only a model it knows reads alone is left out.
         writing = [rating for rating in ratings if rating.suitability is not Suitability.WRONG_KIND]
         times = self._speeds.page_times(
-            [rating.tag for rating in writing], "general", url, hardware=detection
+            [rating.tag for rating in writing],
+            "general",
+            url,
+            hardware=detection,
+            words=source.words,
         )
         return [
             dataclasses.replace(
                 self._candidate(config, source, PROVIDER_OLLAMA, rating.tag),
                 suitability=rating.suitability,
                 very_slow=rating.very_slow,
-                estimated=_for_words(times.get(rating.tag), source.words),
+                estimated=times.get(rating.tag),
             )
             for rating in writing
         ]
@@ -129,10 +132,3 @@ class ComparisonCandidates:
             done=own or self._store.load(source.text_sha, key) is not None,
             own=own,
         )
-
-
-def _for_words(per_page: TimeRange | None, words: int) -> TimeRange | None:
-    """Return *per_page* scaled to a text of *words* words, or ``None`` without a measurement."""
-    if per_page is None:
-        return None
-    return per_page.scaled(words / TYPICAL_PAGE_WORDS if words else 0.0)

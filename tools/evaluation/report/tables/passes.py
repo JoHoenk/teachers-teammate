@@ -17,8 +17,14 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from teachers_teammate.domain.proofreading.edit_agreement import EditScore, edits
-from teachers_teammate.domain.proofreading.word_diff import Edit
+from teachers_teammate.domain.proofreading.edit_agreement import (
+    ChangeKey,
+    EditScore,
+    change_key,
+    edits,
+    word_positions,
+)
+from teachers_teammate.domain.proofreading.word_diff import tokenize
 
 from ...core.constants import TextKind
 from ...core.performance import step_one_share
@@ -27,8 +33,8 @@ from .. import groups
 DECIDING_LANGUAGES: tuple[str, ...] = groups.DECIDING_LANGUAGES
 """The languages the figures are pooled over; French is reported only."""
 
-Edits = frozenset[Edit]
-"""The changes of one text: ``(start, end, replacement)`` over the source tokens."""
+Edits = frozenset[ChangeKey]
+"""The changes of one text, as the agreement compares them (see ``change_key``)."""
 
 EXCHANGE_MODE = "text-first"
 """The label of the whole exchange, whose step ① share prices a second pass."""
@@ -137,7 +143,7 @@ def _passes(group: groups.RunGroup) -> dict[str, list[Edits]]:
         for item in items:
             if item.language not in DECIDING_LANGUAGES or item.kind != TextKind.ERRORS:
                 continue
-            made[item.item] = edits(item.record.source, item.output)
+            made[item.item] = _compared(item.record.source, item.output)
         per_repeat.append(made)
     expected = set(per_repeat[0])
     for number, made in enumerate(per_repeat, start=1):
@@ -156,8 +162,18 @@ def _references(group: groups.RunGroup) -> dict[str, Edits]:
         for item in items:
             if item.language not in DECIDING_LANGUAGES or item.kind != TextKind.ERRORS:
                 continue
-            references.setdefault(item.item, edits(item.record.source, item.record.reference))
+            references.setdefault(item.item, _compared(item.record.source, item.record.reference))
     return references
+
+
+def _compared(source: str, other: str) -> Edits:
+    """Return the changes that turn *source* into *other*, as the agreement compares them.
+
+    Two passes that fixed one place in the same words agree however they laid out the spaces
+    between them, so the votes and the pooled counts read the same form ``score_edits`` reads.
+    """
+    positions = word_positions(tokenize(source))
+    return frozenset(change_key(edit, positions) for edit in edits(source, other))
 
 
 def _one_pass(passes: dict[str, list[Edits]], index: int) -> dict[str, Edits]:

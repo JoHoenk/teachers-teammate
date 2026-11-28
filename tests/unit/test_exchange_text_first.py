@@ -656,7 +656,7 @@ def test_the_cost_model_names_the_three_steps() -> None:
     cost = TextFirstExchange(FakePort()).cost_model()
 
     assert set(cost.requests_per_page) == {"correct", "explain", "unclear"}
-    assert set(cost.answer_tokens_per_100_words) == {"correct", "explain", "unclear"}
+    assert set(cost.answers) == {"correct", "explain", "unclear"}
 
 
 def test_an_empty_correction_fails_the_file() -> None:

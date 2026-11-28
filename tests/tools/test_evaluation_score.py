@@ -123,7 +123,7 @@ def test_the_scorer_is_versioned() -> None:
     When   its version is read
     Then   it is the version the golden numbers of these tests were written for
     """
-    assert SCORER_VERSION == 4
+    assert SCORER_VERSION == 5
 
 
 # ── the numbers are pinned ───────────────────────────────────────────────────
@@ -667,6 +667,21 @@ def test_a_text_without_a_review_has_no_category_agreement() -> None:
     result = category_agreement(SOURCE, OUTPUT, REFERENCE, None, labels)
 
     assert (result.checked, result.agreed) == (0, 0)
+
+
+def test_an_answer_that_writes_the_same_fix_with_other_spacing_is_a_hit() -> None:
+    """
+    Given  a reference that inserts a comma before a space and an answer that inserts it after
+    When   the answer is scored
+    Then   it is one true positive and the reference's change is found, because the words agree
+    """
+    record = _record(source="Ja das ist gut", reference="Ja, das ist gut")
+    answer = _answer(output="Ja , das ist gut")
+
+    scored = score_row(answer, record, _run())
+
+    assert (scored.true_positives, scored.false_positives) == (1, 0)
+    assert (scored.found, scored.false_negatives) == (1, 0)
 
 
 # ── the numbers a report reads ──────────────────────────────────────────────

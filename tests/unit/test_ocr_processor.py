@@ -9,7 +9,7 @@ import pytest
 
 from teachers_teammate.exceptions import OCRError
 from teachers_teammate.domain.ocr_prompt import get_ocr_prompt
-from teachers_teammate.infrastructure.ocr_processor import OllamaOCRProcessor, _encode_image
+from teachers_teammate.infrastructure.ocr_processor import OllamaOCRProcessor, encode_image
 from teachers_teammate.infrastructure.ollama_client import OllamaClient
 
 
@@ -19,29 +19,29 @@ def _make_ollama_proc(
     return OllamaOCRProcessor(model_name=model, client=OllamaClient(url), timeout=timeout)
 
 
-# ── _encode_image ──────────────────────────────────────────────────────────
+# ── encode_image ──────────────────────────────────────────────────────────
 
 
-def test_encode_image_returns_non_empty_string(sample_png: Path) -> None:
+def testencode_image_returns_non_empty_string(sample_png: Path) -> None:
     """
     Given  a valid PNG file
-    When   _encode_image() is called
+    When   encode_image() is called
     Then   a non-empty string is returned
     """
-    result = _encode_image(sample_png)
+    result = encode_image(sample_png)
     assert isinstance(result, str)
     assert len(result) > 0
 
 
-def test_encode_image_returns_valid_base64(sample_png: Path) -> None:
+def testencode_image_returns_valid_base64(sample_png: Path) -> None:
     """
     Given  a valid PNG file
-    When   _encode_image() is called and the result is base64-decoded
+    When   encode_image() is called and the result is base64-decoded
     Then   the decoded bytes are non-empty (confirming valid base64 encoding)
     """
     import base64  # noqa: PLC0415
 
-    result = _encode_image(sample_png)
+    result = encode_image(sample_png)
     # Should not raise
     decoded = base64.b64decode(result)
     assert len(decoded) > 0

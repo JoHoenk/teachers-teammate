@@ -43,19 +43,23 @@ class OllamaOCRProcessor(OCRProcessor):
         Raises:
             :exc:`~teachers_teammate.exceptions.OCRError`: on failure.
         """
-        b64 = _encode_image(image_path)
-        prompt = get_ocr_prompt(language)
         return self._client.chat(
             self._model,
-            prompt,
-            images=[b64],
-            options={"temperature": self._temperature, "num_predict": OCR_ANSWER_TOKENS},
+            get_ocr_prompt(language),
+            images=[encode_image(image_path)],
+            options=ocr_options(self._temperature),
             timeout=self._timeout,
             # The page limit is deliberate: a page that runs into it keeps the text read so far.
             allow_truncated=True,
         )
 
 
-def _encode_image(image_path: Path) -> str:
+def ocr_options(temperature: float) -> dict[str, float | int]:
+    """Return the options a page's OCR request carries: its temperature and its token limit."""
+    return {"temperature": temperature, "num_predict": OCR_ANSWER_TOKENS}
+
+
+def encode_image(image_path: Path) -> str:
+    """Return the page image at *image_path* as an OCR request carries it: base64 text."""
     with image_path.open("rb") as fh:
         return base64.b64encode(fh.read()).decode("utf-8")

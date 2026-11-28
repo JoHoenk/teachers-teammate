@@ -35,6 +35,7 @@ BINARIES: dict[str, tuple[str, ...]] = {
     ),
     "tools/verify_model_catalog": (),
     "tools/evaluation/gpu_agent": (),
+    "tools/ocr_eval/cli": ("run", "report", "validate", "screen"),
 }
 """Every tool binary, and the subcommands it has; a tool without subcommands has an empty tuple."""
 

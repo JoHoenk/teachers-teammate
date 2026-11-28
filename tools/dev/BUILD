@@ -59,6 +59,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         "//teachers_teammate:application_lib",
+        "//tools/ocr_eval:pages",
         "@ocr_test_dependencies//numpy:pkg",
         "@ocr_test_dependencies//opencv_python_headless:pkg",
         "@ocr_test_dependencies//pillow:pkg",
@@ -78,7 +79,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         "//teachers_teammate:application_lib",
-        "//tools/dev:page_lines",
+        "//tools/ocr_eval:pages",
         "@ocr_test_dependencies//numpy:pkg",
         "@ocr_test_dependencies//opencv_python_headless:pkg",
         "@ocr_test_dependencies//pillow:pkg",
@@ -106,6 +107,7 @@ py_library(
     deps = [
         "//teachers_teammate:application_lib",
         "//tools/evaluation:core",
+        "//tools/ocr_eval:pages",
         "@ocr_test_dependencies//numpy:pkg",
         "@ocr_test_dependencies//opencv_python_headless:pkg",
         "@ocr_test_dependencies//pillow:pkg",

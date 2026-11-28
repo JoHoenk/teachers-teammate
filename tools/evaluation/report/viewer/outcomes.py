@@ -33,6 +33,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from teachers_teammate.domain.proofreading.edit_agreement import (
+    ChangeKey,
+    change_key,
     char_to_token,
     edits,
     ordered_edits,
@@ -134,20 +136,24 @@ class Outcomes:
         )
 
 
-def edits_by_label(source: str, labels: Sequence[ReferenceLabel]) -> dict[Edit, ReferenceLabel]:
-    """Return the reference's changes keyed by the token edit each label names.
+def edits_by_label(
+    source: str, labels: Sequence[ReferenceLabel]
+) -> dict[ChangeKey, ReferenceLabel]:
+    """Return the reference's changes keyed by the change each label names.
 
-    A label stores character offsets and its replacement as text, while the scoring's edits are
-    token indices and replacement tokens, so the two are converted here, once.  A label whose span
-    does not lie on token boundaries names no edit and is left out.
+    A label stores character offsets and its replacement as text, while the scoring's changes are
+    token indices and replacement tokens, so the two are converted here, once, into the form the
+    agreement compares (:func:`~teachers_teammate.domain.proofreading.edit_agreement.change_key`).
+    A label whose span does not lie on token boundaries names no change and is left out.
     """
-    found: dict[Edit, ReferenceLabel] = {}
+    positions = word_positions(tokenize(source))
+    found: dict[ChangeKey, ReferenceLabel] = {}
     for label in labels:
         start = char_to_token(source, label.start)
         end = char_to_token(source, label.end)
         if start is None or end is None:
             continue
-        found[(start, end, tuple(tokenize(label.replacement)))] = label
+        found[change_key((start, end, tuple(tokenize(label.replacement))), positions)] = label
     return found
 
 
@@ -163,9 +169,10 @@ def reference_edits(
     if not reference.strip():
         return ()
     by_edit = edits_by_label(source, labels)
+    positions = word_positions(tokenize(source))
     found: list[tuple[Edit, str, str]] = []
     for edit in sorted(edits(source, reference)):
-        label = by_edit.get(edit)
+        label = by_edit.get(change_key(edit, positions))
         found.append((edit, label.code if label else "", label.category if label else ""))
     return tuple(found)
 
@@ -216,10 +223,10 @@ def outcomes(
     """
     positions = word_positions(tokenize(source))
     expected = reference_edits(source, reference, labels)
-    expected_set = {edit for edit, _, _ in expected}
+    expected_set = {change_key(edit, positions) for edit, _, _ in expected}
     expected_spans = [_words(positions, edit) for edit, _, _ in expected]
     made = ordered_edits(source, corrected)
-    made_set = set(made)
+    made_set = {change_key(edit, positions) for edit in made}
     made_spans = [_words(positions, edit) for edit in made]
     notes, orphans = _notes(changes)
     edits: list[ModelEdit] = []
@@ -238,7 +245,9 @@ def outcomes(
                 category=category,
                 explanation=explanation,
                 outcome=(
-                    EXACT if edit in expected_set else (LOCATED if touched is not None else EXTRA)
+                    EXACT
+                    if change_key(edit, positions) in expected_set
+                    else (LOCATED if touched is not None else EXTRA)
                 ),
                 ref=touched,
                 row=row_of(rows, start, end),
@@ -254,7 +263,7 @@ def outcomes(
             category=category,
             outcome=(
                 FIXED
-                if edit in made_set
+                if change_key(edit, positions) in made_set
                 else (LOCATED if any(spans_touch(span, other) for other in made_spans) else MISSED)
             ),
             row=row_of(rows, edit[0], edit[1]),

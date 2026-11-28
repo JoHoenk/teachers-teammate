@@ -23,7 +23,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 import re
 
-from teachers_teammate.domain.proofreading.edit_agreement import edits, spans_touch, word_positions
+from teachers_teammate.domain.proofreading.edit_agreement import (
+    change_key,
+    edits,
+    spans_touch,
+    word_positions,
+)
 from teachers_teammate.domain.proofreading.word_diff import text_offsets, tokenize
 
 from ...core.constants import TextKind
@@ -149,12 +154,13 @@ def classify(item: TextItem) -> list[FalseAlarm]:
     reference = edits(source, item.record.reference)
     tokens = tokenize(source)
     positions = word_positions(tokens)
+    reference_words = {change_key(edit, positions) for edit in reference}
     reference_spans = [(positions[start], positions[end]) for start, end, _ in reference]
     offsets = text_offsets(source)
     unchanged = set(item.record.unchanged_sentences)
     found: list[FalseAlarm] = []
     for edit in sorted(edits(source, item.output)):
-        if edit in reference:
+        if change_key(edit, positions) in reference_words:
             continue
         start, end, replacement = edit
         span = (positions[start], positions[end])

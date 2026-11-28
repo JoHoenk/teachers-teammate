@@ -130,6 +130,40 @@ def test_shared_and_alone_count_the_other_versions() -> None:
     assert (llama.changes, llama.shared, llama.alone) == (1, 1, 0)
 
 
+def test_the_same_insertion_either_side_of_a_space_is_one_change() -> None:
+    """
+    Given  two versions that insert the same comma, one before the space and one after it
+    When   the comparison is made
+    Then   it is one site with one option, shared by both
+    """
+    comparison = compare(
+        "Ja das ist gut",
+        (Version("before", "Ja, das ist gut"), Version("after", "Ja , das ist gut")),
+    )
+    before, after = comparison.versions
+
+    assert (before.changes, before.shared) == (1, 1)
+    assert (after.changes, after.shared) == (1, 1)
+    assert len(comparison.sites) == 1
+    assert len(comparison.sites[0].options) == 1
+
+
+def test_a_change_written_either_side_of_a_space_is_in_every_run() -> None:
+    """
+    Given  a version whose second answer inserts the comma on the other side of the space
+    When   its runs are counted
+    Then   the change is in both of them, so none of its changes was made once
+    """
+    comparison = compare(
+        "Ja das ist gut",
+        (Version("a", "Ja, das ist gut", repeats=("Ja , das ist gut",)),),
+    )
+
+    figures = comparison.versions[0]
+
+    assert (figures.in_every_run, figures.once) == (1, 0)
+
+
 def test_the_explanation_of_an_option_belongs_to_the_version_that_made_it() -> None:
     """
     Given  two versions that fix "macht" differently, one of them without a review

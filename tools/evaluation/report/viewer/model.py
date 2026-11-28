@@ -24,8 +24,10 @@ from typing import Any
 
 from teachers_teammate.domain.proofreading.edit_agreement import (
     DEFAULT_BETA,
+    change_key,
     ordered_edits,
     token_spans,
+    word_positions,
 )
 from teachers_teammate.domain.proofreading.sentences import SentenceRow, row_of, sentence_rows
 from teachers_teammate.domain.proofreading.word_diff import tokenize
@@ -408,6 +410,7 @@ def _texts(loaded: Loaded, by_text: Mapping[str, Sequence[LoadedItem]]) -> dict[
                 len(tokens),
             )
             by_edit = outcomes.edits_by_label(record.source, record.labels)
+            positions = word_positions(tokens)
             ref_edits = tuple(
                 RefEdit(
                     index=index,
@@ -416,7 +419,11 @@ def _texts(loaded: Loaded, by_text: Mapping[str, Sequence[LoadedItem]]) -> dict[
                     text="".join(edit[2]),
                     code=code,
                     category=category,
-                    main_type=by_edit[edit].main_type if edit in by_edit else UNLABELLED,
+                    main_type=(
+                        by_edit[change_key(edit, positions)].main_type
+                        if change_key(edit, positions) in by_edit
+                        else UNLABELLED
+                    ),
                     row=row_of(rows, edit[0], edit[1]),
                 )
                 for index, (edit, code, category) in enumerate(reference_changes)

@@ -7,6 +7,7 @@ import pytest
 from teachers_teammate.domain.proofreading.edit_agreement import (
     EditScore,
     apply_alternatives,
+    change_key,
     char_edits,
     char_to_token,
     edits,
@@ -198,6 +199,54 @@ def test_an_answer_that_leaves_the_words_alone_locates_nothing() -> None:
     match = match_edits(SOURCE, "Gestern hat sie ins Theater gegangen.", CORRECTED)[0]
 
     assert (match.exact, match.located) == (False, False)
+
+
+def test_a_change_is_compared_by_its_place_in_words_and_its_words() -> None:
+    """
+    Given  a change that inserts a word at the end of the source, before its own space
+    When   it is read in the form the agreement compares
+    Then   its span counts words and its replacement holds no whitespace
+    """
+    positions = word_positions(tokenize("Das ist gut"))
+
+    start, end, words = change_key((5, 5, ("sehr", " ")), positions)
+
+    assert (start, end) == (3, 3)
+    assert words == ("sehr",)
+
+
+def test_an_insertion_either_side_of_a_space_is_the_same_change() -> None:
+    """
+    Given  a reference that inserts a comma before a space and an answer that inserts it after
+    When   their agreement is scored
+    Then   it is one hit and no miss, because they are one place in the words
+    """
+    score = score_edits("Ja das ist gut", "Ja , das ist gut", "Ja, das ist gut")
+
+    assert score == EditScore(true_positives=1, false_positives=0, found=1, false_negatives=0)
+
+
+def test_a_replacement_that_differs_only_in_whitespace_is_the_same_change() -> None:
+    """
+    Given  a reference that writes its insertion with one space and an answer with two
+    When   their agreement is scored
+    Then   the whitespace is not counted, so the answer made the change
+    """
+    score = score_edits("Das ist gut", "Das ist  sehr gut", "Das ist sehr gut")
+
+    assert (score.true_positives, score.false_positives) == (1, 0)
+    assert (score.found, score.false_negatives) == (1, 0)
+
+
+def test_a_change_is_exact_however_the_spaces_fell() -> None:
+    """
+    Given  an answer that fixes the reference's place with its own spacing
+    When   the reference's changes are matched
+    Then   the change is exact, not merely located
+    """
+    match = match_edits("Ja das ist gut", "Ja , das ist gut", "Ja, das ist gut")[0]
+
+    assert (match.exact, match.located) == (True, True)
 
 
 def test_a_whitespace_token_does_not_move_a_word_position() -> None:

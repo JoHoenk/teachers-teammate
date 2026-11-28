@@ -762,7 +762,7 @@ def test_a_correct_text_is_left_out_of_the_false_alarm_tally(store):
     assert found["gemma4:12b"]["de"].texts == 12
     assert found["gemma4:12b"]["en"].texts == 6
     assert found["gemma4:12b"]["de"].total == 0
-    assert found["qwen3:8b"]["de"].total == 12
+    assert found["qwen3:8b"]["de"].total == 6
 
 
 def test_the_false_alarm_table_prints_one_table_per_language(store):
@@ -776,7 +776,7 @@ def test_the_false_alarm_table_prints_one_table_per_language(store):
     assert "### German: false alarms per error text" in table
     assert "### English: false alarms per error text" in table
     assert "| `gemma4:12b` | 12 | 0.0 |" in table
-    assert "| `qwen3:8b` | 12 | 1.0 |" in table
+    assert "| `qwen3:8b` | 12 | 0.5 |" in table
 
 
 # ── the performance ─────────────────────────────────────────────────────────

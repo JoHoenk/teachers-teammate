@@ -303,6 +303,7 @@ jobs:
 
       - name: Record that the installer is uploaded
         id: packaged
+        shell: bash
         run: echo "done=true" >> "$GITHUB_OUTPUT"
 
       # ── The app walkthrough ──────────────────────────────────────────────

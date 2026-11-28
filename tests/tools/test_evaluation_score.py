@@ -123,7 +123,7 @@ def test_the_scorer_is_versioned() -> None:
     When   its version is read
     Then   it is the version the golden numbers of these tests were written for
     """
-    assert SCORER_VERSION == 5
+    assert SCORER_VERSION == 6
 
 
 # ── the numbers are pinned ───────────────────────────────────────────────────
@@ -182,8 +182,25 @@ def test_the_numbers_are_pinned() -> None:
         "gleu_src_m2": 0,
         "gleu_src_m3": 0,
         "gleu_src_m4": 0,
+        "lenient_tp": 3,
     }
     assert (scored.true_positives, scored.false_positives, scored.false_negatives) == (3, 0, 0)
+
+
+def test_a_change_at_the_references_place_in_other_words_is_right_only_leniently() -> None:
+    """
+    Given  an answer that fixes the reference's word with another word, and changes a correct word
+    When   it is scored
+    Then   the exact counts call both changes wrong, and the lenient count takes the first as right
+           because it touches the reference change; the second touches none and stays wrong
+    """
+    record = _record(source="Er gehen gern heim.", reference="Er geht gern heim.")
+    answer = _answer(output="Er ging gern nach Hause.")
+
+    scored = score_row(answer, record, _run())
+
+    assert (scored.true_positives, scored.false_positives) == (0, 2)
+    assert scored.scores["lenient_tp"] == 1
 
 
 def test_the_explanations_are_pinned() -> None:

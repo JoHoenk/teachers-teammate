@@ -23,6 +23,7 @@ from typing import Any
 from teachers_teammate.domain.proofreading.edit_agreement import (
     EditScore,
     apply_alternatives,
+    change_key,
     char_edits,
     char_to_token,
     count_explained,
@@ -30,6 +31,8 @@ from teachers_teammate.domain.proofreading.edit_agreement import (
     match_edits,
     ordered_edits,
     score_sets,
+    spans_touch,
+    word_positions,
 )
 from teachers_teammate.domain.proofreading.marks import added_marks, strip_added_marks
 from teachers_teammate.domain.proofreading.review import (
@@ -49,8 +52,11 @@ from ..metrics.item_scores import item_scores
 from ..metrics.offsets import char_span_to_tokens
 from ..metrics.quality import unchanged_sentences
 
-SCORER_VERSION = 5
+SCORER_VERSION = 6
 """Version of the numbers :func:`score` returns.  Bumped by hand, pinned by golden numbers."""
+
+LENIENT_TRUE_POSITIVES = "lenient_tp"
+"""The item score of the answer's changes the lenient precision counts as right."""
 
 
 @dataclass(frozen=True)
@@ -389,6 +395,9 @@ def score_row(
     edit_score, accepted = _edit_score(
         source, output, reference, record, chosen, made=made, expected=expected
     )
+    alternatives = (
+        _alternatives(source, record) if chosen.accepted and record.accepted else frozenset()
+    )
     return Scored(
         explanations_known=known,
         true_positives=edit_score.true_positives,
@@ -413,6 +422,7 @@ def score_row(
                 made=made,
                 expected=expected,
             ),
+            LENIENT_TRUE_POSITIVES: _lenient_true_positives(source, made, expected, alternatives),
             **left_out,
         },
     )
@@ -458,6 +468,28 @@ def _edit_score(
         made=made,
         expected=expected,
         alternatives=_alternatives(source, record),
+    )
+
+
+def _lenient_true_positives(
+    source: str,
+    made: AbstractSet[Edit],
+    expected: AbstractSet[Edit],
+    alternatives: AbstractSet[Edit],
+) -> int:
+    """Return the answer's changes that touch a reference change or are an accepted alternative.
+
+    The lenient precision's numerator: a change at the place the reference changes, in other
+    words, counts as right.  One annotator's version misses valid alternatives, so the exact
+    figure counts them as wrong; this one is printed beside it as a check.
+    """
+    positions = word_positions(tokenize(source))
+    wanted = [change_key(edit, positions)[:2] for edit in expected]
+    return sum(
+        1
+        for edit in made
+        if edit in alternatives
+        or any(spans_touch(change_key(edit, positions)[:2], span) for span in wanted)
     )
 
 
@@ -527,6 +559,7 @@ def notes_of(
 
 
 __all__ = [
+    "LENIENT_TRUE_POSITIVES",
     "SCORERS",
     "SCORER_VERSION",
     "CategoryAgreement",

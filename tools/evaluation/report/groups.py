@@ -385,6 +385,16 @@ def deciding_mean_f_beta(summaries: Sequence[summary.ModelSummary]) -> float | N
     return sum(values) / len(values) if values else None
 
 
+def deciding_mean_lenient_f_beta(summaries: Sequence[summary.ModelSummary]) -> float | None:
+    """Return the mean lenient F0.5 over the deciding languages that have one, or ``None``."""
+    values = [
+        value
+        for row in deciding_rows(summaries).values()
+        if (value := row.lenient_f_beta()) is not None
+    ]
+    return sum(values) / len(values) if values else None
+
+
 def deciding_mean_gleu(summaries: Sequence[summary.ModelSummary]) -> float | None:
     """Return the mean GLEU over the deciding languages that have one, or ``None``."""
     return pooled.mean_gleu({code: row.gleu for code, row in deciding_rows(summaries).items()})
@@ -433,6 +443,7 @@ __all__ = [
     "comparable",
     "deciding_mean_f_beta",
     "deciding_mean_gleu",
+    "deciding_mean_lenient_f_beta",
     "deciding_rows",
     "groups",
     "language_row",

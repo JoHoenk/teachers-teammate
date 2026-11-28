@@ -252,6 +252,34 @@ def test_the_model_table_prints_one_row_per_language(tmp_path):
     assert "French is reported only" in table
 
 
+def test_the_lenient_score_counts_a_change_at_the_references_place(tmp_path):
+    """
+    Given  a summary whose model changed three places, one exactly as the reference and one at a
+           reference change in other words, out of two reference changes
+    When   its lenient F0.5 is read and the model table is written
+    Then   precision counts two of three and recall both reference changes, and the table prints
+           the lenient figure next to the exact one and in the deciding mean
+    """
+    summaries = _summaries(tmp_path / "store")
+    row = replace(
+        summaries[0],
+        score=replace(summaries[0].score, true_positives=1, false_positives=2),
+        lenient_tp=2,
+        located=2,
+        ref_edits=2,
+    )
+
+    table = models.model_table([row])
+
+    precision, recall = 2 / 3, 1.0
+    assert row.lenient_f_beta() == pytest.approx(
+        1.25 * precision * recall / (0.25 * precision + recall)
+    )
+    assert "| F0.5 | F0.5 lenient |" in table
+    assert f"| {row.lenient_f_beta():.2f} |" in table
+    assert "(lenient " in table
+
+
 def test_a_language_without_a_score_shows_a_dash(tmp_path):
     """
     Given  a summary of a language whose texts scored nothing

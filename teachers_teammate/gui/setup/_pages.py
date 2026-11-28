@@ -63,7 +63,7 @@ from ...domain.stages import Stage
 from ...settings_schema import DEFAULTS, normalize_saved_ollama_url
 from ...texts import addons as addon_text
 from ...texts import review as txt
-from ...texts.models import compact_suitability_text
+from ...texts.models import compact_suitability_text, role_text
 from ...texts.privacy import short_place
 from ...texts.setup import (
     CLASSES_HANDWRITTEN,
@@ -199,8 +199,8 @@ def _fit_words(step: PlannedStep) -> str:
 
 
 def _choice_label(choice: ModelChoice) -> str:
-    """Return the label at the right of a model in the list: how it fits, and what it costs."""
-    fit = compact_suitability_text(
+    """Return the label at the right of a model in the list: its role or how it fits, and its cost."""
+    fit = role_text(choice.rating.role) or compact_suitability_text(
         choice.rating.suitability, "general", very_slow=choice.rating.very_slow
     )
     if choice.installed:

@@ -1,7 +1,7 @@
 # How the model recommendations are made
 
 The app recommends up to two writing models per computer type (no graphics card, about 8 GB,
-16 GB or more): **Best quality**, and **Fastest** where one is clearly faster. This page explains
+16 GB or more): **Best quality**, and **Faster** where a model is clearly quicker. This page explains
 the method; the rules and their numbers are in the code it names.
 
 Every record lives in the private repository `teachers-teammate-evals` (the `--store` of every
@@ -98,13 +98,13 @@ teacher accepts count as correct for every model.
   same sign and no loss beyond the noise on the held-out set, and wins beyond the noise on both sets
   pooled. A per-language gain counts for nothing on its own; both languages of both sets are read.
 
-Two roles per computer type, **Best quality** and **Fastest**, each held by an eligible model: it
+Two roles per computer type, **Best quality** and **Faster**, each held by an eligible model: it
 passes gate 1, gate 2 and the fit.
 
 - **Best quality** is the eligible model with the highest F0.5 among those whose page time on the
   tier's reference machine is within the limit of *Fit and speed*. A tie goes to the smaller model,
   then the faster one.
-- **Fastest** is the eligible model with the shortest page time, of those no more than a tenth of an
+- **Faster** is the eligible model with the shortest page time, of those no more than a tenth of an
   F0.5 point behind the quality model, and it has to be at least a quarter faster than that model.
   Otherwise the tier has none: a second name for the same wait helps nobody. The limits are
   `SPEED_ROLE_MAX_F05_GAP` and `SPEED_ROLE_FASTER_SHARE` in `domain/model_fit.py`.
@@ -113,6 +113,8 @@ A holder keeps its place unless a challenger is better beyond the noise; a place
 longer eligible goes to the next one by the rule above. A floor that every model, or the current
 holder, fails is reconsidered before use; the change and its reason go into the gate record. The
 roles are read by hand from `report table --tiers` and the model tables; no tool chooses them.
+They live in `WRITING_PICKS` in `domain/model_fit.py`; on a given computer `writing_picks()` drops
+a pick that is too large for its memory or runs very slowly there.
 
 ## How a recommended model is asked
 

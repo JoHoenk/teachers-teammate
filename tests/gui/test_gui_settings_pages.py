@@ -14,8 +14,13 @@ import pytest
 
 from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.install_item import InstallItem, InstallKind
-from teachers_teammate.domain.hardware_profile import HardwareProfileSetting, profile_setting
+from teachers_teammate.domain.hardware_profile import (
+    HardwareProfile,
+    HardwareProfileSetting,
+    profile_setting,
+)
 from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
+from teachers_teammate.domain.model_fit import RECOMMENDED
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.gui import _anonymizer_config_widget, _dialogs
@@ -2346,7 +2351,7 @@ def test_reading_model_shows_a_warning_hint(qtbot) -> None:
     hint = section._guidance._hint_lbl.text()
     assert hint.startswith("⚠")
     assert "reading model" in hint
-    assert DEFAULT_WRITING_MODEL in hint  # the BEST writing model on 8 GB
+    assert RECOMMENDED["general"][HardwareProfile.CARD_8GB][0] in hint  # the BEST one on 8 GB
     assert "cannot read scans" not in hint
     index = section._model.findText("qwen3-vl:8b")
     assert "Reading model only" in section._model.itemData(index, Qt.ItemDataRole.ToolTipRole)
@@ -2404,6 +2409,35 @@ def test_a_model_that_was_not_measured_shows_the_speed_it_is_expected_to_reach(q
 
     assert "ok (expected)" in label
     assert "Expected speed on this computer: ok." in tooltip
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_the_model_list_names_the_best_quality_and_the_faster_model(qtbot) -> None:
+    """
+    Given  the proofreading section on the 8gb profile, with the tier's two writing models
+           installed beside one of another tier
+    When   the model list is filled
+    Then   the quality model is marked "★ Best quality" and the speed model "Faster", and the
+           model of the other tier carries neither word
+    """
+    service = CatalogAppService(["gemma4:12b", "gemma4:e2b", "gemma4:e4b"])
+    section = _proofreading(
+        qtbot,
+        service,
+        {"correction_provider": "ollama", "correction_model": "gemma4:12b"},
+        hardware_profile="8gb",
+    )
+    qtbot.waitUntil(lambda: len(section._guidance._models) == 3, timeout=5000)
+
+    def label(tag: str) -> str:
+        index = section._model.findText(tag)
+        return section._model.itemData(index, ITEM_LABEL_ROLE) or ""
+
+    quality, speed = RECOMMENDED["general"][HardwareProfile.CARD_8GB]
+
+    assert label(quality).startswith("★ Best quality · ")
+    assert label(speed).startswith("Faster · ")
+    assert not label("gemma4:e4b").startswith(("★ Best quality", "Faster"))
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -2527,8 +2561,11 @@ def test_download_best_choice_asks_for_add_ons_and_hints_follow_the_profile(qtbo
     section._guidance._best_btn.click()
 
     assert received == [
-        ([InstallItem(InstallKind.OLLAMA, DEFAULT_WRITING_MODEL)], section.window())
-    ]  # best writing model, 8 GB
+        (
+            [InstallItem(InstallKind.OLLAMA, RECOMMENDED["general"][HardwareProfile.CARD_8GB][0])],
+            section.window(),
+        )
+    ]  # the BEST writing model, 8 GB
     section._hw_selector.set_setting(HardwareProfileSetting.CARD_16GB)
     assert section._hw_selector.setting() == "16gb"
     qtbot.waitUntil(lambda: section._guidance.active_profile() == "16gb", timeout=5000)

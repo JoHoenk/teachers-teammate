@@ -316,10 +316,10 @@ def test_the_card_budget_is_the_usable_share_of_the_nominal_card() -> None:
 def test_a_computer_without_a_card_runs_small_models_comfortably_and_others_very_slowly() -> None:
     """
     Given  a computer without a graphics card and 32 GB of main memory
-    When   a 5 GB model and a 9.5 GB model are rated
+    When   a 3.6 GB model and a 9.5 GB model are rated
     Then   the first works, the second is slow, very slowly (all of it runs on the processor)
     """
-    small = rate_model("gemma4:e4b", "general", HardwareProfile.CPU, system_memory_gb=32.0)
+    small = rate_model("gemma4:e2b", "general", HardwareProfile.CPU, system_memory_gb=32.0)
     large = rate_model("gemma4:12b", "general", HardwareProfile.CPU, system_memory_gb=32.0)
 
     assert small.suitability is Suitability.BEST  # also the recommendation

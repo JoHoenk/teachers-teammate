@@ -23,7 +23,7 @@ from ..domain.hardware_profile import (
     system_reserve_gb,
 )
 from ..domain.model_catalog import ModelCategory, ModelUses
-from ..domain.model_fit import Suitability
+from ..domain.model_fit import ModelRole, Suitability
 from .app import NAME
 from .review import REMOVE_PERSONAL_INFO
 from .settings import WHERE_AI_SETUP
@@ -248,6 +248,19 @@ def abilities_text(uses: ModelUses | None) -> str:
     if "ocr" in uses:
         return "Reads & writes"
     return "Writes only"
+
+
+#: What a tier's two writing picks are called beside a model's name, in place of how it fits:
+#: the one with the best quality, and the one that trades a little of it for a shorter wait.
+ROLE_LABELS: dict[ModelRole, str] = {
+    ModelRole.QUALITY: "★ Best quality",
+    ModelRole.SPEED: "Faster",
+}
+
+
+def role_text(role: ModelRole | None) -> str:
+    """Return the label of *role*, or ``""`` for a model that plays none on this computer."""
+    return ROLE_LABELS[role] if role else ""
 
 
 def memory_text(memory_gb: float) -> str:

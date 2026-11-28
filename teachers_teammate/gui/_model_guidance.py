@@ -37,6 +37,7 @@ from ..texts.models import (
     is_warning,
     memory_text,
     model_hint,
+    role_text,
     suitability_text,
 )
 from ._hardware_profile_selector import HardwareProfileSelector
@@ -226,7 +227,7 @@ class OllamaModelGuidance(QWidget):
             self._combo.setItemData(index, None, Qt.ItemDataRole.ForegroundRole)
             suggested = rating.suitability in (Suitability.BEST, Suitability.GOOD)
             label_color = _GREEN if suggested else None
-        label = compact_suitability_text(
+        label = role_text(rating.role) or compact_suitability_text(
             rating.suitability, self._category, very_slow=rating.very_slow
         )
         if rating.memory_gb is not None:

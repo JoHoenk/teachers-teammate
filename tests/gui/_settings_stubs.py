@@ -28,7 +28,7 @@ from teachers_teammate.domain.data_location import DataRegion, StageLocation
 from teachers_teammate.domain.install_item import InstallItem, InstallKind
 from teachers_teammate.domain.hardware_profile import HardwareDetection, HardwareProfile
 from teachers_teammate.domain.model_catalog import ModelCategory
-from teachers_teammate.domain.model_fit import best_model
+from teachers_teammate.domain.model_fit import ModelRole, best_model, writing_picks
 from teachers_teammate.domain.model_listing import ListedModel, ModelListing
 from teachers_teammate.domain.name_models import (
     FALLBACK_SPACY_MODEL,
@@ -455,6 +455,7 @@ class SetupAppService(DummyAppService):
                 [tag], task, facts.profile, answers.ollama_url
             )[0],
             best=lambda task: best_model(task, facts.profile),
+            faster=lambda task: writing_picks(facts.profile).get(ModelRole.SPEED),
             default_model=self.default_model_for_task,
         )
 

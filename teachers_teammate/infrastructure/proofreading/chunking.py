@@ -11,6 +11,8 @@ window and is left unwrapped, while the Ollama port asks for a fixed one.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from ...domain.formatted_text import TextFormat
 from ...domain.proofreading.result import CorrectionOutcome
 from ...domain.proofreading.review import CorrectionReview, fits, merge_reviews
@@ -100,7 +102,9 @@ class ChunkingCorrector(Corrector):
             outcome for outcome, chunk in zip(outcomes, chunks, strict=True) if chunk.text.strip()
         ]
         reviews = [outcome.review for outcome in answerable if outcome.review is not None]
-        merged, lost = _merged_review(outcomes, chunks, raw_text, text_format)
+        merged, lost = merged_review(
+            outcomes, [chunk.text for chunk in chunks], raw_text, text_format
+        )
         incomplete = lost or (bool(reviews) and len(reviews) < len(answerable))
         warning = join_warnings(
             *(outcome.warning for outcome in outcomes),
@@ -128,13 +132,14 @@ def _join_text(outcomes: list[CorrectionOutcome], chunks: tuple[Chunk, ...]) -> 
     )
 
 
-def _merged_review(
-    outcomes: list[CorrectionOutcome],
-    chunks: tuple[Chunk, ...],
+def merged_review(
+    outcomes: Sequence[CorrectionOutcome],
+    pieces: Sequence[str],
     raw_text: str,
     text_format: TextFormat,
 ) -> tuple[CorrectionReview | None, bool]:
-    """Return one review over the whole text, and whether a piece lost its review.
+    """Return one review over *raw_text* from the answers to its *pieces*, and whether a piece
+    lost its review.
 
     A piece's review is anchored in the plain text of that piece, so it is found in the plain
     text of the whole from a forward cursor and shifted there.  A piece whose plain text is not
@@ -145,10 +150,10 @@ def _merged_review(
     cursor = 0
     found: list[tuple[int, CorrectionReview]] = []
     lost = False
-    for outcome, chunk in zip(outcomes, chunks, strict=True):
-        if not chunk.text.strip():
+    for outcome, piece in zip(outcomes, pieces, strict=True):
+        if not piece.strip():
             continue
-        piece_plain = plain_text_of(chunk.text, text_format)
+        piece_plain = plain_text_of(piece, text_format)
         start = whole.find(piece_plain, cursor)
         if start >= 0:
             # Every piece moves the cursor, a piece without a review too: a later piece with the

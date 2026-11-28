@@ -28,6 +28,7 @@ class OCRWorker(QThread):
     Signals
     -------
     file_started(source_id, name, idx, total)
+    read_first(source_id, name, idx, total)
     stage_started(source_id, name, stage, idx, total)
     ocr_done(source_id, name, idx, total)
     file_done(FileDoneEvent)
@@ -40,6 +41,8 @@ class OCRWorker(QThread):
     """
 
     file_started = Signal(str, str, int, int)  # (source_id, name, idx, total)
+    # The reading pass, which reads the queue before anything is proofread, is on this file.
+    read_first = Signal(str, str, int, int)  # (source_id, name, idx, total)
     # stage is a ProgressStage; not emitted when the reading comes from the cache.
     stage_started = Signal(str, str, str, int, int)  # (source_id, name, stage, idx, total)
     ocr_done = Signal(str, str, int, int)  # (source_id, name, idx, total)
@@ -72,16 +75,22 @@ class OCRWorker(QThread):
             self.stop_event.set()
 
     def run(self) -> None:
-        # The pipeline's story goes to the log, where a run that stopped early can be read
-        # afterwards.
+        # The pipeline's story goes to the log, where a run that stopped can be read afterwards.
         reporter = LoggingReporter()
 
         # Per-file timing tracked via structured callbacks — no stdout parsing.
         file_start_times: dict[str, float] = {}
         ocr_done_times: dict[str, float] = {}
         file_indices: dict[str, tuple[int, int]] = {}  # source_id → (idx, total)
+        read_first = _ReadFirstClock()
+
+        def on_read_first(source_id: str, name: str, idx: int, total: int) -> None:
+            read_first.start(source_id, time.monotonic())
+            file_indices[source_id] = (idx, total)
+            self.read_first.emit(source_id, name, idx, total)
 
         def on_file_started(source_id: str, name: str, idx: int, total: int) -> None:
+            read_first.stop(time.monotonic())
             file_start_times[source_id] = time.monotonic()
             ocr_done_times.pop(source_id, None)
             file_indices[source_id] = (idx, total)
@@ -113,6 +122,7 @@ class OCRWorker(QThread):
             else:
                 ocr_s = now - start
                 correction_s = 0.0
+            ocr_s += read_first.take(source_id)
             self.file_done.emit(
                 FileDoneEvent(outcome=outcome, ocr_s=ocr_s, correction_s=correction_s)
             )
@@ -128,6 +138,7 @@ class OCRWorker(QThread):
                 "battery_warning": BATTERY_WARNING,
                 "progress": ProgressCallbacks(
                     on_file_started=on_file_started,
+                    on_read_first=on_read_first,
                     on_stage_started=on_stage_started,
                     on_ocr_done=on_ocr_done,
                     on_file_done=on_file_done,
@@ -143,6 +154,30 @@ class OCRWorker(QThread):
             log_failure(_logger, "The run ended with an error", exc)
             summary = RunSummary(error=str(exc) or "unexpected error")
         self.run_finished.emit(summary)
+
+
+class _ReadFirstClock:
+    """How long the reading pass spent on each file: that time is part of the file's reading."""
+
+    def __init__(self) -> None:
+        self._seconds: dict[str, float] = {}
+        self._current: tuple[str, float] | None = None
+
+    def start(self, source_id: str, now: float) -> None:
+        """The pass moved on to *source_id*."""
+        self.stop(now)
+        self._current = (source_id, now)
+
+    def stop(self, now: float) -> None:
+        """The pass left the file it was on."""
+        if self._current is not None:
+            source_id, since = self._current
+            self._seconds[source_id] = self._seconds.get(source_id, 0.0) + now - since
+            self._current = None
+
+    def take(self, source_id: str) -> float:
+        """Return the seconds the pass spent on *source_id*, and forget them."""
+        return self._seconds.pop(source_id, 0.0)
 
 
 #: Workers that were still running when their window closed.  A running ``QThread`` must not be

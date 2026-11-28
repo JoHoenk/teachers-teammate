@@ -74,6 +74,7 @@ from teachers_teammate.domain.run_summary import (
     KeepAwakeState,
     RunSummary,
 )
+from teachers_teammate.texts import check as check_text
 from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts._types import Answer, Notice, Question, StandardButton
 from teachers_teammate.texts.issues import issue_text
@@ -1088,6 +1089,27 @@ def test_a_run_without_a_local_model_starts_its_clock_at_the_stage(
     main_window._run_controller._on_stage_started(a, "a.png", "correction", 1, 1)
 
     assert main_window._run_session.pace._work_started_at == 1005.0
+
+
+@pytest.mark.gui
+def test_the_reading_pass_says_which_file_it_reads_and_keeps_the_bar(main_window) -> None:
+    """
+    Given  a MainWindow of a two-step run over three files
+    When   the reading pass reads file 2 of 3
+    Then   the progress line names that file as read first, and the bar has not moved
+    """
+    main_window._run_session.steps_per_file = 2
+    main_window._progress.setRange(0, 6)
+    main_window._progress.setValue(0)
+    main_window._results_table.set_queue(
+        [queue_row("a.png"), queue_row("b.png"), queue_row("c.png")]
+    )
+
+    main_window._run_controller._on_read_first("b.png", "b.png", 2, 3)
+
+    assert "[2/3] b.png" in main_window._progress.format()
+    assert check_text.PROGRESS_READING_FIRST in main_window._progress.format()
+    assert main_window._progress.value() == 0
 
 
 @pytest.mark.gui

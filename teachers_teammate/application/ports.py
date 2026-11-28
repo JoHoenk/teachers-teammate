@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from ..domain.proofreading.review import CorrectionReview
     from ..domain.providers import ProviderInfo
     from ..domain.system_facts import GpuInfo, GpuUsage, ServerActivity, SystemUsage
+    from ..domain.teacher_work import TeacherWork
     from ..interfaces import Anonymizer, ConnectionCheck, Reporter
 
 
@@ -335,6 +336,53 @@ class CompareResults(Protocol):
         ...
 
 
+class MarkedDocument(Protocol):
+    """What finding task text reads of one stored document, and nothing more.
+
+    ``domain.document_state.DocumentState`` satisfies it; this layer sees only the fields the
+    detection needs, so the cache's own type stays in the cache.
+    """
+
+    @property
+    def source_hash(self) -> str:
+        """Return the content hash of the document: the key of the teacher's work on it."""
+
+    @property
+    def raw_text(self) -> str:
+        """Return the transcription as the reader left it."""
+
+    @property
+    def raw_text_format(self) -> str:
+        """Return the notation ``raw_text`` is written in."""
+
+    @property
+    def task_marks(self) -> tuple[str, ...]:
+        """Return the passages the document is marked with."""
+
+
+class TaskTextStore(Protocol):
+    """The store of a queue's documents, as finding their printed text reads and writes it.
+
+    ``infrastructure.state_repository.StateRepository`` implements it.
+    """
+
+    def load_valid(self, input_file: Path) -> MarkedDocument | None:
+        """Return the stored document of *input_file*, and ``None`` when there is none."""
+
+    def add_task_passages(self, input_file: Path, passages: Sequence[str]) -> bool:
+        """Store *passages* with *input_file*; return whether any of them was new."""
+
+
+class WorkLookup(Protocol):
+    """The teacher's work, as finding task text reads it: their "not task" entries.
+
+    ``infrastructure.teacher_work_store.TeacherWorkStore`` implements it.
+    """
+
+    def load(self, source_hash: str) -> TeacherWork | None:
+        """Return the teacher's work on the document *source_hash*, or ``None`` without any."""
+
+
 class OptionMarks(Protocol):
     """The teacher's verdicts on compared changes: one file per text, in the data root.
 
@@ -398,9 +446,15 @@ class ProofreadingUnit(Protocol):
         text_format: TextFormat = "plain",
         *,
         name: str = "",
+        passages: Sequence[str] = (),
+        not_task: Sequence[str] = (),
         stop_requested: Callable[[], bool] | None = None,
     ) -> ProofreadAnswer:
-        """Proofread *text* and return its answer with the names restored."""
+        """Proofread *text* and return its answer with the names restored.
+
+        A passage of *passages* is printed text, not the student's writing: it is not sent and
+        comes back as it stands.  A line of *not_task* is proofread although a passage covers it.
+        """
         ...
 
 

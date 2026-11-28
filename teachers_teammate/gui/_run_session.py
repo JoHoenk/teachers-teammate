@@ -175,6 +175,22 @@ class RunSession:
         self.stage_label = ""
         self.wait_shown = False
 
+    def read_first(self, source_id: str, name: str, idx: int, total: int) -> str:
+        """Take the file the reading pass reads now; return the progress text to show.
+
+        The pass reads the queue before anything is proofread, so the bar waits for the files'
+        turns: each file's turn reads it from what the pass stored.
+        """
+        self.file_label = f"[{idx}/{total}] {name}"
+        self.progress_base = f"{self.file_label} — {check_text.PROGRESS_READING_FIRST}"
+        self.current = source_id
+        self.step = ""
+        self.file_steps_done = 0
+        self.stage_step = ""
+        self.stage_label = check_text.PROGRESS_READING_FIRST
+        self.wait_shown = False
+        return self.progress_base
+
     def stage_started(
         self, name: str, stage: ProgressStage | str, idx: int, total: int, now: float
     ) -> str | None:

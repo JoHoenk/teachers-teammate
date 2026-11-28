@@ -284,7 +284,7 @@ class ResultsTable(QTableWidget):
     # ── What the run is doing ─────────────────────────────────────────────
 
     def mark_stage_running(self, source_id: str, stage: str) -> None:
-        """Show *stage* of *source_id* as running, on top of what the store says."""
+        """Show *stage* of *source_id* as running, on top of what the store says; ``""`` none."""
         if source_id not in self._row_by_source:
             return
         self._live[source_id] = LiveState(stage=stage)

@@ -19,6 +19,7 @@ from ...domain.output_files import (
     output_path,
 )
 from ...domain.proofreading.review import CorrectionReview
+from ...domain.task_text import Segment
 from ...exceptions import StageError, StageErrorKind
 from ...interfaces import Anonymizer, DocumentCreator
 from ...messages import (
@@ -38,6 +39,8 @@ class OutputTexts:
     raw: str
     corrected: str
     evaluation: str
+    task: tuple[Segment, ...] = ()
+    """Where the task text stands in the plain *corrected* text; empty when nothing is left alone."""
 
 
 class OutputWriter:
@@ -99,6 +102,7 @@ class OutputWriter:
                     source_image=source_image,
                     text_format=text_format,
                     review=review,
+                    task=texts.task,
                 )
                 saved.append(self._shown(docx_file))
         except Exception as exc:  # python-docx / PIL errors vary widely; surface the message

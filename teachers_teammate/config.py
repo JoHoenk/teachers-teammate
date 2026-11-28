@@ -123,6 +123,10 @@ class Config:
     correction_output: CorrectionOutput = DEFAULTS["correction_output"]
     anonymization_enabled: bool = DEFAULTS["anonymization_enabled"]
 
+    # Whether a run leaves the printed text out of the proofreading (see settings_schema).  It
+    # decides what is marked before the proofreading, not how the proofreading works.
+    skip_task_text: bool = DEFAULTS["skip_task_text"]
+
     # ── Evaluation ────────────────────────────────────────────────────────────
     evaluation_enabled: bool = DEFAULTS["evaluation_enabled"]
     evaluate_provider: str = DEFAULTS["evaluate_provider"]
@@ -236,6 +240,7 @@ class Config:
             correction_level=get("correction_level"),
             explanation_language=get("explanation_language"),
             correction_output=get("correction_output"),
+            skip_task_text=get("skip_task_text"),
             evaluation_enabled=get("evaluation_enabled"),
             evaluate_provider=get("evaluate_provider"),
             evaluate_model=get("evaluate_model"),

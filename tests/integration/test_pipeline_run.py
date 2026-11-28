@@ -15,6 +15,7 @@ scenarios in ``tests/integration/test_pipeline_scenarios.py``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 from pathlib import Path
 import threading
@@ -26,6 +27,7 @@ from teachers_teammate.domain.evaluation import EvaluationOutcome
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
 from teachers_teammate.domain.setting_values import PreprocessMethod
+from teachers_teammate.domain.task_text import TaskTextFound
 from teachers_teammate.exceptions import OCRError, RunStoppedError, StageError, StageErrorKind
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.interfaces import AnonymizationMap, Anonymizer, Corrector, ProgressCallbacks
@@ -697,6 +699,111 @@ def test_pipeline_callbacks_are_invoked(tmp_path: Path) -> None:
     assert started == ["page.png"]
     assert ocr_done == ["page.png"]
     assert file_done == [("page.png", FileStatus.SAVED)]
+
+
+def test_the_reading_pass_reports_each_file_and_reads_it_once(tmp_path: Path) -> None:
+    """
+    Given  three images, the task text switch on, and a marking that records what it is given
+    When   OCRPipeline.run() is called
+    Then   the reading pass names each file before its turn, the marking sees the queue, each
+           page is read once, and the reading is announced once per file, in its turn
+    """
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="ppocr",
+        correction_enabled=False,
+        docx_enabled=False,
+        preprocess_method="none",
+    )
+    for name in ("a.png", "b.png", "c.png"):
+        _place_image(cfg.input_dir, name)
+    events: list[tuple[str, str]] = []
+    marked: list[list[str]] = []
+
+    class _Marker:
+        def mark_a_queue(self, config: object, files: Sequence[Path]) -> TaskTextFound:
+            marked.append([file.name for file in files])
+            return TaskTextFound()
+
+    mock_proc = mock_reader()
+    mock_proc.process_image.return_value = "extracted"
+
+    with patch(
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
+        return_value=mock_proc,
+    ):
+        summary = OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            progress=ProgressCallbacks(
+                on_read_first=lambda _id, name, _idx, _total: events.append(("read", name)),
+                on_file_started=lambda _id, name, _idx, _total: events.append(("turn", name)),
+                on_ocr_done=lambda _id, name: events.append(("ocr", name)),
+            ),
+            dependencies=pipeline_dependencies(tmp_path, task_text=_Marker()),
+        ).run()
+
+    assert summary.succeeded == ("a.png", "b.png", "c.png")
+    assert events == [
+        ("read", "a.png"),
+        ("read", "b.png"),
+        ("read", "c.png"),
+        ("turn", "a.png"),
+        ("ocr", "a.png"),
+        ("turn", "b.png"),
+        ("ocr", "b.png"),
+        ("turn", "c.png"),
+        ("ocr", "c.png"),
+    ]
+    assert marked == [["a.png", "b.png", "c.png"]]
+    assert mock_proc.process_image.call_count == 3
+
+
+class _NoTaskText:
+    """Finds no printed text in any queue."""
+
+    def mark_a_queue(self, config: object, files: Sequence[Path]) -> TaskTextFound:
+        return TaskTextFound()
+
+
+def test_a_stop_in_the_reading_pass_proofreads_nothing(tmp_path: Path) -> None:
+    """
+    Given  three images and "Stop after this file" pressed while the reading pass reads the first
+    When   OCRPipeline.run() is called
+    Then   the first keeps its reading, the others are not read, and every file is not started
+    """
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="ppocr",
+        correction_enabled=False,
+        docx_enabled=False,
+        preprocess_method="none",
+    )
+    for name in ("a.png", "b.png", "c.png"):
+        _place_image(cfg.input_dir, name)
+    stop_after = threading.Event()
+
+    def read(*_args: object, **_kwargs: object) -> str:
+        stop_after.set()
+        return "text of the first page"
+
+    mock_proc = mock_reader()
+    mock_proc.process_image.side_effect = read
+
+    with patch(
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
+        return_value=mock_proc,
+    ):
+        summary = OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            stop_after_file_event=stop_after,
+            dependencies=pipeline_dependencies(tmp_path, task_text=_NoTaskText()),
+        ).run()
+
+    assert summary.succeeded == ()
+    assert summary.not_started == ("a.png", "b.png", "c.png")
+    assert mock_proc.process_image.call_count == 1
 
 
 # ── Stop event ─────────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ from ...texts import check as check_text
 from ...texts import review as txt
 from .._formatted_text import (
     STUDENT_STRIKE_COLOUR,
+    TASK_TEXT_COLOUR,
     FormattedTextEdit,
     _toggle,
     chip_placeholders,
@@ -140,6 +141,13 @@ def _text_font(point_size: int) -> QFont:
     return font
 
 
+def _task_format() -> QTextCharFormat:
+    """Return the format of printed text: grey, with no underline of its own."""
+    fmt = QTextCharFormat()
+    fmt.setForeground(QColor(TASK_TEXT_COLOUR))
+    return fmt
+
+
 def _struck_format() -> QTextCharFormat:
     """Return the format of the words the model took out: red and struck through."""
     fmt = QTextCharFormat()
@@ -213,6 +221,7 @@ class CheckTextView(FormattedTextEdit):
         self._plain = ""
         self._format: TextFormat = "plain"
         self._mark_cursors: list[tuple[Mark, QTextCursor]] = []
+        self._task_ranges: tuple[tuple[int, int], ...] = ()
         self._chosen = ""
         self._rendering = False
         self._reason = ""
@@ -231,6 +240,7 @@ class CheckTextView(FormattedTextEdit):
             self._rendering = False
         self._map = self._map_of(self._plain)
         self._mark_cursors = []
+        self._task_ranges = ()
         self.setExtraSelections([])
 
     def _html_of(self, doc: FormattedDocument) -> str:
@@ -282,15 +292,39 @@ class CheckTextView(FormattedTextEdit):
         ]
         self._apply_marks()
 
+    def set_task_ranges(self, ranges: Sequence[tuple[int, int]], *, plain: str) -> None:
+        """Draw the printed text of *plain* as grey and leave the marks alone.
+
+        *ranges* point into the plain text of the view.  They belong to one text: a view showing
+        another one (the transcription with names hidden) is given none, and says nothing.
+        """
+        self._task_ranges = tuple(ranges) if plain == self._plain else ()
+        self._apply_marks()
+
     def _apply_marks(self) -> None:
-        """Draw the marks of the stored cursors as overlays."""
+        """Draw the printed text and the marks of the stored cursors as overlays."""
         selections: list[QTextEdit.ExtraSelection] = []
+        selections.extend(self._task_selections())
         for mark, cursor in self._mark_cursors:
             selection = QTextEdit.ExtraSelection()
             selection.cursor = cursor
             selection.format = mark.look.format(chosen=mark.key == self._chosen)
             selections.append(selection)
         self.setExtraSelections(selections)
+
+    def _task_selections(self) -> list[QTextEdit.ExtraSelection]:
+        """Return the overlays of the printed text, before the marks so the marks win."""
+        if self._map is None:
+            return []
+        selections: list[QTextEdit.ExtraSelection] = []
+        for start, end in self._task_ranges:
+            if end <= start:
+                continue
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = self._map.cursor(self.document(), start, end)
+            selection.format = _task_format()
+            selections.append(selection)
+        return selections
 
     def reveal(self, key: str) -> None:
         """Scroll to the mark of *key*, with the caret at its first word and nothing selected.

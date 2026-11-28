@@ -22,23 +22,25 @@ Not pure: it talks to a model.  No Qt, no provider imports of its own.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import logging
 from typing import Protocol
 
-from ...domain.anonymization import leftover_placeholders, restore_with_offsets
+from ...domain.anonymization import leftover_placeholders, mask_with_offsets, restore_with_offsets
 from ...domain.formatted_text import TextFormat
 from ...domain.performance_estimate import SpeedStep
 from ...domain.proofreading.result import CorrectionOutcome
 from ...domain.proofreading.review import CorrectionReview, fits
 from ...domain.stages import Stage
+from ...domain.task_text import Kind, Segment, locate, normalise
 from ...exceptions import AnonymizerError, RunStoppedError
 from ...interfaces import AnonymizationMap, Anonymizer, Corrector, Reporter
 from ...messages import message_of, personal_info_removal_failed, personal_info_restore_failed
 from ...texts import report as report_text
-from ...texts.review import REVIEW_UNMATCHED, personal_info_still_hidden
+from ...texts.review import EXPLANATIONS_MISSING, REVIEW_UNMATCHED, personal_info_still_hidden
 from ..ocr_formats import plain_text_of
+from ..proofreading.chunking import join_warnings, merged_review
 
 _logger = logging.getLogger(__name__)
 
@@ -184,10 +186,37 @@ class ProofreadOutcome:
     """How many places were hidden for this answer; ``0`` when nothing was sent anonymously."""
 
     sent_text: str
-    """The text the model saw — the extracted text itself when nothing was hidden."""
+    """What the model was sent: the student's stretches, or the whole text when nothing is left
+    alone — the extracted text itself when nothing was hidden."""
 
     sent_map: AnonymizationMap
     """What was hidden in :attr:`sent_text`; empty when nothing was."""
+
+
+@dataclass(frozen=True)
+class _Sent:
+    """What the model is sent: the text with its names hidden, and the stretches of it."""
+
+    text: str
+    """The whole text as the model sees it."""
+    map: AnonymizationMap
+    """What was hidden in :attr:`text`."""
+    parts: tuple[str, ...]
+    """The stretches the model was really sent: the student's, or the whole text."""
+
+
+@dataclass(frozen=True)
+class _Part:
+    """One stretch of what is sent: the student's words, or printed text that stays as it is."""
+
+    start: int
+    """Where the stretch begins in the text the model sees."""
+
+    text: str
+    """The stretch as the model sees it."""
+
+    student: bool
+    """Whether the stretch is the student's writing and goes to the model."""
 
 
 class ProofreadText:
@@ -220,6 +249,8 @@ class ProofreadText:
         name: str = "",
         stop_requested: Callable[[], bool] | None = None,
         hide: Callable[[str, TextFormat], tuple[str, AnonymizationMap]] | None = None,
+        passages: Sequence[str] = (),
+        not_task: Sequence[str] = (),
     ) -> ProofreadOutcome:
         """Proofread *text* and return its answer with the names restored.
 
@@ -232,6 +263,9 @@ class ProofreadText:
             hide: The hiding, when the caller already has the text with its names replaced — a
                 run hides it once and uses it for the anonymized text file too.  ``None`` hides
                 it here.
+            passages: The printed text of the worksheet that stands in *text*, as the batch
+                found it.  It is not sent and comes back as it is.
+            not_task: What the teacher wants proofread after all, though the batch marked it.
 
         Raises:
             RunStoppedError: *stop_requested* said so.
@@ -246,30 +280,142 @@ class ProofreadText:
             )
         else:
             sent_text, sent_map = hide(text, text_format)
+        parts = self._parts(text, text_format, sent_text, sent_map, passages, not_task, name)
         # A text that goes out in several pieces cannot be changed across a piece boundary;
         # say so before the requests start, so the teacher knows what to expect.
-        pieces = self._corrector.pieces(sent_text, self._language, text_format=text_format)
+        pieces = self._requests_of(parts, sent_text, text_format)
         if pieces is not None and pieces > 1:
             self._reporter.status(report_text.proofreading_in_parts(name, pieces))
         if stop_requested is not None and stop_requested():  # the hiding may have taken a while
             raise RunStoppedError()
-        outcome = self._proofread(sent_text, text_format)
-        return self._with_names(text, text_format, pieces, outcome, sent_text, sent_map, name)
+        if parts is None:
+            outcome = self._proofread(sent_text, text_format)
+        else:
+            outcome = self._proofread_parts(parts, text_format)
+        return self._with_names(
+            text,
+            text_format,
+            pieces,
+            outcome,
+            _Sent(
+                sent_text,
+                sent_map,
+                tuple(part.text for part in parts if part.student)
+                if parts is not None
+                else (sent_text,),
+            ),
+            name,
+        )
+
+    def _requests_of(
+        self, parts: Sequence[_Part] | None, sent_text: str, text_format: TextFormat
+    ) -> int | None:
+        """Return how many requests the proofreading takes, or ``None`` when it is unbounded."""
+        if parts is None:
+            return self._corrector.pieces(sent_text, self._language, text_format=text_format)
+        counts = [
+            self._corrector.pieces(part.text, self._language, text_format=text_format)
+            for part in parts
+            if part.student and part.text.strip()
+        ]
+        if any(count is None for count in counts):
+            return None
+        return max(1, sum(count or 0 for count in counts))
+
+    def _parts(
+        self,
+        text: str,
+        text_format: TextFormat,
+        sent_text: str,
+        sent_map: AnonymizationMap,
+        passages: Sequence[str],
+        not_task: Sequence[str],
+        name: str,
+    ) -> tuple[_Part, ...] | None:
+        """Return what is sent, split by the printed text that stays, or ``None`` for the whole.
+
+        The passages are found in the teacher's text; their bounds are carried over to what the
+        model sees through the offsets of the hiding, so the text is never matched a second time.
+        A text whose bounds do not line up — a hiding that changed more than the names, a
+        notation whose lines do not read as the plain text's (a table) — goes out whole, with a
+        log line.
+        """
+        if not passages and not not_task:
+            return None
+        plain = plain_text_of(text, text_format)
+        segments = locate(plain, passages, not_task)
+        if all(segment.kind == "student" for segment in segments):
+            return None
+        bounds = _bounds(text, text_format, plain, sent_text, sent_map, segments)
+        if bounds is None:
+            _logger.warning(
+                "The printed passages of %s did not line up with the text sent; proofreading it whole",
+                name or "the text",
+            )
+            return None
+        return tuple(
+            _Part(start, sent_text[start:end], kind == "student") for start, end, kind in bounds
+        )
 
     def _proofread(self, text: str, text_format: TextFormat) -> CorrectionOutcome:
         """Return the corrector's answer to *text*, with the sample of the run recorded."""
+        self._begin_sample()
+        outcome = self._corrector.correct(text, self._language, text_format=text_format)
+        self._finish_sample([outcome], text)
+        return outcome
+
+    def _proofread_parts(
+        self, parts: Sequence[_Part], text_format: TextFormat
+    ) -> CorrectionOutcome:
+        """Return the answer about the student's stretches, with the printed text kept.
+
+        Each stretch of the student's text goes to the corrector on its own, so a change can never
+        reach across a printed line; the printed parts pass through.  One failed stretch fails the
+        whole text, as a text proofread in pieces does: a half-corrected text is never stored.
+        """
+        whole = "".join(part.text for part in parts)
+        sent = " ".join(part.text for part in parts if part.student and part.text.strip())
+        self._begin_sample()
+        outcomes: list[CorrectionOutcome] = []
+        for part in parts:
+            if not part.student or not part.text.strip():
+                outcomes.append(CorrectionOutcome(text=part.text))
+                continue
+            outcome = self._corrector.correct(part.text, self._language, text_format=text_format)
+            if outcome.failed:
+                self._finish_sample([], sent)
+                return CorrectionOutcome(
+                    text=whole,
+                    review=None,
+                    warning=outcome.warning,
+                    failed=True,
+                )
+            outcomes.append(outcome)
+        self._finish_sample(outcomes, sent)
+        return _combined(parts, outcomes, whole, text_format)
+
+    def _begin_sample(self) -> None:
+        """Mark the proofreading as running, so its requests become one sample."""
         if self._sampler is not None:
             self._sampler.begin_sample(SpeedStep.PROOFREADING)
-        outcome = self._corrector.correct(text, self._language, text_format=text_format)
-        if self._sampler is not None:
-            # The mode the answer was really written in: a run that came back without a review
-            # answered in text mode, and its answer length is the text-mode one.
-            self._sampler.finish_sample(
-                words=len(text.split()),
-                mode="exchange" if outcome.review is not None else "text",
-                usable=not (outcome.failed or outcome.fell_back),
-            )
-        return outcome
+
+    def _finish_sample(self, outcomes: Sequence[CorrectionOutcome], sent: str) -> None:
+        """Turn the requests made for *sent* into one sample of the run.
+
+        Nothing sent, nothing measured: a text that is all printed text makes no request.
+        """
+        if self._sampler is None:
+            return
+        if not sent.strip():
+            self._sampler.finish_sample(usable=False)
+            return
+        # The mode the answer was really written in: a run that came back without a review
+        # answered in text mode, and its answer length is the text-mode one.
+        self._sampler.finish_sample(
+            words=len(sent.split()),
+            mode="exchange" if any(outcome.review is not None for outcome in outcomes) else "text",
+            usable=not any(outcome.failed or outcome.fell_back for outcome in outcomes),
+        )
 
     def _with_names(
         self,
@@ -277,11 +423,14 @@ class ProofreadText:
         text_format: TextFormat,
         pieces: int | None,
         outcome: CorrectionOutcome,
-        sent_text: str,
-        sent_map: AnonymizationMap,
+        sent: _Sent,
         name: str,
     ) -> ProofreadOutcome:
-        """Return the answer with the real names back in its text, its review and its warning."""
+        """Return the answer with the real names back in its text, its review and its warning.
+
+        :attr:`ProofreadOutcome.sent_text` and its map hold only what the model was really sent.
+        """
+        sent_map = sent.map
         corrected_text = restore_personal_info(
             self._anonymizer, outcome.text or "", sent_map, stage=Stage.CORRECTION
         )
@@ -289,11 +438,17 @@ class ProofreadText:
             self._anonymizer,
             outcome.review,
             sent_map,
-            sent_text=sent_text,
+            sent_text=sent.text,
             raw_text=raw_text,
             text_format=text_format,
             name=name,
         )
+        kept_text = "".join(sent.parts)
+        kept_map = {
+            placeholder: original
+            for placeholder, original in sent_map.items()
+            if placeholder in kept_text
+        }
         warnings: list[str] = [outcome.warning] if outcome.warning else []
         if unmatched:
             warnings.append(REVIEW_UNMATCHED)
@@ -307,7 +462,119 @@ class ProofreadText:
             warnings=tuple(warnings),
             stored_warning="; ".join(w for w in (outcome.warning, left_hidden) if w),
             pieces=pieces,
-            names_hidden=len(sent_map),
-            sent_text=sent_text,
-            sent_map=sent_map,
+            names_hidden=len(kept_map),
+            sent_text=kept_text,
+            sent_map=kept_map,
         )
+
+
+def _combined(
+    parts: Sequence[_Part],
+    outcomes: Sequence[CorrectionOutcome],
+    whole: str,
+    text_format: TextFormat,
+) -> CorrectionOutcome:
+    """Return one answer from the answers of the stretches, the printed ones passed through."""
+    answerable = [
+        outcome
+        for part, outcome in zip(parts, outcomes, strict=True)
+        if part.student and part.text.strip()
+    ]
+    reviews = [outcome.review for outcome in answerable if outcome.review is not None]
+    merged, lost = merged_review(outcomes, [part.text for part in parts], whole, text_format)
+    incomplete = lost or (bool(reviews) and len(reviews) < len(answerable))
+    warning = join_warnings(
+        *(outcome.warning for outcome in outcomes),
+        EXPLANATIONS_MISSING if incomplete else None,
+    )
+    return CorrectionOutcome(
+        text="".join(outcome.text for outcome in outcomes),
+        review=merged,
+        warning=warning,
+        left_out=sum(outcome.left_out for outcome in outcomes),
+        fell_back=any(outcome.fell_back for outcome in outcomes),
+    )
+
+
+def _bounds(
+    text: str,
+    text_format: TextFormat,
+    plain: str,
+    sent_text: str,
+    sent_map: AnonymizationMap,
+    segments: Sequence[Segment],
+) -> tuple[tuple[int, int, Kind], ...] | None:
+    """Return the range of every segment in the text the model sees, or ``None``.
+
+    Empty ranges are left out and neighbours of one kind joined, so each range is one request.
+    """
+    masked, offsets = mask_with_offsets(text, sent_map)
+    if masked != sent_text:
+        return None
+    cuts = [(segment.start, segment.end, segment.kind) for segment in segments]
+    if plain != text:
+        pairs = _line_pairs(text, text_format, plain)
+        if pairs is None:
+            return None
+        cuts = [
+            (_in_notation(start, pairs, text), _in_notation(end, pairs, text), kind)
+            for start, end, kind in cuts
+        ]
+    joined: list[tuple[int, int, Kind]] = []
+    for start, end, kind in cuts:
+        if end <= start:
+            continue
+        if joined and joined[-1][2] == kind:
+            joined[-1] = (joined[-1][0], end, kind)
+        else:
+            joined.append((start, end, kind))
+    return tuple((offsets.start(start), offsets.start(end), kind) for start, end, kind in joined)
+
+
+_LinePair = tuple[tuple[int, int], tuple[int, int]]
+"""A line of the notation and the plain line it reads as: ``(start, end)`` of each."""
+
+
+def _line_pairs(text: str, text_format: TextFormat, plain: str) -> tuple[_LinePair, ...] | None:
+    """Return each line of *text* with the line of *plain* it reads as, or ``None``.
+
+    The notation keeps the plain text's lines and their order (a heading, a list item, a bold
+    word read the same line by line); a construct that does not, a table, gives ``None``.
+    """
+    source, printed = _filled_lines(text), _filled_lines(plain)
+    if len(source) != len(printed):
+        return None
+    for (start, end), (plain_start, plain_end) in zip(source, printed, strict=True):
+        if normalise(plain_text_of(text[start:end], text_format)) != normalise(
+            plain[plain_start:plain_end]
+        ):
+            return None
+    return tuple(zip(source, printed, strict=True))
+
+
+def _filled_lines(text: str) -> list[tuple[int, int]]:
+    """Return ``(start, end)`` of every line of *text* that is not blank."""
+    found: list[tuple[int, int]] = []
+    at = 0
+    for raw in text.split("\n"):
+        if raw.strip():
+            found.append((at, at + len(raw)))
+        at += len(raw) + 1
+    return found
+
+
+def _in_notation(position: int, pairs: Sequence[_LinePair], text: str) -> int:
+    """Return where a position of the plain text stands in the notation *text*.
+
+    A cut falls at the start or the end of a line.  Inside a line — behind a label, whose
+    fill-in is the student's — the notation may wrap the label in markup, so the whole line goes
+    with what follows it.
+    """
+    if position == 0:
+        return 0
+    for (start, end), (_, plain_end) in pairs:
+        if position < plain_end:
+            return start
+        if position == plain_end:
+            return end
+    return len(text)

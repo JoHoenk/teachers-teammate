@@ -13,10 +13,10 @@ from dataclasses import dataclass, replace
 import logging
 from pathlib import Path
 
-from ..cache_keys import correction_key, expected_hashes
+from ..cache_keys import correction_key, expected_hashes, with_task_text
 from ..config import Config
 from ..domain.context_budget import RunWindows
-from ..domain.document_state import machine_texts
+from ..domain.document_state import machine_texts, task_text_of
 from ..domain.formatted_text import PLAIN, TextFormat, normalize_text_format
 from ..domain.freshness import ExpectedHashes
 from ..domain.key_facts import KeyFacts
@@ -29,6 +29,7 @@ from ..domain.proofreading.carry import (
 )
 from ..domain.proofreading.review import CorrectionReview
 from ..domain.stages import Stage, normalize_stage
+from ..domain.task_text import locate
 from ..domain.teacher_work import (
     CarriedAnswer,
     MachineTexts,
@@ -41,14 +42,17 @@ from ..domain.teacher_work import (
     with_checked,
     with_corrected,
     with_looked_at,
+    with_not_task,
     with_transcription,
     without_corrections,
+    without_not_task,
     without_work_for_reading,
 )
 from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
 from ..infrastructure.teacher_work_store import TeacherWorkStore
 from ..run_rules import resolve_run_windows
 from .document_view import DocumentStateView
+from .formatting import TextFormatter
 from .merged_view import reconciled_view
 
 _logger = logging.getLogger(__name__)
@@ -160,7 +164,10 @@ class DocumentCommands:
                 state = store.reset_from_stage(source, state, Stage.CORRECTION)
             except OSError as exc:
                 _logger.warning("Could not reset the proofreading of %s: %s", source.name, exc)
-        view = reconciled_view(source, state, work, self._expected(config, source))
+        expected = self._expected(
+            config, source, task_text_of(state, work, TextFormatter.plain_text)
+        )
+        view = reconciled_view(source, state, work, expected)
         return replace(view, reading_fix=outcome)
 
     def edit_corrected_text(
@@ -189,7 +196,10 @@ class DocumentCommands:
             source.name,
             lambda work: with_corrected(work, text, current_texts(machine, work)),
         )
-        return reconciled_view(source, state, work, self._expected(config, source))
+        expected = self._expected(
+            config, source, task_text_of(state, work, TextFormatter.plain_text)
+        )
+        return reconciled_view(source, state, work, expected)
 
     def set_checked(
         self, config: Config, *, source: Path, checked: bool
@@ -216,7 +226,69 @@ class DocumentCommands:
             source.name,
             lambda work: with_checked(work, checked, current_texts(machine, work)),
         )
-        return reconciled_view(source, state, work, self._expected(config, source))
+        expected = self._expected(
+            config, source, task_text_of(state, work, TextFormatter.plain_text)
+        )
+        return reconciled_view(source, state, work, expected)
+
+    def proofread_task_text_again(self, config: Config, *, source: Path) -> bool:
+        """Proofread the printed text of *source* after all, as the teacher's work.
+
+        Every line the marks cover in the current transcription becomes a "not task" entry, so
+        the next proofreading sends it like the rest of the text.  The marks stay: the teacher's
+        entry is what wins over them, and the document's proofreading key follows the located
+        passages, so a run sees the document as out of date until it proofreads it again.
+
+        Returns:
+            Whether anything was added.
+
+        Raises:
+            WorkNotSavedError: the work could not be stored.
+        """
+        state = self._state_store_factory(config).load_valid(source)
+        if state is None or not state.task_marks:
+            return False
+        machine = machine_texts(state)
+        added: list[str] = []
+
+        def change(work: TeacherWork) -> TeacherWork:
+            texts = current_texts(machine, work)
+            plain = TextFormatter.plain_text(texts.transcription, texts.transcription_format)
+            added[:] = [
+                line
+                for segment in locate(plain, state.task_marks, work.not_task)
+                if segment.kind == "task"
+                for line in plain[segment.start : segment.end].splitlines()
+                if line.strip() and line not in work.not_task
+            ]
+            return with_not_task(work, added)
+
+        self._update(state.source_hash, source.name, change)
+        return bool(added)
+
+    def leave_task_text_alone(self, config: Config, *, source: Path) -> bool:
+        """Take back the teacher's "not task" entries of *source*: its marks hold again.
+
+        The undo of :meth:`proofread_task_text_again`.  The proofreading key follows the marks
+        again, so a run sees the document as out of date until it proofreads it.
+
+        Returns:
+            Whether there was an entry to take back.
+
+        Raises:
+            WorkNotSavedError: the work could not be stored.
+        """
+        state = self._state_store_factory(config).load_valid(source)
+        if state is None:
+            return False
+        had: list[bool] = []
+
+        def change(work: TeacherWork) -> TeacherWork:
+            had.append(bool(work.not_task))
+            return without_not_task(work)
+
+        self._update(state.source_hash, source.name, change)
+        return any(had)
 
     def mark_looked_at(self, config: Config, *, source: Path, keys: Collection[str]) -> None:
         """Record that the teacher looked at the items *keys* of *source*.
@@ -245,7 +317,7 @@ class DocumentCommands:
         The answer is stamped with the correction hash it was kept over, so the same settings
         never ask again.  A document whose work could not be stored is asked about again.
         """
-        expected = correction_key(config, self._windows_for(config), self._facts)
+        settings_key = correction_key(config, self._windows_for(config), self._facts)
         store = self._state_store_factory(config)
         for file in files:
             state = store.load_valid(file)
@@ -256,8 +328,15 @@ class DocumentCommands:
                 self._update(
                     state.source_hash,
                     file.name,
-                    lambda work, machine=machine: kept_over(
-                        work, expected, current_texts(machine, work)
+                    lambda work, machine=machine, state=state: kept_over(
+                        work,
+                        # The key the queue compares with: its own task text included.
+                        with_task_text(
+                            config,
+                            settings_key,
+                            task_text_of(state, work, TextFormatter.plain_text),
+                        ),
+                        current_texts(machine, work),
                     ),
                 )
             except WorkNotSavedError:
@@ -375,9 +454,16 @@ class DocumentCommands:
         )
         return _Carry(ReadingFix.CARRIED, carried, answer, stored)
 
-    def _expected(self, config: Config, source: Path) -> ExpectedHashes:
-        """Return the stage hashes the settings of *config* ask for, for *source*."""
-        return expected_hashes(config, source, self._windows_for(config), self._facts)
+    def _expected(self, config: Config, source: Path, task_text: Sequence[str]) -> ExpectedHashes:
+        """Return the stage hashes the settings of *config* ask for, for *source*.
+
+        *task_text* is what the document's marks cover in its current transcription
+        (:func:`~teachers_teammate.domain.document_state.task_text_of`): the part of its
+        proofreading key that belongs to it alone.
+        """
+        return expected_hashes(
+            config, source, self._windows_for(config), self._facts, task_text=task_text
+        )
 
     @staticmethod
     def _invalidate_from_stage(

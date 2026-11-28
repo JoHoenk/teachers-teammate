@@ -104,6 +104,23 @@ A document without a proofreading has only **What was read**, with a strip above
 **Proofread this document**. While a run works on the document, a strip shows its progress and
 **Stop**.
 
+### Task text: what is not proofread
+
+Printed text — the school's header, the tasks, the form labels — is not the student's work, so a
+run leaves it alone. A document that leaves passages alone draws them grey, and the strip above
+the text says how many: **Task text — not proofread (2 passages, grey)**. The Word file keeps them
+grey and italic.
+
+- **Proofread this after all** on that strip sends the printed text of this document like the rest
+  of the text from now on. The strip then says **Task text — proofread in this document**, and
+  **Leave it alone again** takes that back. Either way the document is out of date until a run
+  proofreads it again.
+- Whether a run leaves printed text alone at all is the switch **Don't proofread the task text** in
+  **Options…** of **Proofread**; switched off, everything is proofread. Task text is found when a
+  run works on three documents or more: one or two copies never make a pattern.
+- To find it, a run first reads all its documents, then proofreads them. **Stop** while it reads
+  ends the run there, and nothing is proofread; the documents read so far keep their reading.
+
 **The scan** opens with a whole page in view; **Fit page**, **Fit width**, **+** and **−** (or Ctrl +
 mouse wheel) change the zoom, and zooming in shows the scanned pixels. **Prepared · Original**
 switches between the pages as fixed for reading and as scanned (shown only when the preparation

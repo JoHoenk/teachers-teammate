@@ -65,6 +65,7 @@ from .run_checks import CheckServices, RunChecks
 from .setup_plan import SetupService
 from .speed_estimates import SpeedEstimateService
 from .stored_results import StoredResults
+from .task_text import TaskTextService
 
 if TYPE_CHECKING:
     import threading
@@ -393,6 +394,7 @@ def _run(
     key_facts: KeyFacts,
 ) -> RunService:
     """Return the run itself: the service the adapters start a batch on."""
+    state_store = functools.partial(state_store_for, repository=parts.state_repository_factory)
     return RunService(
         parts=RunParts(
             discovery=parts.discovery,
@@ -407,6 +409,7 @@ def _run(
         ),
         recommendations=recommendations,
         anonymization=anonymization,
+        task_text=TaskTextService(state_store_factory=state_store, work=parts.work_store),
     )
 
 

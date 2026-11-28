@@ -361,6 +361,26 @@ class StateRepository:
         self.save(input_file, new_state)
         return new_state
 
+    def add_task_passages(self, input_file: Path, passages: Sequence[str]) -> bool:
+        """Store *passages* with *input_file* as its printed text; return whether any was new.
+
+        A mark is only ever added: the marks the document has stay.  What the marks cover enters
+        the document's proofreading key, so a stored proofreading that was made without them is
+        out of date (the queue sees that on its own).
+        """
+        state = self.load_valid(input_file)
+        if state is None:
+            return False
+        known = set(state.task_marks)
+        added = [passage for passage in passages if passage not in known]
+        if not added:
+            return False
+        self.save(
+            input_file,
+            dataclasses.replace(state, task_passages=[*state.task_passages, *added]),
+        )
+        return True
+
     def carry_correction(
         self,
         input_file: Path,

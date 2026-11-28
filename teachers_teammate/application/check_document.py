@@ -10,7 +10,7 @@ Pure apart from the state it is built from: no Qt, no I/O of its own.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
@@ -22,6 +22,7 @@ from ..domain.page_layout import Mark, ScanBox, carried, mark_of_line, marks, se
 from ..domain.proofreading.review import AlignedReview, CorrectionReview, align
 from ..domain.proofreading.word_diff import OffsetMap
 from ..domain.stages import Stage
+from ..domain.task_text import locate
 from ..domain.teacher_work import WorkStatus, looked_at_progress
 from .check_items import CheckItem, check_items, countable_keys
 from .document_view import DocumentStateView
@@ -101,6 +102,16 @@ class CheckDocument:
     from under the places: the scan then marks nothing, and the page says what the text says.
     """
 
+    task_segments: tuple[tuple[int, int], ...] = ()
+    """Where the printed text stands in :attr:`raw_plain`: start and end of each stretch.
+
+    Empty when nothing marks the document, or when the marked text is no longer in it.
+    """
+
+    task_text_taken_back: bool = False
+    """The teacher proofreads printed text of this document after all: a mark covers a line
+    that one of their "not task" entries takes back."""
+
     @property
     def has_proofreading(self) -> bool:
         """Whether the document has a proofread text to show."""
@@ -145,6 +156,23 @@ def check_document_of(view: DocumentStateView) -> CheckDocument:
         work=view.work,
         looked_at_progress=looked_at_progress(countable_keys(items), view.work.looked_at),
         scan_boxes=_scan_boxes(view.raw_layout, reading, raw_plain),
+        task_segments=_task_stretches(raw_plain, view.task_marks, view.not_task),
+        task_text_taken_back=bool(view.not_task)
+        and _task_stretches(raw_plain, view.task_marks)
+        != _task_stretches(raw_plain, view.task_marks, view.not_task),
+    )
+
+
+def _task_stretches(
+    plain: str, marks: Sequence[str], not_task: Sequence[str] = ()
+) -> tuple[tuple[int, int], ...]:
+    """Return start and end of each stretch of printed text the marks leave alone in *plain*."""
+    if not marks:
+        return ()
+    return tuple(
+        (segment.start, segment.end)
+        for segment in locate(plain, marks, not_task)
+        if segment.kind == "task"
     )
 
 

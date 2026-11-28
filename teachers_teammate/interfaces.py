@@ -21,7 +21,7 @@ Interfaces:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 import logging
@@ -36,9 +36,12 @@ from .domain.proofreading.result import CorrectionOutcome
 from .domain.proofreading.review import CorrectionReview
 from .domain.providers import ProviderInfo
 from .domain.run_summary import FileOutcome, KeepAwakeState
+from .domain.task_text import Segment, TaskTextFound
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
+
+    from .config import Config
 
 #: What reads each input suffix: ``"pdf"``, ``"image"`` or ``"text"``.
 INPUT_KINDS: dict[str, str] = {
@@ -384,6 +387,7 @@ class DocumentCreator(ABC):
         source_image: str | Path | None = None,
         text_format: TextFormat = "plain",
         review: CorrectionReview | None = None,
+        task: Sequence[Segment] = (),
     ) -> None:
         """Write output document to *out_path*.
 
@@ -397,6 +401,8 @@ class DocumentCreator(ABC):
                 should be written with its formatting (bold, strikethrough, ...).
             review: Explanations and unclear expressions of the proofreading, or ``None``
                 when the file was corrected without a review.
+            task: Where the printed text stands in the plain *corrected_text*; it is written
+                as it came back, marked as text that was left alone.
         """
 
 
@@ -427,9 +433,22 @@ class SleepBlocker(ABC):
 OnFileStartedFn = Callable[[str, str, int, int], None]  # (source_id, name, idx, total)
 OnStageStartedFn = Callable[[str, str], None]  # (source_id, stage)
 OnOcrDoneFn = Callable[[str, str], None]  # (source_id, name)
+OnReadFirstFn = Callable[[str, str, int, int], None]  # (source_id, name, idx, total)
 OnStageDetailFn = Callable[[str, WaitDetail], None]  # (source_id, what the server is doing)
 OnFirstTokenFn = Callable[[str], None]  # (source_id)
 OnFileDoneFn = Callable[[FileOutcome], None]
+
+
+class TaskTextMarker(Protocol):
+    """Finds the printed text a run's documents share and stores it with each of them.
+
+    ``application.task_text.TaskTextService`` implements it; the run calls it between its
+    reading pass and the proofreading.
+    """
+
+    def mark_a_queue(self, config: Config, files: Sequence[Path]) -> TaskTextFound:
+        """Store the printed text found in *files*, and say what was found."""
+        ...
 
 
 @runtime_checkable
@@ -480,6 +499,9 @@ class ProgressCallbacks:
     :class:`~teachers_teammate.domain.stages.ProgressStage` (not when that stage is served from
     the cache).
     ``on_ocr_done(source_id, name)`` fires after OCR, before correction.
+    ``on_read_first(source_id, name, idx, total)`` fires when the reading pass, which reads the
+    queue before anything is proofread, starts on a file; its turn later starts with
+    ``on_file_started`` as usual.
     ``on_file_done(outcome)`` fires with a :class:`FileOutcome` after a file completes
     (saved, failed, skipped or stopped).
     ``on_keep_awake(state)`` fires once at the start of a run with a
@@ -492,6 +514,7 @@ class ProgressCallbacks:
     on_file_started: OnFileStartedFn | None = None
     on_stage_started: OnStageStartedFn | None = None
     on_ocr_done: OnOcrDoneFn | None = None
+    on_read_first: OnReadFirstFn | None = None
     on_file_done: OnFileDoneFn | None = None
     on_keep_awake: Callable[[KeepAwakeState], None] | None = None
     on_stage_detail: OnStageDetailFn | None = None

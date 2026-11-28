@@ -171,6 +171,14 @@ NOTES_TOOLTIP = (
     "Anything the AI should know about this class or this text. Your notes are added to every "
     "request of the proofreading."
 )
+TASK_TEXT_HEADING = "Task text"
+SKIP_TASK_TEXT = "Don't proofread the task text"
+SKIP_TASK_TEXT_TOOLTIP = (
+    "Leave out the printed text that repeats in most documents of a worksheet — the header, the "
+    "tasks, the form labels. The student's own words are proofread as before. It is left out "
+    "found only when a run works on at least three documents."
+)
+
 PROMPTS_HEADING = "What the AI is asked"
 PROMPTS_TOOLTIP = (
     "The fixed instructions the app sends, one per step. They cannot be edited; your notes "

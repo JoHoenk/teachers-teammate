@@ -104,6 +104,10 @@ class CorrectionStage:
                 texts.transcription,
                 texts.transcription_format,
                 name=file.name,
+                # What the document leaves alone: the printed lines come back unchanged instead
+                # of being sent and "corrected".
+                passages=ctx.task_marks,
+                not_task=ctx.not_task,
                 stop_requested=self._shared.stopping,
                 # The file's anonymized text is made once and shared with the anonymized text
                 # file; the unit asks for it rather than hiding the same text again.

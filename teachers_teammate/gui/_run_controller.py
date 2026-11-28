@@ -53,6 +53,7 @@ class WorkerLike(Protocol):
     """What the controller asks of the object that runs the batch (a test may pass its own)."""
 
     file_started: Any
+    read_first: Any
     stage_started: Any
     ocr_done: Any
     stage_detail: Any
@@ -165,6 +166,7 @@ class RunController(QObject):
         self.battery_note.setStyleSheet("color: #e6a23c; font-size: 11px;")
         self.battery_note.setVisible(False)
         self._worker: WorkerLike | None = None
+        self._reading_first = ""  # the file the reading pass is on, until it leaves it
         self._pages_task = LatestTask(self)
         #: Moves the bar and counts the time left down between two events of the run.
         self._progress_timer = QTimer(self)
@@ -226,6 +228,7 @@ class RunController(QObject):
         worker.request_stop(now=True)
         for name in (
             "file_started",
+            "read_first",
             "stage_started",
             "ocr_done",
             "file_done",
@@ -279,6 +282,7 @@ class RunController(QObject):
             app_service=self._services,
         )
         self._worker.file_started.connect(self._on_file_started)
+        self._worker.read_first.connect(self._on_read_first)
         self._worker.stage_started.connect(self._on_stage_started)
         self._worker.ocr_done.connect(self._on_ocr_done)
         self._worker.stage_detail.connect(self._on_stage_detail)
@@ -412,7 +416,24 @@ class RunController(QObject):
 
     # ── Worker signal handlers ────────────────────────────────────────────
 
+    def _on_read_first(self, source_id: str, name: str, idx: int, total: int) -> None:
+        """The reading pass reads *source_id* now: its row and the progress line say so."""
+        self._end_read_first()
+        self._reading_first = source_id
+        self._set_progress_text(self._session.read_first(source_id, name, idx, total))
+        self._table.mark_processing(source_id)
+        self._hooks.apply_lock()
+        self._hooks.refresh_check_run()
+
+    def _end_read_first(self) -> None:
+        """The reading pass left its file: the row shows the reading it stored."""
+        source_id, self._reading_first = self._reading_first, ""
+        if source_id:
+            self._table.mark_stage_running(source_id, "")
+            self._hooks.sync_row(source_id)
+
     def _on_file_started(self, source_id: str, name: str, idx: int, total: int) -> None:
+        self._end_read_first()
         self._set_steps_done((idx - 1) * self._session.steps_per_file)
         self._session.file_started(source_id, name, idx, total)
         self._set_progress_text(self._session.progress_base)
@@ -488,6 +509,7 @@ class RunController(QObject):
 
     def _on_run_finished(self, summary: RunSummary) -> None:
         """Announce how the run ended: done, stopped (not an error) or finished with errors."""
+        self._end_read_first()
         self.run_button.setEnabled(True)
         self.set_stop_stage(StopStage.IDLE)
         self.awake_note.setVisible(False)

@@ -164,6 +164,7 @@ class CheckController(QObject):
         self._page.item_shown.connect(self.on_item_shown)
         self._page.copy_requested.connect(self.on_copy_requested)
         self._page.save_requested.connect(self.on_save_requested)
+        self._page.task_text_again.connect(self._on_task_text_again)
         self._page.text_zoom_changed.connect(self.on_text_zoom)
         self._page.layout_changed.connect(self.on_layout_changed)
         # Ctrl+1 / Ctrl+2 reach the tabs from anywhere in the window; Esc is the page's.
@@ -418,6 +419,29 @@ class CheckController(QObject):
         if not self._open or not self._page.mark_looked_at(key):
             return
         self._services.commands.mark_looked_at(self._config(), source=Path(self._open), keys=[key])
+
+    def _on_task_text_again(self, proofread: bool) -> None:
+        """Proofread the printed text of the open document after all, or leave it alone again.
+
+        The passages stay marked either way; the teacher's entries say whether the next run
+        sends them.  The document is out of date from here on, which its row says.
+        """
+        if not self._open:
+            return
+        source = Path(self._open)
+        commands = self._services.commands
+        try:
+            if proofread:
+                changed = commands.proofread_task_text_again(self._config(), source=source)
+            else:
+                changed = commands.leave_task_text_alone(self._config(), source=source)
+        except WorkNotSavedError as exc:
+            # The command logged the refusal; it is an expected event, not a bug to log again.
+            show_failure(self._window, dlg.work_not_saved(exc.name, too_new=exc.too_new))
+            return
+        if changed:
+            self._hooks.sync_row(self._open)
+            self.load(self._open)
 
     def on_checked_toggled(self, checked: bool) -> None:
         """The teacher pressed *Checked*: store the decision and show what the store says.

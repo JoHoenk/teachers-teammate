@@ -13,12 +13,12 @@ import functools
 import logging
 from pathlib import Path
 
-from ..cache_keys import correction_key, expected_hashes, privacy_key
+from ..cache_keys import correction_key, expected_hashes, privacy_key, with_task_text
 from ..config import Config
 from ..domain.context_budget import RunWindows
 from ..domain.correction_policy import DEFAULT_LEVEL
 from ..domain.correction_prompts import notes_block, parameters
-from ..domain.document_state import DocumentState, machine_texts
+from ..domain.document_state import DocumentState, machine_texts, task_text_of
 from ..domain.formatted_text import TextFormat, normalize_text_format
 from ..domain.freshness import (
     ExpectedHashes,
@@ -29,7 +29,7 @@ from ..domain.freshness import (
 from ..domain.key_facts import KeyFacts
 from ..domain.review_prompts import review_system
 from ..domain.stages import Stage
-from ..domain.teacher_work import current_texts
+from ..domain.teacher_work import TeacherWork, current_texts
 from ..infrastructure.state_repository import StateRepository, compute_file_hash_cached
 from ..infrastructure.teacher_work_store import TeacherWorkStore
 from ..settings_schema import DEFAULTS
@@ -38,6 +38,7 @@ from .check_document import CheckDocument, check_document_of
 from .correction_options import proofreading_prompts
 from .data_flow import DataFlowService
 from .document_view import DocumentStateView, to_view
+from .formatting import TextFormatter
 from .merged_view import merged_view, reconciled_view
 from .queue import QueueRow, StoredStages, queue_row
 from .sent_text import (
@@ -121,11 +122,14 @@ class DocumentQueries:
                 yield file, None, None
                 continue
             if reconciled:
+                work = self._work_store.load(state.source_hash)
                 view = reconciled_view(
                     file,
                     state,
-                    self._work_store.load(state.source_hash),
-                    expected_hashes(config, file, windows, self._facts),
+                    work,
+                    expected_hashes(
+                        config, file, windows, self._facts, task_text=self._task_text(state, work)
+                    ),
                 )
             else:
                 view = self._merged(to_view(file, state), state)
@@ -171,6 +175,9 @@ class DocumentQueries:
             return None
         if not config.scan_marks:
             view = replace(view, raw_layout=())
+        if not config.skip_task_text:
+            # The run proofreads the printed text too, so nothing is shown as left alone.
+            view = replace(view, task_marks=(), not_task=())
         return check_document_of(view)
 
     def recognised_files(self, config: Config, files: Collection[Path]) -> set[Path]:
@@ -187,10 +194,13 @@ class DocumentQueries:
                 state = store.load_valid(file)
                 if state is None or not state.ocr_done:
                     continue
+                work = self._work_store.load(state.source_hash)
                 flags = stage_hashes(
                     state,
-                    self._work_store.load(state.source_hash),
-                    expected_hashes(config, file, windows, self._facts),
+                    work,
+                    expected_hashes(
+                        config, file, windows, self._facts, task_text=self._task_text(state, work)
+                    ),
                 )
                 if first_stale_stage_for_hashes(flags) is not Stage.OCR:
                     found.add(file)
@@ -223,7 +233,7 @@ class DocumentQueries:
         """
 
         store = self._state_store(config)
-        expected_correction_hash = correction_key(config, self._windows_for(config), self._facts)
+        settings_key = correction_key(config, self._windows_for(config), self._facts)
 
         kept_stale: list[Path] = []
         unanswered: list[Path] = []
@@ -248,6 +258,11 @@ class DocumentQueries:
                 if run_proofreads and worked_on:
                     unbound.append(file)
                 continue
+            # The task text of this document is part of its proofreading key: marking a passage
+            # makes the answer stale, so the run asks about it.
+            expected_correction_hash = with_task_text(
+                config, settings_key, self._task_text(state, work)
+            )
             # Only the proofreading's freshness is asked about, so the other two hashes are
             # the stored ones: they are never different, and the file is not read for them.
             flags = stage_hashes(
@@ -340,6 +355,11 @@ class DocumentQueries:
 
         prompt = config.evaluate_prompt or DEFAULTS["evaluate_prompt"]
         return review_system(prompt, text_format)
+
+    @staticmethod
+    def _task_text(state: DocumentState, work: TeacherWork | None) -> tuple[str, ...]:
+        """Return what the marks of *state* cover: its part of the proofreading key."""
+        return task_text_of(state, work, TextFormatter.plain_text)
 
     def _merged(self, view: DocumentStateView, state: DocumentState) -> DocumentStateView:
         """Return *view* with the teacher's texts over the machine's."""

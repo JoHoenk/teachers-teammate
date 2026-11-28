@@ -96,6 +96,30 @@ so background thread only. See {doc}`development` → "Text recognition switch".
 only, the event is the truth. Wording in `gui/_run_status.py`. See {doc}`development` →
 "Stopping a run and run outcomes"
 
+## Task text (the printed text of a worksheet)
+
+`domain/task_text.py` is the whole rule: the thresholds at its top (similarity, share of a group,
+how many documents make a worksheet, how few words a lone line may have), `detect_task_text` for a
+queue and `locate` for one text. A document's marks are the passages the detection found
+(`DocumentState.task_passages`, rebuilt by the next detection); the teacher's "not task" entries
+over them are their work (`TeacherWork.not_task`), hold for that document alone, and win.
+
+- A run reads the queue first (`infrastructure/workflow/task_text_pass.py`, reported through
+  `ProgressCallbacks.on_read_first`), marks what it found through the `TaskTextMarker` port
+  (`application/task_text.py`, only lines not marked yet), then proofreads. A stop in the reading
+  pass ends the run.
+- The detection reads the reading itself; everything else looks for the marks in the current
+  transcription, the teacher's where they fixed it.
+- `CacheContext.task_marks` / `.not_task` are what a run applies: empty while `skip_task_text` is
+  off.
+- `ProofreadText` cuts the transcription at the located segments and sends the student's only; in
+  Markdown it cuts at whole lines, and a text whose lines do not pair with the plain text's goes out
+  whole.
+- What the marks cover (`domain.document_state.task_text_of`) is the document's part of the
+  correction key; `expected_hashes` requires it, so marking re-proofreads that document alone.
+- The Check tab draws them grey over the text, the strip above it says how many, and Word writes
+  them grey and italic.
+
 ## New OCR engine
 
 Id in `OCR_ENGINE_NAMES` (`domain/data_location.py`); a `build_<engine>_ocr` field and branch in

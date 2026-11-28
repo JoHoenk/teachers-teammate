@@ -56,6 +56,7 @@ class _DummyWorker:
     def __init__(self, _config, files=None, app_service=None) -> None:
         self.log_line = _DummySignal()
         self.file_started = _DummySignal()
+        self.read_first = _DummySignal()
         self.stage_started = _DummySignal()
         self.ocr_done = _DummySignal()
         self.stage_detail = _DummySignal()

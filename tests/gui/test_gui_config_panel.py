@@ -1488,26 +1488,35 @@ def test_proofreading_dialog_returns_the_explanation_options(qtbot) -> None:
     """
     Given  the proofreading options opened with German explanations and reviews
     When   the user picks "Same as the text" and ticks "Corrections only"
-    Then   explanation_values() returns explanation_language "" and correction_output "text"
+    Then   option_values() returns explanation_language "" and correction_output "text"
     """
     from teachers_teammate.texts import review as txt  # noqa: PLC0415
     from teachers_teammate.gui._config_panel import _ProofreadingDialog  # noqa: PLC0415
 
     dlg = _ProofreadingDialog(
-        "Proofreading", "", lambda corrections_only: (), explanations=("German", "review")
+        "Proofreading",
+        "",
+        lambda corrections_only: (),
+        explanations=("German", "review"),
+        skip_task_text=False,
     )
     qtbot.addWidget(dlg)
     assert dlg._explanation_language.currentText() == "German"
     assert not dlg._corrections_only.isChecked()
-    assert dlg.explanation_values() == {
+    assert dlg.option_values() == {
         "explanation_language": "German",
         "correction_output": "review",
+        "skip_task_text": False,
     }
 
     dlg._explanation_language.setCurrentIndex(dlg._explanation_language.findText(txt.SAME_AS_TEXT))
     dlg._corrections_only.setChecked(True)
 
-    assert dlg.explanation_values() == {"explanation_language": "", "correction_output": "text"}
+    assert dlg.option_values() == {
+        "explanation_language": "",
+        "correction_output": "text",
+        "skip_task_text": False,
+    }
 
 
 @pytest.mark.gui
@@ -1523,7 +1532,7 @@ def test_review_instructions_have_no_explanation_options(qtbot) -> None:
     qtbot.addWidget(dlg)
 
     assert not hasattr(dlg, "_explanation_language")
-    assert not hasattr(dlg, "explanation_values")
+    assert not hasattr(dlg, "option_values")
     assert not hasattr(dlg, "_notes")
 
 

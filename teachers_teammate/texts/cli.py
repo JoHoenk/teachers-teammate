@@ -72,6 +72,11 @@ HELP_SCAN_MARKS = (
 )
 HELP_NO_SCAN_MARKS = "Do not keep where the lines of a scan sit; the window then marks nothing."
 
+HELP_PROOFREAD_TASK_TEXT = (
+    "Proofread the task text too: the headers, tasks and form labels that repeat in every "
+    "document of a worksheet (by default left as they are, grey in the Word file)."
+)
+
 HELP_OCR_MODEL = "Ollama OCR vision model."
 HELP_OCR_ENGINE = (
     "OCR engine: ollama (AI vision model through Ollama, default) or ppocr (the "

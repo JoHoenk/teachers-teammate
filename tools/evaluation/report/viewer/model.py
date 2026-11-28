@@ -420,8 +420,8 @@ def _texts(loaded: Loaded, by_text: Mapping[str, Sequence[LoadedItem]]) -> dict[
                     code=code,
                     category=category,
                     main_type=(
-                        by_edit[change_key(edit, positions)].main_type
-                        if change_key(edit, positions) in by_edit
+                        label.main_type
+                        if (label := by_edit.get(change_key(edit, positions))) is not None
                         else UNLABELLED
                     ),
                     row=row_of(rows, edit[0], edit[1]),

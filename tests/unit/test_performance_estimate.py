@@ -18,12 +18,13 @@ from teachers_teammate.domain.performance_estimate import (
     FAST_LIMIT_S,
     OK_LIMIT_S,
     SLOW_LIMIT_S,
-    TEXT_MODE_ANSWER,
+    TYPICAL_PAGE_WORDS,
     MachineFactors,
     ModelSpeed,
     SpeedBand,
     TimeRange,
     answer_length_for,
+    answer_tokens,
     band,
     batch_time,
     card_not_used,
@@ -31,6 +32,7 @@ from teachers_teammate.domain.performance_estimate import (
     default_answer_length,
     expected_band,
     expected_speed,
+    fit_answer_curve,
     machine_factor,
     median_factor,
     proofreading_time,
@@ -75,7 +77,7 @@ class TestProofreadingTime:
     """Given a measured writing model, When a text is estimated, Then reading and writing add up."""
 
     def test_the_measured_answer_length_is_used(self) -> None:
-        """Given a measured answer length, When a text is estimated, Then its range is used."""
+        """Given the tokens a run answered with, When a text is estimated, Then its range is used."""
         speed = _speed(chars_per_token=1000.0)
         measured = AnswerLength(low=300, typical=350, high=400)
 
@@ -85,18 +87,15 @@ class TestProofreadingTime:
         assert result.low_s == pytest.approx(0.0024 + 3.0)
         assert result.high_s == pytest.approx(0.0024 + 4.0)
 
-    def test_without_a_measurement_the_exchange_figures_are_summed(self) -> None:
+    def test_without_a_measurement_the_exchange_curves_are_summed(self) -> None:
         """Given no measured length, When a text is estimated, Then the steps' answers add up."""
         speed = _speed(chars_per_token=1000.0)
 
         result = proofreading_time(speed, 100, DEFAULT_EXCHANGE_COST, _ALL_STEPS)
 
-        # 141 + 60 + 20 tokens per 100 words, spread like TEXT_MODE_ANSWER.
-        typical = 221
-        low = round(typical * TEXT_MODE_ANSWER.low / TEXT_MODE_ANSWER.typical)
-        high = round(typical * TEXT_MODE_ANSWER.high / TEXT_MODE_ANSWER.typical)
-        assert result.low_s == pytest.approx(0.0024 + low / 100.0)
-        assert result.high_s == pytest.approx(0.0024 + high / 100.0)
+        tokens = answer_tokens(DEFAULT_EXCHANGE_COST, _ALL_STEPS, 100)
+        assert result.low_s == pytest.approx(0.0024 + tokens.low / 100.0)
+        assert result.high_s == pytest.approx(0.0024 + tokens.high / 100.0)
 
     def test_every_step_reads_the_text_again(self) -> None:
         """Given the three steps, When a text is estimated, Then step ② reads it twice."""
@@ -113,9 +112,10 @@ class TestProofreadingTime:
 
         result = proofreading_time(speed, 100, DEFAULT_EXCHANGE_COST, ("correct",))
 
-        # 600 chars = 0.6 tokens of request; step ① answers like the measured text mode.
-        assert result.low_s == pytest.approx(0.0006 + TEXT_MODE_ANSWER.low / 100.0)
-        assert result.high_s == pytest.approx(0.0006 + TEXT_MODE_ANSWER.high / 100.0)
+        # 600 chars = 0.6 tokens of request; step ① answers with its own curve.
+        tokens = answer_tokens(DEFAULT_EXCHANGE_COST, ("correct",), 100)
+        assert result.low_s == pytest.approx(0.0006 + tokens.low / 100.0)
+        assert result.high_s == pytest.approx(0.0006 + tokens.high / 100.0)
 
     def test_overhead_characters_are_read_too(self) -> None:
         """Given fixed instructions, When a text is estimated, Then their tokens are read."""
@@ -125,8 +125,10 @@ class TestProofreadingTime:
             speed, 0, DEFAULT_EXCHANGE_COST, ("correct",), overhead_chars=2000
         )
 
-        # 2000 chars at 1000 chars per token = 2 tokens, read at 1000 tokens per second.
-        assert result.low_s == pytest.approx(0.002)
+        # 2000 chars at 1000 chars per token = 2 tokens, read at 1000 tokens per second; the
+        # answer of step ① is there whatever the text's length.
+        tokens = answer_tokens(DEFAULT_EXCHANGE_COST, ("correct",), 0)
+        assert result.low_s == pytest.approx(0.002 + tokens.low / 100.0)
 
     def test_unmeasured_characters_per_token_uses_the_default(self) -> None:
         """Given no measured characters per token, When estimated, Then the default applies."""
@@ -135,7 +137,82 @@ class TestProofreadingTime:
         result = proofreading_time(speed, 100, DEFAULT_EXCHANGE_COST, ("correct",))
 
         expected_read = 600 / DEFAULT_CHARS_PER_TOKEN / 1000.0
-        assert result.low_s == pytest.approx(expected_read + TEXT_MODE_ANSWER.low / 100.0)
+        tokens = answer_tokens(DEFAULT_EXCHANGE_COST, ("correct",), 100)
+        assert result.low_s == pytest.approx(expected_read + tokens.low / 100.0)
+
+
+class TestAnswerTokens:
+    """Given the exchange's curves, When a text is summed, Then a part per text and a part per word."""
+
+    def test_the_three_answers_of_a_page_are_the_measured_ones(self) -> None:
+        """Given a page of 250 words, When summed, Then the answers are 660 tokens per 100 words."""
+        tokens = answer_tokens(DEFAULT_EXCHANGE_COST, _ALL_STEPS, TYPICAL_PAGE_WORDS)
+
+        assert tokens.typical == 1650
+        assert tokens.typical / TYPICAL_PAGE_WORDS * 100 == pytest.approx(660, abs=1)
+
+    def test_a_short_text_does_not_pay_the_page_rate(self) -> None:
+        """Given 100 and 500 words, When summed, Then fewer words cost more per 100 words."""
+        short = answer_tokens(DEFAULT_EXCHANGE_COST, _ALL_STEPS, 100).typical
+        long = answer_tokens(DEFAULT_EXCHANGE_COST, _ALL_STEPS, 500).typical
+
+        assert short / 100 > long / 500
+        # The fixed part is paid once per text, so 100 words cost more than a fifth of 500.
+        assert short > long / 5
+
+    def test_a_step_that_is_not_sent_adds_nothing(self) -> None:
+        """Given step ① alone, When summed, Then only its own curve counts."""
+        tokens = answer_tokens(DEFAULT_EXCHANGE_COST, ("correct",), 100)
+
+        assert tokens == AnswerLength(low=117, typical=136, high=154)
+
+
+class TestFitAnswerCurve:
+    """Given the answer lengths a run measured, When they are fitted, Then a line through them."""
+
+    def test_the_line_goes_through_the_runs(self) -> None:
+        """Given answers of 450 + 4.8 per word, When fitted, Then that line comes back."""
+        curve = fit_answer_curve([(250, 1650), (500, 2850), (125, 1050)])
+
+        assert curve is not None
+        assert curve.fixed == pytest.approx(450)
+        assert curve.per_word == pytest.approx(4.8)
+        assert curve.low == pytest.approx(1.0)
+        assert curve.high == pytest.approx(1.0)
+
+    def test_one_text_length_says_nothing_about_the_fixed_part(self) -> None:
+        """Given answers of one length only, When fitted, Then there is no curve."""
+        assert fit_answer_curve([(250, 1650), (250, 1700)]) is None
+        assert fit_answer_curve([(250, 1650)]) is None
+        assert fit_answer_curve([]) is None
+
+    def test_the_range_is_what_the_runs_answered_against_the_line(self) -> None:
+        """Given one run far above its line, When fitted, Then the range reaches it."""
+        curve = fit_answer_curve([(100, 1000), (300, 2000), (500, 4200)])
+
+        assert curve is not None
+        assert curve.per_word == pytest.approx(8)
+        assert curve.low == pytest.approx(5 / 6, abs=0.001)
+        assert curve.high == pytest.approx(1.25, abs=0.001)
+
+    def test_a_line_below_zero_goes_through_zero_instead(self) -> None:
+        """Given answers whose line crosses zero, When fitted, Then it keeps a part per word."""
+        curve = fit_answer_curve([(180, 220), (260, 330), (340, 450)])
+
+        assert curve is not None
+        assert curve.fixed == 0.0
+        assert curve.per_word == pytest.approx(
+            (180 * 220 + 260 * 330 + 340 * 450) / (180**2 + 260**2 + 340**2)
+        )
+        assert curve.tokens(600) > curve.tokens(100) * 5
+
+    def test_answers_that_shrink_with_the_text_keep_the_flat_middle(self) -> None:
+        """Given longer texts with shorter answers, When fitted, Then no part per word."""
+        curve = fit_answer_curve([(100, 600), (300, 400), (500, 200)])
+
+        assert curve is not None
+        assert curve.per_word == 0.0
+        assert curve.fixed == pytest.approx(400)
 
 
 class TestContentReviewTime:
@@ -178,6 +255,12 @@ class TestBatchTime:
         result = batch_time(0, 2, [TimeRange(10.0, 20.0)])
 
         assert result == TimeRange(0.0, 0.0)
+
+    def test_a_further_page_pays_only_its_own_part(self) -> None:
+        """Given 30 s for a first page and 10 s for each further, When 2 files of 3, Then 100 s."""
+        result = batch_time(2, 3, [TimeRange(30.0, 30.0)], further=[TimeRange(10.0, 10.0)])
+
+        assert result == TimeRange(100.0, 100.0)
 
 
 class TestBand:

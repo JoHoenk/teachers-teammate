@@ -429,8 +429,12 @@ class PageTimes(Protocol):
         ollama_url: str,
         *,
         hardware: HardwareDetection | None = None,
+        words: int = ...,
     ) -> dict[str, TimeRange]:
-        """Return the measured seconds per page of *tags*, keyed by tag; unmeasured ones are out."""
+        """Return the measured seconds of *words* words of *tags*, keyed by tag.
+
+        A model that was never measured is left out.
+        """
         ...
 
 

@@ -254,10 +254,10 @@ nothing outside `infrastructure/proofreading/` may see it.
 
 What step ① sends is not quite the text it was given: `domain/proofreading/markdown_shield.py`
 strips the notation of a Markdown text, and `domain/proofreading/paragraph_gaps.py` narrows a run
-of three or more line breaks to one blank line, because a model reads a wide gap as a break
-between two texts; both put the source back into the answer afterwards. A step judges its answer
-against the text it sent, never against the raw text. See {doc}`development` → "Proofreading
-exchange"
+of three or more line breaks of a plain text to one blank line, because a model reads a wide gap
+as a break between two texts; both put the source back into the answer afterwards. A step judges
+its answer against the text it sent, never against the raw text. See {doc}`development` →
+"Proofreading exchange"
 
 ## Proofreading steps / prompts
 

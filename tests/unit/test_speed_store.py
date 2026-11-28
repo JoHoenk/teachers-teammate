@@ -520,24 +520,6 @@ def test_a_sample_holds_no_text(tmp_path: Path) -> None:
     }
 
 
-def test_the_answer_length_per_hundred_words_is_derived_from_the_sample() -> None:
-    """
-    Given  a sample of 300 answer tokens for 250 words
-    When   its answer length is asked for
-    Then   it is 120 tokens per 100 words
-    """
-    assert _sample().answer_per_100_words == 120.0
-
-
-def test_a_sample_without_words_has_no_answer_length() -> None:
-    """
-    Given  a sample of a step that carried no text
-    When   its answer length is asked for
-    Then   it is unknown rather than a division by zero
-    """
-    assert RunSample(answer_tokens=300, words=0).answer_per_100_words is None
-
-
 # ── Reading once, normalised servers, and the file of another schema ───────
 
 

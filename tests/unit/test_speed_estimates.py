@@ -157,6 +157,11 @@ def _sample(
     )
 
 
+def _answer(tokens: int) -> AnswerLength:
+    """Return an answer length of *tokens* with no spread, as a run that measured exactly that."""
+    return AnswerLength(low=tokens, typical=tokens, high=tokens)
+
+
 def _add_samples(
     samples: SampleStore,
     step: SpeedStep,
@@ -175,6 +180,7 @@ def _exchange_time(
     *,
     corrections_only: bool = False,
     chars_per_token: float | None = None,
+    words: int = TYPICAL_PAGE_WORDS,
 ) -> TimeRange:
     """Return the estimate the panel makes for the default writing model.
 
@@ -191,7 +197,7 @@ def _exchange_time(
         steps = ("correct", "explain")
     return proofreading_time(
         ModelSpeed(read_tps=1000.0, write_tps=100.0, chars_per_token=chars_per_token),
-        TYPICAL_PAGE_WORDS,
+        words,
         exchange_cost(profile.exchange),
         steps,
         answer=answer,
@@ -814,7 +820,7 @@ def test_the_summary_reports_the_class_set(tmp_path: Path) -> None:
     """
     Given  a stored measurement of both models
     When   the summary is asked for
-    Then   the class set is the sum of both steps over every page of every file
+    Then   the class set is both steps over every file: its first page, then each further page
     """
     service, store, _server = _service(tmp_path)
     store.save(_record())
@@ -827,8 +833,36 @@ def test_the_summary_reports_the_class_set(tmp_path: Path) -> None:
 
     summary = service.speed_summary(_choices())
 
-    per_page = sum(row.per_page.low_s for row in summary.steps)
-    assert summary.class_set.low_s == pytest.approx(per_page * CLASS_SET_PAGES * CLASS_SET_FILES)
+    first, further = summary.per_page, summary.further_page
+    assert first is not None and further is not None
+    per_file = first.low_s + further.low_s * (CLASS_SET_PAGES - 1)
+    assert summary.class_set.low_s == pytest.approx(per_file * CLASS_SET_FILES)
+
+
+def test_a_further_page_of_a_file_costs_less_to_proofread_than_the_first(tmp_path: Path) -> None:
+    """
+    Given  a stored measurement of a reading and a writing model
+    When   the summary is asked for
+    Then   a further page reads like the first, but proofreads for less: the part of the answer
+           paid once per text is on the first page only
+    """
+    service, store, _server = _service(tmp_path)
+    store.save(_record())
+    store.save(
+        _record(
+            tag="glm-ocr:q8_0",
+            steps=(StepRecord(SpeedStep.READING, StepOutcome.MEASURED, speed=_speed()),),
+        )
+    )
+
+    summary = service.speed_summary(_choices())
+
+    reading = summary.step(SpeedStep.READING)
+    proofreading = summary.step(SpeedStep.PROOFREADING)
+    assert reading is not None and proofreading is not None
+    assert reading.next_page == reading.per_page
+    assert 0 < proofreading.next_page.low_s < proofreading.per_page.low_s
+    assert 0 < proofreading.next_page.high_s < proofreading.per_page.high_s
 
 
 def test_swapping_models_lengthen_the_class_set(tmp_path: Path) -> None:
@@ -1014,24 +1048,27 @@ def test_an_empty_store_gives_an_empty_summary(tmp_path: Path) -> None:
 
 def test_three_samples_replace_the_exchange_answer_length(tmp_path: Path) -> None:
     """
-    Given  three samples of the proofreading step whose answers are shorter than the exchange's
-           own figures
+    Given  two runs of two text lengths whose answers are shorter than the exchange's own figures,
+           then a third
     When   the summary is asked for
-    Then   the per-page range is shorter than the exchange's figure, because the run knows this
-           class's error level and no test can
+    Then   the per-page range is the curve through the runs at the page's length, well below the
+           exchange's figure, because the run knows this class's error level and no test can
     """
     samples = SampleStore(tmp_path / "samples.json")
     service, _store, _server = _service(tmp_path, samples=samples)
-    short = [_sample(answer_tokens=300), _sample(answer_tokens=300)]
+    short = [_sample(answer_tokens=800), _sample(answer_tokens=1300, words=500)]
     _add_samples(samples, SpeedStep.PROOFREADING, short)
     below = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
-    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=300)])
+    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=800)])
     at = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
 
     assert below is not None
     assert at is not None
     assert below.sample_count == 2
     assert at.sample_count == 3
+    # The line through 800 tokens at 250 words and 1300 at 500 is 300 + 2 per word: a page
+    # answers with 800 tokens, not the exchange's 1650.
+    assert at.per_page.typical_s == pytest.approx(_exchange_time(_answer(800)).typical_s)
     assert at.per_page.typical_s < below.per_page.typical_s
 
 
@@ -1049,6 +1086,28 @@ def test_before_samples_the_estimate_comes_from_the_exchange_cost_model(tmp_path
 
     assert row is not None
     assert row.per_page.typical_s == pytest.approx(_exchange_time(chars_per_token=4.2).typical_s)
+
+
+def test_a_text_of_its_own_length_is_estimated_with_that_length(tmp_path: Path) -> None:
+    """
+    Given  a stored measurement, no samples, and a text of 100 words the app knows
+    When   the summary is asked for about that text and about a page
+    Then   the short text is charged its fixed part plus its own words, well below a page
+    """
+    service, store, _server = _service(tmp_path)
+    store.save(_record())
+
+    short = service.speed_summary(_choices(reading_model=""), words=100).step(
+        SpeedStep.PROOFREADING
+    )
+    page = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
+
+    assert short is not None
+    assert page is not None
+    assert short.per_page.typical_s == pytest.approx(
+        _exchange_time(words=100, chars_per_token=4.2).typical_s
+    )
+    assert short.per_page.typical_s < page.per_page.typical_s
 
 
 def test_the_samples_of_the_old_review_mode_are_ignored(tmp_path: Path) -> None:
@@ -1070,23 +1129,22 @@ def test_the_samples_of_the_old_review_mode_are_ignored(tmp_path: Path) -> None:
 
 def test_ten_samples_narrow_the_range_to_the_percentiles(tmp_path: Path) -> None:
     """
-    Given  nine samples with one answer length and a tenth whose answer is far longer
-    When   the summary is asked for
-    Then   the high end is below the runaway answer, which the ends would have taken
+    Given  eight answers on one line and a ninth three times as long as its line
+    When   the summary is asked for before and after a tenth quiet sample
+    Then   the range still reaches the runaway at nine samples and no longer does at ten
     """
+    on_line = [_sample(answer_tokens=1650), _sample(answer_tokens=2850, words=500)] * 4
     samples = SampleStore(tmp_path / "samples.json")
     service, _store, _server = _service(tmp_path, samples=samples)
-    runaway = _sample(answer_tokens=25000)
-    _add_samples(samples, SpeedStep.PROOFREADING, [_sample() for _ in range(8)] + [runaway])
+    _add_samples(samples, SpeedStep.PROOFREADING, [*on_line, _sample(answer_tokens=4950)])
     nine = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
-    _add_samples(samples, SpeedStep.PROOFREADING, [_sample()])
+    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=1650)])
     ten = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
 
     assert nine is not None
     assert ten is not None
-    assert nine.per_page.high_s == pytest.approx(
-        _exchange_time(AnswerLength(low=400, typical=400, high=10000)).high_s
-    )
+    assert nine.sample_count == 9
+    assert ten.sample_count == 10
     assert ten.per_page.high_s < nine.per_page.high_s
 
 
@@ -1122,15 +1180,29 @@ def test_corrections_only_uses_the_answer_length_its_own_samples_measured(
     """
     samples = SampleStore(tmp_path / "samples.json")
     service, _store, _server = _service(tmp_path, samples=samples)
-    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=1000)] * 3)
-    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=700)] * 3, mode="text")
+    _add_samples(
+        samples,
+        SpeedStep.PROOFREADING,
+        [_sample(answer_tokens=1000), _sample(answer_tokens=1300, words=500), _sample()],
+    )
+    _add_samples(
+        samples,
+        SpeedStep.PROOFREADING,
+        [
+            _sample(answer_tokens=700),
+            _sample(answer_tokens=900, words=500),
+            _sample(answer_tokens=700),
+        ],
+        mode="text",
+    )
     choices = dataclasses.replace(_choices(reading_model=""), correction_output="text")
 
     row = service.speed_summary(choices).step(SpeedStep.PROOFREADING)
 
-    expected = _exchange_time(AnswerLength(low=280, typical=280, high=280), corrections_only=True)
+    # 700 tokens at 250 words and 900 at 500 is 500 + 0.8 per word: a page answers with 700.
+    expected = _exchange_time(_answer(700), corrections_only=True)
     assert row is not None
-    assert row.per_page.typical_s == pytest.approx(expected.typical_s, rel=0.05)
+    assert row.per_page.typical_s == pytest.approx(expected.typical_s)
 
 
 def test_a_full_run_ignores_the_samples_of_corrections_only(tmp_path: Path) -> None:
@@ -1142,9 +1214,10 @@ def test_a_full_run_ignores_the_samples_of_corrections_only(tmp_path: Path) -> N
     """
     samples = SampleStore(tmp_path / "samples.json")
     service, _store, _server = _service(tmp_path, samples=samples)
-    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=350)] * 4, mode="text")
+    short = [_sample(answer_tokens=350), _sample(answer_tokens=450, words=500)] * 2
+    _add_samples(samples, SpeedStep.PROOFREADING, short, mode="text")
     only_text = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
-    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=350)] * 4)
+    _add_samples(samples, SpeedStep.PROOFREADING, short)
     with_exchange = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
 
     assert only_text is not None

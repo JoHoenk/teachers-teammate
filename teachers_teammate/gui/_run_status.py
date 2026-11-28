@@ -116,7 +116,9 @@ class RunPace:
     """
 
     estimate: TimeRange | None = None
-    """Seconds per page from the store, or ``None`` when nothing was measured."""
+    """Seconds of a file's first page from the store, or ``None`` when nothing was measured."""
+    further: TimeRange | None = None
+    """Seconds each further page of a file adds; ``None`` when it costs what the first does."""
     _done_s: list[float] = field(default_factory=list)
     _done_pages: list[int] = field(default_factory=list)
     _files_total: int = 0
@@ -175,15 +177,29 @@ class RunPace:
     def per_page(self) -> TimeRange | None:
         """Return the seconds one page is expected to take, or ``None`` when nothing is known."""
         own = self.own_per_page()
+        estimate = self._estimate_per_page()
         if own is None:
-            return self.estimate
-        if self.estimate is None:
+            return estimate
+        if estimate is None:
             return TimeRange(own, own)
         weight = min(1.0, len(self._done_s) / BLEND_FILES)
         return TimeRange(
-            weight * own + (1 - weight) * self.estimate.low_s,
-            weight * own + (1 - weight) * self.estimate.high_s,
+            weight * own + (1 - weight) * estimate.low_s,
+            weight * own + (1 - weight) * estimate.high_s,
         )
+
+    def _estimate_per_page(self) -> TimeRange | None:
+        """Return the store's seconds per page of this run's files, or ``None``.
+
+        Once the page counts are known, what a file pays once is spread over its pages; until
+        then every page is charged as a first page.
+        """
+        if self.estimate is None or self.further is None:
+            return self.estimate
+        if self._pages_total <= 0 or self._files_total <= 0:
+            return self.estimate
+        once = self.estimate - self.further
+        return self.further + once.scaled(self._files_total / self._pages_total)
 
     def _credit(self, now: float, per_page_s: float) -> float:
         """Return the seconds of the running file that count as done at *now*.

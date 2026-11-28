@@ -145,9 +145,14 @@ class RunSession:
         self.time_driven = False
         self.pages = {}
 
-    def start_pace(self, estimate: TimeRange | None, files: int) -> None:
-        """Start the time-left figure at *estimate* per page over *files* documents."""
-        self.pace = RunPace(estimate)
+    def start_pace(
+        self, estimate: TimeRange | None, files: int, further: TimeRange | None = None
+    ) -> None:
+        """Start the time-left figure over *files* documents.
+
+        *estimate* is a file's first page, *further* what each further page adds.
+        """
+        self.pace = RunPace(estimate, further)
         self.pace.set_files(files)
         self.snapshot = RunProgress()
 

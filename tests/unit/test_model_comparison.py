@@ -164,6 +164,44 @@ def test_a_change_written_either_side_of_a_space_is_in_every_run() -> None:
     assert (figures.in_every_run, figures.once) == (1, 0)
 
 
+def test_a_merged_option_shows_the_wording_without_the_stray_space() -> None:
+    """
+    Given  two versions that insert the same comma, the first after the space, the second before
+    When   the comparison is made
+    Then   the one option shows the comma right after the word, as the second version wrote it
+    """
+    comparison = compare(
+        "Ja das ist gut",
+        (Version("after", "Ja , das ist gut"), Version("before", "Ja, das ist gut")),
+    )
+
+    option = comparison.sites[0].options[0]
+
+    assert (option.start, option.end, option.replacement) == (2, 2, ",")
+
+
+def test_a_verdict_on_a_merged_option_is_kept() -> None:
+    """
+    Given  two versions that insert the same comma either side of a space, and a verdict on the
+           option the comparison shows
+    When   the comparison is made again
+    Then   the option carries the verdict, whichever version's wording was judged
+    """
+    versions = (Version("after", "Ja , das ist gut"), Version("before", "Ja, das ist gut"))
+    shown = compare("Ja das ist gut", versions, text_sha=TEXT_SHA).sites[0].options[0]
+    mark = OptionMark(
+        TEXT_SHA,
+        shown.start,
+        shown.end,
+        identity(TEXT_SHA, shown.start, shown.end, shown.replacement)[3],
+        Verdict.RIGHT,
+    )
+
+    for order in (versions, versions[::-1]):
+        comparison = compare("Ja das ist gut", order, text_sha=TEXT_SHA, marks=(mark,))
+        assert comparison.sites[0].options[0].verdict is Verdict.RIGHT
+
+
 def test_the_explanation_of_an_option_belongs_to_the_version_that_made_it() -> None:
     """
     Given  two versions that fix "macht" differently, one of them without a review

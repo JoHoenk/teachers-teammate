@@ -168,13 +168,6 @@ class RunSample:
     at: str = ""
     """When the sample was taken, as an ISO 8601 timestamp in UTC."""
 
-    @property
-    def answer_per_100_words(self) -> float | None:
-        """Return the answer tokens per 100 words of text, or ``None`` without text."""
-        if self.words <= 0:
-            return None
-        return self.answer_tokens / self.words * 100
-
 
 class SampleStore:
     """Reads and writes the samples file; see the module docstring."""

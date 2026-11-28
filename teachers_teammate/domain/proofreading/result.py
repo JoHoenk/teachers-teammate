@@ -54,13 +54,37 @@ back.
 
 
 @dataclass(frozen=True)
+class AnswerCurve:
+    """How long one step's answer is: a part per text plus a part per word.
+
+    Not a rate per 100 words: an answer restates its finding and its notes whatever the text's
+    length, so the same per-100 figure is twice too high for a short text and too low for a long
+    one.  :attr:`low` and :attr:`high` are the spread of real answers against the curve, so one
+    runaway answer in the middle of it does not widen the range.
+    """
+
+    fixed: float
+    """Answer tokens an answer writes whatever the text's length."""
+    per_word: float
+    """Answer tokens one more word of student text adds."""
+    low: float = 1.0
+    """The 10th percentile of what a model answered against this curve, as a factor."""
+    high: float = 1.0
+    """The 90th percentile of what a model answered against this curve, as a factor."""
+
+    def tokens(self, words: int) -> float:
+        """Return the answer tokens one text of *words* words takes, typically."""
+        return self.fixed + self.per_word * words
+
+
+@dataclass(frozen=True)
 class ExchangeCost:
     """What an exchange costs, per step: requests per page, answer length and text copies."""
 
     requests_per_page: dict[StepName, float] = field(default_factory=dict)
     """Requests one page costs per step."""
-    answer_tokens_per_100_words: dict[StepName, int] = field(default_factory=dict)
-    """Answer tokens per 100 words of student text, per step."""
+    answers: dict[StepName, AnswerCurve] = field(default_factory=dict)
+    """How long the answer of one step is, per text."""
     text_copies: dict[StepName, int] = field(default_factory=dict)
     """How many times one request of a step carries the text.
 
@@ -72,14 +96,18 @@ class ExchangeCost:
 
 DEFAULT_EXCHANGE_COST = ExchangeCost(
     requests_per_page={"correct": 1.0, "explain": 1.0, "unclear": 1.0},
-    answer_tokens_per_100_words={"correct": 141, "explain": 60, "unclear": 20},
+    answers={
+        "correct": AnswerCurve(fixed=8, per_word=1.28, low=0.86, high=1.13),
+        "explain": AnswerCurve(fixed=352, per_word=2.99, low=0.54, high=1.47),
+        "unclear": AnswerCurve(fixed=90, per_word=0.53, low=0.34, high=1.98),
+    },
     text_copies={"correct": 1, "explain": 2, "unclear": 1},
 )
-"""What the text-first exchange costs, until a measurement on the official test set replaces it.
+"""What the text-first exchange costs, until this computer's own runs replace it.
 
-Provisional figures from the proof-of-concept sweep: one request per step and page, and the
-answer lengths of the three steps relative to the text.  Step ① is a plain rewrite, so its
-figure is the one measured for text mode (``TEXT_MODE_ANSWER``).
+One request per step and page, and per step the answer length fitted over the runs of the
+reference machine: a part per text and a part per word, with the 10th to 90th percentile of what
+the model answered against the curve as the range.
 """
 
 

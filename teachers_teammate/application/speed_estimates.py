@@ -51,6 +51,7 @@ from ..domain.performance_estimate import (
     batch_time,
     card_not_used,
     content_review_time,
+    fit_answer_curve,
     machine_factor,
     median_factor,
     percentile,
@@ -88,7 +89,7 @@ _logger = logging.getLogger(__name__)
 CLASS_SET_FILES = 30
 CLASS_SET_PAGES = 2
 
-#: Samples of one step before the run figures replace the catalog's answer length.  Two would
+#: Samples of one step before the run figures replace the exchange's answer length.  Two would
 #: be one good document and one bad one; three is the first count whose middle means anything.
 MIN_ANSWER_SAMPLES = 3
 
@@ -254,6 +255,14 @@ class StepEstimate:
     message: str = ""
     sample_count: int = 0
     """Samples of real runs behind this row; ``0`` when the figure comes from the speed test."""
+    further_page: TimeRange | None = None
+    """What each page after the first of one file adds; ``None`` when it costs what the first
+    does.  A proofreading answer is partly paid once per text, so it is less than *per_page*."""
+
+    @property
+    def next_page(self) -> TimeRange:
+        """Return what each page after the first of one file adds."""
+        return self.per_page if self.further_page is None else self.further_page
 
 
 @dataclass(frozen=True)
@@ -330,6 +339,19 @@ class SpeedSummary:
         total = TimeRange(0.0, 0.0)
         for row in self.steps:
             total = total + row.per_page
+        return total
+
+    @property
+    def further_page(self) -> TimeRange | None:
+        """Return what each page after the first of one file adds with every step, or ``None``.
+
+        Less than :attr:`per_page`: what an answer writes once per text is paid on the first page.
+        """
+        if not self.steps:
+            return None
+        total = TimeRange(0.0, 0.0)
+        for row in self.steps:
+            total = total + row.next_page
         return total
 
 
@@ -550,16 +572,18 @@ class SpeedEstimateService:
         choices: SpeedChoices,
         *,
         hardware: HardwareDetection | None = None,
+        words: int = TYPICAL_PAGE_WORDS,
     ) -> SpeedSummary:
         """Return what the panel shows for *choices*.
 
         Never contacts the server: it reads what the server last answered, so it is safe on the
         GUI thread.  Until the server was asked, a measurement is shown without the out-of-date
-        check.
+        check.  *words* is the text the estimate is about; :data:`TYPICAL_PAGE_WORDS` while no
+        text is at hand.
         """
         url = normalize_ollama_url(choices.ollama_url)
         facts = self.cached_server_facts(url)
-        rows = self._rows(choices, url=url, facts=facts, hardware=hardware)
+        rows = self._rows(choices, url=url, facts=facts, hardware=hardware, words=words)
         # A run that paid a model load for most of its documents is a run whose models evict
         # each other: that is what the teacher sees as "every file takes longer than the last".
         swaps = rows.swaps or _most_loaded(rows.run_samples)
@@ -590,6 +614,7 @@ class SpeedEstimateService:
         url: str,
         facts: ServerFacts | None,
         hardware: HardwareDetection | None,
+        words: int,
     ) -> _Rows:
         """Return a row per step that runs, measured where there is a measurement to show."""
         # ``machine_factors`` reads the whole store, so it is worked out on first need and once.
@@ -621,6 +646,7 @@ class SpeedEstimateService:
                     speed,
                     stored,
                     by_mode,
+                    words=words,
                     corrections_only=choices.correction_output == CorrectionOutput.TEXT,
                 )
             )
@@ -654,8 +680,9 @@ class SpeedEstimateService:
         ollama_url: str,
         *,
         hardware: HardwareDetection | None = None,
+        words: int = TYPICAL_PAGE_WORDS,
     ) -> dict[str, TimeRange]:
-        """Return the measured seconds per page of *tags* for *category*, keyed by tag.
+        """Return the measured seconds of one text of *words* words of *tags*, keyed by tag.
 
         A model that was never measured here is left out, and so is one whose measurement no
         longer fits the server: a figure that has moved on is worse than none.  One read of the
@@ -669,7 +696,7 @@ class SpeedEstimateService:
         for tag, stored in self._store.lookup_many(keys).items():
             speed = stored.record.measured(step) if stored.current else None
             if speed is not None:
-                result[tag] = _page_time(step, speed, tag)
+                result[tag] = _page_time(step, speed, tag, words=words)
         # One read of the samples answers for every tag of the list.
         modes_by_tag: dict[str, dict[str, tuple[RunSample, ...]]] = {}
         for key, group in self._samples.server_samples(url).items():
@@ -682,9 +709,9 @@ class SpeedEstimateService:
             if speed is None:
                 continue
             mode = _newest_mode(by_mode) if step is SpeedStep.PROOFREADING else ""
-            answer = _run_answer_length(step, by_mode.get(mode, ()) if mode else samples)
+            answer = _run_answer(step, by_mode.get(mode, ()) if mode else samples, words)
             result[tag] = _page_time(
-                step, speed, tag, answer=answer, corrections_only=mode == "text"
+                step, speed, tag, words=words, answer=answer, corrections_only=mode == "text"
             )
         return result
 
@@ -734,6 +761,7 @@ def _estimate(
     stored: StoredSpeed | None,
     by_mode: Mapping[str, tuple[RunSample, ...]],
     *,
+    words: int,
     corrections_only: bool,
 ) -> StepEstimate:
     """Return the row of one measured step, with the answer length its own runs measured."""
@@ -741,8 +769,23 @@ def _estimate(
     # The rates do not depend on the mode, the answer length does: only the samples of the mode
     # this run is set to say how long its answers are.
     mode = _proofreading_mode(corrections_only) if step is SpeedStep.PROOFREADING else ""
-    answer = _run_answer_length(step, by_mode.get(mode, ()) if mode else samples)
-    per_page = _page_time(step, speed, tag, answer=answer, corrections_only=corrections_only)
+    answer = _run_answer(step, by_mode.get(mode, ()) if mode else samples, words)
+    per_page = _page_time(
+        step, speed, tag, words=words, answer=answer, corrections_only=corrections_only
+    )
+    further = None
+    if step is not SpeedStep.READING:
+        # A file's pages are proofread as one text: a second page adds its words, not a
+        # second answer's part per text.
+        two_pages = _page_time(
+            step,
+            speed,
+            tag,
+            words=2 * words,
+            answer=_run_answer(step, by_mode.get(mode, ()) if mode else samples, 2 * words),
+            corrections_only=corrections_only,
+        )
+        further = two_pages - per_page
     return StepEstimate(
         step=step,
         model=tag,
@@ -753,6 +796,7 @@ def _estimate(
         on_card=speed.on_card,
         message="" if stored is None else _message(stored.record, step),
         sample_count=len(samples),
+        further_page=further,
     )
 
 
@@ -773,25 +817,26 @@ def _page_time(
     speed: ModelSpeed,
     tag: str,
     *,
+    words: int,
     answer: AnswerLength | None = None,
     corrections_only: bool = False,
 ) -> TimeRange:
-    """Return how long one page takes *tag* for *step*, from its measured *speed*.
+    """Return how long one text of *words* words takes *tag* for *step*, from its measured *speed*.
 
-    *answer* is the answer length the runs measured for the steps this run sends; ``None``
-    keeps the exchange's own figures.  *corrections_only* is the teacher's *Corrections only*
-    choice: step ① alone, so the page is read once instead of four times.
+    *answer* is the answer the runs measured for that text; ``None`` keeps the exchange's own
+    figures.  *corrections_only* is the teacher's *Corrections only* choice: step ① alone, so the
+    page is read once instead of four times.
     """
     spec = find_spec(tag)
     category: ModelCategory = "ocr" if step is SpeedStep.READING else "general"
     if step is SpeedStep.READING:
         return reading_page_time(speed, answer or answer_length_for(spec, category))
     if step is SpeedStep.REVIEW:
-        return content_review_time(speed, TYPICAL_PAGE_WORDS)
+        return content_review_time(speed, words)
     profile = request_profile(tag)
     return proofreading_time(
         speed,
-        TYPICAL_PAGE_WORDS,
+        words,
         exchange_cost(profile.exchange),
         _proofreading_steps(profile, corrections_only=corrections_only),
         answer=answer,
@@ -874,31 +919,49 @@ def _newest_mode(by_mode: Mapping[str, Sequence[RunSample]]) -> str:
 def _answer_values(step: SpeedStep, samples: Sequence[RunSample]) -> list[float]:
     """Return the answer lengths *samples* measured, in the unit the step's answer uses.
 
-    A reading model answers per page, a writing model per 100 words of student text.
+    A reading model answers per page, a writing model with as many tokens as the text's length
+    asks for.
     """
     if step is SpeedStep.READING:
         return [float(sample.answer_tokens) for sample in samples if sample.answer_tokens > 0]
     return [
-        value for value in (sample.answer_per_100_words for sample in samples) if value is not None
+        float(sample.answer_tokens)
+        for sample in samples
+        if sample.answer_tokens > 0 and sample.words > 0
     ]
 
 
-def _run_answer_length(step: SpeedStep, samples: Sequence[RunSample]) -> AnswerLength | None:
-    """Return the answer length the *samples* measured, or ``None`` before there are enough.
+def _run_answer(step: SpeedStep, samples: Sequence[RunSample], words: int) -> AnswerLength | None:
+    """Return the answer length the *samples* measured for a text of *words* words, or ``None``.
 
-    From :data:`MIN_ANSWER_SAMPLES` on, the run figures replace the catalog's: they are this
-    class's error level with this model and these instructions, which no test can know.  From
-    :data:`PERCENTILE_SAMPLES` on the range is the 10th to the 90th percentile, so one runaway
-    answer no longer widens it.
+    From :data:`MIN_ANSWER_SAMPLES` on, the run figures replace the exchange's: they are this
+    class's error level with this model and these instructions, which no test can know.  A
+    proofreading answer is the curve through the samples at the text's own length, so a text of
+    100 words is not charged the answer of a page.  From :data:`PERCENTILE_SAMPLES` on the range
+    is the 10th to the 90th percentile, so one runaway answer no longer widens it.
     """
     values = sorted(_answer_values(step, samples))
     if len(values) < MIN_ANSWER_SAMPLES:
         return None
-    if len(values) >= PERCENTILE_SAMPLES:
-        low, high = percentile(values, 10), percentile(values, 90)
-    else:
-        low, high = values[0], values[-1]
-    return AnswerLength(low=round(low), typical=round(median(values)), high=round(high))
+    narrow = len(values) >= PERCENTILE_SAMPLES
+    if step is SpeedStep.READING:
+        if narrow:
+            low, high = percentile(values, 10), percentile(values, 90)
+        else:
+            low, high = values[0], values[-1]
+        return AnswerLength(low=round(low), typical=round(median(values)), high=round(high))
+    points = [
+        (sample.words, sample.answer_tokens)
+        for sample in samples
+        if sample.words > 0 and sample.answer_tokens > 0
+    ]
+    curve = fit_answer_curve(points, narrow=narrow)
+    if curve is None:
+        return None
+    typical = curve.tokens(words)
+    return AnswerLength(
+        low=round(typical * curve.low), typical=round(typical), high=round(typical * curve.high)
+    )
 
 
 def _most_loaded(samples: Sequence[RunSample]) -> bool:
@@ -969,6 +1032,7 @@ def _class_set(
         CLASS_SET_FILES,
         CLASS_SET_PAGES,
         [row.per_page for row in rows],
+        further=[row.next_page for row in rows],
         swaps=swaps,
         load_s=load_s,
     )

@@ -470,12 +470,19 @@ def _site(
             if wordings[index] == change_key(edit, positions):
                 if option.first_by(key):
                     made = replace(made, first_run=True)
+                # The same change in other spacing: show the wording with the fewest spaces, so
+                # "Ja , das" does not stand for "Ja, das", and keep a verdict on either wording.
+                shown = option
+                if _spaces(replacement) < _spaces(option.replacement):
+                    shown = replace(
+                        option, start=option_start, end=option_end, replacement=replacement
+                    )
                 options[index] = Option(
-                    option.start,
-                    option.end,
-                    option.replacement,
+                    shown.start,
+                    shown.end,
+                    shown.replacement,
                     (*[one for one in option.made_by if one.key != key], made),
-                    verdict,
+                    option.verdict if option.verdict is not None else verdict,
                     option.once,
                 )
                 writers[index].setdefault(key, set()).add(run)
@@ -554,6 +561,11 @@ def _figures(
         in_every_run=in_every_run,
         once=made - in_every_run,
     )
+
+
+def _spaces(replacement: str) -> int:
+    """Return how many whitespace characters *replacement* holds."""
+    return sum(1 for char in replacement if char.isspace())
 
 
 def _marked(sites: Sequence[ChangeSite], key: str) -> MarkCount:

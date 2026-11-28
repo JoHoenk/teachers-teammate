@@ -12,8 +12,8 @@ The edits are always the diff of the student's text against the corrected text: 
 explains edits, it never places them.  So a note can never point at words the correction did not
 change, and a teacher who edits the text afterwards still sees the notes that still apply.
 
-Before ① the text is narrowed to what a model reads as one text: a run of blank lines becomes one
-paragraph break, because a model reads a wide gap as two texts and answers the second one.  The
+Before ① a plain text is narrowed to what a model reads as one text: a run of blank lines becomes
+one paragraph break, because a model reads a wide gap as two texts and answers the second one.  The
 student's gaps go back into the answer once it is cleaned
 (:mod:`~teachers_teammate.domain.proofreading.paragraph_gaps`).
 
@@ -143,7 +143,9 @@ class TextFirstExchange:
         reports: list[StepReport] = []
         warnings: list[str] = []
         request_text, shield_map, document = _shielded(source, ctx.text_format)
-        sent, gaps = collapse(request_text)
+        # A Markdown request already has one blank line between its blocks, and its answer
+        # takes the source's block layout back from the shield.
+        sent, gaps = collapse(request_text) if shield_map is None else (request_text, ())
         answer, failure, left_out = self._correct(sent, ctx, reports)
         if answer is None:
             return ExchangeResult(

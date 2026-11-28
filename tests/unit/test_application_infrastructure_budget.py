@@ -27,7 +27,6 @@ PREFIX = "teachers_teammate.infrastructure"
 PINNED = {
     "addons.py": 6,
     "anonymization.py": 6,
-    "api_keys.py": 1,
     "commands.py": 3,
     "correction_options.py": 1,
     "data_flow.py": 2,
@@ -35,7 +34,6 @@ PINNED = {
     "export.py": 1,
     "formatting.py": 4,
     "ollama_server.py": 13,
-    "providers.py": 7,
     "reader.py": 4,
     "run.py": 13,
     "run_checks.py": 1,

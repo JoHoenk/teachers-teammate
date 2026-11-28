@@ -10,9 +10,14 @@ from pathlib import Path
 import shutil
 import sys
 import threading
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from teachers_teammate.application.api_keys import ApiKeys
+    from teachers_teammate.application.ports import SecretStore
 
 # Use headless Qt in CI/local Bazel test runs unless explicitly overridden.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -279,6 +284,14 @@ def make_config(tmp_path: Path, **overrides: object):
     assert isinstance(input_dir, Path)
     input_dir.mkdir(parents=True, exist_ok=True)
     return Config(**defaults)
+
+
+def make_api_keys(store: SecretStore) -> ApiKeys:
+    """Return the app's keys over *store*, reading the providers the app ships."""
+    from teachers_teammate.application.api_keys import ApiKeys  # noqa: PLC0415
+    from teachers_teammate.infrastructure.llm_factory import LlmFactoryProviders  # noqa: PLC0415
+
+    return ApiKeys(store, providers=LlmFactoryProviders())
 
 
 def make_key_facts():

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..domain.context_budget import memory_at_context_gb
-from ..domain.data_location import ENGINE_PPOCR, PROVIDER_OLLAMA
+from ..domain.data_location import ENGINE_PPOCR, is_ollama
 from ..domain.hardware_profile import (
     RUN_MEMORY_MARGIN_GB,
     DetectionReason,
@@ -562,7 +562,7 @@ class RunChecks:
             return [RequirementIssue(IssueKind.PACKAGE_MISSING, provider=provider, name=name)]
         if self._providers.provider_key_missing(provider):
             return [RequirementIssue(IssueKind.KEY_MISSING, provider=provider, name=name)]
-        if provider != PROVIDER_OLLAMA:
+        if not is_ollama(provider):
             return []
         installed, unreachable = self._installed_ollama_models(config.ollama_url)
         models = (model,) if model else ()

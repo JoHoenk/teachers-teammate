@@ -164,13 +164,15 @@ against a fake Ollama). See {doc}`gui` → "Setup Assistant"
 ## A service needs something from infrastructure
 
 1. Add the method to a `Protocol` in `application/ports.py` — narrow: only what the caller asks
-   (`OllamaServer` carries a server's answers, `HardwareProbe` this computer's cards and memory,
-   `AddonState` the packages folder, `NameModels` the spaCy models).
+   (`OllamaServer` carries a server's answers, `ProviderDeclarations` what the provider modules
+   declare, `OnlineProviders` that plus what a vendor's service answers, `HardwareProbe` this
+   computer's cards and memory, `AddonState` the packages folder, `NameModels` the spaCy models).
 2. Give the service the protocol as a required constructor argument and call it; the method body
    imports nothing.
 3. Build the implementation in `application/composition.py`. An adapter class whose methods call
    the module's functions by name keeps those functions patchable in a test, and no second
-   construction is needed (see `SystemHardwareProbe`, `AddonPackages`, `SpacyModels`).
+   construction is needed (see `SystemHardwareProbe`, `LlmFactoryProviders`, `AddonPackages`,
+   `SpacyModels`).
 4. Lower `BUDGET` in `tests/unit/test_lazy_import_budget.py` if the change removed a
    `# noqa: PLC0415`, and the count of that module in `PINNED` of
    `tests/unit/test_application_infrastructure_budget.py` if the module stops importing

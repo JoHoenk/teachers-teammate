@@ -32,7 +32,7 @@ import threading
 from ..config import Config, OcrConfig
 from ..domain.context_budget import BASE_NUM_CTX
 from ..domain.correction_policy import CorrectionOutput, normalize_output_mode
-from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
+from ..domain.data_location import ENGINE_OLLAMA, is_ollama
 from ..domain.hardware_profile import HardwareDetection
 from ..domain.model_catalog import AnswerLength, ModelCategory, find_spec, request_profile
 from ..domain.model_fit import rate_model
@@ -204,7 +204,7 @@ class SpeedChoices:
         """Build the choices; a step that is ``None``/``False`` or not on Ollama gets no model."""
 
         def ollama_model(choice: tuple[str, str] | None, task: Stage) -> str:
-            if choice is None or choice[0] != PROVIDER_OLLAMA:
+            if choice is None or not is_ollama(choice[0]):
                 return ""
             return effective_model(choice[0], choice[1], task)
 

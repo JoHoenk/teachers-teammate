@@ -27,6 +27,7 @@ from teachers_teammate.domain.data_location import (
     StageLocation,
     anonymization_badge,
     classify_ollama,
+    is_ollama,
     is_ollama_cloud_host,
     is_ollama_cloud_model,
     online_ocr_reason,
@@ -1061,3 +1062,15 @@ def test_sent_location_places_an_ipv6_loopback_host_on_this_computer(host: str) 
     location = sent_location(SentRecord(provider="ollama", model="m", endpoint=host))
 
     assert location.location is DataLocation.THIS_COMPUTER
+
+
+@pytest.mark.parametrize(
+    ("provider", "is_the_server"), [("ollama", True), ("mistral", False), ("Mistral", False)]
+)
+def test_only_the_servers_own_id_is_the_local_server(provider: str, is_the_server: bool) -> None:
+    """
+    Given  the id of the Ollama server, an online service and the same name in other capitals
+    When   the provider name is judged
+    Then   only the server's own id counts, so no vendor can be taken for the local one
+    """
+    assert is_ollama(provider) is is_the_server

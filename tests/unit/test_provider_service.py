@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import cast
 
 import pytest
 
-from teachers_teammate.application import api_keys as api_keys_module
-from teachers_teammate.application import providers as providers_module
-from teachers_teammate.application.api_keys import ApiKeys
 from teachers_teammate.application.composition import build_app_services
-from teachers_teammate.application.ports import OllamaServer
+from teachers_teammate.application.ports import OllamaServer, OnlineProviders
 from teachers_teammate.application.providers import ProviderService
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.ollama_snapshot import InstalledModel, ServerSnapshot
-from teachers_teammate.domain.providers import ProviderInfo
+from teachers_teammate.infrastructure.llm_factory import LlmFactoryProviders
+
+from tests.conftest import make_api_keys
 
 from ..fakes.fake_secret_store import FakeSecretStore
 
@@ -56,17 +56,43 @@ class _FakeServer:
         self.forgotten.append(url)
 
 
-def _service(**kwargs) -> ProviderService:
-    """Return the service over a server that is never asked."""
+class _FakeOnline(LlmFactoryProviders):
+    """The shipped providers' declarations, with scripted answers instead of asking a service."""
+
+    def __init__(
+        self,
+        *,
+        listing: Callable[..., ModelListing] | None = None,
+        connection: Callable[..., tuple[bool, str]] | None = None,
+    ) -> None:
+        self._listing = listing or (lambda *_args, **_kwargs: ModelListing([], "builtin"))
+        self._connection = connection or (lambda *_args, **_kwargs: (True, "✓ OK"))
+
+    def list_models_checked(self, provider: str, *, api_key: str) -> ModelListing:
+        """Return the scripted listing for *provider*."""
+        return self._listing(provider, api_key=api_key)
+
+    def check_connection(self, provider: str, *, api_key: str) -> tuple[bool, str]:
+        """Return the scripted answer for *provider*."""
+        return self._connection(provider, api_key=api_key)
+
+
+def _service(online: OnlineProviders | None = None, **kwargs) -> ProviderService:
+    """Return the service over a server that is never asked and scripted online services."""
     return ProviderService(
-        ollama=cast(OllamaServer, _NoServer()), credentials=ApiKeys(FakeSecretStore()), **kwargs
+        ollama=cast(OllamaServer, _NoServer()),
+        credentials=make_api_keys(FakeSecretStore()),
+        online=online or _FakeOnline(),
+        **kwargs,
     )
 
 
 def _service_with(server: object) -> ProviderService:
     """Return the service over the fake Ollama server port *server*."""
     return ProviderService(
-        ollama=cast(OllamaServer, server), credentials=ApiKeys(FakeSecretStore())
+        ollama=cast(OllamaServer, server),
+        credentials=make_api_keys(FakeSecretStore()),
+        online=_FakeOnline(),
     )
 
 
@@ -74,7 +100,7 @@ def _service_with(server: object) -> ProviderService:
 
 
 @pytest.mark.unit
-def test_list_provider_models_uses_ttl_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_list_provider_models_uses_ttl_cache() -> None:
     """
     Given  a ProviderService whose list_provider_models is called once
     When   list_provider_models() is called a second time within the TTL window
@@ -87,8 +113,7 @@ def test_list_provider_models_uses_ttl_cache(monkeypatch: pytest.MonkeyPatch) ->
         call_count += 1
         return ["model-a", "model-b"]
 
-    monkeypatch.setattr(providers_module, "list_provider_models_checked", _as_listing(_fake_list))
-    providers = _service()
+    providers = _service(_FakeOnline(listing=_as_listing(_fake_list)))
 
     first = providers.list_provider_models("openai")
     second = providers.list_provider_models("openai")
@@ -99,7 +124,7 @@ def test_list_provider_models_uses_ttl_cache(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.unit
-def test_invalidate_model_cache_forces_refetch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_invalidate_model_cache_forces_refetch() -> None:
     """
     Given  a ProviderService with a cached model list for 'openai'
     When   invalidate_model_cache('openai') is called and then list_provider_models again
@@ -112,8 +137,7 @@ def test_invalidate_model_cache_forces_refetch(monkeypatch: pytest.MonkeyPatch) 
         call_count += 1
         return ["model-a"]
 
-    monkeypatch.setattr(providers_module, "list_provider_models_checked", _as_listing(_fake_list))
-    providers = _service()
+    providers = _service(_FakeOnline(listing=_as_listing(_fake_list)))
 
     providers.list_provider_models("openai")
     providers.invalidate_model_cache("openai")
@@ -178,9 +202,7 @@ def test_an_unreachable_ollama_says_why_instead_of_listing_nothing() -> None:
 
 
 @pytest.mark.unit
-def test_failed_listing_is_asked_again_while_a_live_one_is_remembered(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_failed_listing_is_asked_again_while_a_live_one_is_remembered() -> None:
     """
     Given  a provider whose first answer is a failed listing (no key) and then a live one
     When   the models are listed three times
@@ -198,8 +220,7 @@ def test_failed_listing_is_asked_again_while_a_live_one_is_remembered(
         calls += 1
         return answers.pop(0)
 
-    monkeypatch.setattr(providers_module, "list_provider_models_checked", fake)
-    providers = _service()
+    providers = _service(_FakeOnline(listing=fake))
 
     first = providers.list_provider_models_checked("mistral")
     second = providers.list_provider_models_checked("mistral")
@@ -247,39 +268,34 @@ def test_provider_packages_list_a_shared_package_once() -> None:
 
 
 @pytest.mark.parametrize(
-    ("info", "key_set", "missing"),
+    ("provider", "key_held", "missing"),
     [
-        (
-            ProviderInfo(name="any", display_name="Any", needs_api_key=True, env_key="TT_TEST_KEY"),
-            False,
-            True,
-        ),
-        (
-            ProviderInfo(name="any", display_name="Any", needs_api_key=True, env_key="TT_TEST_KEY"),
-            True,
-            False,
-        ),
-        (ProviderInfo(name="any", display_name="Any"), False, False),
-        (None, False, False),
+        ("mistral", False, True),
+        ("mistral", True, False),
+        ("ollama", False, False),
+        ("nonexistent", False, False),
     ],
 )
 def test_provider_key_missing_follows_the_provider_and_environment(
-    monkeypatch: pytest.MonkeyPatch, info: ProviderInfo | None, key_set: bool, missing: bool
+    monkeypatch: pytest.MonkeyPatch, provider: str, key_held: bool, missing: bool
 ) -> None:
     """
-    Given  a declaration that does or does not need an API key, with the app holding one or not
-    When   the service is asked whether the key is missing
+    Given  an online service that needs a key, the local server and a name nobody declares
+    When   the service is asked whether the key is missing, with the app holding one or not
     Then   it is missing only for a provider that needs a key while the app holds none
     """
-    monkeypatch.setattr(providers_module, "get_provider_info", lambda _provider: info)
-    monkeypatch.setattr(api_keys_module.llm_factory, "get_provider_info", lambda _provider: info)
-    keys = ApiKeys(FakeSecretStore())
-    if key_set:
-        keys.remember("TT_TEST_KEY", "k")
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    keys = make_api_keys(FakeSecretStore())
+    if key_held:
+        keys.remember("MISTRAL_API_KEY", "k")
 
-    service = ProviderService(ollama=cast(OllamaServer, _NoServer()), credentials=keys)
+    service = ProviderService(
+        ollama=cast(OllamaServer, _NoServer()),
+        credentials=keys,
+        online=_FakeOnline(),
+    )
 
-    assert service.provider_key_missing("any") is missing
+    assert service.provider_key_missing(provider) is missing
 
 
 # ── what a provider declares ──────────────────────────────────────────────

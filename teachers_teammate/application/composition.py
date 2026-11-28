@@ -30,6 +30,7 @@ from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.gpu_detector import SystemHardwareProbe
 from ..infrastructure.key_facts import MachineKeyFacts
+from ..infrastructure.llm_factory import LlmFactoryProviders
 from ..infrastructure.ollama_client import OllamaClient
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.option_mark_store import OptionMarkStore, default_marks_root
@@ -138,6 +139,7 @@ class _Parts:
     state_repository_factory: Callable[[Path], StateRepository]
     component_factory: PipelineComponentFactory
     keys: ApiKeys
+    online: LlmFactoryProviders
     work_store: TeacherWorkStore
     model_store: ModelStore
     sleep_blocker: SleepBlocker
@@ -159,9 +161,7 @@ def build_app_services(
     work_store: TeacherWorkStore | None = None,
 ) -> AppServices:
     """Build the application's services, sharing the parts that must exist once."""
-    keys = ApiKeys(CredentialStore())
     parts = _parts(
-        keys=keys,
         discovery=discovery,
         pipeline_factory=pipeline_factory,
         state_repository_factory=state_repository_factory,
@@ -191,7 +191,7 @@ def build_app_services(
         run_checks=run_checks,
         ollama=parts.ollama,
         providers=providers,
-        keys=keys,
+        keys=parts.keys,
         reader=reader,
         recommendations=recommendations,
         speeds=speeds,
@@ -222,7 +222,6 @@ def build_app_services(
 
 def _parts(
     *,
-    keys: ApiKeys,
     discovery: FileDiscovery | None,
     pipeline_factory: Callable[..., OCRPipeline] | None,
     state_repository_factory: Callable[[Path], StateRepository] | None,
@@ -232,8 +231,11 @@ def _parts(
     work_store: TeacherWorkStore | None,
 ) -> _Parts:
     """Return what the services are built from, each part built here or handed in."""
+    online = LlmFactoryProviders()
+    keys = ApiKeys(CredentialStore(), providers=online)
     return _Parts(
         keys=keys,
+        online=online,
         discovery=discovery or FileDiscovery(),
         pipeline_factory=pipeline_factory or OCRPipeline,
         state_repository_factory=state_repository_factory or StateRepository,
@@ -252,7 +254,7 @@ def _parts(
 
 def _reading(parts: _Parts) -> tuple[ProviderService, ReaderService]:
     """Return the providers and the text recognition: what reads a page, and with what."""
-    providers = ProviderService(ollama=parts.ollama, credentials=parts.keys)
+    providers = ProviderService(ollama=parts.ollama, credentials=parts.keys, online=parts.online)
     reader = ReaderService(
         model_store=parts.model_store,
         component_factory=parts.component_factory,

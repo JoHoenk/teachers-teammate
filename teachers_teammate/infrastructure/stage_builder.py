@@ -33,8 +33,8 @@ from ..domain.anonymization import AnonymizerConfig, resolve_anonymizer_config
 from ..domain.context_budget import RunWindows
 from ..domain.data_location import (
     ENGINE_PPOCR,
-    PROVIDER_OLLAMA,
     DataLocation,
+    is_ollama,
     llm_stage_location,
     online_ocr_reason,
 )
@@ -365,7 +365,7 @@ class StageBuilder:
             ollama_client: The run's client, built by composition.  An Ollama stage without one
                 is a bug, so nothing here builds a second.
         """
-        if provider == PROVIDER_OLLAMA:
+        if is_ollama(provider):
             return OllamaPort(
                 ollama_client,
                 model,

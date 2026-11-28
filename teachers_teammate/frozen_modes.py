@@ -185,12 +185,12 @@ def _setup_answers(settings: Mapping[str, object]) -> SetupAnswers:
 def _setup_plan_problem(plan: SetupPlan, frozen: bool) -> str | None:
     """Return what is wrong with *plan*, or ``None`` when it is what the defaults should give."""
     from teachers_teammate.application.setup_plan import DownloadKind  # noqa: PLC0415
-    from teachers_teammate.domain.data_location import PROVIDER_OLLAMA  # noqa: PLC0415
+    from teachers_teammate.domain.data_location import PROVIDER_OLLAMA, is_ollama  # noqa: PLC0415
 
     if not plan.steps:
         return "the setup plan has no step"
     provider = plan.settings.get("correction_provider")
-    if provider != PROVIDER_OLLAMA:
+    if not is_ollama(provider):
         return f"the setup plan proofreads with {provider!r} instead of {PROVIDER_OLLAMA!r}"
     if frozen:
         # The bundle carries the page models, so the defaults (handwritten pages, automatic image
@@ -601,8 +601,9 @@ def forget_keys() -> int:
     """
     from teachers_teammate.application.api_keys import ApiKeys  # noqa: PLC0415
     from teachers_teammate.infrastructure.credential_store import CredentialStore  # noqa: PLC0415
+    from teachers_teammate.infrastructure.llm_factory import LlmFactoryProviders  # noqa: PLC0415
 
-    ApiKeys(CredentialStore()).forget_all()
+    ApiKeys(CredentialStore(), providers=LlmFactoryProviders()).forget_all()
     return 0
 
 

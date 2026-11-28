@@ -33,6 +33,12 @@ ENGINE_PPOCR = OcrEngine.PPOCR
 #: reads ``ProviderInfo.self_hosted`` instead.
 PROVIDER_OLLAMA = "ollama"
 
+
+def is_ollama(provider: object) -> bool:
+    """Return whether *provider* is the Ollama server the teacher names, not a vendor's service."""
+    return provider == PROVIDER_OLLAMA
+
+
 #: The name shown for each engine.
 OCR_ENGINE_NAMES: dict[str, str] = {
     ENGINE_OLLAMA: "Ollama",

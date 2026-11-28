@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from teachers_teammate.application.api_keys import ApiKeys
 from teachers_teammate.domain.credentials import KeyLocation
 from teachers_teammate.infrastructure import credential_store
 from teachers_teammate.infrastructure.credential_store import (
@@ -17,7 +16,10 @@ from teachers_teammate.infrastructure.credential_store import (
 )
 from teachers_teammate.infrastructure.credential_store import _keyring as real_keyring
 
+from tests.conftest import make_api_keys
+
 from ..fakes.fake_keyring import FakeKeyring
+from ..fakes.fake_secret_store import FakeSecretStore
 
 _FILE_KEY = "credentials/OPENAI_API_KEY"
 
@@ -110,7 +112,7 @@ def test_start_up_moves_plain_keys_into_the_keychain(
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     credential_file[_FILE_KEY] = "sk-old"
-    keys = ApiKeys(CredentialStore())
+    keys = make_api_keys(CredentialStore())
 
     keys.load_stored(["OPENAI_API_KEY", "MISTRAL_API_KEY"])
 
@@ -129,25 +131,14 @@ def test_a_provider_without_a_stored_key_is_not_asked_again(monkeypatch) -> None
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    class CountingStore:
-        reads = 0
-
-        def migrate(self, env_key: str) -> None:
-            """Nothing to move."""
-
-        def get(self, env_key: str) -> str:
-            """Count the read; the store holds nothing."""
-            self.reads += 1
-            return ""
-
-    store = CountingStore()
-    keys = ApiKeys(store)  # ty: ignore[invalid-argument-type]
+    store = FakeSecretStore()
+    keys = make_api_keys(store)
 
     keys.load_stored(["OPENAI_API_KEY"])
     assert keys.key("OPENAI_API_KEY") == ""
     assert keys.key("OPENAI_API_KEY") == ""
 
-    assert store.reads == 1
+    assert store.asked == ["OPENAI_API_KEY"]
 
 
 def test_a_key_in_the_environment_wins_over_the_stored_one(keychain, monkeypatch) -> None:
@@ -159,7 +150,7 @@ def test_a_key_in_the_environment_wins_over_the_stored_one(keychain, monkeypatch
     """
     keychain.passwords[(KEYRING_SERVICE, "OPENAI_API_KEY")] = "sk-stored"
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
-    keys = ApiKeys(CredentialStore())
+    keys = make_api_keys(CredentialStore())
 
     keys.load_stored(["OPENAI_API_KEY"])
 
@@ -180,7 +171,7 @@ def test_a_failed_move_leaves_the_plain_copy_for_the_next_start(
     monkeypatch.setattr(credential_store, "_keyring", lambda: locked)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     credential_file[_FILE_KEY] = "sk-old"
-    keys = ApiKeys(CredentialStore())
+    keys = make_api_keys(CredentialStore())
 
     keys.load_stored(["OPENAI_API_KEY"])
 
@@ -267,7 +258,7 @@ def test_a_refused_replacement_is_not_shadowed_by_the_old_keychain_key(
 
     assert locked.passwords == {}
     assert CredentialStore().get("OPENAI_API_KEY") == "sk-new"
-    keys = ApiKeys(CredentialStore())
+    keys = make_api_keys(CredentialStore())
     keys.load_stored(["OPENAI_API_KEY"])
     assert keys.key("OPENAI_API_KEY") == "sk-new"
 
@@ -285,7 +276,7 @@ def test_the_newer_plain_key_replaces_a_stale_keychain_key_when_it_is_moved(
     keychain.passwords[(KEYRING_SERVICE, "OPENAI_API_KEY")] = "sk-old"
     credential_file[_FILE_KEY] = "sk-new"
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    keys = ApiKeys(CredentialStore())
+    keys = make_api_keys(CredentialStore())
 
     keys.load_stored(["OPENAI_API_KEY"])
 
@@ -304,7 +295,7 @@ def test_a_key_set_outside_the_app_is_known_as_such(monkeypatch, credential_file
     monkeypatch.setenv("OPENAI_API_KEY", "sk-outside")
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     credential_file["credentials/MISTRAL_API_KEY"] = "m-stored"
-    keys = ApiKeys(CredentialStore())
+    keys = make_api_keys(CredentialStore())
 
     keys.load_stored(["OPENAI_API_KEY", "MISTRAL_API_KEY"])
     keys.load_stored(["OPENAI_API_KEY", "MISTRAL_API_KEY"])

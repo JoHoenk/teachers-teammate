@@ -28,6 +28,7 @@ from ..domain.data_location import (
     PROVIDER_OLLAMA,
     RETIRED_OCR_ENGINES,
     STAGE_ANONYMIZATION,
+    is_ollama,
 )
 from ..domain.hardware_profile import HardwareProfile, profile_setting
 from ..domain.local_models import (
@@ -410,7 +411,7 @@ def _proofreading_plan(
     if place is ProofreadingPlace.LOCAL:
         candidate = (
             _current(current, "correction_model")
-            if _current(current, "correction_provider") == PROVIDER_OLLAMA
+            if is_ollama(_current(current, "correction_provider"))
             else ""
         )
         tag, rating, installed = _propose(candidate, "general", facts, rate, best)

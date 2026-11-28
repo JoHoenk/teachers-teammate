@@ -44,7 +44,7 @@ from .. import __version__
 from ..cache_keys import sent_record
 from ..config import Config
 from ..domain.correction_policy import CorrectionOutput
-from ..domain.data_location import PROVIDER_OLLAMA, StageLocation
+from ..domain.data_location import StageLocation, is_ollama
 from ..domain.formatted_text import TextFormat, normalize_text_format
 from ..domain.model_fit import Suitability
 from ..domain.performance_estimate import TimeRange
@@ -436,7 +436,7 @@ class ModelComparisonService:
         pulled in a terminal since would otherwise be stored with the digest of the weights it
         no longer has.  One request per model, in a job that takes minutes.
         """
-        if candidate.provider != PROVIDER_OLLAMA:
+        if not is_ollama(candidate.provider):
             return ""
         return self._ollama.snapshot(ollama_url, max_age=0.0).digest_of(candidate.model)
 
@@ -464,7 +464,7 @@ class ModelComparisonService:
 
     def _loaded_models(self, config: Config, candidate: Candidate) -> frozenset[str]:
         """Return the models the server held before the answer, or nothing for another service."""
-        if candidate.provider != PROVIDER_OLLAMA:
+        if not is_ollama(candidate.provider):
             return frozenset()
         try:
             return frozenset(self._ollama.activity(config.ollama_url).loaded_names())
@@ -480,7 +480,7 @@ class ModelComparisonService:
         Only the ones that were not in memory before: a model the teacher was already using stays
         loaded.
         """
-        if candidate.provider != PROVIDER_OLLAMA:
+        if not is_ollama(candidate.provider):
             return
         try:
             loaded = self._ollama.activity(config.ollama_url).loaded_names()

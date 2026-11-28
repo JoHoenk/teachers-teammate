@@ -70,6 +70,7 @@ _DOMAIN_SRCS = [
     "domain/proofreading/marks.py",
     "domain/proofreading/model_comparison.py",
     "domain/proofreading/option_marks.py",
+    "domain/proofreading/paragraph_gaps.py",
     "domain/proofreading/quotes.py",
     "domain/proofreading/result.py",
     "domain/proofreading/review.py",

@@ -106,9 +106,10 @@ class ProofreadingAnswers:
     reader made of a page still gets exactly one change per document; ``last_words`` gives a model
     of its own tag another such word, so two models disagree about it.  A document with neither
     comes back as it was sent.  ``category`` and ``explanation`` are what it says about every
-    change.  The two
-    structured steps answer in the app's own answer shapes, so a renamed field or a new required
-    one raises here instead of somewhere in the walk.
+    change; ``skips_before_gap`` makes it answer only the part after a run of blank lines, as a
+    model that reads a wide gap as two texts does.  The two structured steps answer in the app's
+    own answer shapes, so a renamed field or a new required one raises here instead of somewhere
+    in the walk.
     """
 
     edits: tuple[tuple[str, str], ...] = ()
@@ -116,6 +117,12 @@ class ProofreadingAnswers:
     last_words: tuple[tuple[str, str], ...] = ()
     explanation: str = "The spelling was corrected."
     category: Category = PROOFREADING_CATEGORY
+    skips_before_gap: int = 0
+    """A run of this many line breaks in a row, and the answer holds only what follows it.
+
+    ``0`` reads the whole text, as a model that answers it does.  ``3`` is the model of the
+    held-out text: four blank lines between two essays and the answer was the second essay alone.
+    """
 
     def __call__(self, body: dict[str, Any]) -> str:
         """Answer one chat request of the proofreading exchange."""
@@ -138,13 +145,22 @@ class ProofreadingAnswers:
         return answer.model_dump_json()
 
     def _corrected(self, text: str, model: str) -> str:
-        """Answer step ①/③: the text the request carried, with the words *model* changes."""
+        """Answer step ①/③: what it reads of the text, with the words *model* changes."""
+        text = _after_gap(text, self.skips_before_gap)
         for original, corrected in self.edits:
             text = text.replace(original, corrected)
         last = dict(self.last_words).get(model, self.last_word)
         if last:
             text = re.sub(r"\S+(\s*)$", lambda found: last + found.group(1), text)
         return text
+
+
+def _after_gap(text: str, breaks: int) -> str:
+    """Return the part of *text* after its first run of *breaks* line breaks, or all of it."""
+    if breaks <= 0:
+        return text
+    found = re.search(rf"\n{{{breaks},}}", text)
+    return text[found.end() :] if found else text
 
 
 def _asked_text(body: dict[str, Any]) -> str:

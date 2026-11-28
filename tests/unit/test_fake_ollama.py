@@ -21,8 +21,8 @@ import pytest
 
 from teachers_teammate.domain.correction_prompts import correct_user, explain_user, unclear_user
 from teachers_teammate.domain.ollama_discovery import WaitKind
-from teachers_teammate.infrastructure import ollama_utils
-from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.infrastructure import ollama_client, ollama_stream
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
 from teachers_teammate.infrastructure.proofreading.schemas import (
     UnclearAnswer,
     explain_schema,
@@ -229,8 +229,8 @@ def _quick_wait(monkeypatch) -> None:
     The real figures are seconds; a test that waited them out would take longer than the whole
     suite.
     """
-    monkeypatch.setattr(ollama_utils, "_WAITING_POLL_S", 0.05)
-    monkeypatch.setattr(ollama_utils, "WAIT_DETAIL_AFTER_S", 0.1)
+    monkeypatch.setattr(ollama_stream, "_WAITING_POLL_S", 0.05)
+    monkeypatch.setattr(ollama_client, "WAIT_DETAIL_AFTER_S", 0.1)
 
 
 def test_a_request_queued_behind_another_model_says_so_before_it_answers(

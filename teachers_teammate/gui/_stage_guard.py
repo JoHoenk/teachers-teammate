@@ -15,7 +15,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QCheckBox, QWidget
 
 from ..application.providers import ProviderService
-from ..application.run import RunService
+from ..application.run_checks import RunChecks
 from ..config import Config
 from ..domain.install_item import InstallItem
 from ..domain.requirements import RequirementIssue
@@ -40,8 +40,8 @@ _STAGE_STEP_TITLES: dict[str, str] = {
 class GuardHooks:
     """What the requirement guard asks its owner for."""
 
-    #: The run service, which answers what a stage needs before it can run.
-    run: RunService
+    #: The checks, which answer what a stage needs before it can run.
+    checks: RunChecks
     #: The provider service, for the name of a provider in a fix's wording.
     providers: ProviderService
     #: The config of the live panel values, for the check and for its answer's age.
@@ -81,7 +81,7 @@ class StageGuard(QObject):
         config = hooks.config()
         task = self._tasks.setdefault(stage, LatestTask(self))
         task.submit(
-            lambda: hooks.run.check_stage_requirements(config, stage),
+            lambda: hooks.checks.check_stage_requirements(config, stage),
             lambda result, error: self._on_result(config, stage, result, error),
         )
 

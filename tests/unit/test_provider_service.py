@@ -135,7 +135,7 @@ def test_one_ollama_server_is_shared_by_every_service_that_reads_it() -> None:
     assert services.providers._ollama is services.ollama
     assert services.recommendations._ollama is services.ollama
     assert services.speeds._ollama is services.ollama
-    assert services.run._ollama is services.ollama
+    assert services.run_checks._ollama is services.ollama
     assert services.comparison._ollama is services.ollama
 
 
@@ -354,10 +354,10 @@ def test_check_connection_provider_ollama_success(monkeypatch) -> None:
     When   the provider's check for ollama is called
     Then   returns (connected=True, model_ok=True, <success message>)
     """
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
+    from teachers_teammate.infrastructure import ollama_client  # noqa: PLC0415
 
     monkeypatch.setattr(
-        ollama_utils.OllamaClient,
+        ollama_client.OllamaClient,
         "check_connection",
         lambda self, model="": (True, True, "✓ Connected — 1 model(s) available"),
     )

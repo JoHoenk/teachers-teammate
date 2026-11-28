@@ -14,11 +14,8 @@ import pytest
 
 from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.install_item import InstallItem, InstallKind
-from teachers_teammate.domain.model_catalog import (
-    DEFAULT_WRITING_MODEL,
-    HardwareProfileSetting,
-    profile_setting,
-)
+from teachers_teammate.domain.hardware_profile import HardwareProfileSetting, profile_setting
+from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.gui import _anonymizer_config_widget, _dialogs
@@ -1094,12 +1091,12 @@ def test_the_context_row_follows_the_detected_card(qtbot, monkeypatch) -> None:
     Then   the automatic entry of the row names the larger window that card gives
     """
     from teachers_teammate.domain import context_budget as choice_module  # noqa: PLC0415
-    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+    from teachers_teammate.domain.hardware_profile import (  # noqa: PLC0415
         DetectionReason,
         HardwareDetection,
         HardwareProfile,
-        OllamaModelSpec,
     )
+    from teachers_teammate.domain.model_catalog import OllamaModelSpec  # noqa: PLC0415
 
     spec = OllamaModelSpec(
         tag="gemma4:e4b",

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..domain.model_catalog import RequestProfile
+from ..domain.request_profile import RequestProfile
 from .onnx.store import ModelStore
 from .preprocessing.identity import available_page_steps
 from .proofreading.corrector import exchange_identity

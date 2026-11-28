@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.hardware_profile import (
     PROFILE_SETTINGS,
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
-    Suitability,
     choose_profile,
 )
+from teachers_teammate.domain.model_fit import Suitability
 from teachers_teammate.texts import models as wording
 
 # ── detection status line ───────────────────────────────────────────────────

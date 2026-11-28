@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .model_catalog import LoadedModel, ServerFacts, digest_in
+from .model_tags import digest_in
+from .system_facts import LoadedModel, ServerFacts
 
 SNAPSHOT_TTL_S = 300.0
 """How long an answer of a server is used before it is asked again."""

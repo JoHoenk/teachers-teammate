@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QPushButton, QWidget
 
 from ..application.composition import AppServices
 from ..application.documents import WorkedOn
-from ..application.run import RunPreflight
+from ..application.run_checks import RunPreflight
 from ..config import Config
 from ..domain.requirements import MemoryShortfall
 from ..domain.stages import Stage
@@ -139,7 +139,7 @@ class RunStartController(QObject):
         """
         # The preflight checks the folder too; asking first answers on the spot, without the
         # background check and the "checking" state it would show.
-        problem = self._app_service.run.output_problem_for_run(config)
+        problem = self._app_service.run_checks.output_problem_for_run(config)
         if problem is not None:
             show_failure(self._view.window, dlg.output_folder_refused(problem))
             return
@@ -149,12 +149,15 @@ class RunStartController(QObject):
         service = self._app_service
         recognised = self._hooks.recognised_files()
         run_in_background(
-            lambda: service.run.check_run_preflight(
+            lambda: service.run_checks.check_run_preflight(
                 config,
                 recognition=recognition,
                 files=files,
                 recognised=recognised,
                 ask_about_work=ask_about_work,
+                # The run starts now, so the models the server has are asked now: one local
+                # request while the window says "checking".
+                fresh=True,
             ),
             lambda result, error: self._on_preflight_done(
                 lambda preflight: self._confirm_data_flow_then(config, lambda: on_ready(preflight)),
@@ -279,7 +282,7 @@ class RunStartController(QObject):
 
         # One stage by hand: the service builds that config, so the GUI holds no variant of
         # its own that could drift from what a run does.
-        config = self._app_service.run.config_for_stage_run(config, stage)
+        config = self._app_service.run_checks.config_for_stage_run(config, stage)
 
         # Check before touching the cache: a re-run that cannot work (Ollama stopped, model
         # missing) must not throw away the results that are there.

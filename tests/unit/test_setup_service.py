@@ -16,13 +16,12 @@ from teachers_teammate.application.setup_plan import (
     SetupAnswers,
 )
 from teachers_teammate.settings_schema import DEFAULTS
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.hardware_profile import (
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
-    ModelRating,
-    Suitability,
 )
+from teachers_teammate.domain.model_fit import ModelRating, Suitability
 from teachers_teammate.domain.ollama_discovery import OllamaState
 
 _INSTALL = "teachers_teammate.infrastructure.ollama_install"

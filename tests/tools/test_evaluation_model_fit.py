@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX, CONTEXT_STEPS
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.hardware_profile import (
     FULL_SPEED_SHARE,
     HardwareProfile,
     card_budget_gb,

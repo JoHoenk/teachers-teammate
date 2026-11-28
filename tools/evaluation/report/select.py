@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from teachers_teammate.domain.model_catalog import normalize_tag
+from teachers_teammate.domain.model_tags import normalize_tag
 
 from ..core import protocol_table
 from ..core.axes import date_of, digest8, host_of

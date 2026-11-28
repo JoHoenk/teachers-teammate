@@ -27,13 +27,9 @@ from teachers_teammate.domain.install_item import (
     InstallItem,
     InstallKind,
 )
-from teachers_teammate.domain.model_catalog import (
-    short_model_name,
-    DEFAULT_OCR_MODEL,
-    DiskVerdict,
-    ModelRating,
-    Suitability,
-)
+from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
+from teachers_teammate.domain.model_fit import DiskVerdict, ModelRating, Suitability
+from teachers_teammate.domain.model_tags import short_model_name
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.texts.addons import PAGE_MODELS_PROGRESS_STATUS
 from teachers_teammate.texts import review as txt

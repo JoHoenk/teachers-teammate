@@ -167,7 +167,7 @@ datas = [
 ]
 # The versions this bundle ships, written by build_standalone.py just before PyInstaller runs.
 # The installed app gives it to pip as `-c` for every add-on install and compares the add-on
-# folder against it after an app update (teachers_teammate/infrastructure/addon_manager.py).
+# folder against it after an app update (teachers_teammate/infrastructure/addon_folder.py).
 _ADDON_CONSTRAINTS = ROOT / "teachers_teammate" / "_build" / "addon_constraints.txt"
 if not _ADDON_CONSTRAINTS.is_file():
     raise SystemExit(

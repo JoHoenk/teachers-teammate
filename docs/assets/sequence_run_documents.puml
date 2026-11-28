@@ -9,13 +9,14 @@ actor "Teacher" as USER
 participant "RunStartController\n(GUI thread)" as START
 participant "RunController\n(GUI thread)" as CTRL
 participant "OCRWorker\n(QThread)" as WORKER
+participant "RunChecks" as CHECKS
 participant "RunService" as RUN
 participant "run_files()" as COORD
 participant "FileProcessor" as FP
 
 USER -> START : Run Selected
-START -> RUN : check_run_preflight()  [background task]
-RUN --> START : RunPreflight
+START -> CHECKS : check_run_preflight()  [background task]
+CHECKS --> START : RunPreflight
 opt something is missing
   START -> USER : readiness line / dialog with the fix
 end

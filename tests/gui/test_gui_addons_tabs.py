@@ -17,7 +17,7 @@ from teachers_teammate.domain.install_item import (
     InstallItem,
     InstallKind,
 )
-from teachers_teammate.domain.model_catalog import HardwareProfileSetting
+from teachers_teammate.domain.hardware_profile import HardwareProfileSetting
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.texts import addons as txt
 from teachers_teammate.gui.settings.addons import (

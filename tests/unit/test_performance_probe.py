@@ -10,7 +10,8 @@ import pytest
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX
 from teachers_teammate.domain.correction_prompts import correct_system
-from teachers_teammate.domain.model_catalog import LoadedModel, ServerFacts, request_profile
+from teachers_teammate.domain.model_catalog import request_profile
+from teachers_teammate.domain.system_facts import LoadedModel, ServerFacts
 from teachers_teammate.domain.performance_estimate import SpeedStep, StepOutcome
 from teachers_teammate.domain.ollama_snapshot import InstalledModel, ServerSnapshot
 from teachers_teammate.exceptions import (
@@ -20,10 +21,8 @@ from teachers_teammate.exceptions import (
     RunStoppedError,
 )
 from teachers_teammate.infrastructure.onnx.store import ModelStore
-from teachers_teammate.infrastructure.ollama_utils import (
-    ChatStats,
-    OllamaClient,
-)
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
+from teachers_teammate.infrastructure.ollama_request import ChatStats
 from teachers_teammate.infrastructure.performance_probe import (
     MEASURE_ANSWER_TOKENS,
     MEASURE_TIMEOUT_S,

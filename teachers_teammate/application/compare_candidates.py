@@ -14,7 +14,7 @@ import dataclasses
 
 from ..config import Config
 from ..domain.data_location import PROVIDER_OLLAMA
-from ..domain.model_catalog import Suitability, suitability_rank
+from ..domain.model_fit import Suitability, suitability_rank
 from ..domain.performance_estimate import TYPICAL_PAGE_WORDS, TimeRange
 from .model_comparison import Candidate, CompareSource
 from .ports import CompareResults, ModelAdvice, PageTimes, ProviderCatalogue

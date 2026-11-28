@@ -20,7 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .model_catalog import FULL_SPEED_SHARE, find_spec, runs_at_full_speed
+from .hardware_profile import FULL_SPEED_SHARE, runs_at_full_speed
+from .model_catalog import find_spec
 
 if TYPE_CHECKING:
     from .model_catalog import OllamaModelSpec

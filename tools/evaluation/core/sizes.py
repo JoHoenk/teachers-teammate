@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX
-from teachers_teammate.domain.model_catalog import card_share
+from teachers_teammate.domain.hardware_profile import card_share
 
 GB = 1e9
 """Ollama reports bytes; the catalog and the docs speak of GB (10^9), as the download sizes do."""

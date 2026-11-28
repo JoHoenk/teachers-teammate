@@ -2511,7 +2511,7 @@ class Walk:
 
     def _requirement_kinds(self) -> set[IssueKind]:
         """Return what readiness says name detection still needs, as kinds."""
-        issues = self._service.run.check_stage_requirements(self._config(), "anonymizer")
+        issues = self._service.run_checks.check_stage_requirements(self._config(), "anonymizer")
         return {issue.kind for issue in issues}
 
     def _assert_name_detection(self, kinds: set[IssueKind]) -> None:

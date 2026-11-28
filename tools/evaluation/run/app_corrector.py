@@ -23,9 +23,9 @@ from ..core.modes import ALL_STEPS, ONE_REQUEST_OUTPUT, Exchange, Setup, Step
 if TYPE_CHECKING:
     from teachers_teammate.domain.context_budget import ContextBudget
     from teachers_teammate.domain.formatted_text import TextFormat
-    from teachers_teammate.domain.model_catalog import RequestProfile
     from teachers_teammate.domain.proofreading.result import CorrectionOutcome
-    from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+    from teachers_teammate.domain.request_profile import RequestProfile
+    from teachers_teammate.infrastructure.ollama_client import OllamaClient
     from teachers_teammate.infrastructure.proofreading.port import (
         ModelPort,
         PortAnswer,
@@ -127,9 +127,7 @@ def _one_request_factory(
     profile: RequestProfile | None,
 ) -> CorrectorFactory:
     """Return a factory building the one-request corrector of *exchange* on *client*."""
-    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
-        DEFAULT_REQUEST_PROFILE,
-    )
+    from teachers_teammate.domain.request_profile import DEFAULT_REQUEST_PROFILE  # noqa: PLC0415
     from teachers_teammate.infrastructure.proofreading.chunking import (  # noqa: PLC0415
         ChunkingCorrector,
     )
@@ -170,9 +168,7 @@ def _exchange_factory(
     The temperature and the thinking of each step come from *profile*; the temperature the
     factory is asked for is not used, because ``--temperature`` is already the profile's step ①.
     """
-    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
-        DEFAULT_REQUEST_PROFILE,
-    )
+    from teachers_teammate.domain.request_profile import DEFAULT_REQUEST_PROFILE  # noqa: PLC0415
     from teachers_teammate.infrastructure.proofreading.chunking import (  # noqa: PLC0415
         ChunkingCorrector,
     )

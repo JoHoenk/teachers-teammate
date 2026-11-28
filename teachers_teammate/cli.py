@@ -29,7 +29,7 @@ from .application.composition import (
     inject_addon_packages_dir,
     start_logging,
 )
-from .application.run import RunPreflight
+from .application.run_checks import RunPreflight
 from .config import Config, load_config_file
 from .domain.data_location import LOCAL_OCR_ENGINES, PROVIDER_OLLAMA, DataFlow
 from .domain.output_files import folder_problem
@@ -681,7 +681,7 @@ def run_cli(
     # file says so itself, without asking a server or a key first.
     if files:
         stopped = _preflight_exit(
-            service.run.check_run_preflight(config, files=files, fresh=True),
+            service.run_checks.check_run_preflight(config, files=files, fresh=True),
             service,
             ignore_memory_check=args.ignore_memory_check,
         )

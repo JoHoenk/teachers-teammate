@@ -191,7 +191,7 @@ def _server_answers(models: list[str], error: str = ""):
     )
 
     return patch(
-        "teachers_teammate.infrastructure.ollama_utils.OllamaClient.snapshot",
+        "teachers_teammate.infrastructure.ollama_client.OllamaClient.snapshot",
         return_value=ServerSnapshot(
             version="0.12.3",
             models=tuple(InstalledModel(tag=tag) for tag in models),
@@ -202,10 +202,7 @@ def _server_answers(models: list[str], error: str = ""):
 
 def _computer(svc, monkeypatch, *, profile, free_gb, card_gb=None, reason=None) -> None:
     """Make *svc* believe it runs on a computer of *profile* with *free_gb* of free memory."""
-    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
-        DetectionReason,
-        HardwareDetection,
-    )
+    from teachers_teammate.domain.hardware_profile import DetectionReason, HardwareDetection  # noqa: PLC0415
     from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
 
     monkeypatch.setattr(gpu_detector, "detect_available_memory_gb", lambda: free_gb)

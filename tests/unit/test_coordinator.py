@@ -19,7 +19,7 @@ from teachers_teammate.domain.run_summary import RunStatus, RunSummary
 from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
 from teachers_teammate.exceptions import UNEXPECTED_ERROR_MESSAGE
 from teachers_teammate.infrastructure.workflow.coordinator import run_files
-from teachers_teammate.infrastructure.workflow.file_processor import ProcessingResult
+from teachers_teammate.infrastructure.workflow.processing_result import ProcessingResult
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 

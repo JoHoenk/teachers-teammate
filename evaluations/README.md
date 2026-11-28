@@ -44,7 +44,7 @@ The first two criteria decide whether a model can be used at all; quality comes 
 tier, at the window the app asks for (`verify_model_catalog fit`), never read from Ollama's own
 report (it was off by more than a gigabyte for some models): what counts is the memory the card
 holds while the model answers. A small part may sit in main memory and the model still fits, somewhat
-slower; the share is `FULL_SPEED_SHARE` in `domain/model_catalog.py`, and below a second share the
+slower; the share is `FULL_SPEED_SHARE` in `domain/hardware_profile.py`, and below a second share the
 model is *very slow*. A model beyond the first share does not fit and is not compared on quality.
 Without a card the model must be small enough for the processor (`CPU_COMFORT_GB`).
 
@@ -104,7 +104,7 @@ passes gate 1, the floors and the fit, and a teacher has marked its explanations
 - **Fastest** is the eligible model with the shortest page time, of those no more than a tenth of an
   F0.5 point behind the quality model, and it has to be at least a quarter faster than that model.
   Otherwise the tier has none: a second name for the same wait helps nobody. The limits are
-  `SPEED_ROLE_MAX_F05_GAP` and `SPEED_ROLE_FASTER_SHARE` in `domain/model_catalog.py`.
+  `SPEED_ROLE_MAX_F05_GAP` and `SPEED_ROLE_FASTER_SHARE` in `domain/model_fit.py`.
 
 A holder keeps its place unless a challenger is better beyond the noise; a place whose holder is no
 longer eligible goes to the next one by the rule above. A floor that every model, or the current
@@ -130,7 +130,7 @@ roles are read by hand from `report table --tiers` and the model tables; no tool
 
 | What | Where |
 | --- | --- |
-| Fit and speed, per tier | `report table --tiers` (`tools/evaluation/report/tables/fit.py`); rule: `domain/model_catalog.py` |
+| Fit and speed, per tier | `report table --tiers` (`tools/evaluation/report/tables/fit.py`); rule: `domain/model_fit.py` |
 | Model sizes and rates | `model-fit/sizes.jsonl` in the store, written by `verify_model_catalog fit` |
 | Gate 1 rule, verdict order, fixtures | `tools/evaluation/checks/check_rule.py`, `structured_check.py`, `gate1_fixtures.py` |
 | Gate 2 floors | `tools/evaluation/report/gates.py` |

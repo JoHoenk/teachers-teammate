@@ -15,7 +15,8 @@ package "gui/ · cli.py" {
 }
 
 package "application/  (AppServices: one instance per process)" {
-  [RunService] as RUN
+  [RunService\n(runs the files)] as RUN
+  [RunChecks\n(what a run is asked first)] as CHECKS
   [DocumentQueries\n(reads)] as QUERY
   [DocumentCommands\n(writes)] as CMD
   [ProviderService · ReaderService · AddonService ·\nAnonymizationService · DataFlowService · ...] as OTHER
@@ -42,10 +43,12 @@ package "Stores" {
 }
 
 GUI --> RUN
+GUI --> CHECKS
 GUI --> QUERY
 GUI --> CMD
 WORKER --> RUN : run_selected()
 CLI --> RUN
+CLI --> CHECKS
 GUI ..> WORKER : starts
 
 RUN --> PIPE : run()

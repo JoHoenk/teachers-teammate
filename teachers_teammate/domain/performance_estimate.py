@@ -29,14 +29,10 @@ from enum import StrEnum
 import math
 from statistics import median
 
-from .model_catalog import (
-    OLLAMA_CATALOG,
-    AnswerLength,
-    ModelCategory,
-    OllamaModelSpec,
-    ServerFacts,
-)
+from .model_catalog import OLLAMA_CATALOG, AnswerLength, ModelCategory, OllamaModelSpec
+from .ollama_snapshot import ServerSnapshot
 from .proofreading.result import DEFAULT_EXCHANGE_COST, ExchangeCost, StepName
+from .system_facts import ServerFacts
 
 #: Words on a typical page of a student's essay.  Used where a page has to be turned into a
 #: word count (a proofreading estimate for "one page").  An estimate: a handwritten A4 page of
@@ -90,7 +86,7 @@ class SpeedBand(StrEnum):
 
 #: Band limits in seconds per page.  They match what is already measured: on an 8 GB card a page
 #: took under a minute at full speed and about seven at the bottom (see
-#: :data:`~.model_catalog.FULL_SPEED_SHARE`).
+#: :data:`~.hardware_profile.FULL_SPEED_SHARE`).
 FAST_LIMIT_S = 30.0
 OK_LIMIT_S = 90.0
 SLOW_LIMIT_S = 300.0
@@ -448,6 +444,10 @@ class ProbeResult:
     steps: tuple[StepResult, ...] = ()
     facts: ServerFacts = field(default_factory=ServerFacts)
     """The server's version, the model digests and what it held in memory afterwards."""
+    snapshot: ServerSnapshot | None = None
+    """The one answer of the server that :attr:`facts` comes from; ``None`` when the test never
+    got one.  The app holds it, so the panel compares the records with the server as it was
+    when it measured, not with an answer given before the test."""
     on_battery: bool | None = None
     shared: bool = False
     """Another model was loaded when the test started: the times may be too long."""

@@ -22,7 +22,7 @@ from teachers_teammate.application.model_comparison import (
 from teachers_teammate.config import Config
 from teachers_teammate.domain.data_location import DataLocation, StageLocation
 from teachers_teammate.domain.formatted_text import PLAIN
-from teachers_teammate.domain.model_catalog import Suitability
+from teachers_teammate.domain.model_fit import Suitability
 from teachers_teammate.domain.proofreading.compared_result import ComparedResult
 from teachers_teammate.domain.proofreading.edits import edits_from_hunks
 from teachers_teammate.domain.proofreading.model_comparison import (

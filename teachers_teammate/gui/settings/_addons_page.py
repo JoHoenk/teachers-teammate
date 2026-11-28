@@ -21,6 +21,7 @@ from typing import ClassVar
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QPushButton, QTabWidget, QVBoxLayout, QWidget
 
+from ...domain.hardware_profile import HardwareProfileSetting, profile_setting
 from ...domain.install_item import (
     PAGE_MODELS_ITEM,
     READER_ITEM,
@@ -28,7 +29,6 @@ from ...domain.install_item import (
     InstallItem,
     InstallKind,
 )
-from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...domain.ollama_address import normalize_ollama_url
 from ...settings_schema import DEFAULTS, normalize_saved_ollama_url
 from ...texts import addons as txt

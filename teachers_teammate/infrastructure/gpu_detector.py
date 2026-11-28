@@ -33,7 +33,7 @@ import subprocess
 import sys
 from typing import Any
 
-from ..domain.model_catalog import GpuInfo, GpuUsage, SystemUsage
+from ..domain.system_facts import GpuInfo, GpuUsage, SystemUsage
 from .subprocess_utils import child_env, no_console_window_kwargs
 
 _logger = logging.getLogger(__name__)
@@ -254,7 +254,7 @@ def detect_apple_unified_memory_gb() -> float | None:
     On Apple Silicon the GPU shares system RAM; the total is the upper bound
     for what a model can use, so it feeds the same profile thresholds as
     dedicated GPU memory (scaled by the Apple GPU share, see
-    :mod:`teachers_teammate.domain.model_catalog`).
+    :mod:`teachers_teammate.domain.hardware_profile`).
     """
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         return None

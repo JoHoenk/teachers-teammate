@@ -11,7 +11,7 @@ from teachers_teammate.domain.correction_prompts import (
     EXPLAIN_SYSTEM,
     correct_system,
 )
-from teachers_teammate.domain.model_catalog import RequestProfile, StepProfile
+from teachers_teammate.domain.request_profile import RequestProfile, StepProfile
 from teachers_teammate.infrastructure.proofreading.exchanges import TextFirstExchange
 from teachers_teammate.infrastructure.proofreading.corrector import exchange_identity
 from teachers_teammate.infrastructure.proofreading.exchanges.base import ProofreadContext

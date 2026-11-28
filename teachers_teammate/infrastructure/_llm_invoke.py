@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
     from langchain_core.language_models import BaseChatModel
 
-    from .ollama_utils import OllamaClient
+    from .ollama_client import OllamaClient
 
 
 @dataclass(frozen=True)
@@ -229,7 +229,7 @@ def invoke_ollama_structured[T](
     would be cut off as well.
     """
     from ..exceptions import ResponseTruncatedError  # noqa: PLC0415
-    from .ollama_utils import proofreading_options  # noqa: PLC0415
+    from .ollama_request import proofreading_options  # noqa: PLC0415
 
     try:
         text = client.chat(

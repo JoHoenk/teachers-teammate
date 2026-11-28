@@ -20,14 +20,13 @@ from dataclasses import dataclass
 import logging
 
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.hardware_profile import (
     CPU_COMFORT_GB,
     HardwareProfile,
     choose_profile,
     comfortable_model_gb,
-    find_spec,
-    request_profile,
 )
+from teachers_teammate.domain.model_catalog import find_spec, request_profile
 from teachers_teammate.domain.performance_estimate import (
     PROOFREADING_STEPS,
     TYPICAL_PAGE_WORDS,

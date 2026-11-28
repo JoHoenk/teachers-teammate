@@ -18,7 +18,7 @@ from teachers_teammate.application.ollama_server import (
 from teachers_teammate.domain.ollama_discovery import OllamaState
 from teachers_teammate.domain.ollama_snapshot import SNAPSHOT_TTL_S
 from teachers_teammate.exceptions import OllamaUnreachableError
-from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
 
 from ..fakes.fake_ollama import PULL_DIGEST, FakeOllama
 

@@ -489,7 +489,7 @@ def test_correction_config_hash_changes_with_the_step_one_temperature(tmp_path: 
     When   _correction_config_hash() is called before and after
     Then   the two hashes differ (the temperature is part of what is sent)
     """
-    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+    from teachers_teammate.domain.request_profile import STEP_ONE_TEMPERATURES  # noqa: PLC0415
 
     svc, _, _ = _make_svc(
         tmp_path,
@@ -498,7 +498,7 @@ def test_correction_config_hash_changes_with_the_step_one_temperature(tmp_path: 
         correction_model="gemma4:e4b",
     )
     before = svc._correction_config_hash()
-    with patch.dict(model_catalog.STEP_ONE_TEMPERATURES, {"gemma4:e4b": 0.5}):
+    with patch.dict(STEP_ONE_TEMPERATURES, {"gemma4:e4b": 0.5}):
         assert svc._correction_config_hash() != before
 
 
@@ -508,7 +508,7 @@ def test_eval_config_hash_changes_with_the_recommended_temperature(tmp_path: Pat
     When   _eval_config_hash() is called before and after
     Then   the two hashes differ (the temperature affects evaluation cache invalidation)
     """
-    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+    from teachers_teammate.domain.request_profile import MAKER_TEMPERATURES  # noqa: PLC0415
 
     svc, _, _ = _make_svc(
         tmp_path,
@@ -517,7 +517,7 @@ def test_eval_config_hash_changes_with_the_recommended_temperature(tmp_path: Pat
         evaluate_model="gemma4:e4b",
     )
     before = svc._eval_config_hash()
-    with patch.dict(model_catalog.MAKER_TEMPERATURES, {"gemma4:e4b": 0.5}):
+    with patch.dict(MAKER_TEMPERATURES, {"gemma4:e4b": 0.5}):
         assert svc._eval_config_hash() != before
 
 
@@ -527,7 +527,7 @@ def test_the_hashes_change_with_the_reasoning_level_a_model_is_asked_for(tmp_pat
     When   the correction and the evaluation hash are computed before and after
     Then   both differ: pages proofread at another reasoning level are not served again
     """
-    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+    from teachers_teammate.domain.request_profile import THINK_LEVELS  # noqa: PLC0415
 
     svc, _, _ = _make_svc(
         tmp_path,
@@ -539,7 +539,7 @@ def test_the_hashes_change_with_the_reasoning_level_a_model_is_asked_for(tmp_pat
         evaluate_model="gpt-oss:20b",
     )
     correction, review = svc._correction_config_hash(), svc._eval_config_hash()
-    with patch.dict(model_catalog.THINK_LEVELS, {"gpt-oss": "medium"}):
+    with patch.dict(THINK_LEVELS, {"gpt-oss": "medium"}):
         assert svc._correction_config_hash() != correction
         assert svc._eval_config_hash() != review
 
@@ -1191,13 +1191,13 @@ def test_todays_catalog_keeps_the_cache_key_of_a_pinned_base_window(tmp_path: Pa
     Then   the key equals the key of a pinned "8192", so an upgrade invalidates nothing
     """
     from teachers_teammate.domain.context_budget import run_windows  # noqa: PLC0415
-    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+    from teachers_teammate.domain.hardware_profile import (  # noqa: PLC0415
         FULL_SPEED_SHARE,
         DetectionReason,
         HardwareDetection,
         HardwareProfile,
-        find_spec,
     )
+    from teachers_teammate.domain.model_catalog import find_spec  # noqa: PLC0415
 
     tag = "gemma4:e4b"
     auto = make_config(
@@ -1259,7 +1259,7 @@ def test_a_changed_temperature_of_steps_two_and_three_changes_the_correction_key
     When   the correction fingerprint is computed before and after
     Then   the key differs, though step ①'s measured temperature is the same
     """
-    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+    from teachers_teammate.domain.request_profile import MAKER_TEMPERATURES  # noqa: PLC0415
 
     cfg = make_config(
         tmp_path,
@@ -1269,7 +1269,7 @@ def test_a_changed_temperature_of_steps_two_and_three_changes_the_correction_key
     )
     before = _correction_key(cfg)
 
-    monkeypatch.setitem(model_catalog.MAKER_TEMPERATURES, "qwen3.5:9b", 0.5)
+    monkeypatch.setitem(MAKER_TEMPERATURES, "qwen3.5:9b", 0.5)
 
     assert _correction_key(cfg) != before
 
@@ -1283,17 +1283,17 @@ def test_correction_config_hash_changes_with_a_prompt_variant_and_only_then(
     Then   they differ, so results made with another prompt are not served as fresh, while a model
            without a variant keeps the hash it always had
     """
-    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+    from teachers_teammate.domain.request_profile import STEP_ONE_PROMPTS  # noqa: PLC0415
 
     svc, _, _ = _make_svc(
         tmp_path, correction_enabled=True, correction_provider="ollama", correction_model="x:1"
     )
     plain = svc._correction_config_hash()
 
-    monkeypatch.setitem(model_catalog.STEP_ONE_PROMPTS, "x:1", "keep")
+    monkeypatch.setitem(STEP_ONE_PROMPTS, "x:1", "keep")
 
     assert svc._correction_config_hash() != plain
-    monkeypatch.delitem(model_catalog.STEP_ONE_PROMPTS, "x:1")
+    monkeypatch.delitem(STEP_ONE_PROMPTS, "x:1")
     assert svc._correction_config_hash() == plain
 
 
@@ -1305,12 +1305,13 @@ def test_correction_config_hash_follows_the_text_of_a_variant_not_only_its_id(
     When   the text of that variant changes under the same id
     Then   the correction hash changes, so results made with the old text are not served as fresh
     """
-    from teachers_teammate.domain import correction_prompts, model_catalog  # noqa: PLC0415
+    from teachers_teammate.domain import correction_prompts  # noqa: PLC0415
+    from teachers_teammate.domain.request_profile import STEP_ONE_PROMPTS  # noqa: PLC0415
 
     svc, _, _ = _make_svc(
         tmp_path, correction_enabled=True, correction_provider="ollama", correction_model="x:1"
     )
-    monkeypatch.setitem(model_catalog.STEP_ONE_PROMPTS, "x:1", "keep")
+    monkeypatch.setitem(STEP_ONE_PROMPTS, "x:1", "keep")
     before = svc._correction_config_hash()
 
     monkeypatch.setitem(

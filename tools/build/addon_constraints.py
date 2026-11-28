@@ -2,11 +2,11 @@
 """Write the constraints file the installed app gives to pip for every add-on install.
 
 The file lists ``name==version`` of every package in the build environment — exactly what the
-bundle ships.  The app passes it as ``-c`` (``addon_manager.pip_policy_arguments``): an add-on
+bundle ships.  The app passes it as ``-c`` (``addon_pip.pip_policy_arguments``): an add-on
 that needs another numpy or pydantic fails with pip's own explanation instead of putting a
 second copy ahead of the bundled one on ``sys.path``.  After an app update the same file tells
 the app that the packages folder was written by an older bundle
-(``addon_manager.outdated_shared_packages``).
+(``addon_folder.outdated_shared_packages``).
 
 Usage (from the repo root, inside the build environment, before PyInstaller runs):
 

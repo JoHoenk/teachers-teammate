@@ -18,7 +18,7 @@ import pytest
 from teachers_teammate import __version__
 from teachers_teammate.infrastructure import logging_setup
 from teachers_teammate.infrastructure.workflow.coordinator import run_files
-from teachers_teammate.infrastructure.workflow.file_processor import ProcessingResult
+from teachers_teammate.infrastructure.workflow.processing_result import ProcessingResult
 from teachers_teammate.interfaces import Reporter
 
 _logger = logging.getLogger("tests.logging_setup")

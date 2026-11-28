@@ -1,7 +1,7 @@
 """The add-ons the app installs at run time are the ones this release ships and pins.
 
 A teacher installs an add-on from the Add-ons page or the Setup Assistant, so its requirement
-reaches a pip command of its own.  This test holds the table in ``infrastructure/addon_manager``
+reaches a pip command of its own.  This test holds the table in ``infrastructure/addon_list``
 to ``pyproject.toml`` — the extras a ``pip install`` uses — and to
 ``requirements_addons_lock.txt``, the versions the release was tested with: the requirement is a
 range like the extra, the pin lives in the lock.
@@ -15,7 +15,7 @@ import re
 import tomllib
 
 from teachers_teammate.domain.local_models import PRIVACY_ADDON_ID
-from teachers_teammate.infrastructure.addon_manager import addon_requirements
+from teachers_teammate.infrastructure.addon_list import addon_requirements
 
 #: The extra the add-ons are installed from; the privacy add-on has an extra of its own.
 _LLM_EXTRA = "llm"

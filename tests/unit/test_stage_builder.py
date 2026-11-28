@@ -10,7 +10,7 @@ import pytest
 
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.setting_values import PreprocessMethod
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.hardware_profile import (
     DetectionReason,
     HardwareDetection,
     HardwareProfile,

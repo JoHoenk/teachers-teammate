@@ -37,19 +37,19 @@ from teachers_teammate.domain.data_location import (
     DataLocation,
     StageLocation,
 )
-from teachers_teammate.domain.model_catalog import (
-    OLLAMA_CATALOG,
+from teachers_teammate.domain.hardware_profile import (
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
-    ModelCategory,
-    ModelRating,
-    ModelUses,
-    catalog_uses,
     concrete_profile,
-    find_spec,
-    rate_model,
 )
+from teachers_teammate.domain.model_catalog import (
+    OLLAMA_CATALOG,
+    ModelCategory,
+    ModelUses,
+    find_spec,
+)
+from teachers_teammate.domain.model_fit import ModelRating, catalog_uses, rate_model
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.ollama_snapshot import ServerSnapshot
 from teachers_teammate.domain.performance_estimate import ProbeResult, TimeRange
@@ -463,7 +463,7 @@ class RecommendationServiceStub(LocalDataFlowStub):
         return result
 
     def rate_for(self, tags, task, detection, setting, ollama_url, *, cached_only: bool = False):
-        from teachers_teammate.domain.model_catalog import active_profile  # noqa: PLC0415
+        from teachers_teammate.domain.hardware_profile import active_profile  # noqa: PLC0415
 
         return self.rate_ollama_models(
             tags,

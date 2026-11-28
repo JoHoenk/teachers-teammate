@@ -102,7 +102,7 @@ def test_installation_status_compares_normalised_tags(monkeypatch) -> None:
     Then   it counts as installed
     """
     monkeypatch.setattr(
-        "teachers_teammate.infrastructure.ollama_utils.OllamaClient.snapshot",
+        "teachers_teammate.infrastructure.ollama_client.OllamaClient.snapshot",
         lambda _self: ServerSnapshot(models=(InstalledModel("llama3.2:latest"),)),
     )
     status = build_app_services().addons.get_installation_status(
@@ -160,15 +160,15 @@ def test_addon_packages_dir_delegates(tmp_path: Path) -> None:
     """
     Given  the add-on service
     When   addon_packages_dir() is called
-    Then   it delegates to addon_manager.get_packages_dir and returns a Path
+    Then   it answers with the add-on packages folder under the app data folder
     """
     with patch(
-        "teachers_teammate.infrastructure.addon_manager.get_packages_dir",
+        "teachers_teammate.infrastructure.addon_folder.app_data_folder",
         return_value=tmp_path,
     ):
         result = build_app_services().addons.addon_packages_dir()
 
-    assert result == tmp_path
+    assert result == tmp_path / "packages"
 
 
 @pytest.mark.unit
@@ -178,10 +178,10 @@ def test_update_addons_hands_the_log_to_the_add_on_manager(monkeypatch) -> None:
     When   the add-ons are updated
     Then   the add-on manager does it, with the caller's log callback
     """
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    from teachers_teammate.infrastructure import addon_pip  # noqa: PLC0415
 
     seen: list[object] = []
-    monkeypatch.setattr(addon_manager, "update_installed_addons", seen.append)
+    monkeypatch.setattr(addon_pip, "update_installed_addons", seen.append)
     log = lambda _line: None  # noqa: E731
 
     build_app_services().addons.update_addons(log)

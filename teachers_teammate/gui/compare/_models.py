@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 
 from ...application.model_comparison import Candidate
 from ...domain.data_location import DataLocation
-from ...domain.model_catalog import Suitability
+from ...domain.model_fit import Suitability
 from ...texts import compare as txt
 from ...texts.models import compact_suitability_text
 

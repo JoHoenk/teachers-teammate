@@ -10,12 +10,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.hardware_profile import (
     CPU_COMFORT_GB,
     HardwareProfile,
     card_budget_gb,
-    request_profile,
 )
+from teachers_teammate.domain.model_catalog import request_profile
 from teachers_teammate.domain.performance_estimate import TYPICAL_PAGE_WORDS
 from tools.evaluation.core.machines import Machine
 from tools.evaluation.core.modes import ALL_STEPS, Exchange, Step

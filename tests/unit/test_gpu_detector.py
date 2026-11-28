@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.domain.model_catalog import GpuInfo, SystemUsage
+from teachers_teammate.domain.system_facts import GpuInfo, SystemUsage
 from teachers_teammate.infrastructure import gpu_detector
 from teachers_teammate.infrastructure.gpu_detector import (
     GpuUsage,

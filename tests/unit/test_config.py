@@ -19,7 +19,8 @@ from teachers_teammate.config import (
 )
 from teachers_teammate.settings_schema import DEFAULTS
 from teachers_teammate.domain.settings_notice import SettingNoticeKind
-from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL, HardwareProfileSetting
+from teachers_teammate.domain.hardware_profile import HardwareProfileSetting
+from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
 from teachers_teammate.exceptions import ConfigFileNotFoundError, ConfigFileParseError
 from teachers_teammate.settings_schema import SETTINGS
 from teachers_teammate.infrastructure.storage_root import (

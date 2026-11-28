@@ -9,7 +9,7 @@ import pytest
 from ..fakes.fake_secret_store import FakeSecretStore
 from ..gui._service_stubs import services_of
 from teachers_teammate.application.composition import build_app_services
-from teachers_teammate.application.run import RunPreflight
+from teachers_teammate.application.run_checks import RunPreflight
 from teachers_teammate.domain.data_location import DataFlow
 from teachers_teammate.domain.output_files import FolderProblem
 from teachers_teammate.domain.requirements import IssueKind, MemoryShortfall, RequirementIssue

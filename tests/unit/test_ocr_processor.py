@@ -10,7 +10,7 @@ import pytest
 from teachers_teammate.exceptions import OCRError
 from teachers_teammate.domain.ocr_prompt import get_ocr_prompt
 from teachers_teammate.infrastructure.ocr_processor import OllamaOCRProcessor, _encode_image
-from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
 
 
 def _make_ollama_proc(
@@ -148,7 +148,8 @@ def test_ollama_process_image_propagates_ocr_error_from_client(
     Then   the OCRError is propagated unchanged (the processor adds no error handling)
 
     The various failure modes (connection refused, HTTP error, empty response,
-    timeout) are owned by OllamaClient.chat and tested in test_ollama_utils.py.
+    timeout) are owned by OllamaClient.chat and tested in test_ollama_client.py and
+    test_ollama_stream.py.
     """
     mocker.patch.object(OllamaClient, "chat", side_effect=OCRError("connection refused"))
 

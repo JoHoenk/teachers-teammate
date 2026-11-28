@@ -26,12 +26,9 @@ from teachers_teammate.application.setup_plan import (
 )
 from teachers_teammate.domain.data_location import DataRegion, StageLocation
 from teachers_teammate.domain.install_item import InstallItem, InstallKind
-from teachers_teammate.domain.model_catalog import (
-    HardwareDetection,
-    HardwareProfile,
-    ModelCategory,
-    best_model,
-)
+from teachers_teammate.domain.hardware_profile import HardwareDetection, HardwareProfile
+from teachers_teammate.domain.model_catalog import ModelCategory
+from teachers_teammate.domain.model_fit import best_model
 from teachers_teammate.domain.model_listing import ListedModel, ModelListing
 from teachers_teammate.domain.name_models import (
     FALLBACK_SPACY_MODEL,

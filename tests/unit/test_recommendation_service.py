@@ -18,18 +18,17 @@ from teachers_teammate.application.ports import OllamaServer
 from teachers_teammate.domain.ollama_address import is_local_ollama_url
 from teachers_teammate.infrastructure.gpu_detector import SystemHardwareProbe
 from teachers_teammate.settings_schema import DEFAULTS
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.hardware_profile import (
     DetectionReason,
-    GpuInfo,
     HARDWARE_PROFILES,
     HardwareDetection,
     HardwareProfile,
     HardwareProfileSetting,
-    ModelCategory,
-    ModelUses,
-    best_model,
     profile_setting,
 )
+from teachers_teammate.domain.model_catalog import ModelCategory, ModelUses
+from teachers_teammate.domain.model_fit import best_model
+from teachers_teammate.domain.system_facts import GpuInfo
 
 _URL = "http://127.0.0.1:11434"
 _REMOTE_URL = "http://192.168.1.50:11434"
@@ -348,7 +347,7 @@ def test_the_free_memory_and_the_live_load_are_read_on_demand(monkeypatch) -> No
     When   the "My computer" line and the System Monitor ask for them
     Then   the figures are read fresh, never taken from the detection cache
     """
-    from teachers_teammate.domain.model_catalog import GpuUsage, SystemUsage  # noqa: PLC0415
+    from teachers_teammate.domain.system_facts import GpuUsage, SystemUsage  # noqa: PLC0415
     from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
 
     system = SystemUsage(cpu_percent=12.0, ram_percent=50.0, ram_used_gb=8.0, ram_total_gb=16.0)
@@ -436,7 +435,7 @@ def test_rate_ollama_models_rates_catalog_and_custom_models() -> None:
     Then   the catalog model is BEST with its memory/note and the custom one is
            a WORKS model for reading (the single rating path of the widgets)
     """
-    from teachers_teammate.domain.model_catalog import Suitability  # noqa: PLC0415
+    from teachers_teammate.domain.model_fit import Suitability  # noqa: PLC0415
 
     service = _service(server=_FakeServer(lambda _tag: frozenset({"vision"})))
     ratings = service.rate_ollama_models(

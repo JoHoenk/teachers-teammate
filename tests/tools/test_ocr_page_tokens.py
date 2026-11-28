@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from tools.dev.ocr_page_tokens import Reading, _catalog_lines, _pages, _reading, _report, _spread
-from teachers_teammate.infrastructure.ollama_utils import ChatStats
+from teachers_teammate.infrastructure.ollama_request import ChatStats
 
 
 def _stats(answer_tokens: int, words: int, *, done_reason: str = "stop") -> ChatStats:

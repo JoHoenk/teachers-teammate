@@ -26,15 +26,11 @@ from .domain.anonymization import (
     resolve_patterns,
 )
 from .domain.correction_policy import CorrectionOutput
-from .domain.model_catalog import (
-    OCR_TEMPERATURE,
-    HardwareProfileSetting,
-    RequestProfile,
-    request_profile,
-    review_temperature,
-)
+from .domain.hardware_profile import HardwareProfileSetting
+from .domain.model_catalog import request_profile
 from .domain.output_files import DocxFormat
 from .domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
+from .domain.request_profile import OCR_TEMPERATURE, RequestProfile, review_temperature
 from .domain.setting_values import ContextSetting, PreprocessMethod
 from .domain.stages import Stage
 from .exceptions import ConfigFileParseError
@@ -285,8 +281,8 @@ class Config:
 
         The model's own profile, resolved for the provider.  Teachers set no temperature; step ①
         runs at the value measured for it and steps ② and ③ at the one the model's maker
-        recommends (see :data:`~.domain.model_catalog.STEP_ONE_TEMPERATURES` and
-        :data:`~.domain.model_catalog.MAKER_TEMPERATURES`).
+        recommends (see :data:`~.domain.request_profile.STEP_ONE_TEMPERATURES` and
+        :data:`~.domain.request_profile.MAKER_TEMPERATURES`).
         """
         return request_profile(self.effective_correction_model, self.correction_provider)
 
@@ -295,7 +291,7 @@ class Config:
         """Return the temperature the online model itself is built with.
 
         Every step of an online profile is sent at this value
-        (:data:`~.domain.model_catalog.DEFAULT_CORRECTION_TEMPERATURE`), so it is the model's own
+        (:data:`~.domain.request_profile.DEFAULT_CORRECTION_TEMPERATURE`), so it is the model's own
         temperature and not a request's.  A local model is asked per step instead
         (``correction_profile``), because Ollama takes the temperature with each request.
         """

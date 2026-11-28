@@ -16,7 +16,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QWidget
 
 from ..application.composition import AppServices
-from ..application.run import RunPreflight
+from ..application.run_checks import RunPreflight
 from ..domain.ollama_discovery import (
     OLLAMA_DOWNLOAD_URL,
     DiscoveredServer,
@@ -159,9 +159,9 @@ class ReadinessController(QObject):
         # The table is read here, on the GUI thread: the task only gets what it was handed.
         files = self._table.files()
         recognised = self._table.recognised_files()
-        recognition = service.run.needs_text_recognition(files, recognised=recognised)
+        recognition = service.run_checks.needs_text_recognition(files, recognised=recognised)
         self._readiness_task.submit(
-            lambda: service.run.check_run_preflight(
+            lambda: service.run_checks.check_run_preflight(
                 config,
                 for_run=False,
                 recognition=recognition,
@@ -297,7 +297,7 @@ class ReadinessController(QObject):
         panel.show_recognition_note(
             skipped=len(skipped),
             not_needed=bool(files)
-            and not self._services.run.needs_text_recognition(
+            and not self._services.run_checks.needs_text_recognition(
                 files, recognised=self._table.recognised_files()
             ),
         )
@@ -307,7 +307,7 @@ class ReadinessController(QObject):
         panel = self._panel
         if panel.results_problem():
             return results_fix(RESULTS_NO_FOLDER)
-        if panel.get_input_dir() and self._services.run.output_problem_for_run(
+        if panel.get_input_dir() and self._services.run_checks.output_problem_for_run(
             panel.lookup_config()
         ):
             return results_fix(RESULTS_TEXT_IN_INPUT)

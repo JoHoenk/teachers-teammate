@@ -22,7 +22,7 @@ from teachers_teammate.application.speed_estimates import SpeedSummary
 from teachers_teammate.application.documents import WorkedOn
 from teachers_teammate.application.export import NothingToExport, WouldOverwriteInput
 from teachers_teammate.application.model_recommendations import ModelRecommendationService
-from teachers_teammate.application.run import RunPreflight, RunService
+from teachers_teammate.application.run_checks import RunChecks, RunPreflight
 from teachers_teammate.application.setup_plan import SetupService
 from teachers_teammate.config import broken_settings_copy, load_config_file
 from teachers_teammate.settings_schema import LoadedSettings
@@ -31,13 +31,13 @@ from teachers_teammate.domain.requirements import (
     MemoryShortfall,
     RequirementIssue,
 )
-from teachers_teammate.domain.model_catalog import (
-    DEFAULT_OCR_MODEL,
-    RECOMMENDED,
+from teachers_teammate.domain.hardware_profile import (
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
 )
+from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
+from teachers_teammate.domain.model_fit import RECOMMENDED
 from teachers_teammate.gui import _dialogs, _handles
 from teachers_teammate.gui import _export_controller as export_controller_module
 from teachers_teammate.gui import _main_window as main_window_module
@@ -2722,7 +2722,7 @@ def test_missing_model_dialog_opens_addons_with_models_preselected(
     )
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: MagicMock())
     monkeypatch.setattr(
-        RunService,
+        RunChecks,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(missing_models=("qwen3-vl:8b", "qwen3.5:9b")),
     )
@@ -2947,7 +2947,7 @@ def test_run_with_ollama_unreachable_shows_clear_message_and_does_not_start(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        RunService,
+        RunChecks,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(ollama_unreachable="✗ Cannot connect to Ollama"),
     )
@@ -2985,7 +2985,7 @@ def test_run_checks_requirements_off_the_gui_thread(
         assert release.wait(timeout=5), "test never released the check"
         return RunPreflight()
 
-    monkeypatch.setattr(RunService, "check_run_preflight", _slow_preflight)
+    monkeypatch.setattr(RunChecks, "check_run_preflight", _slow_preflight)
 
     main_window._run_start.start()
 
@@ -3011,7 +3011,7 @@ def test_run_shows_unmet_stage_requirement_dialog(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        RunService,
+        RunChecks,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(
             stage="correction",
@@ -3045,7 +3045,7 @@ def test_insufficient_memory_runs_anyway_only_when_the_user_says_so(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        RunService,
+        RunChecks,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(memory_shortfall=_SHORTFALL),
     )
@@ -3076,7 +3076,7 @@ def test_cancelling_the_memory_warning_does_not_start_the_run(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        RunService,
+        RunChecks,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(memory_shortfall=_SHORTFALL),
     )
@@ -3149,7 +3149,7 @@ def test_run_refuses_online_ocr_with_an_explanation(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        RunService,
+        RunChecks,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(ocr_not_allowed="Runs on Ollama's servers."),
     )
@@ -3179,7 +3179,7 @@ def test_run_with_text_files_in_the_input_folder_is_refused(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     preflight: list[object] = []
     monkeypatch.setattr(
-        RunService,
+        RunChecks,
         "check_run_preflight",
         lambda self, config: preflight.append(config) or RunPreflight(),
     )
@@ -3479,7 +3479,7 @@ def test_stage_rerun_with_unmet_requirement_keeps_the_cached_results(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
-        RunService,
+        RunChecks,
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(ollama_unreachable="✗ Cannot connect to Ollama"),
     )
@@ -3523,7 +3523,7 @@ def test_run_pressed_while_requirements_are_checked_starts_nothing_twice(
         assert release.wait(timeout=5), "test never released the check"
         return RunPreflight()
 
-    monkeypatch.setattr(RunService, "check_run_preflight", _slow_preflight)
+    monkeypatch.setattr(RunChecks, "check_run_preflight", _slow_preflight)
     busy = record_notices(monkeypatch)
 
     main_window._run_start.start()
@@ -4183,7 +4183,7 @@ def _preflight_returns(monkeypatch, result: RunPreflight) -> list[dict]:
         calls.append(kwargs)
         return result
 
-    monkeypatch.setattr(RunService, "check_run_preflight", answer)
+    monkeypatch.setattr(RunChecks, "check_run_preflight", answer)
     return calls
 
 
@@ -4365,7 +4365,7 @@ def test_the_line_says_checking_only_when_the_first_answer_is_slow(
         assert release.wait(timeout=5), "test never released the check"
         return RunPreflight()
 
-    monkeypatch.setattr(RunService, "check_run_preflight", slow)
+    monkeypatch.setattr(RunChecks, "check_run_preflight", slow)
     panel = ready_window._config_panel
     panel._selection.set_folder(tmp_path)  # no scan of the folder: the queue is the queue below
     ready_window._results_table.set_queue([queue_row(str(tmp_path / "a.png"), "a.png")])
@@ -4397,7 +4397,7 @@ def test_a_stale_readiness_answer_is_dropped(qtbot, ready_window, monkeypatch) -
         assert gates[index].wait(timeout=5), "test never released the check"
         return answers[index]
 
-    monkeypatch.setattr(RunService, "check_run_preflight", preflight)
+    monkeypatch.setattr(RunChecks, "check_run_preflight", preflight)
     ready_window._readiness_controller.start_check()
     qtbot.waitUntil(lambda: started["n"] == 1, timeout=3000)
     ready_window._readiness_controller.start_check()

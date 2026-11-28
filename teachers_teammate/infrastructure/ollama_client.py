@@ -1,51 +1,39 @@
-"""The OllamaClient HTTP wrapper, and the names this computer answers to.
+"""The Ollama client: every request the app makes to an Ollama server.
 
-Centralises all Ollama HTTP access so pipeline stages, GUI helpers, and connection-check threads
-use the same code path.  What an address *is* — its normal form, its host, whether it points at
-this computer — is :mod:`~teachers_teammate.domain.ollama_address`.
+Where a server is — its host, and whether it is this computer — is
+:mod:`~teachers_teammate.infrastructure.ollama_host`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, replace
-import functools
+from collections.abc import Callable, Iterator
+from dataclasses import replace
 import logging
-import queue
-import socket
 import threading
-import time
 from typing import TYPE_CHECKING, Any
 
-from ..domain.context_budget import (
-    BASE_NUM_CTX,
-    ContextBudget,
-    answers_with_the_same_text,
-)
-from ..domain.model_catalog import LoadedModel, ServerFacts, normalize_tag
-from ..domain.ollama_address import (
-    is_local_ollama_url,
-    models_include,
-    normalize_ollama_url,
-    ollama_host,
-)
-from ..domain.ollama_discovery import WaitDetail, WaitKind, is_private_host
+from ..domain.ollama_address import models_include, normalize_ollama_url
+from ..domain.ollama_discovery import WaitDetail, WaitKind
 from ..domain.ollama_snapshot import InstalledModel, ServerSnapshot
-from ..exceptions import OllamaUnreachableError, RunStoppedError, stop_requested
+from ..domain.system_facts import LoadedModel, ServerActivity, ServerFacts
+from ..exceptions import (
+    OCRError,
+    OllamaUnreachableError,
+    ResponseTruncatedError,
+    RunStoppedError,
+    stop_requested,
+)
 from ..interfaces import ConnectionCheck, Reporter
 from ..messages import (
-    answer_abandoned,
     cannot_connect,
     cannot_reach,
     connection_timed_out,
     contact_failed,
     empty_answer,
     empty_answer_cut_off,
-    http_error,
     message_of,
     model_not_found,
     model_pull_failed,
-    no_first_token,
     no_models_installed,
     unreachable,
 )
@@ -60,456 +48,35 @@ from ..texts.servers import (
     model_not_loaded,
     vision_not_supported,
 )
+from .ollama_request import (
+    ChatStats,
+    chat_request,
+    chunk_stats,
+    ensure_prompt_fits,
+    open_chat_stream,
+    rejects_think,
+)
+from .ollama_stream import consume_with_first_token_timeout, cut_connection, mapped_stream
 from .reporting import StdoutReporter
-from .wsl import windows_host_addresses
 
 if TYPE_CHECKING:
     import ollama
 
-    from ..exceptions import OCRError
-
 logger = logging.getLogger(__name__)
+
 
 # How long to wait for the TCP connection to be established.
 _CONNECT_TIMEOUT = 10
+
 
 #: Model families that indicate a model can read images (used as a fallback on
 #: older Ollama servers that do not report capabilities).
 _KNOWN_VISION_FAMILIES = frozenset({"clip", "vision", "deepseekocr"})
 
 
-def ensure_prompt_fits(
-    system: str,
-    prompt: str,
-    num_ctx: int,
-    *,
-    answer_tokens: int | None = None,
-) -> None:
-    """Raise :exc:`~teachers_teammate.exceptions.ResponseTruncatedError` if a request is too long.
-
-    Ollama silently drops the middle of a prompt that is longer than ``num_ctx`` and still reports
-    ``done_reason="stop"``, so a prompt overflow cannot be seen in the answer.  (A *long answer*
-    can: it ends with ``done_reason="length"``.)  The client library cannot send
-    ``truncate=false`` either, so the size is checked here, by estimate, before the request goes
-    out.  The rule itself lives in :class:`~teachers_teammate.domain.context_budget.ContextBudget`.
-
-    Args:
-        answer_tokens: Tokens reserved for the answer.  ``None`` — the answer repeats (part of)
-            the text it was given, so the request may take at most half of the window.
-    """
-    from ..exceptions import ResponseTruncatedError  # noqa: PLC0415
-
-    budget = ContextBudget(num_ctx)
-    allowance = answers_with_the_same_text(num_ctx) if answer_tokens is None else answer_tokens
-    if not budget.request_fits(len(system) + len(prompt), answer_tokens=allowance):
-        raise ResponseTruncatedError()
-
-
-def proofreading_options(
-    temperature: float,
-    num_ctx: int = BASE_NUM_CTX,
-    sampling: Mapping[str, float] | None = None,
-) -> dict:
-    """Return the Ollama options of a proofreading or content-review request.
-
-    The one place that decides what such a request sends, so the model check
-    (``tools/verify_model_catalog.py``) exercises the same options as the app.  *sampling* is the
-    step's extra sampling values (:attr:`~teachers_teammate.domain.model_catalog.StepProfile.
-    options`); without it the request carries nothing but the temperature and the window, and
-    the model's own tag decides the rest.
-    """
-    return {**(sampling or {}), "temperature": temperature, "num_ctx": num_ctx}
-
-
-@functools.cache
-def own_host_names() -> frozenset[str]:
-    """Return the names and addresses under which this computer knows itself.
-
-    Only the machine's own host name is resolved — never an arbitrary host — so
-    the lookup does not leak the Ollama URL to a DNS server.  It can still be slow on a
-    misconfigured network: call :func:`warm_up_own_host_names` early so the answer is
-    ready before a GUI thread asks.
-    """
-    names: set[str] = set()
-    try:
-        hostname = socket.gethostname()
-        names.update({hostname, socket.getfqdn()})
-        names.update(socket.gethostbyname_ex(hostname)[2])
-    except OSError as exc:
-        logger.debug("Cannot resolve the host names of this computer: %s", exc)
-    return frozenset(name.lower() for name in names if name)
-
-
-def warm_up_own_host_names() -> None:
-    """Resolve this computer's own names in a background thread (idempotent, non-blocking)."""
-    threading.Thread(target=own_host_names, name="own-host-names", daemon=True).start()
-
-
-@dataclass(frozen=True)
-class ServerAddress:
-    """What the privacy rules need to know about the server at an Ollama URL."""
-
-    host: str
-    #: The server runs on this computer (or the Windows computer behind a WSL session).
-    is_this_computer: bool
-    #: The host is on a local network, so it is a computer the teacher controls.
-    is_private: bool
-
-
-def ollama_server(url: str) -> ServerAddress:
-    """Return where the Ollama server at *url* is: the one place that reads the address.
-
-    Every classification of a step on Ollama (the badge, the refusal of online text
-    recognition, the number of tries) starts here, so they cannot disagree about a URL.
-    """
-    host = ollama_host(url)
-    return ServerAddress(
-        host=host,
-        is_this_computer=is_local_ollama_url(
-            url, own_addresses=own_host_names, windows_hosts=windows_host_addresses
-        ),
-        is_private=is_private_host(host),
-    )
-
-
-def _mapped_stream[T](stream: Iterator[T], base_url: str) -> Iterator[T]:
-    """Translate the errors a streaming Ollama request raises into this module's errors.
-
-    A streaming call only *creates* a generator; the HTTP request is made when the generator is
-    first read.  So a refused connection and an HTTP error both arrive from the stream, not from
-    the call, and the ``ollama`` client leaves them untranslated (``httpx.ConnectError``,
-    ``ollama.ResponseError``).  Mapping them here is what lets a caller tell an unreachable
-    server from a model that failed.
-
-    A connection that breaks *after* the first chunk is a plain
-    :exc:`~teachers_teammate.exceptions.OCRError`: a server that dies in the middle of an answer
-    can be the model's doing (a CUDA crash), and the evaluation tools ask the server afterwards
-    and decide there.
-    """
-    import httpx  # noqa: PLC0415  # comes with ollama, a core dependency
-    import ollama  # noqa: PLC0415
-
-    from ..exceptions import OCRError  # noqa: PLC0415
-
-    started = False
-    try:
-        for item in stream:
-            started = True
-            yield item
-    except ollama.ResponseError as exc:
-        raise OCRError(
-            http_error(message_of(exc)), status_code=getattr(exc, "status_code", None)
-        ) from exc
-    except (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError) as exc:
-        if started:
-            raise OCRError(message_of(exc)) from exc
-        raise OllamaUnreachableError(unreachable(base_url, message_of(exc))) from exc
-    finally:
-        # The reader thread closes the outer generator to stop the server generating; without
-        # this the inner HTTP response would stay open until garbage collection.
-        close = getattr(stream, "close", None)
-        if close is not None:
-            try:
-                close()
-            except Exception:  # noqa: BLE001  # a stream that cannot be closed is already gone
-                pass
-
-
-def _cut_connection(client: ollama.Client) -> None:
-    """Close *client*'s HTTP connections, which ends a request that is still waiting.
-
-    Each request makes its own ``ollama.Client``, so nothing else is using this one.  Closing it
-    from another thread makes the blocked read fail at once and the server see the dropped
-    connection, which is what stops it working on an answer nobody waits for.
-    """
-    close = getattr(client, "close", None)
-    if close is None:
-        # A version without the public close still has its httpx client under ``_client``.
-        close = getattr(getattr(client, "_client", None), "close", None)
-    if close is not None:
-        close()
-
-
-def _rejects_think(exc: OCRError) -> bool:
-    """Return whether *exc* is Ollama refusing the ``think`` flag (a 400 that names it)."""
-    return exc.status_code == 400 and "think" in str(exc).lower()
-
-
-#: How often a waiting request looks at its cancel event (seconds): a stop takes effect within
-#: this long, and the polling costs nothing measurable.
-_CANCEL_POLL_S = 0.2
-
-#: How often a request that has no answer yet asks the server what it is doing (seconds).
-_WAITING_POLL_S = 2.0
-
 #: How long a request may wait before the run is told why (seconds).  A model that is already
 #: loaded answers well within this, so it never shows a note.
 WAIT_DETAIL_AFTER_S = 3.0
-
-
-def _next_item[T](
-    item_queue: queue.Queue[T],
-    timeout: float | None,
-    cancel_event: threading.Event | None,
-) -> T:
-    """Return the next queue item, waiting at most *timeout* seconds (``None`` = for ever).
-
-    Raises :exc:`queue.Empty` when the time is up and :exc:`RunStoppedError` as soon as
-    *cancel_event* is set and nothing is waiting in the queue: an item that already arrived
-    (the end of a finished answer included) is handed over first, never thrown away.
-    """
-    if cancel_event is None:
-        return item_queue.get() if timeout is None else item_queue.get(timeout=timeout)
-    end = None if timeout is None else time.monotonic() + timeout
-    while True:
-        try:
-            return item_queue.get_nowait()
-        except queue.Empty:
-            pass  # an empty queue is the ordinary case: poll again
-        if cancel_event.is_set():
-            raise RunStoppedError
-        step = _CANCEL_POLL_S
-        if end is not None:
-            step = min(step, max(end - time.monotonic(), 0.0))
-        try:
-            return item_queue.get(timeout=step)
-        except queue.Empty:
-            if end is not None and time.monotonic() >= end:
-                raise
-
-
-def _abandon(abandoned: threading.Event, on_abandon: Callable[[], None] | None) -> None:
-    """Tell the reader thread to stop, and cut the connection when the caller can."""
-    abandoned.set()
-    if on_abandon is not None:
-        try:
-            on_abandon()
-        except Exception:  # cutting the connection is best effort
-            logger.debug("could not cut the abandoned Ollama connection", exc_info=True)
-
-
-def _first_item[T](
-    item_queue: queue.Queue[T | BaseException | None],
-    first_token_timeout: float,
-    cancel_event: threading.Event | None,
-    waiting: Callable[[float], bool] | None,
-) -> T | BaseException | None:
-    """Return the first item, pausing the timeout while *waiting* reports a wait.
-
-    Waiting behind another model of the server is not a failure: while the server is busy the
-    clock starts again, so the timeout only counts the time the request could have been
-    answered.  Without *waiting* the timeout runs as it is.
-    """
-    if waiting is None:
-        return _next_item(item_queue, first_token_timeout, cancel_event)
-    started = time.monotonic()
-    deadline = started + first_token_timeout
-    while True:
-        step = max(min(_WAITING_POLL_S, deadline - time.monotonic()), _CANCEL_POLL_S)
-        try:
-            return _next_item(item_queue, step, cancel_event)
-        except queue.Empty:
-            if waiting(time.monotonic() - started):
-                deadline = time.monotonic() + first_token_timeout
-                continue
-            if time.monotonic() >= deadline:
-                raise
-
-
-def _chat_messages(prompt: str, images: list[str] | None, system: str) -> list[dict]:
-    """Return the messages of a chat: the system message when there is one, then the user's."""
-    message: dict = {"role": "user", "content": prompt}
-    if images:
-        message["images"] = images
-    return [{"role": "system", "content": system}, message] if system else [message]
-
-
-def _chat_request(
-    model: str,
-    prompt: str,
-    *,
-    images: list[str] | None,
-    options: dict | None,
-    response_format: dict | str | None,
-    system: str,
-) -> dict:
-    """Return the body of one chat request, in the shape the Ollama client takes."""
-    request: dict = {
-        "model": model,
-        "messages": _chat_messages(prompt, images, system),
-        "options": options,
-    }
-    if response_format is not None:
-        request["format"] = response_format
-    return request
-
-
-def _open_chat_stream(client: Any, request: dict, think: bool | str | None) -> Iterator:
-    """Open a streaming chat for *request*; ``think=None`` leaves the argument out."""
-    kwargs: dict = {**request, "stream": True}
-    if think is not None:
-        kwargs["think"] = think
-    return client.chat(**kwargs)
-
-
-def _pump[T](
-    it: Iterator[T], item_queue: queue.Queue[T | BaseException | None], abandoned: threading.Event
-) -> None:
-    """Move the items of *it* into *item_queue*, then ``None``; an error goes in as itself.
-
-    Runs in the reader thread of :func:`_consume_iterator_with_first_token_timeout`.
-    """
-    try:
-        for item in it:
-            if abandoned.is_set():
-                break
-            item_queue.put(item)
-    except Exception as exc:  # noqa: BLE001  # forward any iterator/transport error to the consumer thread via the queue
-        item_queue.put(exc)
-    finally:
-        # Closing a generator closes its HTTP response, which tells the server to stop.
-        close = getattr(it, "close", None)
-        if close is not None:
-            try:
-                close()
-            except Exception:  # noqa: BLE001  # a stream that cannot be closed is already gone
-                pass
-        item_queue.put(None)  # sentinel: stream finished
-
-
-def _consume_iterator_with_first_token_timeout[T](
-    it: Iterator[T],
-    first_token_timeout: float,
-    total_timeout: float | None = None,
-    cancel_event: threading.Event | None = None,
-    on_abandon: Callable[[], None] | None = None,
-    waiting: Callable[[float], bool] | None = None,
-    on_first_token: Callable[[], None] | None = None,
-) -> list[T]:
-    """Consume *it* in a background thread, enforcing a timeout on the first item.
-
-    Returns the full list of items, or raises :exc:`~teachers_teammate.exceptions.OCRError`
-    when the first item does not arrive within *first_token_timeout* seconds.  Once the answer
-    has begun it may take as long as it takes, unless *total_timeout* is given: then the whole
-    answer has that many seconds, :exc:`~teachers_teammate.exceptions.OCRDeadlineError` is
-    raised when it is still running, and the stream is closed so the server stops generating.
-
-    Setting *cancel_event* ends the wait within :data:`_CANCEL_POLL_S` seconds with
-    :exc:`~teachers_teammate.exceptions.RunStoppedError`; the stream is closed the same way.
-
-    The reader thread can only close the stream between two chunks.  While the server is still
-    loading the model or reading the prompt no chunk comes, so a caller that can cut the
-    connection from outside passes *on_abandon*: it is called (never raising) whenever the
-    request is given up on -- a timeout, the deadline or a stop.
-
-    *waiting* is asked every :data:`_WAITING_POLL_S` seconds while the first item has not
-    arrived, with the seconds elapsed since the request was sent; returning ``True`` means the
-    server is busy with something else, which pauses the first-token timeout.  *on_first_token*
-    is called once, when the first item arrives.
-    """
-    from ..exceptions import (  # noqa: PLC0415  # avoid circular import at module level
-        OCRDeadlineError,
-        OCRError,
-        OCRTimeoutError,
-    )
-
-    item_queue: queue.Queue[T | BaseException | None] = queue.Queue()
-    abandoned = threading.Event()
-
-    t = threading.Thread(target=_pump, args=(it, item_queue, abandoned), daemon=True)
-    t.start()
-    deadline = None if total_timeout is None else time.monotonic() + total_timeout
-
-    try:
-        first = _first_item(item_queue, first_token_timeout, cancel_event, waiting)
-    except queue.Empty:
-        _abandon(abandoned, on_abandon)
-        raise OCRTimeoutError(no_first_token(first_token_timeout)) from None
-    except RunStoppedError:
-        _abandon(abandoned, on_abandon)
-        raise
-
-    if on_first_token is not None:
-        on_first_token()
-    results: list[T] = []
-    item: T | BaseException | None = first
-    while item is not None:
-        if isinstance(item, BaseException):
-            # An error the stream already mapped (see _mapped_stream) keeps its type: a caller
-            # must be able to tell an unreachable server from a model that failed.
-            if isinstance(item, OCRError):
-                raise item
-            raise OCRError(message_of(item)) from item
-        results.append(item)
-        try:
-            item = _next_item(
-                item_queue,
-                None if deadline is None else max(deadline - time.monotonic(), 0.0),
-                cancel_event,
-            )
-        except queue.Empty:
-            _abandon(abandoned, on_abandon)
-            if total_timeout is None:
-                # Only a deadline makes the queue time out; without one an empty queue stays.
-                raise
-            raise OCRDeadlineError(answer_abandoned(total_timeout)) from None
-        except RunStoppedError:
-            _abandon(abandoned, on_abandon)
-            raise
-
-    t.join()
-    return results
-
-
-@dataclass(frozen=True)
-class ChatStats:
-    """What Ollama reported about the answer it just finished (defaults when it said nothing).
-
-    Kept so a caller can tell a complete answer from one the context window cut off, and so
-    the token counts of a real run are visible in the log and in the model check.
-    """
-
-    done_reason: str = ""
-    """``"stop"`` for a complete answer, ``"length"`` when the context window was full."""
-    prompt_eval_count: int = 0
-    """Tokens of the request (system instructions, answer format and text)."""
-    eval_count: int = 0
-    """Tokens of the answer."""
-    total_duration: int = 0
-    """Nanoseconds the server spent on the whole request (loading the model included)."""
-    load_duration: int = 0
-    """Nanoseconds spent loading the model; near zero when it was already in memory."""
-    prompt_eval_duration: int = 0
-    """Nanoseconds spent reading the request."""
-    eval_duration: int = 0
-    """Nanoseconds spent writing the answer: ``eval_count`` tokens over this is the speed."""
-    waited: bool = False
-    """The request waited behind another model of the server, so ``load_duration`` counts that
-    wait as well and is no measurement of loading."""
-
-    @property
-    def truncated(self) -> bool:
-        """Whether the model stopped because it ran out of context, not because it was done."""
-        return self.done_reason == "length"
-
-
-def _chunk_stats(chunk: object) -> ChatStats:
-    """Return the statistics of one stream chunk (empty ones for a chunk that reports none)."""
-    done_reason = getattr(chunk, "done_reason", "")
-
-    def count(name: str) -> int:
-        value = getattr(chunk, name, 0)
-        return value if isinstance(value, int) else 0
-
-    return ChatStats(
-        done_reason=done_reason if isinstance(done_reason, str) else "",
-        prompt_eval_count=count("prompt_eval_count"),
-        eval_count=count("eval_count"),
-        total_duration=count("total_duration"),
-        load_duration=count("load_duration"),
-        prompt_eval_duration=count("prompt_eval_duration"),
-        eval_duration=count("eval_duration"),
-    )
 
 
 def _is_transport_error(exc: BaseException) -> bool:
@@ -561,53 +128,6 @@ def _trouble_message(base_url: str, exc: BaseException) -> str:
     if kind == "timeout":
         return check_timed_out(base_url)
     return check_unexpected(exc)
-
-
-@dataclass(frozen=True)
-class ServerActivity:
-    """What the server is doing right now, as far as ``/api/ps`` can tell.
-
-    "Busy" is inferred: a model whose ``expires_at`` moved since the previous look is
-    generating.  That is undocumented behaviour, so it only chooses the wording of a note and
-    never what the app does.
-    """
-
-    loaded: tuple[LoadedModel, ...] = ()
-    """The models the server holds in memory."""
-    busy: tuple[str, ...] = ()
-    """The models that were generating when the server was asked."""
-    reachable: bool = True
-    """The server answered.  ``False`` means nothing is known, not that nothing is loaded."""
-
-    def has(self, model: str) -> bool:
-        """Return whether *model* is in memory."""
-        wanted = normalize_tag(model)
-        return any(normalize_tag(item.name) == wanted for item in self.loaded)
-
-    def loaded_names(self) -> tuple[str, ...]:
-        """Return the names of the models in memory."""
-        return tuple(item.name for item in self.loaded)
-
-    def busy_other_than(self, model: str) -> str:
-        """Return a model that is generating and is not *model*, or ``""``."""
-        wanted = normalize_tag(model)
-        for name in self.busy:
-            if normalize_tag(name) != wanted:
-                return name
-        return ""
-
-    def wait_detail(self, model: str) -> WaitDetail:
-        """Return what to tell the teacher about a request for *model* that has no answer yet.
-
-        Nothing when the model is in memory: it is reading the text, so the first token is
-        close.  Otherwise another model is still generating, or *model* is being loaded.
-        """
-        if not self.reachable or self.has(model):
-            return WaitDetail()
-        other = self.busy_other_than(model)
-        if other:
-            return WaitDetail(WaitKind.BUSY, model, other)
-        return WaitDetail(WaitKind.LOADING, model)
 
 
 class OllamaClient:
@@ -926,8 +446,6 @@ class OllamaClient:
                 the context window, or the answer was cut off.
             :exc:`~teachers_teammate.exceptions.OCRError`: on any other failure.
         """
-        from ..exceptions import ResponseTruncatedError  # noqa: PLC0415
-
         num_ctx = (options or {}).get("num_ctx")
         if num_ctx and not images:
             ensure_prompt_fits(system, prompt, int(num_ctx), answer_tokens=answer_tokens)
@@ -948,8 +466,6 @@ class OllamaClient:
             if not content.strip():
                 # A cut-off answer without any text is no partial page: it is nothing, and
                 # returning "" would silently drop the page from the document.
-                from ..exceptions import OCRError  # noqa: PLC0415
-
                 raise OCRError(empty_answer_cut_off())
         return content
 
@@ -997,7 +513,7 @@ class OllamaClient:
         if stop_requested(self._cancel_event):
             raise RunStoppedError
         self._last_stats = None
-        request = _chat_request(
+        request = chat_request(
             model,
             prompt,
             images=images,
@@ -1024,8 +540,6 @@ class OllamaClient:
         A model that rejects ``think`` is asked again without it.  Any other error is raised:
         a model that is not pulled or a server that is down does not answer twice as fast.
         """
-        from ..exceptions import OCRError  # noqa: PLC0415
-
         client, stream = self._open_answer(request, think, timeout=timeout)
         waited = False
         reported: WaitDetail | None = None
@@ -1053,7 +567,7 @@ class OllamaClient:
             chunks = self._consume(stream, client, timeout, total_timeout, _waiting)
         except OCRError as exc:
             # A model that does not support ``think`` rejects it with a 400 that names it.
-            if think is None or not _rejects_think(exc):
+            if think is None or not rejects_think(exc):
                 raise
             client, stream = self._open_answer(request, None, timeout=timeout)
             chunks = self._consume(stream, client, timeout, total_timeout, _waiting)
@@ -1068,11 +582,11 @@ class OllamaClient:
         try:
             client = ollama.Client(host=self.base_url, timeout=timeout)
             try:
-                stream = _open_chat_stream(client, request, think)
+                stream = open_chat_stream(client, request, think)
             except TypeError:
                 # Older ollama clients lack the ``think`` kwarg. The output cleaner strips any
                 # leaked reasoning regardless.
-                stream = _open_chat_stream(client, request, None)
+                stream = open_chat_stream(client, request, None)
         except Exception as exc:
             raise OllamaUnreachableError(unreachable(self.base_url, message_of(exc))) from exc
         return client, stream
@@ -1086,12 +600,12 @@ class OllamaClient:
         waiting: Callable[[float], bool],
     ) -> list[Any]:
         """Read the answer to its end, returning the chunks in the order they arrived."""
-        return _consume_iterator_with_first_token_timeout(
-            _mapped_stream(stream, self.base_url),
+        return consume_with_first_token_timeout(
+            mapped_stream(stream, self.base_url),
             timeout,
             total_timeout,
             self._cancel_event,
-            on_abandon=lambda: _cut_connection(client),
+            on_abandon=lambda: cut_connection(client),
             waiting=waiting,
             on_first_token=self.first_token_sink,
         )
@@ -1100,12 +614,10 @@ class OllamaClient:
         self, model: str, chunks: list[Any], *, waited: bool
     ) -> tuple[str, ChatStats]:
         """Return the text of the answer and its statistics, and report the statistics."""
-        from ..exceptions import OCRError  # noqa: PLC0415
-
         parts = [(chunk.message.content or "") for chunk in chunks if chunk.message]
         content = "".join(parts)
         # The last chunk carries the summary of the whole answer; earlier ones leave these unset.
-        stats = _chunk_stats(chunks[-1]) if chunks else ChatStats()
+        stats = chunk_stats(chunks[-1]) if chunks else ChatStats()
         if waited:
             stats = replace(stats, waited=True)
         self._last_stats = stats
@@ -1142,8 +654,6 @@ class OllamaClient:
             abort_event: When set, stops consuming the stream after the current chunk.
         """
         import ollama  # noqa: PLC0415
-
-        from ..exceptions import OCRError  # noqa: PLC0415
 
         client = ollama.Client(host=self.base_url)
         try:

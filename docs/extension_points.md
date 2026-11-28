@@ -6,12 +6,15 @@ change keeps are in `CONTRIBUTING.md`; the explanations in {doc}`development` an
 
 ## New pipeline stage
 
-Add ABC to `interfaces.py`, implement in `infrastructure/`, route through `FileProcessor`.
-A stage that cannot do its work raises `StageError` with its `kind` and `stage`
+Add ABC to `interfaces.py`, implement in `infrastructure/`. What runs per file is a
+`<name>_stage.py` in `infrastructure/workflow/`, which `FileProcessor.process()` calls in order;
+each stage takes what it uses plus `StageShared` (reporter, stop event, stage callback, cache
+service, language) and returns its result as a frozen dataclass from its module. A stage that
+cannot do its work raises `StageError` with its `kind` and `stage`
 (`exceptions.py`); `FileProcessor.process()` has the one `except` that turns it into a `FAILED`
-file. What a stage produced with a remark is an outcome, not an exception. The name a teacher
-reads for it goes into `texts/app.py:STAGE_TITLES`; the layers pass the stage key. See
-{doc}`development` → "One error contract".
+file, and turns `Stopped` into a stopped result. What a stage produced with a remark is an outcome,
+not an exception. The name a teacher reads for it goes into `texts/app.py:STAGE_TITLES`; the layers
+pass the stage key. See {doc}`development` → "One error contract".
 
 ## New LLM provider
 
@@ -62,7 +65,7 @@ and advice sentences come from `texts/privacy.py`.
 `Config.recognition_enabled` is not part of `OcrConfig`, so no cache key changes. Off:
 `RecognitionSwitchedOffError` → `ProcessingResult.skipped` → `RunSummary.skipped` →
 `FileDoneEvent.skipped`. Gate anything that needs the OCR model/engine on it.
-`RunService` (`application/run.py`) works out what a run can use; it opens PDFs,
+`RunChecks` (`application/run_checks.py`) works out what a run can use; it opens PDFs,
 so background thread only. See {doc}`development` → "Text recognition switch".
 
 ## Ollama server: finding, installing, starting
@@ -141,7 +144,7 @@ model in `domain/formatted_text.py`, adapters use `application/formatting.py:Tex
 ## New run requirement
 
 Add an `IssueKind` and its check to `check_stage_requirements` / `check_run_preflight`
-(`application/run.py`), and a row in `gui/_fix_targets.py:fix_for`: the readiness line, the
+(`application/run_checks.py`), and a row in `gui/_fix_targets.py:fix_for`: the readiness line, the
 requirement guard and the "run can't start" dialog all take their line and buttons from it.
 Preselect entries for Add-ons are `InstallItem`s (`domain/install_item.py`): a kind and a
 name, never a string key.
@@ -175,14 +178,14 @@ What stays a lazy import: installs with progress and their own errors, the facts
 
 ## Add-on packages (installed app)
 
-`infrastructure/addon_manager.py`. `get_packages_dir()` comes **first** on `sys.path`, so every
+`infrastructure/addon_folder.py`. `get_packages_dir()` comes **first** on `sys.path`, so every
 pip call goes through `pip_policy_arguments()` (`--only-binary :all:`, `-c addon_constraints.txt`
 = the bundle's versions, written by `tools/build/addon_constraints.py`). After an app update
 `outdated_shared_packages()` / `foreign_python_packages()` keep stale folders **off**
 `sys.path`; `IssueKind.ADDONS_OUTDATED` and the Add-ons banner offer **Update add-ons**
 (`AddonService.update_addons()`). Every entry point calls
 `application/composition.inject_addon_packages_dir()` first. A new add-on = its requirement
-in `_ADDON_PACKAGES`; `tools/build/check_addon_resolution.py` (CI) proves it fits the bundle.
+in `ADDON_PACKAGES`; `tools/build/check_addon_resolution.py` (CI) proves it fits the bundle.
 See {doc}`development` → "The bundle's constraints and add-ons after an app update"
 
 ## New GUI setting
@@ -233,7 +236,7 @@ and the Check page"
 
 ## Model temperatures
 
-Teachers set none. `domain/model_catalog.py` holds `STEP_ONE_TEMPERATURES` (measured per model,
+Teachers set none. `domain/request_profile.py` holds `STEP_ONE_TEMPERATURES` (measured per model,
 else `STEP_ONE_DEFAULT_TEMPERATURE`) for step ①, and `MAKER_TEMPERATURES` (the model
 card) for steps ② and ③ and the content review. A `RequestProfile` carries one `StepProfile`
 (temperature, `think`, `options`) per step; `options` are sampling values besides the
@@ -336,7 +339,7 @@ of whole texts in bands share `input/recipes/_bands.py` (`select_texts`); each r
 ## Third-party licenses
 
 `third_party_licenses/inventory.csv` is written by `tools/licenses/inventory.py`. The tool reads
-the app's own lists (`[project] dependencies`, `addon_manager.addon_package_names()`, the
+the app's own lists (`[project] dependencies`, `addon_list.addon_package_names()`, the
 `LocalModel`s, `SPACY_MODEL_PINS`) and the two locks, so a new dependency, add-on, model or spaCy
 language is a red test until the tool runs. `tools/licenses/policy.toml` holds the allow list —
 the ids and `WITH` exceptions a component may state — the deny rules that explain a refusal, and

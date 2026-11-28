@@ -33,14 +33,14 @@ PROVIDER = ProviderInfo(
 
 def list_models(*, base_url: str, **_kwargs: object) -> list[str]:
     """Return model names from the Ollama server, or ``[]`` when unreachable."""
-    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_client import OllamaClient  # noqa: PLC0415
 
     return OllamaClient(base_url).list_models()
 
 
 def check_connection(*, base_url: str, **_kwargs: object) -> tuple[bool, str]:
     """Return ``(ok, message)`` for the Ollama server at *base_url*."""
-    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_client import OllamaClient  # noqa: PLC0415
 
     _connected, _model_ok, message = OllamaClient(base_url).check_connection()
     return _connected, message

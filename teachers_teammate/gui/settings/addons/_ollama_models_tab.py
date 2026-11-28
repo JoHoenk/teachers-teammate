@@ -32,21 +32,11 @@ from PySide6.QtWidgets import (
 )
 
 from ....application.composition import AppServices
+from ....domain.hardware_profile import HardwareProfile, HardwareProfileSetting, active_profile
 from ....domain.install_item import InstallItem, InstallKind
-from ....domain.model_catalog import (
-    HardwareProfile,
-    HardwareProfileSetting,
-    ModelCategory,
-    ModelRating,
-    ModelUses,
-    OllamaModelSpec,
-    Suitability,
-    active_profile,
-    best_model,
-    find_spec,
-    normalize_tag,
-    suitability_rank,
-)
+from ....domain.model_catalog import ModelCategory, ModelUses, OllamaModelSpec, find_spec
+from ....domain.model_fit import ModelRating, Suitability, best_model, suitability_rank
+from ....domain.model_tags import normalize_tag
 from ....texts import dialogs as dlg
 from ....texts import review as txt
 from ....texts.models import (

@@ -25,8 +25,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...domain.hardware_profile import HardwareProfileSetting, profile_setting
 from ...domain.install_item import InstallItem
-from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...domain.ollama_address import normalize_ollama_url
 from ...settings_schema import DEFAULTS, normalize_saved_ollama_url
 from ...texts import models as mdl

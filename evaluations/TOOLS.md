@@ -138,7 +138,7 @@ each `--fit-limit`. `--compare A B` sets two machines side by side; `--catalog` 
 enter.
 
 **Limit.** A tier's limit is `card_budget_gb(tier) / FULL_SPEED_SHARE`; `runs_at_full_speed()` in
-`domain/model_catalog.py` decides, for the app and the tools alike. A number (`--fit-limit 14.5`)
+`domain/model_fit.py` decides, for the app and the tools alike. A number (`--fit-limit 14.5`)
 is GB.
 
 ### Memory agent
@@ -185,7 +185,8 @@ about the corrections, and `text-first` for explanations, unclear flags and page
 - `--prompt keep|find|shot`: a step-① prompt variant (`CORRECT_VARIANTS` in
   `domain/correction_prompts.py`); `--prompt standard` sends `CORRECT_SYSTEM` to a model with an
   adopted variant. `text-first` only. Adopted variants are listed in `STEP_ONE_PROMPTS`
-  (`model_catalog.py`). A variant's text never changes once measured; another text is another id.
+  (`model_tags.py` tables in `request_profile.py`). A variant's text never changes once measured;
+  another text is another id.
 
 **Measuring.** `--seed` (the app sends none), `--repeat N` (repeat *k* uses seed + k − 1),
 `--isolate` (unload all models first and after; only on your own server), `--gpu-sampler`,

@@ -15,7 +15,7 @@ from teachers_teammate.application.composition import build_app_services
 from teachers_teammate.config import Config
 from teachers_teammate.domain.page_layout import Box, PageReading, ReadLine
 from teachers_teammate.infrastructure.file_discovery import FileDiscovery
-from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.pipeline import OCRPipeline
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore

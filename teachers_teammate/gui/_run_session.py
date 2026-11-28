@@ -12,7 +12,7 @@ from enum import Enum
 
 from ..config import Config
 from ..domain.data_location import PROVIDER_OLLAMA
-from ..domain.model_catalog import short_model_name
+from ..domain.model_tags import short_model_name
 from ..domain.performance_estimate import TimeRange
 from ..domain.stages import ProgressStage
 from ..texts import check as check_text

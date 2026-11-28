@@ -175,10 +175,8 @@ def test_the_fingerprint_covers_both_compact_settings(monkeypatch) -> None:
            choice per model does not, because it is recorded per run like the temperature
     """
     from teachers_teammate.domain import model_catalog  # noqa: PLC0415
-    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
-        OLLAMA_CATALOG,
-        RequestProfile,
-    )
+    from teachers_teammate.domain.model_catalog import OLLAMA_CATALOG  # noqa: PLC0415
+    from teachers_teammate.domain.request_profile import RequestProfile  # noqa: PLC0415
 
     before = protocol.fingerprint_sha256()
     assert set(protocol.fingerprint()["requests"]["one-request-review"]["de"]) == {

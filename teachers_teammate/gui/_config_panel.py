@@ -998,7 +998,7 @@ class ConfigPanel(QScrollArea):
     def _guard_hooks(self) -> GuardHooks:
         """Return what the requirement guard asks of the panel."""
         return GuardHooks(
-            run=self._services.run,
+            checks=self._services.run_checks,
             providers=self._services.providers,
             config=self.lookup_config,
             loading=lambda: self._loading,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from teachers_teammate.domain.model_catalog import LoadedModel
+from teachers_teammate.domain.system_facts import LoadedModel
 from teachers_teammate.domain.ollama_snapshot import InstalledModel, ServerSnapshot
 
 

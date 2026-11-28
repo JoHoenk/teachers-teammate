@@ -22,13 +22,13 @@ from typing import TYPE_CHECKING
 
 from ...domain.correction_policy import DEFAULT_LEVEL
 from ...domain.correction_prompts import PROMPT_VERSION
-from ...domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
 from ...domain.proofreading.result import (
     CorrectionOutcome,
     ExchangeKind,
     StepName,
     stored_exchange_id,
 )
+from ...domain.request_profile import DEFAULT_REQUEST_PROFILE, RequestProfile
 from ...domain.stages import Stage
 from ...exceptions import StageError, StageErrorKind
 from ...interfaces import Corrector
@@ -43,7 +43,7 @@ from .port import ModelPort, OllamaPort
 
 if TYPE_CHECKING:
     from ...domain.formatted_text import TextFormat
-    from ..ollama_utils import OllamaClient
+    from ..ollama_client import OllamaClient
 
 _PARTIAL_WARNINGS: frozenset[str] = frozenset({EXPLANATIONS_MISSING, UNCLEAR_FAILED})
 """The warnings of the steps whose failure costs part of the answer instead of the file."""

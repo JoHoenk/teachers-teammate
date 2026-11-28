@@ -4,7 +4,8 @@
 carries), ``domain/ollama_discovery.py`` writes the address the app looks at first and
 ``domain/data_location.py`` writes the provider id.  A literal elsewhere means a name with a
 second home: a typo cannot be caught, and a changed name silently reaches only the paths that
-read the constant.
+read the constant.  A name is read from the module that defines it, never from one that merely
+imported it.
 """
 
 from __future__ import annotations
@@ -28,7 +29,8 @@ _STAGE_WORDS_LEFT: dict[str, int] = {
     "application/setup_plan.py": 1,
     "application/speed_estimates.py": 4,
     "cli.py": 2,  # the argument groups a teacher sees as "--correction", "--evaluation"
-    "domain/model_catalog.py": 9,  # ModelCategory
+    "domain/model_catalog.py": 7,  # ModelCategory, the catalog's own use of it
+    "domain/model_fit.py": 2,  # ModelCategory, the recommendations and detected uses
     "domain/performance_estimate.py": 4,
     "domain/proofreading/review.py": 1,  # "1 minor correction"
     "exceptions.py": 1,  # OCRError's stage: the pkg layer cannot import domain
@@ -93,6 +95,49 @@ def _modules() -> list[tuple[str, Path]]:
     """Return ``(module, path)`` for every module of the package."""
     package = _package_dir()
     return [(path.relative_to(package).as_posix(), path) for path in sorted(package.rglob("*.py"))]
+
+
+def _defined_names(path: Path) -> set[str]:
+    """Return the names *path* defines at module level: its functions, classes and constants."""
+    names: set[str] = set()
+
+    def collect(target: ast.expr) -> None:
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                collect(element)
+
+    def walk(body: list[ast.stmt]) -> None:
+        for statement in body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(statement.name)
+            elif isinstance(statement, ast.Assign):
+                for target in statement.targets:
+                    collect(target)
+            elif isinstance(statement, ast.AnnAssign):
+                collect(statement.target)
+            elif isinstance(statement, ast.TypeAlias):
+                collect(statement.name)
+            elif isinstance(statement, (ast.If, ast.Try, ast.With)):
+                walk(statement.body)
+                walk(getattr(statement, "orelse", []))
+                walk(getattr(statement, "finalbody", []))
+                for handler in getattr(statement, "handlers", []):
+                    walk(handler.body)
+
+    walk(ast.parse(path.read_text(encoding="utf-8")).body)
+    return names
+
+
+def _named_module(importer: Path, module: str) -> Path | None:
+    """Return the module a ``from .<module>`` in *importer* names, or ``None`` for a package.
+
+    A package is its own surface: its ``__init__.py`` gathers what its submodules define, which
+    is not a second home for them.
+    """
+    file = (importer.parent / Path(*module.split("."))).with_suffix(".py")
+    return file if file.exists() else None
 
 
 def test_a_stage_word_is_spelled_in_domain_stages_only() -> None:
@@ -205,3 +250,25 @@ def test_the_ollama_provider_asks_for_its_address() -> None:
         and "base_url" in _defaulted_parameters(node)
     }
     assert defaulted == set(), f"take base_url as a required argument: {sorted(defaulted)}"
+
+
+def test_a_relative_import_names_a_module_that_defines_the_name() -> None:
+    """
+    Given  every module of the package that is not a package's own surface
+    When   each ``from .x import name`` is resolved to the module it names
+    Then   *name* is defined there, so an import never reaches through a re-export
+    """
+    undefined = {
+        f"{module}:{node.lineno}: from .{node.module} import {alias.name}"
+        for module, path in _modules()
+        if path.name != "__init__.py"
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module
+        for alias in node.names
+        if alias.name != "*"
+        if (target := _named_module(path, node.module)) is not None
+        if alias.name not in _defined_names(target)
+    }
+    assert undefined == set(), (
+        f"import the name from the module that defines it: {sorted(undefined)}"
+    )

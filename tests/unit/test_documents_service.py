@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 import shutil
-from teachers_teammate.domain.model_catalog import HardwareProfileSetting
+from teachers_teammate.domain.hardware_profile import HardwareProfileSetting
 from teachers_teammate.domain.stages import Stage
 from unittest.mock import MagicMock, patch
 import pytest

@@ -11,7 +11,7 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-from teachers_teammate.application.run import RunPreflight
+from teachers_teammate.application.run_checks import RunPreflight
 from teachers_teammate.cli import run_cli
 from teachers_teammate.config import Config, OcrConfig, dump_config_file, load_config_file
 from teachers_teammate.domain.data_location import DataFlow

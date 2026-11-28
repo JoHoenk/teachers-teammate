@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..domain.model_catalog import GpuUsage, SystemUsage
+from ..domain.system_facts import GpuUsage, SystemUsage
 from ..texts import main_window as txt
 from ._background import run_in_background
 

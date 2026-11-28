@@ -15,11 +15,8 @@ import math
 from typing import Any
 
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX, CONTEXT_STEPS
-from teachers_teammate.domain.model_catalog import (
-    HardwareProfile,
-    comfortable_model_gb,
-    request_profile,
-)
+from teachers_teammate.domain.hardware_profile import HardwareProfile, comfortable_model_gb
+from teachers_teammate.domain.model_catalog import request_profile
 
 from ..core.constants import CARD_USED_TOLERANCE_BYTES, CPU_ONLY_OPTIONS
 from ..core.sizes import (
@@ -549,7 +546,7 @@ def measure_tag(  # noqa: PLR0913  # one keyword per thing a measurement needs
         AgentError: the agent stopped answering; the caller stops, because a record without its
             card reading would be silently weaker.
     """
-    from teachers_teammate.infrastructure.ollama_utils import (  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_request import (  # noqa: PLC0415
         proofreading_options,
     )
 

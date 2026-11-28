@@ -39,8 +39,8 @@ from PySide6.QtWidgets import (
 
 from ...application.correction_options import review_has_own_model
 from ...config import OcrConfig
+from ...domain.hardware_profile import HardwareProfileSetting, profile_setting
 from ...domain.install_item import InstallItem, InstallKind
-from ...domain.model_catalog import HardwareProfileSetting, profile_setting
 from ...domain.ollama_address import normalize_ollama_url
 from ...domain.stages import Stage
 from ...settings_schema import CONTEXT_SETTINGS, DEFAULTS, normalize_saved_ollama_url

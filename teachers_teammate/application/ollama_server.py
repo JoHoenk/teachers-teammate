@@ -24,13 +24,10 @@ from ..domain.ollama_discovery import (
     ollama_state,
 )
 from ..domain.ollama_snapshot import SNAPSHOT_TTL_S, ServerSnapshot
+from ..domain.system_facts import ServerActivity
 from ..exceptions import OllamaUnreachableError
-from ..infrastructure.ollama_utils import (
-    OllamaClient,
-    ServerActivity,
-    own_host_names,
-    warm_up_own_host_names,
-)
+from ..infrastructure.ollama_client import OllamaClient
+from ..infrastructure.ollama_host import own_host_names, warm_up_own_host_names
 from ..infrastructure.wsl import windows_host_addresses
 from ..interfaces import ConnectionCheck
 from ..messages import cannot_reach, detail
@@ -143,6 +140,29 @@ class OllamaServerService:
         with self._lock:
             self._snapshots.pop(key, None)
             self._generations[key] = self._generations.get(key, 0) + 1
+
+    def generation(self, url: str) -> int:
+        """Return how often the answer of *url* was forgotten; read it before asking.
+
+        Hand it back to :meth:`hold`, which keeps an answer only when nothing was forgotten in
+        between.
+        """
+        key = normalize_ollama_url(url)
+        with self._lock:
+            return self._generations.get(key, 0)
+
+    def hold(self, url: str, snapshot: ServerSnapshot, *, generation: int) -> None:
+        """Keep *snapshot* as the latest answer of *url*, unless it was forgotten since.
+
+        For a caller that asked the server itself (the speed test): what it measured and what
+        the app knows then come from one answer.  *generation* is what :meth:`generation` said
+        before the request went out, so a pull or a restart meanwhile wins over this answer.
+        """
+        key = normalize_ollama_url(url)
+        with self._lock:
+            if self._generations.get(key, 0) != generation:
+                return
+            self._snapshots[key] = (self._clock(), snapshot)
 
     def _held(self, key: str, max_age: float | None) -> ServerSnapshot | None:
         """Return the snapshot held for *key* if it is younger than *max_age* (``None``: any)."""

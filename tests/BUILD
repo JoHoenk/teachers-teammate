@@ -49,7 +49,10 @@ filegroup(
         "integration/test_pipeline_scenarios.py",
         "integration/test_pipeline_teacher_work.py",
         "integration/test_pipeline_txt.py",
-        "unit/test_addon_manager.py",
+        "unit/test_addon_folder.py",
+        "unit/test_addon_imports.py",
+        "unit/test_addon_pip.py",
+        "unit/test_addon_staging.py",
         "unit/test_addons_service.py",
         "unit/test_anonymization_service.py",
         "unit/test_anonymizer.py",
@@ -67,14 +70,20 @@ filegroup(
         "unit/test_file_discovery.py",
         "unit/test_file_processor.py",
         "unit/test_gpu_detector.py",
+        "unit/test_hardware_profile.py",
         "unit/test_model_catalog.py",
+        "unit/test_model_fit.py",
         "unit/test_model_listing.py",
         "unit/test_ollama_address.py",
+        "unit/test_ollama_client.py",
         "unit/test_ollama_discovery.py",
-        "unit/test_ollama_utils.py",
+        "unit/test_ollama_host.py",
+        "unit/test_ollama_request.py",
+        "unit/test_ollama_stream.py",
         "unit/test_preprocessor.py",
         "unit/test_provider_service.py",
         "unit/test_recommendation_service.py",
+        "unit/test_run_checks.py",
         "unit/test_run_service.py",
         "unit/test_settings_schema.py",
         "unit/test_setup_plan.py",
@@ -270,7 +279,7 @@ _GUI_DEPS = [
 
 # infrastructure/pipeline.py has module-level imports of docx_builder (→ python-docx),
 # preprocessing (→ opencv-python-headless), correction (→ langchain-core),
-# ocr_processor + ollama_utils (→ requests), and input_providers (→ pypdfium2).
+# ocr_processor + ollama_client (→ requests), and input_providers (→ pypdfium2).
 # Any test that imports from pipeline needs all of these.
 _PIPELINE_DEPS = (
     _FORMAT_DEPS +
@@ -569,7 +578,22 @@ app_test(
 )
 
 app_test(
-    "unit/test_ollama_utils.py",
+    "unit/test_ollama_client.py",
+    deps = _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+app_test(
+    "unit/test_ollama_host.py",
+    deps = _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+app_test(
+    "unit/test_ollama_request.py",
+    deps = _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+app_test(
+    "unit/test_ollama_stream.py",
     deps = _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
 )
 
@@ -904,7 +928,7 @@ app_test(
     deps = _INFRASTRUCTURE_LIB,
 )
 
-# A stage word and the Ollama address are spelled in one module each.
+# A stage word, the Ollama address and an imported name live in one module each.
 app_test(
     "unit/test_names_have_one_home.py",
     data = ["//teachers_teammate:all_sources"],
@@ -1092,9 +1116,15 @@ app_test(
     deps = _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
-# The run: its files, its requirements and its summary.
+# The run: the files it runs, the keep-awake hold and the preview.
 app_test(
     "unit/test_run_service.py",
+    deps = _PIPELINE_DEPS + _APPLICATION_LIB,
+)
+
+# The checks a run passes before it starts.
+app_test(
+    "unit/test_run_checks.py",
     deps = _PIPELINE_DEPS + _APPLICATION_LIB + _TEXTS_LIB,
 )
 
@@ -1147,7 +1177,22 @@ app_test(
 )
 
 app_test(
-    "unit/test_addon_manager.py",
+    "unit/test_addon_folder.py",
+    deps = _INFRASTRUCTURE_LIB,
+)
+
+app_test(
+    "unit/test_addon_imports.py",
+    deps = _INFRASTRUCTURE_LIB,
+)
+
+app_test(
+    "unit/test_addon_pip.py",
+    deps = _INFRASTRUCTURE_LIB,
+)
+
+app_test(
+    "unit/test_addon_staging.py",
     deps = _INFRASTRUCTURE_LIB,
 )
 
@@ -1204,7 +1249,8 @@ app_test(
 
 app_test(
     "unit/test_speed_estimates.py",
-    deps = _FORMAT_DEPS + _APPLICATION_LIB,
+    extra_srcs = ["fakes/fake_ollama.py"],
+    deps = _FORMAT_DEPS + _APPLICATION_LIB + ["@ocr_test_dependencies//ollama:pkg"],
 )
 
 app_test(
@@ -1229,7 +1275,22 @@ app_test(
 
 app_test(
     "unit/test_model_catalog.py",
-    deps = _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
+    deps = _CORE_LIB,
+)
+
+app_test(
+    "unit/test_model_fit.py",
+    deps = _DOMAIN_LIB,
+)
+
+app_test(
+    "unit/test_hardware_profile.py",
+    deps = _DOMAIN_LIB,
+)
+
+app_test(
+    "unit/test_model_tags.py",
+    deps = _DOMAIN_LIB,
 )
 
 app_test(
@@ -1924,8 +1985,14 @@ app_test(
 app_test(
     "gui/test_gui_run_start.py",
     size = "medium",
-    extra_srcs = ["gui/_gui_harness.py"],
-    deps = _GUI_DEPS + _PIPELINE_DEPS + _CLI_LIB + ["//teachers_teammate:gui_layer_lib"],
+    extra_srcs = [
+        "gui/_gui_harness.py",
+        "fakes/fake_ollama.py",
+    ],
+    deps = _GUI_DEPS + _PIPELINE_DEPS + _CLI_LIB + [
+        "//teachers_teammate:gui_layer_lib",
+        "@ocr_test_dependencies//ollama:pkg",
+    ],
 )
 
 app_test(

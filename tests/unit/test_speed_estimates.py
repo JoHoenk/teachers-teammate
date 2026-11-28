@@ -7,9 +7,11 @@ import dataclasses
 import threading
 from pathlib import Path
 from typing import cast
+from unittest.mock import MagicMock
 
 import pytest
 
+from teachers_teammate.application.ollama_server import OllamaServerService, ollama_client
 from teachers_teammate.application.speed_estimates import (
     CLASS_SET_FILES,
     CLASS_SET_PAGES,
@@ -20,13 +22,13 @@ from teachers_teammate.application.speed_estimates import (
 from teachers_teammate.application.ports import OllamaServer
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX
 from teachers_teammate.domain.ollama_snapshot import InstalledModel, ServerSnapshot
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.hardware_profile import (
     HardwareDetection,
     DetectionReason,
     HardwareProfile,
-    ServerFacts,
-    request_profile,
 )
+from teachers_teammate.domain.model_catalog import request_profile
+from teachers_teammate.domain.system_facts import ServerFacts
 from teachers_teammate.domain.performance_estimate import (
     AnswerLength,
     ModelSpeed,
@@ -51,6 +53,8 @@ from teachers_teammate.infrastructure.speed_store import (
     SpeedStore,
     StepRecord,
 )
+
+from tests.fakes.fake_ollama import FakeOllama
 
 _URL = "http://127.0.0.1:11434"
 
@@ -89,10 +93,11 @@ def _choices(
     review_model: str = "",
     language: str = "English",
     num_ctx: int = BASE_NUM_CTX,
+    ollama_url: str = _URL,
 ) -> SpeedChoices:
     """Return the choices of a page that reads and proofreads on Ollama."""
     return SpeedChoices(
-        ollama_url=_URL,
+        ollama_url=ollama_url,
         reading_model=reading_model,
         writing_model=writing_model,
         review_model=review_model,
@@ -194,7 +199,7 @@ def _exchange_time(
 
 
 class _FakeServer:
-    """A stand-in for the Ollama server port: one fixed answer, and a count of the requests."""
+    """A stand-in for the Ollama server port: what it answered, and what it held."""
 
     def __init__(self, facts: ServerFacts) -> None:
         self.facts = facts
@@ -206,18 +211,41 @@ class _FakeServer:
             ),
         )
         self.calls = 0
+        #: The answer held for it, and how often it was forgotten: what `hold` keeps.
+        self.held: ServerSnapshot | None = None
+        self.forgets = 0
 
     def snapshot(self, url: str, *, max_age: float = 0.0) -> ServerSnapshot:
-        """Return the scripted answer and count the request."""
+        """Return the scripted answer, count the request and hold it, as the service does."""
         _ = url, max_age
         self.calls += 1
+        self.held = self.answer
         return self.answer
 
     def cached_snapshot(self, url: str, *, max_age: float | None = None) -> ServerSnapshot | None:
-        """Return the scripted answer as what is held, without counting a request."""
+        """Return what is held, or the scripted answer when nothing was held."""
         _ = url, max_age
+        if self.held is not None:
+            return self.held
         answer = self.answer
         return None if not (answer.models or answer.version or answer.unreachable) else answer
+
+    def generation(self, url: str) -> int:
+        """Return how often the server was forgotten."""
+        _ = url
+        return self.forgets
+
+    def hold(self, url: str, snapshot: ServerSnapshot, *, generation: int) -> None:
+        """Keep *snapshot*, unless the server was forgotten since *generation*."""
+        _ = url
+        if generation == self.forgets:
+            self.held = snapshot
+
+    def forget(self, url: str) -> None:
+        """Forget what was held, as a pull does."""
+        _ = url
+        self.held = None
+        self.forgets += 1
 
 
 class _FakeClient:
@@ -277,6 +305,24 @@ def _service(
         ),
     )
     return service, store, server
+
+
+def _real_probe_service(tmp_path: Path) -> SpeedEstimateService:
+    """Return a service that measures with the app's own probe and client.
+
+    Only the stores live under *tmp_path*: the requests are the ones the app really sends, so a
+    test sees what the server is asked.
+    """
+    return SpeedEstimateService(
+        effective_model=_effective_model,
+        ollama=OllamaServerService(),
+        client_factory=ollama_client,
+        store=SpeedStore(tmp_path / "measurements.json"),
+        samples=SampleStore(tmp_path / "samples.json"),
+        probe_factory=lambda client, **kwargs: PerformanceProbe(
+            client, model_store=MagicMock(), **kwargs
+        ),
+    )
 
 
 # ── the choices ────────────────────────────────────────────────────────────
@@ -474,29 +520,83 @@ def test_a_test_that_measured_nothing_stores_nothing(tmp_path: Path) -> None:
     assert store.records() == ()
 
 
-def test_the_test_asks_the_server_again_after_it_measured(tmp_path: Path) -> None:
+def test_the_test_holds_the_answer_it_measured(tmp_path: Path) -> None:
     """
-    Given  a probe that reported the server's version and digests, and a server that reports
-           them still
+    Given  the app's own probe and client, over a server that answers
     When   the speed test runs
-    Then   the server is asked once more, so the panel compares the new record with what the
-           server has now rather than with the answer it gave before the test
+    Then   the server was asked for its models once before and once after the measuring, and
+           the panel finds the records current, because both came from the last answer
+    """
+    with FakeOllama() as fake:
+        fake.install("gemma4:e4b")
+        choices = _choices(reading_model="", ollama_url=fake.url)
+        service = _real_probe_service(tmp_path)
+
+        service.test_speed(choices, hardware=_hardware())
+
+        assert fake.paths().count("/api/tags") == 2
+        summary = service.speed_summary(choices, hardware=_hardware())
+        assert summary.out_of_date is False
+        assert summary.step(SpeedStep.PROOFREADING) is not None
+
+
+def test_a_last_answer_that_is_unreachable_keeps_the_one_held_before(tmp_path: Path) -> None:
+    """
+    Given  an answer the app holds, and a probe whose last request to the server failed
+    When   the speed test runs
+    Then   the answer held before is kept, so a failed look does not make every record stale
     """
     facts = ServerFacts(version="0.40.15", digests={"gemma4:e4b": "sha256:aaa"})
+    before = ServerSnapshot(version="0.39.0")
     probe = _FakeProbe(
         ProbeResult(
             steps=(
                 StepResult(SpeedStep.PROOFREADING, "gemma4:e4b", StepOutcome.MEASURED, _speed()),
             ),
             facts=facts,
+            snapshot=ServerSnapshot(unreachable="✗ Cannot reach Ollama"),
         )
     )
     service, _store, server = _service(tmp_path, facts=facts, probe=probe)
+    server.held = before
 
-    service.test_speed(_choices())
+    service.test_speed(_choices(reading_model=""))
 
-    assert server.calls == 1
-    assert service.cached_server_facts(_URL) == facts
+    assert server.held is before
+    assert service.cached_server_facts(_URL) == before.facts()
+
+
+def test_a_forget_while_the_test_runs_holds_nothing(tmp_path: Path) -> None:
+    """
+    Given  a pull that forgets the server while the probe is measuring
+    When   the speed test comes back with the answer it measured
+    Then   nothing is held, because that answer is older than the pull
+    """
+    result = ProbeResult(
+        steps=(StepResult(SpeedStep.PROOFREADING, "gemma4:e4b", StepOutcome.MEASURED, _speed()),),
+        snapshot=ServerSnapshot(version="0.40.15"),
+    )
+
+    class _ForgettingProbe(_FakeProbe):
+        """A probe during which the server is pulled: what it measured is old news."""
+
+        def __init__(self, scripted: ProbeResult) -> None:
+            super().__init__(scripted)
+            self.server: _FakeServer | None = None
+
+        def run(self, request: object) -> ProbeResult:
+            assert self.server is not None
+            self.server.forget(_URL)
+            return super().run(request)
+
+    probe = _ForgettingProbe(result)
+    service, _store, server = _service(tmp_path, probe=probe)
+    probe.server = server
+
+    service.test_speed(_choices(reading_model=""))
+
+    assert server.held is None
+    assert service.cached_server_facts(_URL) is None
 
 
 def test_a_stopped_test_stores_nothing(tmp_path: Path) -> None:

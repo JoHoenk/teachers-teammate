@@ -2,7 +2,7 @@
 
 Pure: what an address is made of, given as strings and as lookups handed in by the caller.  Which
 names this computer answers to — its host name, its addresses, the Windows host behind a WSL
-session — is read by :mod:`~teachers_teammate.infrastructure.ollama_utils`; whoever asks (that
+session — is read by :mod:`~teachers_teammate.infrastructure.ollama_host`; whoever asks (that
 module, and ``OllamaServerService.is_local``) passes the lookups.  The cheap cases are answered
 without ever calling them.
 

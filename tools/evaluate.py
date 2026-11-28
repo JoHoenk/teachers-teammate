@@ -49,8 +49,8 @@ import sys
 from typing import cast
 
 from teachers_teammate.domain.correction_prompts import CORRECT_VARIANTS
-from teachers_teammate.domain.model_catalog import SAMPLING_OPTIONS, RequestProfile
-from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.domain.request_profile import SAMPLING_OPTIONS, RequestProfile
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
 from tools.evaluation.checks.smoke import (
     SMOKE_DEADLINE,
     SMOKE_TIMEOUT,

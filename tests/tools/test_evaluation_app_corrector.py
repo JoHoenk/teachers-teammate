@@ -335,3 +335,29 @@ def test_a_run_without_step_two_wraps_the_exchange_in_the_no_explanation_correct
 
     assert isinstance(corrector, ChunkingCorrector)
     assert isinstance(corrector.inner, NoExplanationCorrector)
+
+
+@pytest.mark.use_case("Model_Eval_Comparison")
+def test_a_correct_only_file_that_lost_text_keeps_the_count_of_what_was_put_back() -> None:
+    """
+    Given  the exchange built to send step one only, and a model that answers only the second of
+           two paragraphs, twice
+    When   a text is proofread
+    Then   the app puts the first paragraph back and the outcome still counts it as left out, so
+           the run row shows the drop and the gate's lost-text check can see it
+    """
+    first = " ".join(f"Am Montag {n} gehe ich mit meinem Hund in den Park." for n in range(12))
+    second = " ".join(f"Am Freitag {n} spiele ich mit meinem Bruder Fußball." for n in range(12))
+    corrector = app_corrector_factory(
+        _as_client(_OneStepClient(second)),
+        timeout=5.0,
+        exchange=Exchange.TEXT_FIRST,
+        steps=(Step.CORRECT,),
+    )("gemma4:e4b", 0.2)
+
+    outcome = corrector.correct(f"{first}\n\n{second}", "German")
+
+    assert not outcome.failed
+    assert first in outcome.text
+    assert outcome.left_out == 1
+    assert outcome.fell_back

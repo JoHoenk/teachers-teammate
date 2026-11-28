@@ -39,7 +39,9 @@ from tools.evaluation.core.records import (
 )
 from teachers_teammate.domain.proofreading.word_diff import text_offsets
 from teachers_teammate.domain.proofreading.edit_agreement import ordered_edits
+from tools.evaluation.core.modes import Exchange, default_steps
 from tools.evaluation.run.defaults import temperature_for
+from tools.evaluation.run.protocol import instructions_sha256
 from tools.evaluation.store import layout, writer
 
 SOURCE = "Er geht heute nach Hause."
@@ -80,8 +82,13 @@ def _header(
     temperature: float = 0.0,
     machine: str = "rx9070xt-server",
     repeat: int = 1,
+    prompt: str = "standard",
+    instructions: str = "",
 ) -> RunHeader:
-    """Return the header of a run of *record*, at one temperature and on one machine."""
+    """Return the header of a run of *record*, at one temperature, on one machine, with one prompt.
+
+    *instructions* is the hash of what was sent in German; empty records none.
+    """
     return RunHeader(
         input=Input(
             testset=TESTSET,
@@ -94,6 +101,8 @@ def _header(
             model_digest="a" * 64,
             fingerprint=FINGERPRINT,
             temperature=temperature,
+            step_one_prompt=prompt,
+            instructions=(("de", instructions),) if instructions else (),
         ),
         run=RunSettings(seed=20261109, repeat=repeat),
         environment=Environment(machine=machine, ollama_version="0.40.16"),
@@ -242,6 +251,81 @@ def test_a_named_machine_overrides_the_choice(tmp_path: Path, capsys) -> None:
     printed = capsys.readouterr()
     assert code in {0, 1}
     assert "chose machine rx9070xt, set gec-2026-12" in printed.err
+
+
+# ── report: the group a gate reads ───────────────────────────────────────────
+
+
+def _today(prompt: str = "") -> str:
+    """Return the hash of the German instructions today's code sends with step-① *prompt*."""
+    return instructions_sha256(
+        ["de"],
+        exchange=Exchange.TEXT_FIRST,
+        steps=default_steps(Exchange.TEXT_FIRST),
+        prompt=prompt,
+    )
+
+
+def test_a_gate_reads_the_runs_asked_with_todays_instructions(tmp_path: Path, capsys) -> None:
+    """Given  two groups of one model that differ only in the instructions: today's and an older text
+    When   the gate is asked for the model
+    Then   it judges the group asked as the app asks today, and says it left the other out
+    """
+    record = _record()
+    own = temperature_for(MODEL)
+    store_root = _store(
+        tmp_path / "store",
+        _run(record, temperature=own, instructions="0" * 64),
+        _run(record, temperature=own, instructions=_today()),
+    )
+
+    code = report.main(["gate", "--model", MODEL, "--store", str(store_root)])
+
+    printed = capsys.readouterr()
+    assert code in {0, 1}
+    assert "left out 1 group(s) asked with older ones" in printed.err
+    assert f"# Gate 2: `{MODEL}`" in printed.out
+
+
+def test_a_gate_refuses_two_groups_and_names_what_differs(tmp_path: Path, capsys) -> None:
+    """Given  two groups of one model, both asked with instructions today's code no longer sends
+    When   the gate is asked for the model
+    Then   it refuses, and names the axis the groups differ in
+    """
+    record = _record()
+    own = temperature_for(MODEL)
+    store_root = _store(
+        tmp_path / "store",
+        _run(record, temperature=own, instructions="0" * 64),
+        _run(record, temperature=own, instructions="1" * 64),
+    )
+
+    code = report.main(["gate", "--model", MODEL, "--store", str(store_root)])
+
+    assert code == 2
+    assert "they differ in instructions" in capsys.readouterr().err
+
+
+def test_a_gate_reads_the_prompt_variant_it_is_given(tmp_path: Path, capsys) -> None:
+    """Given  a group of one model with the standard step-① prompt and one with a variant
+    When   the gate is asked without a prompt, and then for the variant
+    Then   it reads the model's own prompt first and the variant when named, never refusing
+    """
+    record = _record()
+    own = temperature_for(MODEL)
+    store_root = _store(
+        tmp_path / "store",
+        _run(record, temperature=own, instructions=_today()),
+        _run(record, temperature=own, prompt="find", instructions=_today("find")),
+    )
+
+    standard = report.main(["gate", "--model", MODEL, "--store", str(store_root)])
+    variant = report.main(
+        ["gate", "--model", MODEL, "--store", str(store_root), "--prompt", "find"]
+    )
+
+    assert {standard, variant} <= {0, 1}
+    assert "refused" not in capsys.readouterr().err
 
 
 # ── report: the options a command refuses ────────────────────────────────────

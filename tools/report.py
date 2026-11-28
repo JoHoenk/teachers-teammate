@@ -44,6 +44,7 @@ from dataclasses import replace
 from pathlib import Path
 import sys
 
+from teachers_teammate.domain.correction_prompts import CORRECT_VARIANTS
 from tools.evaluation.core.axes import AXIS_NAMES
 from tools.evaluation.core.formats import FormatError
 from tools.evaluation.core.machines import known_machines
@@ -58,7 +59,8 @@ from tools.evaluation.report.summary import summarise
 from tools.evaluation.report.tables import by_error, false_alarms, fit, models, passes, performance
 from tools.evaluation.report.viewer import model as viewer_model
 from tools.evaluation.report.viewer import page as viewer_page
-from tools.evaluation.run.defaults import temperature_for
+from tools.evaluation.run.defaults import STANDARD_PROMPT, request_profile_for, temperature_for
+from tools.evaluation.run.protocol import instructions_sha256
 from tools.evaluation.store import layout, reader
 from tools.evaluation.store import marks as marks_module
 
@@ -157,13 +159,15 @@ def _compare(args) -> int:
 def _gate(args) -> int:
     """Judge one model against the floors of gate 2; return the exit code."""
     args.temperature = _temperature_of(args)
+    args.prompt = _prompt_of(args)
     chosen = _chosen(args)
     if chosen is None:
         return 2
+    chosen = _asked_today(chosen)
     if len(chosen) != 1:
         print(
-            f"refused: {len(chosen)} groups of {args.model!r} match; name the exchange, the "
-            "steps or the temperature",
+            f"refused: {len(chosen)} groups of {args.model!r} match; they differ in "
+            f"{', '.join(_differing(chosen))}",
             file=sys.stderr,
         )
         return 2
@@ -175,7 +179,7 @@ def _gate(args) -> int:
     print()
     for line in judgement.lines():
         print(line)
-    return 0 if judgement.outcome in {gates.Outcome.PASS, gates.Outcome.PASS_PENDING} else 1
+    return 0 if judgement.outcome is gates.Outcome.PASS else 1
 
 
 def _temperature_of(args) -> float:
@@ -189,6 +193,61 @@ def _temperature_of(args) -> float:
     if args.temperature is not None:
         return args.temperature
     return temperature_for(args.model)
+
+
+def _prompt_of(args) -> str:
+    """Return the step-① prompt a gate reads: the one given, or the one the app sends the model."""
+    if args.prompt:
+        return args.prompt
+    return request_profile_for(args.model).correct.prompt or STANDARD_PROMPT
+
+
+def _asked_today(chosen: list[groups.RunGroup]) -> list[groups.RunGroup]:
+    """Return the one group asked with today's instructions when several match, else *chosen*.
+
+    Runs asked with an older prompt text form a group of their own; a gate judges the model as the
+    app asks it today, as it does for the temperature and the prompt variant.
+    """
+    if len(chosen) < 2:
+        return chosen
+    today = [group for group in chosen if _instructions_are_today(group)]
+    if len(today) != 1:
+        return chosen
+    print(
+        f"read the runs asked with today's instructions; left out {len(chosen) - 1} "
+        "group(s) asked with older ones",
+        file=sys.stderr,
+    )
+    return today
+
+
+def _instructions_are_today(group: groups.RunGroup) -> bool:
+    """Return whether *group* was asked with the instructions today's code sends."""
+    key = group.key
+    recorded = dict(key.get("instructions"))
+    prompt = key.get("step_one_prompt")
+    try:
+        today = {
+            code: instructions_sha256(
+                [code],
+                exchange=Exchange(key.get("exchange")),
+                steps=tuple(Step(step) for step in key.steps),
+                compact_json=bool(key.get("compact_json")),
+                prompt="" if prompt == STANDARD_PROMPT else prompt,
+            )
+            for code in recorded
+        }
+    except ValueError:
+        # An exchange or prompt variant today's code no longer has: not asked as today.
+        return False
+    return bool(recorded) and recorded == today
+
+
+def _differing(chosen: Sequence[groups.RunGroup]) -> list[str]:
+    """Return the axes in which the groups' keys differ, for a refusal to name."""
+    keys = [dict(group.key.values) for group in chosen]
+    names = sorted({name for key in keys for name in key})
+    return [name for name in names if len({repr(key.get(name)) for key in keys}) > 1]
 
 
 def _marks_of_group(args, group: groups.RunGroup) -> list:
@@ -359,6 +418,7 @@ def _narrowing(args) -> select.Narrowing:
         steps=getattr(args, "steps", None),
         digest=getattr(args, "digest", None),
         compact_json=getattr(args, "compact_json", None),
+        prompt=getattr(args, "prompt", None),
     )
 
 
@@ -570,6 +630,12 @@ def _gate_command(sub) -> None:
         model_required=True,
         temperature_help="the temperature of the runs "
         "(default: the step-① temperature the app sends the model)",
+    )
+    gate.add_argument(
+        "--prompt",
+        choices=[STANDARD_PROMPT, *sorted(CORRECT_VARIANTS)],
+        default="",
+        help="the step-① prompt variant of the runs (default: the one the app sends the model)",
     )
     gate.set_defaults(handler=_gate)
 

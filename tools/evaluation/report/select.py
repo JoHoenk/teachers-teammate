@@ -423,6 +423,8 @@ class Narrowing:
     """The model digest, when two digests of one tag are stored."""
     compact_json: bool | None = None
     """The compact-JSON rule of the request profile, when two profiles are stored."""
+    prompt: str | None = None
+    """The step-① prompt variant (``standard`` for the standard prompt), when two are stored."""
 
 
 def series_of(
@@ -460,7 +462,7 @@ def series_of(
 
 
 def narrow(chosen: Sequence[RunGroup], wanted: Narrowing) -> list[RunGroup]:
-    """Return the groups *wanted* selects, by model, temperature, exchange, steps and profile."""
+    """Return the groups *wanted* selects: model, temperature, exchange, steps, profile, prompt."""
     found = list(chosen)
     if wanted.model:
         tag = normalize_tag(wanted.model)
@@ -478,6 +480,8 @@ def narrow(chosen: Sequence[RunGroup], wanted: Narrowing) -> list[RunGroup]:
         ]
     if wanted.compact_json is not None:
         found = [group for group in found if group.key.get("compact_json") is wanted.compact_json]
+    if wanted.prompt:
+        found = [group for group in found if group.key.get("step_one_prompt") == wanted.prompt]
     return found
 
 

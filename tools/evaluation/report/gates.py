@@ -1,19 +1,17 @@
-"""Gate 2's floors: what one model has to meet on its own numbers, before it is offered.
+"""Gate 2, the entry gate: whether one model works in the app at all, before it is ranked.
 
 One question, one answer.  :meth:`GateTwoRule.judge` asks whether one model, on its own numbers,
-meets the bar for being offered at all: pass or fail per model, no other model involved, no
-baseline needed.  Whether model *a* is better than model *b* is a different question, and it lives
-in :mod:`.stats` and :mod:`.compare`: a gate is not a comparison.
+works in the app: no text it could not proofread, no cut-off that cost the explanations, no Markdown
+it added, no text it keeps losing.  Pass or fail per model, no other model involved.  How good it
+is, is the ranking's question (mean F0.5, :mod:`.stats` and :mod:`.compare`): coverage, left alone,
+GLEU, the explained share and the teacher's marks are printed with the verdict and never decide.
 
 The answer comes in two steps, measuring and then rating.  Measuring pools nothing across
-languages: every floor is measured per language, French too, so each language reads as its own
-evaluation.  Rating decides which languages enter the outcome — German and English by default,
-until a calibration on the full screen settles it — and shows the others with their ✓/✗ and
-"(not deciding)".
+languages: every check is measured per language, French too.  Rating decides which languages enter
+the outcome — German and English — and shows the others with their ✓/✗ and "(not deciding)".
 
-The floors are events over all runs and rates pooled over the repeats, because a rate on one repeat
-is noisy.  Every floor is a hard stop, and the values are data, so a calibration changes a value and
-not a branch.
+The floors are events over all runs.  Every floor is a hard stop, and the values are data, so a
+calibration changes a value and not a branch.
 """
 
 from __future__ import annotations
@@ -52,10 +50,6 @@ class Outcome(Enum):
     """What the floors say about one model."""
 
     PASS = "pass"
-    PASS_PENDING = "pass, explanations not yet marked"
-    """Every floor holds, but the explanations are not marked yet: enough for an alternative's
-    place, not for a star's."""
-
     FAIL = "fail"
     INCOMPLETE = "incomplete"
     """Fewer than three repeats, or an item missing: nothing is judged."""
@@ -67,10 +61,6 @@ class CheckKind(Enum):
     FLOOR = "floor"
     """A bar the model has to meet.  Unmeasured (no text to measure it on) leaves the verdict
     open: a model is never passed on a floor nobody measured."""
-
-    EXPLANATION = "explanation"
-    """The teacher's marks of the explanations.  Unmeasured means "not yet marked": enough for an
-    alternative's place, not for a star's."""
 
     DIAGNOSTIC = "diagnostic"
     """A figure printed with the verdict; never decisive."""
@@ -156,8 +146,8 @@ class Judgement:
 class GateTwoRule:
     """The floors of gate 2, as data, so a calibration changes a value and not a branch.
 
-    Every floor is a hard stop.  The starting values come from two runs on ``gec-2026-12``
-    and are to be calibrated on the full screen.
+    Every floor is a hard stop on something that breaks a file for the teacher; nothing here is a
+    measure of quality.
     """
 
     failed_texts: int = 0
@@ -178,25 +168,11 @@ class GateTwoRule:
     marked: a single dropped sentence can be the sampler's doing, and the floor is about a
     configuration that keeps losing text."""
 
-    coverage: float = 0.90
-    """Share of the reference's error sentences the model touches, pooled per language."""
-
-    explained: float = 0.85
-    """Share of the changes that carry an explanation, pooled per language (review mode)."""
-
-    left_alone: float = 0.50
-    """Share of the sentences the reference leaves alone that the model leaves alone too."""
-
-    correct_share: float = spot_check.CORRECT_SHARE
-    """Share of a language's explanation sample that has to be marked ``correct``."""
-
     repeats: int = groups.REPEATS
     """How many repeats a group needs before it is judged."""
 
     deciding: tuple[str, ...] = DECIDING_LANGUAGES
-    """The languages whose checks enter the outcome.  A calibration on the full
-    screen settles it; until then German and English decide and French is shown with
-    "(not deciding)"."""
+    """The languages whose checks enter the outcome; French is shown with "(not deciding)"."""
 
     def judge(self, group: groups.RunGroup, marks: Sequence[Mark] | None = None) -> Judgement:
         """Return the checks of *group* and what they add up to: measure, then rate.
@@ -209,10 +185,11 @@ class GateTwoRule:
         return self.rate(self.measure(group), marks)
 
     def measure(self, group: groups.RunGroup) -> Measurement:
-        """Return one check per floor and language, for every language the runs hold.
+        """Return one check per floor and language, and the figures beside them.
 
         Nothing is pooled across languages: each language is measured on its own, French too, and
-        which of them decides is :meth:`rate`'s question.
+        which of them decides is :meth:`rate`'s question.  The figures (coverage, the explained
+        share, GLEU, left alone) sit in their language's block and never decide.
         """
         if not group.complete or 1 not in group.repeats:
             return Measurement(
@@ -279,26 +256,13 @@ class GateTwoRule:
                 )
             )
             checks.append(self._lost_texts(group, code))
-            checks.append(
-                self._share(f"coverage, {code}", code, parts, "cover", "cover_of", self.coverage)
-            )
+            checks.append(_share(f"coverage, {code}", code, parts, "cover", "cover_of"))
             if explains:
                 checks.append(
-                    self._share(
-                        f"explained share, {code}",
-                        code,
-                        parts,
-                        "explained",
-                        "needed",
-                        self.explained,
-                    )
+                    _share(f"explained share, {code}", code, parts, "explained", "needed")
                 )
-            checks.append(self._gleu(code, parts))
-            checks.append(
-                self._share(
-                    f"left alone, {code}", code, parts, "alone", "alone_of", self.left_alone
-                )
-            )
+            checks.append(_gleu(code, parts))
+            checks.append(_share(f"left alone, {code}", code, parts, "alone", "alone_of"))
         return Measurement(
             group=group,
             parts=parts,
@@ -369,59 +333,16 @@ class GateTwoRule:
             language=code,
         )
 
-    def _share(
-        self,
-        name: str,
-        code: str,
-        parts: Sequence[Sequence[summary.ModelSummary]],
-        numerator: str,
-        denominator: str,
-        floor: float,
-    ) -> Check:
-        """Return one language's pooled share against *floor*."""
-        counts = _pooled(parts, code)
-        share = counts[numerator] / counts[denominator] if counts[denominator] else None
-        return Check(
-            name,
-            None if share is None else share >= floor,
-            "no text" if share is None else f"{share:.2f}",
-            f"≥ {floor:.2f}",
-            language=code,
-        )
-
-    def _gleu(self, code: str, parts: Sequence[Sequence[summary.ModelSummary]]) -> Check:
-        """Return the smallest GLEU margin over the source of one language, over the runs."""
-        margins = []
-        for part in parts:
-            row = groups.language_row(part, code)
-            if row is None or row.gleu is None or row.gleu_source is None:
-                continue
-            margins.append(row.gleu - row.gleu_source)
-        if not margins:
-            return Check(
-                f"GLEU above the source, {code}", None, "no text", "> 0 in every run", language=code
-            )
-        smallest = min(margins)
-        return Check(
-            f"GLEU above the source, {code}",
-            smallest > 0,
-            f"{smallest:+.2f}",
-            "> 0 in every run",
-            language=code,
-        )
-
     def _explanations(
         self,
         group: groups.RunGroup,
         parts: Sequence[Sequence[summary.ModelSummary]],
         marks: Sequence[Mark] | None,
     ) -> list[Check]:
-        """Return the explanation check per deciding language: 80 % of the sample ``correct``.
+        """Return the teacher's marks per deciding language, as figures that never decide.
 
-        Review mode only: text mode has no explanations to mark, and says so by mode and not
-        because its sample happens to be empty.  A deciding language whose sample is empty gets a
-        check that is neither passed nor failed, with "nothing to mark", so the outcome is pending
-        and never a pass: no star is given without marks.
+        Runs with explanations only: a run without them has nothing to mark, and says so by its
+        steps and not because its sample happens to be empty.
         """
         drawn = spot_check.sample(group.first())
         per_language = drawn.per_language()
@@ -432,60 +353,27 @@ class GateTwoRule:
                 continue
             notes = per_language.get(code, ())
             if not notes:
-                checks.append(
-                    Check(
-                        f"{spot_check.EXPLANATIONS}, {code}",
-                        None,
-                        "nothing to mark",
-                        "",
-                        language=code,
-                        kind=CheckKind.EXPLANATION,
-                    )
-                )
-                continue
-            threshold = drawn.threshold(code)
-            if marks is None:
-                checks.append(
-                    Check(
-                        f"{spot_check.EXPLANATIONS}, {code}",
-                        None,
-                        f"{len(notes)} to mark",
-                        f"≥ {threshold} correct",
-                        language=code,
-                        kind=CheckKind.EXPLANATION,
-                    )
-                )
-                continue
-            correct, total = counted.get(code, (0, len(notes)))
-            checks.append(
-                Check(
-                    f"{spot_check.EXPLANATIONS}, {code}",
-                    correct >= threshold,
-                    f"{correct}/{total} correct",
-                    f"≥ {threshold}",
-                    language=code,
-                    kind=CheckKind.EXPLANATION,
-                )
-            )
+                value = "nothing to mark"
+            elif marks is None:
+                value = f"{len(notes)} to mark"
+            else:
+                correct, total = counted.get(code, (0, len(notes)))
+                value = f"{correct}/{total} correct"
+            checks.append(_figure(f"{spot_check.EXPLANATIONS}, {code}", value, code))
         return checks
 
 
 def _outcome(checks: Sequence[Check]) -> Outcome:
-    """Return what the deciding checks add up to.
+    """Return what the deciding floors add up to.
 
     A failed floor fails the model.  A floor nobody measured leaves it ``INCOMPLETE`` (never a
-    pass).  Unmarked explanations leave it ``PASS_PENDING``.  Otherwise it passes.
+    pass).  Otherwise it passes.
     """
-    deciding = [
-        check for check in checks if check.deciding and check.kind is not CheckKind.DIAGNOSTIC
-    ]
+    deciding = [check for check in checks if check.deciding and check.kind is CheckKind.FLOOR]
     if any(check.passed is False for check in deciding):
         return Outcome.FAIL
-    unmeasured = [check for check in deciding if check.passed is None]
-    if any(check.kind is CheckKind.FLOOR for check in unmeasured):
+    if any(check.passed is None for check in deciding):
         return Outcome.INCOMPLETE
-    if unmeasured:
-        return Outcome.PASS_PENDING
     return Outcome.PASS
 
 
@@ -511,6 +399,39 @@ def _pooled(parts: Sequence[Sequence[summary.ModelSummary]], language: str) -> d
             for name in _COUNTED:
                 totals[name] += getattr(row, name)
     return totals
+
+
+# ── the figures ───────────────────────────────────────────────────────────────
+
+
+def _figure(name: str, value: str, language: str) -> Check:
+    """Return one language's figure: printed in its block, never deciding."""
+    return Check(name, None, value, "", language=language, kind=CheckKind.DIAGNOSTIC)
+
+
+def _share(
+    name: str,
+    code: str,
+    parts: Sequence[Sequence[summary.ModelSummary]],
+    numerator: str,
+    denominator: str,
+) -> Check:
+    """Return one language's share, pooled over the repeats."""
+    counts = _pooled(parts, code)
+    share = counts[numerator] / counts[denominator] if counts[denominator] else None
+    return _figure(name, "no text" if share is None else f"{share:.2f}", code)
+
+
+def _gleu(code: str, parts: Sequence[Sequence[summary.ModelSummary]]) -> Check:
+    """Return the smallest GLEU margin over the source of one language, over the runs."""
+    margins = []
+    for part in parts:
+        row = groups.language_row(part, code)
+        if row is None or row.gleu is None or row.gleu_source is None:
+            continue
+        margins.append(row.gleu - row.gleu_source)
+    value = f"{min(margins):+.2f} in the weakest run" if margins else "no text"
+    return _figure(f"GLEU above the source, {code}", value, code)
 
 
 # ── the diagnostics ───────────────────────────────────────────────────────────

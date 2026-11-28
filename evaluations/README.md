@@ -17,10 +17,10 @@ code and these pages: commands in [TOOLS.md](TOOLS.md), file formats in [FORMAT.
    format; each answer is judged (cut off, invalid, empty, unchanged, too few sentences placed or
    explained). A pass earns the `explanations ✓` badge, without which a model is not recommended.
    Rule: `CheckRule`; fixtures: `tools/evaluation/checks/gate1_fixtures.py`.
-3. **Gate 2: correction quality.** Real learner texts go through the app's own corrector, with
-   its long-text path and temperatures, three times each, and are scored against the annotators'
-   corrections. The model must clear every floor.
-4. **Comparison.** A model takes a place only if it beats the current holder beyond the noise.
+3. **Gate 2: does it work in the app.** Real learner texts go through the app's own corrector, with
+   its long-text path and temperatures, three times each. The model must clear every floor below.
+4. **Ranking.** The models that pass are ranked by F0.5 against the annotators' corrections; a
+   model takes a place only if it beats the current holder beyond the noise.
 5. **Choice.** The two roles of the tier, by the rule in *Comparison and pick* below, by hand. The
    verdict, the runs it rests on and the command that reproduces the figures go into a gate record
    in the private repository (no figure).
@@ -73,18 +73,19 @@ change. Definitions: `tools/evaluation/metrics/`.
 | **Lost text, added marks, failed and fallback answers** | Sentences dropped, Markdown added, no usable answer. |
 | **Explained** | A change that needs a note carries one. |
 
-German and English decide; the ranking figure is the mean of F0.5 and GLEU over both.
+German and English decide; the ranking figure is the mean F0.5 over both, on both test sets.
 
 ## Floors
 
-Before any comparison a model must pass every floor of `GateTwoRule`
-(`tools/evaluation/report/gates.py`): failed texts, cut-off and other fallbacks, added marks, lost
-text, and minimum coverage, left-alone and explained shares. A group with fewer than three repeats
-or a missing text is *incomplete*, not passed.
+Gate 2 asks only whether a model works in the app. It must pass every floor of `GateTwoRule`
+(`tools/evaluation/report/gates.py`): no failed text, no cut-off or other fallback beyond the
+floor, no added marks, and no text that loses text in two of the three repeats. A group with fewer
+than three repeats or a missing text is *incomplete*, not passed.
 
-A teacher marks a sample of the explanations from the page-length texts as correct, wrong or vague;
-a minimum share must be correct. Until marked, a model can be an alternative, not the best choice.
-Corrections the annotators missed but a teacher accepts count as correct for every model.
+Coverage, left alone, GLEU, the explained share and the teacher's marks of the explanations are
+printed with the verdict and never decide: quality is the ranking's question. A teacher can mark a
+sample of the explanations as correct, wrong or vague; corrections the annotators missed but a
+teacher accepts count as correct for every model.
 
 ## Comparison and pick
 
@@ -96,7 +97,7 @@ Corrections the annotators missed but a teacher accepts count as correct for eve
   pooled. A per-language gain counts for nothing on its own; both languages of both sets are read.
 
 Two roles per computer type, **Best quality** and **Fastest**, each held by an eligible model: it
-passes gate 1, the floors and the fit, and a teacher has marked its explanations.
+passes gate 1, gate 2 and the fit.
 
 - **Best quality** is the eligible model with the highest F0.5 among those whose page time on the
   tier's reference machine is within the limit of *Fit and speed*. A tie goes to the smaller model,
@@ -133,7 +134,7 @@ roles are read by hand from `report table --tiers` and the model tables; no tool
 | Fit and speed, per tier | `report table --tiers` (`tools/evaluation/report/tables/fit.py`); rule: `domain/model_fit.py` |
 | Model sizes and rates | `model-fit/sizes.jsonl` in the store, written by `verify_model_catalog fit` |
 | Gate 1 rule, verdict order, fixtures | `tools/evaluation/checks/check_rule.py`, `structured_check.py`, `gate1_fixtures.py` |
-| Gate 2 floors | `tools/evaluation/report/gates.py` |
+| Gate 2 floors and figures | `tools/evaluation/report/gates.py` |
 | Comparison, bootstrap, minimum effect | `tools/evaluation/report/stats.py`, `compare.py` |
 | Metrics | `tools/evaluation/metrics/` |
 | Test-set recipes and corpora | `tools/evaluation/input/recipes/`, `input/corpora/` |

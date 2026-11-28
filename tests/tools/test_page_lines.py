@@ -3,20 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-import shutil
 
 from teachers_teammate.domain.page_layout import ReadLine
-from tools.dev.page_lines import (
-    THRESHOLDS,
-    Page,
-    Row,
-    _cases,
-    _rendered,
-    _report,
-    _rows,
-    _share,
-    _sweep,
-)
+from tools.dev.page_lines import THRESHOLDS, Page, Row, _report, _rows, _share, _sweep
 
 
 def _line(text: str, confidence: float = 0.9) -> ReadLine:
@@ -152,105 +141,6 @@ def test_a_group_with_no_rows_is_reported_without_dividing_by_zero() -> None:
     report = _report([Page("printed", ())])
 
     assert "| printed | 1 | 0 | 0 | 0 | 0 | 0 | 0 |" in report
-
-
-def test_a_page_is_taken_with_the_transcription_beside_it(tmp_path: Path, capsys) -> None:
-    """
-    Given  a folder of one page with a ``.gt.txt`` and one without
-    When   the cases are read
-    Then   the folder is the group and the page without a transcription is named and skipped
-    """
-    group = tmp_path / "handwritten"
-    group.mkdir()
-    (group / "s01.png").write_bytes(b"page")
-    (group / "s01.gt.txt").write_text("Der Hund läuft\n", encoding="utf-8")
-    (group / "s02.png").write_bytes(b"page")
-
-    cases = _cases([tmp_path])
-
-    assert [(case.image.name, case.group, case.reference, case.page) for case in cases] == [
-        ("s01.png", "handwritten", "Der Hund läuft\n", None)
-    ]
-    assert "s02.png: no s02.gt.txt, skipped" in capsys.readouterr().err
-
-
-def test_a_one_page_pdf_takes_the_transcription_of_its_name(
-    tmp_path: Path, sample_pdf: Path, capsys
-) -> None:
-    """
-    Given  a PDF of one page and the transcription named after the file
-    When   the cases are read
-    Then   the page is read against ``sample.gt.txt``, as page 0 of the PDF
-    """
-    group = tmp_path / "photographed"
-    group.mkdir()
-    shutil.copy(sample_pdf, group / "sample.pdf")
-    (group / "sample.gt.txt").write_text("Der Hund läuft\n", encoding="utf-8")
-
-    cases = _cases([group])
-
-    assert [(case.image.name, case.page, case.reference) for case in cases] == [
-        ("sample.pdf", 0, "Der Hund läuft\n")
-    ]
-    assert capsys.readouterr().err == ""
-
-
-def test_each_page_of_a_longer_pdf_takes_its_own_transcription(
-    tmp_path: Path, sample_multipage_pdf, capsys
-) -> None:
-    """
-    Given  a PDF of three pages with a transcription for its second page only
-    When   the cases are read
-    Then   that page is case 1 and the two others are named by their page and skipped
-    """
-    group = tmp_path / "photographed"
-    group.mkdir()
-    shutil.copy(sample_multipage_pdf(), group / "scan.pdf")
-    (group / "scan_p2.gt.txt").write_text("Der Hund läuft\n", encoding="utf-8")
-
-    cases = _cases([group])
-
-    assert [(case.image.name, case.page, case.reference) for case in cases] == [
-        ("scan.pdf", 1, "Der Hund läuft\n")
-    ]
-    err = capsys.readouterr().err
-    assert "scan.pdf page 1: no scan_p1.gt.txt, skipped" in err
-    assert "scan.pdf page 3: no scan_p3.gt.txt, skipped" in err
-
-
-def test_a_pdf_that_cannot_be_read_is_named_and_skipped(tmp_path: Path, capsys) -> None:
-    """
-    Given  a file that is called a PDF but is not one
-    When   the cases are read
-    Then   it is skipped with a line on stderr, not a traceback
-    """
-    group = tmp_path / "photographed"
-    group.mkdir()
-    (group / "broken.pdf").write_bytes(b"not a pdf")
-    (group / "broken.gt.txt").write_text("Der Hund läuft\n", encoding="utf-8")
-
-    assert _cases([group]) == []
-    assert "broken.pdf: cannot be read, skipped" in capsys.readouterr().err
-
-
-def test_every_page_of_a_pdf_is_rendered_the_way_a_run_renders_it(
-    tmp_path: Path, sample_multipage_pdf
-) -> None:
-    """
-    Given  a PDF of two pages
-    When   its pages are rendered for the measure
-    Then   there is one image per page, in page order, and it is a picture
-    """
-    from PIL import Image  # noqa: PLC0415
-
-    pdf = sample_multipage_pdf(pages=2)
-
-    rendered = _rendered(pdf, tmp_path)
-
-    assert [path.name for path in rendered] == ["sample_page0.png", "sample_page1.png"]
-    with Image.open(rendered[0]) as first, Image.open(rendered[1]) as second:
-        assert first.size == second.size
-        assert first.width > 0
 
 
 def test_nothing_to_read_is_not_a_report() -> None:

@@ -298,7 +298,10 @@ and their detection) and `domain/system_facts.py` (what a server reports).
   remote Ollama URLs to a hardware profile.
 
 To add a model: add one `OllamaModelSpec` to `OLLAMA_CATALOG` and (when it should be
-recommended) its tag to the matching `RECOMMENDED` entries. Consistency tests in
+recommended) its tag to the matching `RECOMMENDED` entries.  A reading model the catalog does not
+know yet is a candidate in `tools/ocr_eval/candidates.py` — tag, licence, where it came from —
+and enters the catalog only after it has been read against the page set (see *Comparing reading
+models* under *Text recognition engines*). Consistency tests in
 `tests/unit/test_model_catalog.py` and `tests/unit/test_model_fit.py` check that every recommended
 tag exists with the right category and that every best pick runs at full speed on its profile — new
 entries must keep them green.
@@ -546,8 +549,9 @@ Nothing known at all gives no figure, which is better than a guess the teacher w
 
 Only the catalog entries with a `reference_speed` get an expected band, and no entry has a
 `read_tps`: a reading model gets no expected band, and `MachineFactors.reading` stays `None` until
-reading models are measured on the reference machine.  `tools/dev/ocr_page_tokens.py` measures them,
-and `report --performance --catalog-lines` prints the `answer_length` lines for the writing models.
+reading models are measured on the reference machine.  `tools/dev/ocr_page_tokens.py` measures the
+answer tokens a reading model needs, `tools/ocr_eval/cli screen` its seconds a page, and
+`report --performance --catalog-lines` prints the `answer_length` lines for the writing models.
 
 ## Who owns what (hardware detection and recommendations)
 
@@ -838,6 +842,59 @@ joins written lines into paragraphs wherever it can, so a page it read as paragr
 reference of paragraphs: that page's rows stay *split* instead of *lined up* and it has to be
 typed by hand.  Such a reference is no truth, only what one other model read.
 
+### Comparing reading models, and where the defaults come from
+
+`tools/ocr_eval/` reads one page set with the app's own preparation, the app's own reader
+(`PpOcrProcessor(store, settings=…)`), the app's own Ollama request (`ocr_options`,
+`encode_image`) and the app's own OCR answer handling (`clean_ocr_text`, `OcrOutputPostprocessor`,
+`plain_text_of`), and keeps the numbers in the store:
+
+```bash
+bazel run //tools/ocr_eval:cli -- screen --url http://127.0.0.1:11434
+bazel run //tools/ocr_eval:cli -- run --store $EVALS --machine ID --pages ~/pages \
+    --model qwen3-vl:8b --preset R
+bazel run //tools/ocr_eval:cli -- report --store $EVALS \
+    --baseline qwen3-vl_8b--R--app--gpu--rx9070xt-server--1a2b3c
+```
+
+`screen` asks what a candidate is before any page of the set is spent on it — the tag pulls, the
+server lists `vision`, the answer on a drawn page is not empty — and times the drawn pages of
+`screen.LINES` for every model, with the app's prompt and with the one its card names, and for the
+built-in reader. One table, machine named; a tag the server does not hold is a row of that table
+and a line on stderr, and the rest is timed anyway. The reader's row is the number a `cpu`
+recommendation needs. The licence a row shows is the catalog's or the survey's claim: the developer
+reads the model's card, and a wrong claim is corrected in `candidates.py`, not in the table.
+
+`run` reads the set: `--model` a tag or `reader`, `--preset` `raw`, `R` (the automatic
+preparation), `R-<step>` with one automatic step left out, or `R-colour`; `--prompt app|card`,
+`--detector key=value`, `--cpu-only`. The run's name says what it is — model, preset, prompt,
+device, machine and a hash of the rest — so the same ask twice is refused; `--replace` writes over
+the old file, and the store is a git repository. `report` takes `--runs` and `--baseline` as that
+name, with or without its campaign folder in front. Every reading is cached in the tool's own
+folder in the user's cache directory, keyed by what decides it (`readings.key_of`), so a rerun of
+the same ask reads nothing again. A reading is a page's text: it stays on the machine and never
+enters the store, which takes one numbers-only record per run (`ocr/runs/`, checked by
+`validate`).
+
+A page scores CER, WER and bag-of-words WER (reading order ignored), the share of the student's
+misspelt words a model read exactly as written (*kept mistakes*: a model that silently corrects
+hides what proofreading is there to find), failure flags, seconds and the answer's tokens. A
+transcription wraps a misspelt word as the student wrote it (`{Fehler}`) and writes `[?]` where
+nobody can read one. `report` gives one row per run and group, each with a paired bootstrap
+interval against a baseline run over the same page ids, weighted like the row's own rates: a
+difference whose interval holds zero is none.
+
+The set is the developer's own pages, outside the repository, with a version (the hash of its
+images and transcriptions); runs of two versions are not compared. Its `pages.jsonl` names every
+page by a neutral id, with its writer and its language, which the page's prompt names. It is split
+once, whole writers held out (`pages.TUNE_SHARE` to choose on, the rest to confirm a choice), which
+only catches a large reversal.
+
+A measured result changes the app in its own commit: a threshold in `auto.py` and an
+`AUTO_VERSION` bump, a `DetectorSettings` number and a `READER_VERSION` bump, `auto_output`, the
+catalog's notes and `RECOMMENDED` order, or a per-model OCR prompt. A candidate tag enters
+`OLLAMA_CATALOG` only through `tools/verify_model_catalog.py`.
+
 **Adding an engine** is in {doc}`extension_points` ("New OCR engine").  A settings file that names a
 retired engine (`RETIRED_OCR_ENGINES`: `tesseract`, `paddleocr`) is read as `ppocr` by
 `settings_schema.normalize_ocr_engine`, with a notice that names the engine; an online engine falls
@@ -955,7 +1012,9 @@ and **Original page** (`"none"`).  `infrastructure/preprocessing/` holds all of 
 **The gates are conservative on purpose.**  Every step acts only where its measurement says so
 and leaves the page alone otherwise, so a clean scan passes unchanged; a thing the steps get
 wrong costs less than a thing they do to a page that did not need it.  A changed threshold is a
-changed constant and an `AUTO_VERSION` bump.
+changed constant and an `AUTO_VERSION` bump.  What a step is worth is measured, not argued:
+`bazel run //tools/ocr_eval:cli -- run … --preset R-<step>` reads the same pages with that step
+left out, and `report` compares the two runs page for page (see *Comparing reading models* above).
 
 **Page models.**  `DOC_ORI` (PP-LCNet_x1_0_doc_ori) and `UVDOC` are `LocalModel`s in
 `domain/local_models.py` (group `PAGE_MODELS`, Apache-2.0, PaddlePaddle).  The installed app

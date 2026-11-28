@@ -26,9 +26,35 @@ from .model_catalog import (
 from .model_tags import normalize_tag
 from .performance_estimate import SpeedBand, SpeedSource, expected_band
 
+
+class ModelRole(StrEnum):
+    """Which of a writing tier's two picks a model is."""
+
+    QUALITY = "quality"
+    """The tier's best model: the most accurate one that runs on it."""
+
+    SPEED = "speed"
+    """The tier's faster alternative, for a little less accuracy."""
+
+
+#: The writing picks per profile, one model per role.  Chosen by hand by the rule in
+#: ``evaluations/README.md``: the speed model is at most SPEED_ROLE_MAX_F05_GAP behind the
+#: quality model and at least SPEED_ROLE_FASTER_SHARE quicker.  gemma4:12b is the most accurate
+#: model; on an 8 GB card a page still takes about a minute.  gemma4:e2b ties with gemma4:e4b in
+#: quality at half its time.  Without a card it is the quality model and there is no speed
+#: model: nothing that runs there is faster.
+WRITING_PICKS: dict[HardwareProfile, dict[ModelRole, str]] = {
+    HardwareProfile.CPU: {ModelRole.QUALITY: "gemma4:e2b"},
+    HardwareProfile.CARD_8GB: {ModelRole.QUALITY: "gemma4:12b", ModelRole.SPEED: "gemma4:e2b"},
+    HardwareProfile.CARD_16GB: {ModelRole.QUALITY: "gemma4:12b", ModelRole.SPEED: "gemma4:e2b"},
+}
+
+
 #: Ordered recommendations per category and profile: the first entry is ``BEST``,
 #: the others are ``GOOD``.  Every list must be non-empty and every tag must
 #: exist in :data:`OLLAMA_CATALOG` with the matching category (tests enforce this).
+#: The writing lists are :data:`WRITING_PICKS` in role order; on a given computer
+#: :func:`writing_picks` decides which of them hold.
 RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
     "ocr": {
         HardwareProfile.CPU: ("glm-ocr:q8_0",),
@@ -50,12 +76,8 @@ RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
         ),
     },
     "general": {
-        # gemma4:e4b passes gate 1 and writes the shortest pages.  qwen3:4b is not offered
-        # without a graphics card: it fails gate 1 (empty answers) and thinks for about 4,000
-        # tokens a page, which is 7 minutes on the Ryzen.
-        HardwareProfile.CPU: ("gemma4:e4b",),
-        HardwareProfile.CARD_8GB: ("gemma4:e4b", "qwen3.5:9b"),
-        HardwareProfile.CARD_16GB: ("gemma4:12b", "qwen3.5:9b"),
+        profile: tuple(picks[role] for role in ModelRole if role in picks)
+        for profile, picks in WRITING_PICKS.items()
     },
 }
 
@@ -69,6 +91,62 @@ SPEED_ROLE_MAX_F05_GAP = 0.10
 #: How much faster than the quality model a speed model has to be, as a share of the quality model's
 #: page time: a quarter.  A smaller gain is no second role — the tier has one model then.
 SPEED_ROLE_FASTER_SHARE = 0.25
+
+
+def _pick_holds(
+    tag: str, profile: HardwareProfile, system_memory_gb: float | None, card_gb: float | None
+) -> bool:
+    """Return whether the pick *tag* runs well enough on this computer to keep its role.
+
+    It must not be too large for the main memory (checked only when that is known), and a model
+    that spills off the card must not spill so far that it runs very slowly.
+    """
+    spec = find_spec(tag)
+    if spec is None:
+        return True
+    card = card_gb if card_gb is not None else card_budget_gb(profile)
+    if (
+        system_memory_gb is not None
+        and _memory_fit(spec, card, system_memory_gb) is Suitability.TOO_LARGE
+    ):
+        return False
+    return not (card > 0 and is_very_slow(spec.memory_gb, card))
+
+
+def writing_picks(
+    profile: HardwareProfile,
+    *,
+    system_memory_gb: float | None = None,
+    card_gb: float | None = None,
+) -> dict[ModelRole, str]:
+    """Return the writing picks that hold on this computer, by role.
+
+    A tier's quality model that does not hold here hands its role to the speed model, and the
+    computer then has no speed model.  Empty when no pick holds.
+    """
+    listed = WRITING_PICKS[profile]
+    quality = listed[ModelRole.QUALITY]
+    speed = listed.get(ModelRole.SPEED)
+    if speed is not None and not _pick_holds(speed, profile, system_memory_gb, card_gb):
+        speed = None
+    if not _pick_holds(quality, profile, system_memory_gb, card_gb):
+        return {ModelRole.QUALITY: speed} if speed is not None else {}
+    if speed is None:
+        return {ModelRole.QUALITY: quality}
+    return {ModelRole.QUALITY: quality, ModelRole.SPEED: speed}
+
+
+def role_of(
+    tag: str,
+    profile: HardwareProfile,
+    *,
+    system_memory_gb: float | None = None,
+    card_gb: float | None = None,
+) -> ModelRole | None:
+    """Return the writing role *tag* plays on this computer, or ``None`` when it plays none."""
+    wanted = normalize_tag(tag)
+    picks = writing_picks(profile, system_memory_gb=system_memory_gb, card_gb=card_gb)
+    return next((role for role, named in picks.items() if normalize_tag(named) == wanted), None)
 
 
 class Suitability(StrEnum):
@@ -135,19 +213,21 @@ def best_model(
 ) -> str:
     """Return the BEST model tag for *category* on *profile*.
 
-    The first model of the profile's list, unless the computer's main memory is known and that
-    model is too large for it (:func:`suitability` rates it ``TOO_LARGE``): then the first one of
-    the list that fits.  A computer without a card and with little memory is therefore pointed to
-    the smaller model, and :func:`suitability` marks that one BEST.  When none fits, the first of
-    the list, as without a figure.
+    For writing, the quality model of :func:`writing_picks`.  For reading, the first model of
+    the profile's list, unless the computer's main memory is known and that model is too large
+    for it: then the first one of the list that fits.  When none fits, the first of the list,
+    as without a figure.
     """
     recommended = RECOMMENDED[category][profile]
+    if category == "general":
+        picks = writing_picks(profile, system_memory_gb=system_memory_gb, card_gb=card_gb)
+        return picks.get(ModelRole.QUALITY, recommended[0])
     if system_memory_gb is not None:
+        card = card_gb if card_gb is not None else card_budget_gb(profile)
         for tag in recommended:
             spec = find_spec(tag)
             if spec is None:
                 continue
-            card = card_gb if card_gb is not None else card_budget_gb(profile)
             if _memory_fit(spec, card, system_memory_gb) is not Suitability.TOO_LARGE:
                 return tag
     return recommended[0]
@@ -195,8 +275,10 @@ def suitability(
        dedicated OCR models do not follow a proofreading prompt well.  A catalogued
        writing model is a reading model too only when it lists ``"ocr"`` in
        ``also_uses``.
-    3. Tag is ``RECOMMENDED[category][profile][0]`` → ``BEST``; elsewhere in that
-       list → ``GOOD``.
+    3. Writing: the quality model of :func:`writing_picks` → ``BEST``, its speed model →
+       ``GOOD``; a tier pick that does not hold here is rated by its fit like any other.
+       Reading: ``RECOMMENDED["ocr"][profile][0]`` → ``BEST``, elsewhere in that list →
+       ``GOOD``, unless it is too large for a known main memory.
     4. Not catalogued (custom model) → ``WORKS`` (its size is unknown, so it is
        never called too large).
     5. At least :data:`FULL_SPEED_SHARE` of the model fits on the graphics card (for a
@@ -238,6 +320,11 @@ def suitability(
 
     card = card_gb if card_gb is not None else card_budget_gb(profile)
     fit = _memory_fit(spec, card, system_memory_gb)
+    if category == "general":
+        role = role_of(tag, profile, system_memory_gb=system_memory_gb, card_gb=card_gb)
+        if role is None:
+            return fit
+        return Suitability.BEST if role is ModelRole.QUALITY else Suitability.GOOD
     recommended = RECOMMENDED[category][profile]
     if normalized in recommended:
         # A recommendation holds for the computer type; it does not hold where the model
@@ -290,6 +377,9 @@ class ModelRating:
     speed: SpeedBand | None = None
     #: Where :attr:`speed` comes from; ``None`` when there is no band.
     speed_source: SpeedSource | None = None
+    #: The writing role the model plays on this computer (see :func:`writing_picks`); ``None``
+    #: for a model that plays none, and for every reading model.
+    role: ModelRole | None = None
 
 
 #: Ratings that get no expected speed.  A model that spills to the processor is slower by an
@@ -344,6 +434,11 @@ def rate_model(
         very_slow=very_slow,
         speed=speed,
         speed_source=speed_source,
+        role=(
+            role_of(tag, profile, system_memory_gb=system_memory_gb, card_gb=card_gb)
+            if task == "general"
+            else None
+        ),
     )
 
 

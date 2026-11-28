@@ -41,14 +41,17 @@ from ..domain.model_catalog import OLLAMA_CATALOG, ModelCategory, find_spec
 from ..domain.model_fit import (
     DiskVerdict,
     ModelRating,
+    ModelRole,
     Suitability,
     best_model,
     catalog_uses,
     disk_verdict,
     suitability_rank,
+    writing_picks,
 )
 from ..domain.model_tags import normalize_tag
 from ..domain.ollama_discovery import OllamaState
+from ..domain.performance_estimate import SpeedBand
 from ..domain.stages import Stage
 from ..settings_schema import DEFAULTS, normalize_preprocess_method
 from .addons import AddonService
@@ -340,6 +343,40 @@ def _propose(
     return tag, rate(tag, category), _installed(tag, facts)
 
 
+#: Bands that make the tier's speed model the one to propose: a page of the quality model is
+#: expected to take minutes here, so a teacher would rather wait less than read the last errors.
+_SLOW_BANDS = (SpeedBand.SLOW, SpeedBand.VERY_SLOW)
+
+
+def _faster_choice(
+    proposed: tuple[str, ModelRating, bool],
+    facts: SetupFacts,
+    rate: Callable[[str, ModelCategory], ModelRating],
+    faster: Callable[[ModelCategory], str | None],
+) -> tuple[str, ModelRating, bool] | None:
+    """Return the speed model when this computer is expected to run *proposed* slowly.
+
+    ``None`` whenever the proposal stands: it is installed (a model that works is kept), it is
+    not expected to take minutes a page here, the computer has no speed model, that model does
+    not run here, or it is not expected to reach a faster band.  The expected band needs a
+    model measured on this server, so on a first start nothing is swapped on a guess; a quality
+    model that does not fit well is no pick there to begin with (:func:`writing_picks`).
+    """
+    tag, rating, installed = proposed
+    if installed or rating.speed not in _SLOW_BANDS:
+        return None
+    alternative = faster("general")
+    if not alternative or normalize_tag(alternative) == normalize_tag(tag):
+        return None
+    rated = rate(alternative, "general")
+    if rated.suitability in _NOT_OFFERED or rated.speed is None:
+        return None
+    bands = list(SpeedBand)
+    if bands.index(rated.speed) >= bands.index(rating.speed):
+        return None
+    return alternative, rated, _installed(alternative, facts)
+
+
 def _current(values: Mapping[str, Any], key: str) -> str:
     """Return the saved value of *key*, or its default."""
     return str(values.get(key) or DEFAULTS[key])
@@ -389,6 +426,7 @@ def _proofreading_plan(
     facts: SetupFacts,
     rate: Callable[[str, ModelCategory], ModelRating],
     best: Callable[[ModelCategory], str],
+    faster: Callable[[ModelCategory], str | None],
 ) -> tuple[dict[str, Any], list[PlannedStep], str, str]:
     """Return the proofreading settings, its row and the ``(provider, model)`` pair."""
     place = answers.proofreading
@@ -415,6 +453,9 @@ def _proofreading_plan(
             else ""
         )
         tag, rating, installed = _propose(candidate, "general", facts, rate, best)
+        swapped = _faster_choice((tag, rating, installed), facts, rate, faster)
+        if swapped is not None:
+            tag, rating, installed = swapped
         row = PlannedStep(
             stage=Stage.CORRECTION,
             provider=PROVIDER_OLLAMA,
@@ -588,14 +629,15 @@ def build_setup_plan(
     *,
     rate: Callable[[str, ModelCategory], ModelRating],
     best: Callable[[ModelCategory], str],
+    faster: Callable[[ModelCategory], str | None],
     default_model: Callable[[str, str], str],
 ) -> SetupPlan:
     """Return the setup plan for *answers* on this computer.
 
     *current* is the settings as they are now (the Settings-window keys plus the main window's
     ``anonymization_enabled``).  *rate* rates one Ollama tag for a task, *best* names the
-    recommendation for a task, and *default_model* resolves a provider's default model for a
-    task.
+    recommendation for a task, *faster* names this computer's speed model for a task or ``None``
+    when it has none, and *default_model* resolves a provider's default model for a task.
     """
     settings: dict[str, Any] = {}
     panel: dict[str, Any] = {"language": answers.language}
@@ -613,7 +655,7 @@ def build_setup_plan(
     place = answers.proofreading
     panel["correction_enabled"] = place is not ProofreadingPlace.OFF
     correction_settings, correction_rows, provider, model = _proofreading_plan(
-        answers, current, facts, rate, best
+        answers, current, facts, rate, best, faster
     )
     settings.update(correction_settings)
     steps += correction_rows
@@ -803,9 +845,18 @@ class SetupService:
                 card_gb=facts.card_gb,
             )
 
+        def faster(task: ModelCategory) -> str | None:
+            if task != "general":
+                return None
+            picks = writing_picks(
+                facts.profile, system_memory_gb=facts.system_memory_gb, card_gb=facts.card_gb
+            )
+            return picks.get(ModelRole.SPEED)
+
         return {
             "rate": rate,
             "best": best,
+            "faster": faster,
             "default_model": self._providers.default_model_for_task,
         }
 

@@ -27,8 +27,14 @@ from teachers_teammate.domain.install_item import (
     InstallItem,
     InstallKind,
 )
+from teachers_teammate.domain.hardware_profile import HardwareProfile
 from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
-from teachers_teammate.domain.model_fit import DiskVerdict, ModelRating, Suitability
+from teachers_teammate.domain.model_fit import (
+    RECOMMENDED,
+    DiskVerdict,
+    ModelRating,
+    Suitability,
+)
 from teachers_teammate.domain.model_tags import short_model_name
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.texts.addons import PAGE_MODELS_PROGRESS_STATUS
@@ -1643,6 +1649,30 @@ def test_the_proofreading_page_follows_the_recommended_model_until_one_is_chosen
     page._use_recommended.setChecked(True)
     assert page._model_box.currentData() == suggested
     assert page.local_model() == ""
+
+
+def test_the_model_list_names_the_best_quality_and_the_faster_model(qtbot) -> None:
+    """
+    Given  the proofreading page on a computer whose tier names two writing models
+    When   the model list is filled
+    Then   the tier's quality model is marked "★ Best quality" and its speed model "Faster", and
+           a writing model of another tier carries neither word
+    """
+    from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE  # noqa: PLC0415
+
+    assistant = _assistant(qtbot, _context(SetupAppService()))
+    page = _page(assistant, SetupPageId.PROOFREADING)
+    page.initializePage()
+    _wait_for_choices(qtbot, page)
+
+    quality, speed = RECOMMENDED["general"][HardwareProfile.CARD_16GB]
+
+    def label(tag: str) -> str:
+        return page._model_box.itemData(page._model_box.findData(tag), ITEM_LABEL_ROLE) or ""
+
+    assert label(quality).startswith("★ Best quality · ")
+    assert label(speed).startswith("Faster · ")
+    assert not label("gemma4:e4b").startswith(("★ Best quality", "Faster"))
 
 
 def test_the_model_choice_is_for_the_local_ai_only(qtbot) -> None:

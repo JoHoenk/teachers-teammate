@@ -23,6 +23,7 @@ from teachers_teammate.domain.model_catalog import (
     ModelUses,
     OLLAMA_CATALOG,
 )
+from teachers_teammate.domain.model_fit import RECOMMENDED
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.texts import addons as txt
@@ -57,6 +58,10 @@ MISTRAL_EU = InstallItem(InstallKind.PROVIDER, "mistral_eu")
 OPENAI = InstallItem(InstallKind.PROVIDER, "openai")
 GERMAN_NAMES = InstallItem(InstallKind.SPACY, "de_core_news_sm")
 OPENAI_PACKAGE = InstallItem(InstallKind.PACKAGE, "langchain-openai")
+
+#: The BEST writing model of the 8gb profile the dialog starts on, and of a basic computer.
+_BEST_WRITING_8GB = RECOMMENDED["general"][HardwareProfile.CARD_8GB][0]
+_BEST_WRITING_CPU = RECOMMENDED["general"][HardwareProfile.CPU][0]
 
 _USER_ROLE = 0x0100  # Qt.ItemDataRole.UserRole
 
@@ -221,7 +226,7 @@ def test_suitability_column_and_sort_order_follow_profile(qtbot) -> None:
     assert reading.child(0).text(0) == DEFAULT_OCR_MODEL
     assert reading.child(0).text(1) == "★ Best"
     writing = dlg.ollama_models._group_items["general"]
-    assert writing.child(0).text(0) == DEFAULT_WRITING_MODEL
+    assert writing.child(0).text(0) == _BEST_WRITING_8GB
     gpt_oss = dlg.ollama_models._model_items["gpt-oss:20b"]
     assert gpt_oss.text(1) == "Won't fit"
 
@@ -255,7 +260,7 @@ def test_a_model_that_was_not_measured_shows_the_speed_it_is_expected_to_reach(q
     service.machine_factor = 0.5
     dlg = _make_dialog(qtbot, service=service)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    row = dlg.ollama_models._model_items["gemma4:e4b"]
+    row = dlg.ollama_models._model_items[_BEST_WRITING_8GB]
     assert row.text(1) == "★ Best · ok (expected)"
     assert "Expected speed on this computer: ok." in row.toolTip(1)
     # A model that does not fit the card has no page time worth naming.
@@ -299,9 +304,7 @@ def test_select_best_ticks_undownloaded_best_models(qtbot) -> None:
     deepseek.setCheckState(0, Qt.CheckState.Checked)
     dlg.ollama_models._on_select_best_models()
     assert dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
-    assert (
-        dlg.ollama_models._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
-    )
+    assert dlg.ollama_models._model_items[_BEST_WRITING_8GB].checkState(0) is Qt.CheckState.Checked
     assert deepseek.checkState(0) is Qt.CheckState.Checked
 
 
@@ -313,7 +316,7 @@ def test_select_best_reports_when_already_downloaded(qtbot) -> None:
     Then   the status line says the best models are already downloaded
     """
     dlg = _make_dialog(qtbot)
-    dlg._on_detection_done(_detection_results(dlg, {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL}))
+    dlg._on_detection_done(_detection_results(dlg, {DEFAULT_OCR_MODEL, _BEST_WRITING_8GB}))
     dlg.ollama_models._on_select_best_models()
     assert dlg.ollama_models._ollama_hint_lbl.text() == (
         "The best models for your computer are already downloaded."
@@ -332,9 +335,7 @@ def test_pre_ticking_when_no_model_of_category_downloaded(qtbot) -> None:
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
     assert dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
-    assert (
-        dlg.ollama_models._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
-    )
+    assert dlg.ollama_models._model_items[_BEST_WRITING_8GB].checkState(0) is Qt.CheckState.Checked
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -967,7 +968,7 @@ def test_failed_installed_check_still_ticks_best_models_and_preselect(qtbot) -> 
     )
     dlg.on_shown()
     qtbot.waitUntil(lambda: "Detection failed" in dlg.status._status.text(), timeout=5000)
-    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL, "llama3.2:latest"}
+    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, _BEST_WRITING_8GB, "llama3.2:latest"}
 
 
 # ── the profile is read-only here ──────────────────────────────────────────
@@ -999,12 +1000,12 @@ def test_the_page_follows_a_profile_chosen_on_this_computer(qtbot) -> None:
     """
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL}
+    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, _BEST_WRITING_8GB}
 
     with qtbot.waitSignal(dlg.ollama_models._hardware_selector.resolved_changed, timeout=5000):
         dlg.set_hardware_setting(HardwareProfileSetting.CPU)
 
-    assert _ticked(dlg) == {"glm-ocr:q8_0", "gemma4:e4b"}
+    assert _ticked(dlg) == {"glm-ocr:q8_0", _BEST_WRITING_CPU}
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
@@ -1352,7 +1353,7 @@ def test_pre_ticking_waits_for_hardware_detection(qtbot) -> None:
 
     with qtbot.waitSignal(dlg.ollama_models._hardware_selector.resolved_changed, timeout=5000):
         service.detection_gate.set()
-    assert _ticked(dlg) == {"glm-ocr:q8_0", "gemma4:e4b"}
+    assert _ticked(dlg) == {"glm-ocr:q8_0", _BEST_WRITING_CPU}
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
@@ -1367,12 +1368,12 @@ def test_profile_change_replaces_untouched_auto_ticks_and_keeps_user_ticks(qtbot
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL}
+    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, _BEST_WRITING_8GB}
     dlg.ollama_models._model_items["mistral:latest"].setCheckState(0, Qt.CheckState.Checked)
 
     _choose_computer(qtbot, dlg, _CPU_TEXT)
 
-    assert _ticked(dlg) == {"glm-ocr:q8_0", "gemma4:e4b", "mistral:latest"}
+    assert _ticked(dlg) == {"glm-ocr:q8_0", _BEST_WRITING_CPU, "mistral:latest"}
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")

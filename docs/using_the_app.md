@@ -41,7 +41,8 @@ The first time you start the app, the **Setup Assistant** opens. It asks:
 - where Ollama (the program that runs AI models) runs: on this computer or on another PC in your
   network — **Get Ollama…**, **Start Ollama** and **Find…** help;
 - whether proofreading runs on this computer (the recommended model, or one you pick) or at an
-  online service (with the service's key);
+  online service (with the service's key) — once the app has measured that your computer would
+  take minutes for a page, the assistant proposes the faster model;
 - what happens to names: removed before text is sent away, or hidden on screen when everything
   stays on this computer.
 
@@ -206,8 +207,9 @@ it could not make sense of.
 on your computer and needs no account. An online service needs an access key from the service:
 choose it, and paste the key in the row that appears below it.
 
-The recommended models for your computer are listed in the *Advanced User Guide*; the default is
-fast and fits an 8 GB graphics card.
+The recommended models for your computer are listed in the *Advanced User Guide*: the one with the
+best quality your computer can run, and the faster one beside it. The list marks them *★ Best
+quality* and *Faster*.
 
 Models the app has tested for explanations show `explanations ✓` in the model list.
 

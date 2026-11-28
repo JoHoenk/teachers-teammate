@@ -126,15 +126,16 @@ def test_writing_models_offered_first_pass_the_structured_output_check() -> None
     """
     Given  the default writing model and the RECOMMENDED[general] lists
     When   their catalog flags are inspected
-    Then   the model the app picks for proofreading and the first entry of every general
-           list are marked as answering the review schema — the rule that an
-           unverified model must not be the one a teacher gets by default
+    Then   the model the app picks for proofreading and every entry of every general list are
+           marked as answering the review schema — the rule that an unverified model must not be
+           one the app proposes, be it as the quality or as the speed model
     """
     default = find_spec(DEFAULT_WRITING_MODEL)
     assert default is not None
     assert default.structured_output, f"{DEFAULT_WRITING_MODEL} must support explanations"
 
     for profile in HARDWARE_PROFILES:
-        first = find_spec(RECOMMENDED["general"][profile][0])
-        assert first is not None
-        assert first.structured_output, f"{first.tag} is the first choice for {profile}"
+        for tag in RECOMMENDED["general"][profile]:
+            spec = find_spec(tag)
+            assert spec is not None
+            assert spec.structured_output, f"{tag} is offered for {profile}"

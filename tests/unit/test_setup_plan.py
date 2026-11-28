@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
+
+import pytest
 from teachers_teammate.domain.stages import Stage
 from typing import Any
 
@@ -31,9 +34,13 @@ from teachers_teammate.domain.hardware_profile import HardwareProfile
 from teachers_teammate.domain.model_catalog import ModelCategory, find_spec
 from teachers_teammate.domain.model_fit import DiskVerdict, ModelRating, Suitability
 from teachers_teammate.domain.ollama_address import is_local_ollama_url
+from teachers_teammate.domain.performance_estimate import SpeedBand
 
 #: The recommendation the fake ``best`` names per task.
 _BEST: dict[str, str] = {"ocr": "qwen2.5vl:7b", "general": "gemma4:e4b"}
+
+#: The speed alternative the fake ``faster`` names per task; ``None`` for a task without one.
+_FASTER: dict[str, str | None] = {"ocr": None, "general": "gemma4:e2b"}
 
 
 def _rating(tag: str, task: ModelCategory, suitability: Suitability) -> ModelRating:
@@ -43,11 +50,16 @@ def _rating(tag: str, task: ModelCategory, suitability: Suitability) -> ModelRat
     )
 
 
-def _rater(ratings: dict[str, Suitability]):
-    """Return a ``rate`` that answers from *ratings* and rates everything else ``WORKS``."""
+def _rater(ratings: dict[str, Suitability], speeds: dict[str, SpeedBand] | None = None):
+    """Return a ``rate`` that answers from *ratings* and rates everything else ``WORKS``.
+
+    A tag named in *speeds* carries that expected band, so a test can say how fast a model is
+    expected to run here.
+    """
 
     def rate(tag: str, task: ModelCategory) -> ModelRating:
-        return _rating(tag, task, ratings.get(tag, Suitability.WORKS))
+        rating = _rating(tag, task, ratings.get(tag, Suitability.WORKS))
+        return replace(rating, speed=(speeds or {}).get(tag))
 
     return rate
 
@@ -55,6 +67,11 @@ def _rater(ratings: dict[str, Suitability]):
 def _best(task: ModelCategory) -> str:
     """Return the fake recommendation for *task*."""
     return _BEST[task]
+
+
+def _faster(task: ModelCategory) -> str | None:
+    """Return the fake speed alternative for *task*."""
+    return _FASTER[task]
 
 
 def _default_model(provider: str, task: str) -> str:
@@ -107,11 +124,14 @@ def _plan(
     current: dict[str, Any] | None = None,
     facts: SetupFacts | None = None,
     ratings: dict[str, Suitability] | None = None,
+    speeds: dict[str, SpeedBand] | None = None,
+    faster: Callable[[ModelCategory], str | None] = _faster,
 ):
     """Return the setup plan for *answers*, *current* and *facts* with fake ratings.
 
     Without *facts*, the server counts as this computer when the answers' address says so,
-    the question the GUI asks before it builds the Setup Assistant's pages.
+    the question the GUI asks before it builds the Setup Assistant's pages.  *speeds* gives the
+    expected band per tag, and *faster* names the tier's speed alternative.
     """
     chosen = answers or _answers()
     return build_setup_plan(
@@ -124,8 +144,9 @@ def _plan(
                 chosen.ollama_url, own_addresses=tuple, windows_hosts=tuple
             )
         ),
-        rate=_rater(ratings or {}),
+        rate=_rater(ratings or {}, speeds),
         best=_best,
+        faster=faster,
         default_model=_default_model,
     )
 
@@ -715,6 +736,130 @@ def test_the_chosen_model_is_ignored_for_online_proofreading() -> None:
 
     assert plan.settings["correction_provider"] == "openai"
     assert plan.settings["correction_model"] == "gpt-x"
+
+
+# ── the tier's two roles ────────────────────────────────────────────────────
+
+
+def test_a_computer_that_runs_the_quality_model_slowly_gets_the_speed_model() -> None:
+    """
+    Given  a computer that is expected to run the quality model slowly (band SLOW) and the
+           speed model ok
+    When   the setup plan is built
+    Then   the tier's speed model is proposed for the proofreading and the review, and it is
+           the model that is downloaded
+    """
+    alternative = _FASTER["general"]
+    assert alternative is not None
+    plan = _plan(speeds={_BEST["general"]: SpeedBand.SLOW, alternative: SpeedBand.OK})
+
+    assert plan.settings["correction_model"] == _FASTER["general"]
+    assert plan.settings["evaluate_model"] == _FASTER["general"]
+    assert _step(plan, Stage.CORRECTION).model == _FASTER["general"]
+    assert [(d.name, d.stage) for d in _downloads(plan, DownloadKind.OLLAMA_MODEL)] == [
+        (_BEST["ocr"], Stage.OCR),
+        (_FASTER["general"], Stage.CORRECTION),
+    ]
+    assert _step(plan, Stage.CORRECTION).rating.tag == _FASTER["general"]
+
+
+@pytest.mark.parametrize("band", [SpeedBand.FAST, SpeedBand.OK, None])
+def test_a_computer_that_runs_the_quality_model_well_keeps_it(band: SpeedBand | None) -> None:
+    """
+    Given  a computer that is expected to run the quality model fast or ok, or that was never
+           measured (no band)
+    When   the setup plan is built
+    Then   the quality model is proposed: no swap is made on a guess
+    """
+    plan = _plan(speeds={_BEST["general"]: band} if band is not None else {})
+
+    assert plan.settings["correction_model"] == _BEST["general"]
+    assert _step(plan, Stage.CORRECTION).model == _BEST["general"]
+
+
+def test_an_installed_quality_model_is_kept_even_where_it_runs_slowly() -> None:
+    """
+    Given  the quality model is installed and is expected to run slowly here
+    When   the setup plan is built
+    Then   it is kept: a model that already works on this computer is not replaced, and nothing
+           is downloaded for the proofreading
+    """
+    plan = _plan(
+        current=_current(correction_model=_BEST["general"]),
+        facts=_facts(installed_tags=frozenset({_BEST["general"]})),
+        speeds={_BEST["general"]: SpeedBand.VERY_SLOW},
+    )
+
+    assert plan.settings["correction_model"] == _BEST["general"]
+    assert _step(plan, Stage.CORRECTION).installed is True
+    assert all(d.stage != Stage.CORRECTION for d in _downloads(plan, DownloadKind.OLLAMA_MODEL))
+
+
+def test_the_model_the_teacher_named_wins_over_the_speed_model() -> None:
+    """
+    Given  a teacher who named the quality model, and a computer that runs it slowly
+    When   the setup plan is built
+    Then   the named model is used as chosen
+    """
+    plan = _plan(
+        answers=_answers(local_model=_BEST["general"]),
+        speeds={_BEST["general"]: SpeedBand.VERY_SLOW},
+    )
+
+    assert plan.settings["correction_model"] == _BEST["general"]
+
+
+def test_a_tier_without_a_speed_model_keeps_its_proposal() -> None:
+    """
+    Given  a tier that names no speed alternative, on a computer that runs the quality model
+           slowly
+    When   the setup plan is built
+    Then   the quality model keeps its place
+    """
+    plan = _plan(
+        speeds={_BEST["general"]: SpeedBand.SLOW},
+        faster=lambda task: None,
+    )
+
+    assert plan.settings["correction_model"] == _BEST["general"]
+
+
+def test_a_speed_model_that_cannot_work_here_does_not_replace_the_proposal() -> None:
+    """
+    Given  a computer that runs the quality model slowly, and a speed model that is too large
+           for it
+    When   the setup plan is built
+    Then   the quality model keeps its place: the smaller model would be no working choice
+    """
+    alternative = _FASTER["general"]
+    assert alternative is not None
+    plan = _plan(
+        speeds={_BEST["general"]: SpeedBand.SLOW, alternative: SpeedBand.OK},
+        ratings={alternative: Suitability.TOO_LARGE},
+    )
+
+    assert plan.settings["correction_model"] == _BEST["general"]
+
+
+@pytest.mark.parametrize("band", [SpeedBand.SLOW, None])
+def test_a_speed_model_not_expected_to_be_faster_does_not_replace_the_proposal(
+    band: SpeedBand | None,
+) -> None:
+    """
+    Given  a computer that runs the quality model slowly, and a speed model expected in the same
+           band or with no expected band
+    When   the setup plan is built
+    Then   the quality model keeps its place: the swap would not shorten the wait
+    """
+    alternative = _FASTER["general"]
+    assert alternative is not None
+    speeds = {_BEST["general"]: SpeedBand.SLOW}
+    if band is not None:
+        speeds[alternative] = band
+
+    plan = _plan(speeds=speeds)
+
+    assert plan.settings["correction_model"] == _BEST["general"]
 
 
 # ── who gets the text ───────────────────────────────────────────────────────

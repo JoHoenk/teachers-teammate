@@ -493,14 +493,14 @@ def test_first_run_model_settings_return_best_models(profile: HardwareProfile) -
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
 def test_first_run_model_settings_respect_the_main_memory() -> None:
     """
-    Given  a computer without a graphics card and 12 GB of main memory
+    Given  a computer in the 8gb profile with 10 GB of main memory, so the tier's 9.5 GB quality
+           model does not fit next to the system's reserve
     When   first_run_model_settings is called with those figures
-    Then   the writing steps get gemma4:e4b, the only writing model the app offers without a
-           card: the smaller one it used to offer (qwen3:4b) fails gate 1
+    Then   the writing steps get the tier's speed alternative, gemma4:e2b
     """
-    settings = _service().first_run_model_settings(HardwareProfile.CPU, system_memory_gb=12.0)
-    assert settings["correction_model"] == "gemma4:e4b"
-    assert settings["evaluate_model"] == "gemma4:e4b"
+    settings = _service().first_run_model_settings(HardwareProfile.CARD_8GB, system_memory_gb=10.0)
+    assert settings["correction_model"] == "gemma4:e2b"
+    assert settings["evaluate_model"] == "gemma4:e2b"
 
 
 # ── the context choice ──────────────────────────────────────────────────────

@@ -78,11 +78,18 @@ the model you chose.
 
 ### Writing models
 
+Each computer type has up to two picks: the model with the **best quality** it runs, and a
+**faster** one that costs a little accuracy. The app names them beside the model in **Settings → AI
+models…** and in the Setup Assistant. If your computer runs the best-quality model only very
+slowly (a graphics card under 8 GB) or has too little main memory for it, the faster model takes
+its place.
+
 | Model | Memory | Download | Basic | 8 GB | 16 GB | Notes |
 |---|---|---|---|---|---|---|
-| `gemma4:e4b` | ~5 GB | 6.6 GB | ★ best | ★ best | works | Default. Fast; without a graphics card about 2 to 3 minutes a page (16 GB of main memory or more) |
-| `gemma4:12b` | ~9.5 GB | 8 GB | too large | too large | ★ best | Best for 16 GB graphics cards |
-| `qwen3.5:9b` | ~7.2 GB | 6.6 GB | too large | good | good | Another model family; also reads scans |
+| `gemma4:12b` | ~9.5 GB | 8 GB | too large | ★ best quality | ★ best quality | The most accurate model the app offers; on an 8 GB card a page takes about a minute |
+| `gemma4:e2b` | ~3.6 GB | 4.6 GB | ★ best quality | faster | faster | Smallest Gemma 4 build; also the one for a computer without a graphics card |
+| `gemma4:e4b` | ~5 GB | 6.6 GB | works | works | works | Fast; without a graphics card about 2 to 3 minutes a page (16 GB of main memory or more) |
+| `qwen3.5:9b` | ~7.2 GB | 6.6 GB | too large | works | works | Another model family; also reads scans |
 | `qwen3:4b` | ~4 GB | 2.5 GB | works | works | works | Small, but thinks first, so slow |
 | `gpt-oss:20b` | ~14 GB | 13.8 GB | too large | too large | works | Large; asked to think as little as possible |
 | `mistral:latest` | ~5.5 GB | 4.4 GB | too large | works | works | Does not reliably give explanations |

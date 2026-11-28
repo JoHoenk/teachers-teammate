@@ -25,6 +25,8 @@ DEFAULT_OCR_MODEL = "hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0"
 
 #: The default writing model must be one that passes the structured-output check:
 #: proofreading explains every change, which needs an answer the model can be constrained to.
+#: It is the model for settings that name none, not a pick: it runs on every computer type, and a
+#: teacher who has it keeps it (see the ``catalog-roles`` gate record).
 DEFAULT_WRITING_MODEL = "gemma4:e4b"
 
 
@@ -141,6 +143,11 @@ class OllamaModelSpec:
 # tokens per 100 words of student text (10th percentile, median, 90th percentile);
 # ``reference_speed`` is the middle of the measured writing rate.  A model without them was not
 # measured: the estimate takes the median of its kind, and no expected band is shown for it.
+#
+# ``gemma4:e2b`` was measured on the same machine on 2026-11-27: ``fit`` gave its memory and its
+# growth per 8k tokens, and its writing rate is the middle of the rate its stored answers reached.
+# ``answer_length`` is left out for it: the stored runs send the app's exchange of three steps,
+# which is not the one-request review the figures above come from.
 OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
     OllamaModelSpec(
         tag=DEFAULT_OCR_MODEL,
@@ -219,6 +226,21 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         also_uses=frozenset({"ocr"}),
         structured_output=True,
         context_gb_per_8k=0.28,
+    ),
+    OllamaModelSpec(
+        tag="gemma4:e2b",
+        category="general",
+        memory_gb=3.6,
+        download_gb=4.6,
+        # Passes gate 1, gate 2 and the fit (2026-11-28), on both test sets and on either machine.
+        note="Smallest Gemma 4 build: the faster writing model, and the one for a computer "
+        "without a graphics card.",
+        licence=ModelLicence(
+            name="Apache-2.0", url="https://ai.google.dev/gemma/docs/gemma_4_license"
+        ),
+        structured_output=True,
+        context_gb_per_8k=0.08,
+        reference_speed=ReferenceSpeed(write_tps=255.0),
     ),
     OllamaModelSpec(
         tag="gemma4:e4b",

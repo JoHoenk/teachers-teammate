@@ -29,8 +29,12 @@ sends. Every option and its default: `bazel run //tools:<tool> -- <command> --he
 | `evaluate` | `run` | gate 2: send a test set through the app's corrector |
 | `report` | `table`, `compare`, `gate`, `passes`, `sheet`, `page` | read the store; print or write reports |
 | `store` | `convert`, `validate`, `marks`, `accept-marks`, `manifest` | keep the records: marks, accepted alternatives, checks |
+| `ocr-eval` | `screen`, `run`, `report`, `validate` | compare reading models and the reader on a page set; store `ocr/runs/` |
 
-The command-line files only parse arguments and print; the work is in `tools/evaluation/`.
+The command-line files only parse arguments and print; the work is in `tools/evaluation/`. The
+reading models are elsewhere: `tools/ocr_eval/` reads pages with the app's own preparation, reader
+and Ollama request and keeps numbers only — its records are not this store's proofreading records,
+and its readings never leave the machine. Method: `docs/development.md`, *Comparing reading models*.
 
 ## Evaluating a candidate
 

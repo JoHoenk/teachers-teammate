@@ -48,18 +48,14 @@ from teachers_teammate.domain.data_location import ENGINE_PPOCR
 from teachers_teammate.domain.page_layout import ReadLine
 from teachers_teammate.domain.proofreading.word_diff import diff_opcodes, tokenize
 from teachers_teammate.exceptions import ModelMissingError, OCRError
-from teachers_teammate.infrastructure.input_providers import PdfInputProvider, pdf_page_count
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.ppocr.engine import PpOcrProcessor
 from teachers_teammate.infrastructure.preprocessing.recipes import steps_for
 from teachers_teammate.infrastructure.preprocessing.steps import StepPipeline
-from teachers_teammate.interfaces import ImageUnit
 from teachers_teammate.texts import install
-
-_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".tif", ".tiff"})
-_PDF_SUFFIXES = frozenset({".pdf"})
-_REFERENCE_SUFFIX = ".gt.txt"
-"""The transcription beside a page ``s01.png``: ``s01.gt.txt``."""
+from tools.ocr_eval.pages import REFERENCE_SUFFIX
+from tools.ocr_eval.pages import cases as page_set
+from tools.ocr_eval.pages import rendered as rendered_pages
 
 LINED_UP_SHARE = 0.9
 """The share of its words a row and one reference line must send each other to line up."""
@@ -86,17 +82,6 @@ class Page:
 
     group: str
     rows: tuple[Row, ...]
-
-
-@dataclass(frozen=True)
-class Case:
-    """One page and the transcription beside it: a page image, or one page of a PDF."""
-
-    image: Path
-    reference: str
-    group: str
-    page: int | None = None
-    """Which page of the PDF *image* is, from 0; ``None`` when the file is the page itself."""
 
 
 @dataclass(frozen=True)
@@ -237,60 +222,6 @@ def _report(pages: Sequence[Page]) -> str:
     return "\n".join(report)
 
 
-def page_files(path: Path) -> list[Path]:
-    """Return the page files *path* names, a folder contributing every image and PDF below it."""
-    suffixes = _IMAGE_SUFFIXES | _PDF_SUFFIXES
-    if path.is_dir():
-        return sorted(p for p in path.rglob("*") if p.suffix.lower() in suffixes)
-    return [path] if path.suffix.lower() in suffixes else []
-
-
-def page_count(file: Path) -> int:
-    """Return how many pages *file* holds: a PDF's pages, one for an image, 0 if unreadable."""
-    if file.suffix.lower() in _PDF_SUFFIXES:
-        return pdf_page_count(file)
-    return 1
-
-
-def transcription(file: Path, page: int, pages: int) -> Path:
-    """Return the transcription page *page* of *file* is read against.
-
-    ``s01.png`` and a one-page ``s01.pdf`` sit beside ``s01.gt.txt``; the pages of a longer PDF
-    are counted, ``scan.pdf`` page 2 → ``scan_p2.gt.txt``.
-    """
-    if pages == 1:
-        return file.with_name(file.stem + _REFERENCE_SUFFIX)
-    return file.with_name(f"{file.stem}_p{page + 1}{_REFERENCE_SUFFIX}")
-
-
-def _cases(paths: Sequence[Path]) -> list[Case]:
-    """Return every page with its transcription, the folder it sits in its group."""
-    cases: list[Case] = []
-    for file in (file for path in paths for file in page_files(path)):
-        count = page_count(file)
-        if not count:
-            print(f"{file.name}: cannot be read, skipped", file=sys.stderr)
-            continue
-        is_pdf = file.suffix.lower() in _PDF_SUFFIXES
-        for number in range(count):
-            reference = transcription(file, number, count)
-            if not reference.is_file():
-                where = file.name if count == 1 else f"{file.name} page {number + 1}"
-                print(f"{where}: no {reference.name}, skipped", file=sys.stderr)
-                continue
-            case_page = number if is_pdf else None
-            cases.append(
-                Case(file, reference.read_text(encoding="utf-8"), file.parent.name, case_page)
-            )
-    return cases
-
-
-def _rendered(pdf: Path, tmp_dir: Path) -> list[Path]:
-    """Return every page of *pdf*, rendered the way a run renders it."""
-    payload = PdfInputProvider(tmp_dir, text_layer="never").load(pdf)
-    return [unit.path for unit in payload.units if isinstance(unit, ImageUnit)]
-
-
 def _prepared(image: Path, tmp_dir: Path, ocr: OcrConfig, store: ModelStore) -> Path:
     """Return *image* prepared the way a run prepares it: the preset ``R``."""
     preprocessor = StepPipeline(steps_for(ocr, store), tmp_dir=tmp_dir)
@@ -316,25 +247,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Read every page, score its rows and print the report; return the exit code."""
     args = _parse(argv)
     install()
-    cases = _cases(args.pages)
-    if not cases:
+    found = page_set(args.pages)
+    if not found:
         named = ", ".join(str(path) for path in args.pages)
-        print(f"no page with a {_REFERENCE_SUFFIX} below {named}", file=sys.stderr)
+        print(f"no page with a {REFERENCE_SUFFIX} below {named}", file=sys.stderr)
         return 1
     ocr = OcrConfig(engine=ENGINE_PPOCR)
     store = ModelStore()
     reader = PpOcrProcessor(store)
     pages: list[Page] = []
-    rendered: dict[Path, list[Path]] = {}
+    rendered: dict[Path, tuple[Path, ...]] = {}
     with tempfile.TemporaryDirectory(prefix="page-lines-") as tmp:
         # One page at a time: two groups may hold a page of the same name, and the prepared
         # page is read before the next one is written.
-        for case in cases:
+        for case in found:
             source = case.image
             if case.page is not None:
                 if case.image not in rendered:
                     try:
-                        rendered[case.image] = _rendered(case.image, Path(tmp))
+                        rendered[case.image] = rendered_pages(case.image, Path(tmp))
                     except Exception as error:  # noqa: BLE001  # a damaged PDF is the developer's
                         print(f"{case.image}: {error}", file=sys.stderr)
                         return 1

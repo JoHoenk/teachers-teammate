@@ -148,6 +148,7 @@ _TESTS_DEVELOPER_TOOLS = [
     "//tools/ci:lint_lib",
     "//tools/dev:lint_lib",
     "//tools/licenses:lint_lib",
+    "//tools/ocr_eval:lib",
     "//tools/packaging:lint_lib",
     "//tools/release:lint_lib",
     "//tools/user_text:user_text_lib",
@@ -1779,6 +1780,77 @@ app_test(
     ],
 )
 
+# The OCR evaluation tooling, one block per part of it: the page set, its scores, the presets, the
+# candidates, the readings' cache, the record, the report, a run with a fake engine, and the three
+# commands.  No test starts a server, reads a real page set or touches the network.
+app_test(
+    "tools/test_ocr_eval_pages.py",
+    deps = [
+        "//tools/evaluation:core",
+        "//tools/ocr_eval:pages",
+    ],
+)
+
+app_test(
+    "tools/test_ocr_eval_metrics.py",
+    deps = ["//tools/ocr_eval:lib"],
+)
+
+app_test(
+    "tools/test_ocr_eval_presets.py",
+    deps = ["//tools/ocr_eval:lib"],
+)
+
+app_test(
+    "tools/test_ocr_eval_candidates.py",
+    deps = ["//tools/ocr_eval:lib"],
+)
+
+app_test(
+    "tools/test_ocr_eval_readings.py",
+    deps = [
+        "//tools/evaluation:core",
+        "//tools/ocr_eval:lib",
+    ],
+)
+
+app_test(
+    "tools/test_ocr_eval_records.py",
+    deps = [
+        "//tools/evaluation:core",
+        "//tools/ocr_eval:records",
+    ],
+)
+
+app_test(
+    "tools/test_ocr_eval_report.py",
+    deps = ["//tools/ocr_eval:records"],
+)
+
+app_test(
+    "tools/test_ocr_eval_run.py",
+    deps = ["//tools/ocr_eval:lib"],
+)
+
+app_test(
+    "tools/test_ocr_eval_cli.py",
+    deps = [
+        "//tools/evaluation:core",
+        "//tools/ocr_eval:lib",
+    ],
+)
+
+app_test(
+    "tools/test_ocr_eval_engine.py",
+    extra_srcs = ["fakes/fake_ollama.py"],
+    deps = ["//tools/ocr_eval:lib"],
+)
+
+app_test(
+    "tools/test_ocr_eval_screen.py",
+    deps = ["//tools/ocr_eval:lib"],
+)
+
 # Every tool binary starts: `--help` exits 0, and so does each subcommand's `--help`.  The binaries
 # are data, so the test starts them the way a person does, with the runfiles Bazel gives them.
 app_test(
@@ -1796,6 +1868,7 @@ app_test(
         "//tools/dev:ocr_page_tokens",
         "//tools/dev:page_lines",
         "//tools/evaluation:gpu_agent",
+        "//tools/ocr_eval:cli",
     ],
 )
 

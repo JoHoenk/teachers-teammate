@@ -34,7 +34,7 @@ from pathlib import Path
 import re
 import sys
 
-from tools.dev.page_lines import page_count, page_files, transcription
+from tools.ocr_eval.pages import page_count, page_files, transcription
 
 _SKIPPED_LABELS = frozenset({"image", "figure", "diagram", "chemical-block", "blank-page"})
 """Block labels of a picture: a reference line holds written text, and these do not."""

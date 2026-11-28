@@ -33,7 +33,12 @@ from teachers_teammate.domain.teacher_work import (
     proofreading_id,
     text_identity,
 )
-from teachers_teammate.cache_keys import correction_key, review_key, sent_record
+from teachers_teammate.cache_keys import (
+    correction_key,
+    review_key,
+    sent_record,
+    with_task_text,
+)
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheContext,
     CacheReconciliationService,
@@ -1510,6 +1515,112 @@ def test_prepare_loads_the_work_of_the_documents_content(tmp_path: Path) -> None
 
     work_store.load.assert_called_once_with("filehash")
     assert ctx.work is work
+
+
+def test_prepare_keys_the_task_text_of_the_document_it_reads(tmp_path: Path) -> None:
+    """
+    Given  a document whose text carries a marked passage of printed text, and the same document
+           marked nowhere
+    When   prepare() computes the proofreading key of each
+    Then   the marked one is keyed by what the passage covers, the other by the settings alone
+    """
+    src = tmp_path / "doc.png"
+    src.write_bytes(b"data")
+    cfg = make_config(tmp_path)
+    plain = "Aufgabe 1 Lies den Text!\nAnna schreibt ihrer Freundin."
+    marked = replace(
+        _make_state(),
+        raw_text=plain,
+        ocr_done=True,
+        task_passages=["Aufgabe 1 Lies den Text!"],
+    )
+
+    keys = {}
+    for name, state in (("marked", marked), ("plain", replace(marked, task_passages=[]))):
+        svc, repo, _ = _make_svc(tmp_path)
+        repo.load_or_create.return_value = state
+        repo.reconcile.return_value = state
+        with patch(
+            "teachers_teammate.infrastructure.workflow.cache_service.compute_file_hash",
+            return_value="filehash",
+        ):
+            keys[name] = svc.prepare(src).correction_config_hash
+
+    settings_key = correction_key(cfg, None, make_key_facts())
+    assert keys["plain"] == settings_key
+    assert keys["marked"] == with_task_text(cfg, settings_key, ("Aufgabe 1 Lies den Text!",))
+
+
+def test_prepare_with_the_switch_off_leaves_no_text_alone(tmp_path: Path) -> None:
+    """
+    Given  a document whose text carries a marked passage, and a run that proofreads task text
+    When   prepare() computes its context
+    Then   the key is the settings key and the context applies no mark
+    """
+    src = tmp_path / "doc.png"
+    src.write_bytes(b"data")
+    state = replace(
+        _make_state(),
+        raw_text="Aufgabe 1 Lies den Text!\nAnna schreibt ihrer Freundin.",
+        ocr_done=True,
+        task_passages=["Aufgabe 1 Lies den Text!"],
+    )
+    cfg = make_config(tmp_path, skip_task_text=False)
+    svc, repo, _ = _make_svc(tmp_path, skip_task_text=False)
+    repo.load_or_create.return_value = state
+    repo.reconcile.return_value = state
+    with patch(
+        "teachers_teammate.infrastructure.workflow.cache_service.compute_file_hash",
+        return_value="filehash",
+    ):
+        ctx = svc.prepare(src)
+
+    assert ctx.correction_config_hash == correction_key(cfg, None, make_key_facts())
+    assert ctx.task_marks == ()
+    assert ctx.not_task == ()
+
+
+def test_prepare_takes_the_not_task_entries_from_the_teachers_work(tmp_path: Path) -> None:
+    """
+    Given  a marked document, and the teacher's work that proofreads its printed line after all
+    When   prepare() computes its context
+    Then   the context applies the teacher's entry, and the key is the settings key: the entry
+           takes the only mark back
+    """
+    src = tmp_path / "doc.png"
+    src.write_bytes(b"data")
+    task = "Aufgabe 1 Lies den Text!"
+    state = replace(
+        _make_state(),
+        raw_text=f"{task}\nAnna schreibt ihrer Freundin.",
+        ocr_done=True,
+        task_passages=[task],
+    )
+    work_store = MagicMock()
+    work_store.load.return_value = TeacherWork(
+        source_hash="filehash", name="doc.png", not_task=(task,)
+    )
+    repo = MagicMock()
+    repo.load_or_create.return_value = state
+    repo.reconcile.return_value = state
+    cfg = make_config(tmp_path)
+    svc = CacheReconciliationService(
+        facts=make_key_facts(),
+        state_repo=repo,
+        artifact_store=MagicMock(),
+        config=cfg,
+        work_store=work_store,
+    )
+
+    with patch(
+        "teachers_teammate.infrastructure.workflow.cache_service.compute_file_hash",
+        return_value="filehash",
+    ):
+        ctx = svc.prepare(src)
+
+    assert ctx.task_marks == (task,)
+    assert ctx.not_task == (task,)
+    assert ctx.correction_config_hash == correction_key(cfg, None, make_key_facts())
 
 
 def test_prepare_without_a_store_reads_no_work(tmp_path: Path) -> None:

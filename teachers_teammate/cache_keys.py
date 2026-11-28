@@ -13,6 +13,7 @@ So a key changes only with an intended bump of ``AUTO_VERSION``, ``PROMPT_VERSIO
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from .config import Config, OcrConfig
@@ -227,6 +228,20 @@ def correction_key(config: Config, windows: RunWindows | None, facts: KeyFacts) 
     )
 
 
+def with_task_text(config: Config, key: str, task_text: Sequence[str]) -> str:
+    """Return the proofreading key of one document: *key* plus what it leaves alone.
+
+    *task_text* is what the document's marks really cover
+    (:func:`~teachers_teammate.domain.document_state.task_text_of`), so marking a
+    passage, or undoing that, makes the stored answer stale for the documents it touches and for
+    no other.  A document that leaves nothing alone, and every document while
+    ``skip_task_text`` is off, keeps the settings key itself.
+    """
+    if not task_text or not config.skip_task_text:
+        return key
+    return compute_config_hash(key, *task_text)
+
+
 def review_key(config: Config, windows: RunWindows | None = None) -> str:
     """Return the evaluation stage key for *config*.
 
@@ -246,16 +261,25 @@ def review_key(config: Config, windows: RunWindows | None = None) -> str:
 
 
 def expected_hashes(
-    config: Config, file: Path, windows: RunWindows | None, facts: KeyFacts
+    config: Config,
+    file: Path,
+    windows: RunWindows | None,
+    facts: KeyFacts,
+    *,
+    task_text: Sequence[str],
 ) -> ExpectedHashes:
     """Return the stage hashes the settings of *config* ask for, for the document *file*.
 
     *windows* is ``None`` while this computer has not been probed; the hashes then key the
-    settings alone, as the run's own base step does.
+    settings alone, as the run's own base step does.  *task_text* is what the document leaves
+    alone, which belongs to its proofreading and to no other stage; it has no default, so no
+    caller keys a marked document as if it had no marks.
     """
     return ExpectedHashes(
         ocr_config_hash=ocr_key(config, file, facts),
-        correction_config_hash=correction_key(config, windows, facts),
+        correction_config_hash=with_task_text(
+            config, correction_key(config, windows, facts), task_text
+        ),
         eval_config_hash=review_key(config, windows),
         correction_enabled=config.correction_enabled,
         evaluation_enabled=config.evaluation_enabled,

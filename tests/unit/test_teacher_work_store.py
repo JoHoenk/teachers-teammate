@@ -230,7 +230,7 @@ def test_the_stored_file_holds_the_version_first(tmp_path: Path) -> None:
 
     raw = json.loads(store.path_for(HASH).read_text(encoding="utf-8"))
     assert next(iter(raw)) == "version"
-    assert raw["version"] == WORK_VERSION
+    assert raw["version"] == 1  # nothing in it that an older app would lose
 
 
 def test_a_newer_file_is_not_overwritten_by_the_first_write(tmp_path: Path) -> None:

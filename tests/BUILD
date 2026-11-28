@@ -346,6 +346,12 @@ app_test(
 )
 
 app_test(
+    "unit/test_task_text.py",
+    size = "medium",
+    deps = _DOMAIN_LIB,
+)
+
+app_test(
     "unit/test_sentences.py",
     deps = _DOMAIN_LIB,
 )
@@ -1130,6 +1136,21 @@ app_test(
 app_test(
     "unit/test_state_repository.py",
     deps = _FORMAT_DEPS + _APPLICATION_LIB,
+)
+
+app_test(
+    "unit/test_task_marks.py",
+    deps = _FORMAT_DEPS + _APPLICATION_LIB,
+)
+
+app_test(
+    "unit/test_task_text_service.py",
+    deps = _FORMAT_DEPS + _APPLICATION_LIB,
+)
+
+app_test(
+    "unit/test_task_text_pass.py",
+    deps = _INFRASTRUCTURE_LIB,
 )
 
 app_test(

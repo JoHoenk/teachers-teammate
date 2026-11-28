@@ -146,7 +146,10 @@ def _touches(hunk: Hunk, start: int, end: int) -> bool:
 # ── The teacher's work ────────────────────────────────────────────────────────
 
 #: Version of a stored work file.  A file of a newer version is never read or overwritten.
-WORK_VERSION = 1
+WORK_VERSION = 2
+
+#: The version a work file without "not task" entries is written as: an older app reads it whole.
+_PLAIN_WORK_VERSION = 1
 
 
 class WorkTooNewError(Exception):
@@ -225,16 +228,22 @@ class TeacherWork:
     """The file name at the last write; for people looking at the folder, never a key."""
     transcription: TranscriptionWork | None = None
     corrections: CorrectionsWork | None = None
+    not_task: tuple[str, ...] = ()
+    """The lines of printed text the teacher proofreads after all, although a mark covers them."""
 
     @property
     def empty(self) -> bool:
         """Whether there is nothing left to store: the file is deleted."""
-        return self.transcription is None and self.corrections is None
+        return self.transcription is None and self.corrections is None and not self.not_task
 
     def to_dict(self) -> dict:
-        """Return the stored shape of this work, ``version`` first."""
-        return {
-            "version": WORK_VERSION,
+        """Return the stored shape of this work, ``version`` first.
+
+        Only a work with "not task" entries is written as :data:`WORK_VERSION`: an older app
+        would drop them on its next write, so it must leave such a file alone.
+        """
+        stored: dict = {
+            "version": WORK_VERSION if self.not_task else _PLAIN_WORK_VERSION,
             "source_hash": self.source_hash,
             "name": self.name,
             "transcription": (
@@ -259,6 +268,9 @@ class TeacherWork:
                 }
             ),
         }
+        if self.not_task:
+            stored["not_task"] = list(self.not_task)
+        return stored
 
     @classmethod
     def from_dict(cls, raw: Mapping) -> TeacherWork:
@@ -281,6 +293,7 @@ class TeacherWork:
             name=str(raw.get("name") or ""),
             transcription=_transcription_from(raw.get("transcription")),
             corrections=_corrections_from(raw.get("corrections")),
+            not_task=tuple(str(line) for line in raw.get("not_task") or ()),
         )
 
 
@@ -599,6 +612,16 @@ def kept_over(
     if work.corrections is None or current.corrections_work is None:
         return work
     return replace(work, corrections=replace(work.corrections, kept_under=expected_correction_hash))
+
+
+def with_not_task(work: TeacherWork, lines: Iterable[str]) -> TeacherWork:
+    """Return *work* with *lines* proofread after all, although a mark covers them."""
+    return replace(work, not_task=tuple(dict.fromkeys((*work.not_task, *lines))))
+
+
+def without_not_task(work: TeacherWork) -> TeacherWork:
+    """Return *work* with no line proofread after all: the marks hold again."""
+    return replace(work, not_task=())
 
 
 def without_corrections(work: TeacherWork) -> TeacherWork:

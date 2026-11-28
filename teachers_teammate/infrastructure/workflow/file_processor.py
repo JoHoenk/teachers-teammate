@@ -8,12 +8,15 @@ The work of a stage is in its own module — :mod:`reading_stage`, :mod:`correct
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 import logging
 from pathlib import Path
 import threading
 
 from ...domain.document_state import machine_texts
+from ...domain.formatted_text import TextFormat
+from ...domain.task_text import Segment, locate
 from ...domain.teacher_work import CurrentTexts, current_texts
 from ...exceptions import (
     FILE_GONE_MESSAGE,
@@ -33,7 +36,7 @@ from ...interfaces import (
 )
 from ...messages import input_read_failed
 from ...texts import report as report_text
-from ..ocr_formats import OcrOutputPostprocessor
+from ..ocr_formats import OcrOutputPostprocessor, plain_text_of
 from ..reporting import StdoutReporter
 from ..run_stats import RunStatsCollector, StepSampler
 from .cache_service import CacheContext, CacheReconciliationService
@@ -146,33 +149,63 @@ class FileProcessor:
         (:class:`~teachers_teammate.infrastructure.workflow.processing_result.Stopped`) are
         neither a success nor a failure.
         """
+        return self._guarded(lambda: self._process(file))
+
+    def read(self, file: Path) -> ProcessingResult | None:
+        """Read *file* up to its transcription, and keep it; ``None`` when it was read.
+
+        The reading pass of a run: nothing is proofread, and the reading is not announced as
+        done, because the file's turn reads it from what this one stored and reports all of it.
+        Otherwise the result is what its turn reports without reading it again: a failure, a
+        file left out, or a stop.
+        """
+        return self._guarded(lambda: self._read_only(file))
+
+    def _read_only(self, file: Path) -> None:
+        """Read *file* up to its transcription; a way out of it raises."""
+        self._reading.run(file, self._prepare_cache(file), announce=False)
+
+    def _process(self, file: Path) -> ProcessingResult:
+        """Run every stage of *file*; a way out of it raises (see :meth:`process`)."""
+        reading = self._reading.run(file, self._prepare_cache(file))
+        texts = self._current_texts(reading.ctx)
+
+        # The extracted text is anonymized once, and only when something asks for it: a
+        # proofreading that is not served from the cache.  Without proofreading nothing
+        # else would ask, so it runs here to fill the session cache the previews read.
+        anonymized = self._names.lazy(texts.transcription)
+        if self._correction is None and self._names.enabled and not self._shared.stopping():
+            anonymized("")  # the anonymized text file, not one stage's request
+
+        proofread = self._proofreading.run(
+            file, texts, reading.preview_img, reading.ctx, anonymized
+        )
+        # Again: a new proofreading makes the teacher's corrections part not apply.
+        texts = self._current_texts(proofread.ctx)
+        reviewed = self._review.run(file, texts, reading.preview_img, proofread=proofread)
+        result = self._outputs.write(
+            file,
+            OutputTexts(
+                texts.transcription,
+                texts.corrected,
+                reviewed.text,
+                task=self._task_segments(
+                    proofread.ctx, texts.corrected, texts.transcription_format
+                ),
+            ),
+            reading.preview_img,
+            reading.source_image,
+            proofread.warnings + reviewed.warnings,
+            text_format=texts.transcription_format,
+            review=proofread.review,
+            anonymized_raw=self._names.reusable_text(anonymized, self._text_anonymizer),
+        )
+        return replace(result, correction_warning=proofread.stored_warning)
+
+    def _guarded[T](self, work: Callable[[], T]) -> T | ProcessingResult:
+        """Return what *work* returns, or the result each way out of a file ends in."""
         try:
-            reading = self._reading.run(file, self._prepare_cache(file))
-            texts = self._current_texts(reading.ctx)
-
-            # The extracted text is anonymized once, and only when something asks for it: a
-            # proofreading that is not served from the cache.  Without proofreading nothing
-            # else would ask, so it runs here to fill the session cache the previews read.
-            anonymized = self._names.lazy(texts.transcription)
-            if self._correction is None and self._names.enabled and not self._shared.stopping():
-                anonymized("")  # the anonymized text file, not one stage's request
-
-            proofread = self._proofreading.run(
-                file, texts, reading.preview_img, reading.ctx, anonymized
-            )
-            # Again: a new proofreading makes the teacher's corrections part not apply.
-            texts = self._current_texts(proofread.ctx)
-            reviewed = self._review.run(file, texts, reading.preview_img, proofread=proofread)
-            result = self._outputs.write(
-                file,
-                OutputTexts(texts.transcription, texts.corrected, reviewed.text),
-                reading.preview_img,
-                reading.source_image,
-                proofread.warnings + reviewed.warnings,
-                text_format=texts.transcription_format,
-                review=proofread.review,
-                anonymized_raw=self._names.reusable_text(anonymized, self._text_anonymizer),
-            )
+            return work()
         except RunStoppedError:
             # A cancelled request that no stage turned into a result itself: nothing of that
             # step was stored, and the steps before it already are.
@@ -185,9 +218,21 @@ class FileProcessor:
             self._shared.sampler.finish_sample(usable=False)  # a failed step's requests say nothing
             _logger.error("%s stage failed (%s): %s", exc.stage or "pipeline", exc.kind, exc)
             return ProcessingResult.failure(str(exc))
-        return replace(result, correction_warning=proofread.stored_warning)
 
     # ── Stage helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _task_segments(
+        ctx: CacheContext, corrected: str, text_format: TextFormat
+    ) -> tuple[Segment, ...]:
+        """Return where the printed text stands in the plain *corrected* text, for the Word file.
+
+        The corrected text has had the student's stretches changed, so the marks are matched in
+        it again; nothing when the run leaves no text alone.
+        """
+        if not corrected or not (ctx.task_marks or ctx.not_task):
+            return ()
+        return locate(plain_text_of(corrected, text_format), ctx.task_marks, ctx.not_task)
 
     @staticmethod
     def _current_texts(ctx: CacheContext) -> CurrentTexts:

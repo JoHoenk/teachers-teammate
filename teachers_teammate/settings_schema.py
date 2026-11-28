@@ -398,6 +398,10 @@ SETTINGS: tuple[Setting, ...] = (
         SettingScope.RUN,
         lambda v: normalize_output_mode(str(v)),
     ),
+    # Whether a run leaves the printed text of a worksheet out of the proofreading: headers, the
+    # tasks and form labels repeat in every document of one worksheet, the student's text does
+    # not.  A document keeps what was left alone, and its proofreading key says so.
+    Setting("skip_task_text", True, SettingScope.RUN, _flag),
     # ── Evaluation ────────────────────────────────────────────────────────────
     Setting("evaluation_enabled", False, SettingScope.RUN, _flag),
     Setting("evaluate_provider", PROVIDER_OLLAMA, SettingScope.RUN, _provider_of(Stage.EVALUATION)),

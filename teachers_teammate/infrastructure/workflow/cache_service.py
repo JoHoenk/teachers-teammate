@@ -13,10 +13,11 @@ from ...cache_keys import (
     preview_key,
     review_key,
     sent_record,
+    with_task_text,
 )
 from ...config import Config
 from ...domain.context_budget import RunWindows
-from ...domain.document_state import DocumentState
+from ...domain.document_state import DocumentState, task_text_of
 from ...domain.freshness import (
     ExpectedHashes,
     correction_kept_over_settings,
@@ -28,6 +29,7 @@ from ...domain.ocr_prompt import get_ocr_prompt
 from ...domain.page_layout import ScanBox
 from ...domain.stages import Stage
 from ...domain.teacher_work import TeacherWork, text_identity
+from ..ocr_formats import plain_text_of
 from ..preview_image_store import PreviewImageStore
 from ..state_repository import OcrResultRecord, StateRepository, compute_file_hash
 from ..storage_root import document_stem
@@ -52,6 +54,10 @@ class CacheContext:
     proofreading_kept: bool = False
     """Whether the stored proofreading is kept although the settings changed (the teacher
     worked on its corrections).  The run says so instead of "using cached output"."""
+    task_marks: tuple[str, ...] = ()
+    """The printed text this run leaves alone; empty while ``skip_task_text`` is off."""
+    not_task: tuple[str, ...] = ()
+    """The lines the teacher proofreads after all, although a mark covers them."""
 
 
 # ── Service ───────────────────────────────────────────────────────────────────
@@ -106,7 +112,10 @@ class CacheReconciliationService:
 
         ocr_prompt = get_ocr_prompt(cfg.language)
         ocr_config_hash = self._ocr_config_hash(file)
-        correction_config_hash = self._correction_config_hash()
+        # The task text this document leaves alone belongs to its proofreading key alone.
+        correction_config_hash = with_task_text(
+            cfg, self._correction_config_hash(), task_text_of(state, work, plain_text_of)
+        )
         eval_config_hash = self._eval_config_hash()
         preview_config_hash = preview_key(cfg, file, source_hash, self._facts)
 
@@ -156,6 +165,8 @@ class CacheReconciliationService:
             preview_config_hash=preview_config_hash,
             work=work,
             proofreading_kept=correction_kept_over_settings(flags),
+            task_marks=state.task_marks if cfg.skip_task_text else (),
+            not_task=work.not_task if cfg.skip_task_text and work is not None else (),
         )
 
     def persist_preview_artifact(

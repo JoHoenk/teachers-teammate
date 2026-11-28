@@ -34,6 +34,7 @@ from ..run_rules import resolve_run_windows
 from .anonymization import AnonymizationService
 from .model_recommendations import ModelRecommendationService
 from .ports import OllamaClientFactory
+from .task_text import TaskTextService
 
 
 def state_store_for(
@@ -92,6 +93,7 @@ class RunService:
         parts: RunParts,
         recommendations: ModelRecommendationService,
         anonymization: AnonymizationService,
+        task_text: TaskTextService,
     ) -> None:
         self._discovery = parts.discovery
         self._pipeline_factory = parts.pipeline_factory
@@ -104,6 +106,7 @@ class RunService:
         self._client_factory = parts.client_factory
         self._recommendations = recommendations
         self._anonymization = anonymization
+        self._task_text = task_text
         # How many runs this process is running right now: 0 unless one is inside its call.
         self._runs_going = 0
         self._runs_lock = threading.Lock()
@@ -182,6 +185,7 @@ class RunService:
                         key_facts=self._key_facts,
                         work_store=self._work_store,
                         samples=self._samples,
+                        task_text=self._task_text,
                         client_factory=self._client_factory,
                     ),
                     progress=progress,

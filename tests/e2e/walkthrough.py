@@ -2079,7 +2079,12 @@ class Walk:
         self._assert_docx(self._run_docx(PNG_NAME), (TYPED_WORD,))
 
     def _step_stop_after_file(self) -> None:
-        """Re-read everything, press Stop once, and check the run stopped after one file."""
+        """Re-read everything, press Stop once, and check the run stopped after one file.
+
+        Three documents are read first, to find their task text, before any is proofread; Stop
+        pressed while that pass reads the second ends the run once it is read: nothing is
+        proofread, and the third is never read.
+        """
         table = self._table()
         order = table.queued_source_ids()
         if len(order) != 3:
@@ -2092,18 +2097,22 @@ class Walk:
         )
         self._recorder.begin()
         self._recorder.arm_stop_point(
-            "file_started", when=lambda args, second=order[1]: args[0] == second, clicks=1
+            "read_first", when=lambda args, second=order[1]: args[0] == second, clicks=1
         )
         self._rerun_recognition()
         summary = self._wait_run("the stopped run")
         if summary.status is not RunStatus.STOPPED:
             raise _Failed(f"the run ended {summary.status}")
-        if self._names(summary.succeeded) != self._names(order[:2]):
-            raise _Failed(f"succeeded is {list(summary.succeeded)}")
-        if self._names(summary.not_started) != self._names(order[2:]):
+        if summary.succeeded or summary.failed or summary.stopped:
+            raise _Failed(
+                f"succeeded {list(summary.succeeded)}, failed {list(summary.failed)}, "
+                f"stopped {list(summary.stopped)}"
+            )
+        if self._names(summary.not_started) != self._names(order):
             raise _Failed(f"not_started is {list(summary.not_started)}")
-        if summary.failed or summary.stopped:
-            raise _Failed(f"failed {list(summary.failed)}, stopped {list(summary.stopped)}")
+        read = table.row_for(order[1])
+        if read is None or read.ocr is StageState.NONE:
+            raise _Failed(f"{Path(order[1]).name} lost the reading it was on when Stop came")
         row = table.row_for(order[2])
         if row is None or row.ocr is not StageState.NONE:
             raise _Failed(

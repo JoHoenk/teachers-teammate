@@ -201,6 +201,12 @@ misses.
   `gemma4:12b` instead of `gemma4:e4b`. **Settings → This computer** has a speed test.
 - **Check what the AI was asked.** **What the AI is asked** (in **Options…** of **Proofread**) and
   **What is sent for this file…** show the exact instructions and text.
+- **Task text is left alone.** The header, the tasks and the form labels repeat on every sheet of a
+  worksheet; the student's own words do not. From three documents on, a run recognises them and
+  sends only the student's text: the task lines come back as they were read, grey in the Word file.
+  **Options…** of **Proofread** has the switch **Don't proofread the task text**. Below three
+  documents nothing is recognised; **Proofread this after all** on the strip above the text sends
+  it for one document (see *Task text* in *Using the app*).
 
 **Content review.** The review answers whatever its **Instructions** ask (**Options…** of
 **Review content**). Write them for your task, for example:

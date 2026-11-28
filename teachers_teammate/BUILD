@@ -84,6 +84,7 @@ _DOMAIN_SRCS = [
     "domain/settings_notice.py",
     "domain/stages.py",
     "domain/system_facts.py",
+    "domain/task_text.py",
     "domain/teacher_work.py",
     "domain/text_chunks.py",
 ]
@@ -224,6 +225,7 @@ _INFRASTRUCTURE_SRCS = [
     "infrastructure/workflow/stage_shared.py",
     "infrastructure/workflow/proofread_text.py",
     "infrastructure/workflow/proofread_unit.py",
+    "infrastructure/workflow/task_text_pass.py",
 ] + glob(["infrastructure/providers/*.py"])
 
 # application/: the service the adapters call; imports infrastructure/, domain/, core.
@@ -259,6 +261,7 @@ _APPLICATION_SRCS = [
     "application/speed_estimates.py",
     "application/stored_results.py",
     "application/setup_plan.py",
+    "application/task_text.py",
 ]
 
 # The command-line adapter and the module entry point.

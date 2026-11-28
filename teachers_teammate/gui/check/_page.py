@@ -49,6 +49,7 @@ from ...application.check_document import (
 from ...application.check_items import CheckItem, ItemKind, countable_keys, minor_corrections
 from ...domain.page_layout import Mark
 from ...domain.proofreading.carry import ReadingFix
+from ...domain.proofreading.quotes import map_forward
 from ...domain.proofreading.review import AlignedReview
 from ...domain.proofreading.text_edits import TextEdit
 from ...domain.teacher_work import (
@@ -306,6 +307,9 @@ class CheckBody(QWidget):
     """*Hide this* was chosen in *What was read*: the words to hide from now on."""
     keep_requested = Signal(str)
     """*Don't hide this* was chosen in *What was read*: the name to send as written."""
+    task_text_again = Signal(bool)
+    """The strip of a document's printed text was answered: ``True`` for *Proofread this after
+    all*, ``False`` for *Leave it alone again*."""
     layout_changed = Signal(object)
     """The teacher dragged a pane: the :class:`CheckLayout` the tab has now."""
 
@@ -334,6 +338,7 @@ class CheckBody(QWidget):
 
         self.banner = _Banner()
         self.banner.action_clicked.connect(self._on_banner_action)
+        self._banner_task: bool | None = None  # what the strip's button sends, on a task strip
         layout.addWidget(self.banner)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -630,8 +635,22 @@ class CheckBody(QWidget):
         plain = self._masking.mask(doc.corrected_plain)
         chosen = self.panel.chosen
         self.final_view.set_marks(marks, plain=plain, chosen=chosen)
+        self.final_view.set_task_ranges(self._task_in_corrected(doc), plain=plain)
+        self.read_view.set_task_ranges(doc.task_segments, plain=doc.raw_plain)
         self.marked_view.show_document(doc, self._masking, chosen=chosen)
         self.panel.set_note("" if self.final_view.mapped else txt.COULD_NOT_MARK)
+
+    def _task_in_corrected(self, doc: CheckDocument) -> tuple[tuple[int, int], ...]:
+        """Return the printed text's spans in the corrected text, as *Final text* shows it.
+
+        The spans are offsets in the transcription; a correction moves the words after it, and
+        hidden names shift them again, so both are carried the way the marks carry them.
+        """
+        hunks = tuple(change.hunk for change in doc.aligned.changes) if doc.aligned else ()
+        return tuple(
+            self._masking.carry(map_forward((start, end), hunks), doc.corrected_plain)
+            for start, end in doc.task_segments
+        )
 
     def _on_cursor_moved(self) -> None:
         """The cursor moved in one of the texts: the scan follows the view that is in front."""
@@ -732,6 +751,7 @@ class CheckBody(QWidget):
         reading fix left behind: it is shown once, until the next document or the next fix.
         """
         doc = self._doc
+        self._banner_task = None
         if doc is None:
             self.banner.hide_message()
             return
@@ -754,6 +774,17 @@ class CheckBody(QWidget):
         if doc.warning:
             self.banner.show_message(doc.warning)
             return
+        task = check_text.task_text_notice(len(doc.task_segments))
+        if task:
+            self.banner.show_message(task, action=check_text.PROOFREAD_TASK_TEXT_AGAIN)
+            self._banner_task = True
+            return
+        if doc.task_text_taken_back:
+            self.banner.show_message(
+                check_text.TASK_TEXT_PROOFREAD, action=check_text.LEAVE_TASK_TEXT_ALONE
+            )
+            self._banner_task = False
+            return
         self.banner.hide_message()
 
     def _refresh_panel_visibility(self) -> None:
@@ -763,9 +794,12 @@ class CheckBody(QWidget):
         self.panel.setVisible(wanted)
 
     def _on_banner_action(self) -> None:
-        """Do what the strip's button offers: show the names again, or edit anyway."""
+        """Do what the strip's button offers: show the names, edit anyway, or switch the print."""
         if self._masking.error:
             self.display_anonymized_changed.emit(False)
+            return
+        if self._banner_task is not None:
+            self.task_text_again.emit(self._banner_task)
             return
         self._edit_allowed = True
         self._refresh()
@@ -980,6 +1014,8 @@ class CheckPage(QWidget):
     """*Hide this* was chosen in *What was read*: the words to hide from now on."""
     keep_requested = Signal(str)
     """*Don't hide this* was chosen in *What was read*: the name to send as written."""
+    task_text_again = Signal(bool)
+    """The strip of the document's printed text was answered (see ``CheckBody``)."""
     text_zoom_changed = Signal(int)
     item_shown = Signal(str)
     """An item became the one the card shows: its key."""
@@ -1030,6 +1066,7 @@ class CheckPage(QWidget):
         self.body.anonymization_needed.connect(self._refresh_hide_names_box)
         self.body.hide_requested.connect(self.hide_requested)
         self.body.keep_requested.connect(self.keep_requested)
+        self.body.task_text_again.connect(self.task_text_again)
         self.body.display_anonymized_changed.connect(self.display_anonymized_changed)
         self.body.text_zoom_changed.connect(self.text_zoom_changed)
         self.body.item_shown.connect(self.item_shown)

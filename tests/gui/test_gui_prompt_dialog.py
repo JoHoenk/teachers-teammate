@@ -30,7 +30,7 @@ def _dialog(qtbot, prompt: str = "", **kwargs) -> _PromptDialog:
 
 
 def _proofreading_dialog(
-    qtbot, notes: str = "", prompts=_STEPS, explanations=("", "review")
+    qtbot, notes: str = "", prompts=_STEPS, explanations=("", "review"), skip_task_text=True
 ) -> _ProofreadingDialog:
     """Build the proofreading options dialog as the panel does, and show it."""
     dlg = _ProofreadingDialog(
@@ -38,6 +38,7 @@ def _proofreading_dialog(
         notes,
         lambda corrections_only: prompts[:1] if corrections_only else prompts,
         explanations=explanations,
+        skip_task_text=skip_task_text,
     )
     qtbot.addWidget(dlg)
     dlg.show()
@@ -250,13 +251,30 @@ def test_explanations_options_round_trip_in_the_dialog(qtbot) -> None:
     """
     dlg = _proofreading_dialog(qtbot, explanations=("German", "text"))
 
-    assert dlg.explanation_values() == {
+    assert dlg.option_values() == {
         "explanation_language": "German",
         "correction_output": "text",
+        "skip_task_text": True,
     }
 
     dlg._corrections_only.setChecked(False)
-    assert dlg.explanation_values()["correction_output"] == "review"
+    assert dlg.option_values()["correction_output"] == "review"
+
+
+@pytest.mark.gui
+def test_the_task_text_switch_round_trips_in_the_dialog(qtbot) -> None:
+    """
+    Given  the proofreading options opened with the task text switch off
+    When   the values are read, then the box is ticked
+    Then   it says to proofread the task text until the box says otherwise
+    """
+    dlg = _proofreading_dialog(qtbot, skip_task_text=False)
+
+    assert dlg._skip_task_text.isChecked() is False
+    assert dlg.option_values()["skip_task_text"] is False
+
+    dlg._skip_task_text.setChecked(True)
+    assert dlg.option_values()["skip_task_text"] is True
 
 
 # ── the panel hands the dialog what the app always adds ────────────────────────

@@ -63,6 +63,14 @@ class DocumentStateView:
     """Explanations and unclear expressions; ``None`` when the file has no review."""
     correction_warning: str = ""
     """Why the file has no (or only a partial) review; empty when there is nothing to say."""
+    task_marks: tuple[str, ...] = ()
+    """The passages of the document that are printed text, not the student's writing.
+
+    What a run leaves out of the proofreading; the window shows them in grey and the comparison
+    proofreads the same stretches a run would."""
+    not_task: tuple[str, ...] = ()
+    """The lines the teacher proofreads after all, although a mark covers them: their work, so a
+    view built straight from the cache has none."""
     sent: dict[str, SentStatus] = field(default_factory=dict)
     """How each stored result was sent, keyed by stage (``correction``, ``evaluation``).
 
@@ -132,6 +140,7 @@ def to_view(input_file: Path, state: DocumentState) -> DocumentStateView:
         page_images=state.pages,
         original_images=state.originals,
         correction_config_hash=state.correction_config_hash,
+        task_marks=state.task_marks,
     )
 
 

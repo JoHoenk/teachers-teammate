@@ -24,7 +24,7 @@ from teachers_teammate.domain.proofreading.review import (
     edit_note,
 )
 from teachers_teammate.domain.proofreading.text_edits import TextEdit
-from teachers_teammate.gui._formatted_text import document_from_qt
+from teachers_teammate.gui._formatted_text import TASK_TEXT_COLOUR, document_from_qt
 from teachers_teammate.gui.check import _style
 from teachers_teammate.gui.check._masking import Masking
 from teachers_teammate.gui.check._text_views import (
@@ -56,6 +56,7 @@ def _document(
     *,
     text_format: TextFormat = "plain",
     review: bool = True,
+    task_marks: tuple[str, ...] = (),
 ) -> CheckDocument:
     """Return the Check tab's data for a stored document with a proofreading."""
     raw_plain = TextFormatter.plain_text(raw, text_format)
@@ -86,6 +87,7 @@ def _document(
             raw_text_format=text_format,
             correction_review=notes,
             correction_warning="",
+            task_marks=task_marks,
             sent={},
             page_images=(),
             original_images=(),
@@ -140,6 +142,60 @@ def _colour_at(view: CheckTextView, word: str) -> str:
     cursor.setPosition(document.toPlainText().index(word))
     cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor)
     return cursor.charFormat().foreground().color().name()
+
+
+def test_the_printed_text_is_offered_as_ranges_of_the_reading() -> None:
+    """
+    Given  a document marked with the header line as printed text
+    When   the Check tab builds its data
+    Then   the printed line is a range of the plain transcription, and nothing else is
+    """
+    doc = _document(task_marks=(RAW,))
+
+    assert doc.task_segments == ((0, len(RAW)),)
+
+
+def test_a_mark_the_text_no_longer_holds_leaves_no_range() -> None:
+    """
+    Given  a document marked with a passage that is not in the text any more
+    When   the Check tab builds its data
+    Then   nothing is drawn as printed text: the mark is ignored, as the proofreading ignores it
+    """
+    doc = _document(task_marks=("Ein ganz anderer Satz.",))
+
+    assert doc.task_segments == ()
+
+
+def test_the_printed_text_is_drawn_grey_under_the_marks(qtbot) -> None:
+    """
+    Given  the reading of a document whose first words are printed text
+    When   the view is filled with it
+    Then   the printed words are drawn grey, and before the review's marks so a mark wins
+    """
+    doc = _document(task_marks=(RAW,))
+    view = _view(qtbot, ReadView, doc)
+    view.set_text(doc.raw_text, doc.text_format)
+
+    view.set_task_ranges(doc.task_segments, plain=doc.raw_plain)
+
+    selections = view._task_selections()
+    assert [selection.cursor.selectedText() for selection in selections] == [RAW]
+    assert selections[0].format.foreground().color().name() == QColor(TASK_TEXT_COLOUR).name()
+
+
+def test_the_ranges_of_another_text_are_dropped(qtbot) -> None:
+    """
+    Given  a view that shows the transcription as it was sent, with names hidden
+    When   it is given the ranges of the plain transcription
+    Then   nothing is drawn: the offsets are of another text
+    """
+    doc = _document(task_marks=(RAW,))
+    view = _view(qtbot, ReadView, doc)
+    view.set_text(doc.raw_text, doc.text_format)
+
+    view.set_task_ranges(doc.task_segments, plain="Ein anderes " + doc.raw_plain)
+
+    assert view._task_selections() == []
 
 
 def _canonical(text: str, text_format: TextFormat) -> str:

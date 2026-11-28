@@ -36,8 +36,10 @@ from teachers_teammate.domain.teacher_work import (
     with_checked,
     with_corrected,
     with_looked_at,
+    with_not_task,
     with_transcription,
     without_corrections,
+    without_not_task,
     without_work_for_reading,
 )
 
@@ -820,8 +822,35 @@ def test_work_round_trips_through_its_stored_shape() -> None:
 
     stored = work.to_dict()
 
+    assert stored["version"] == 1
+    assert TeacherWork.from_dict(stored) == work
+
+
+def test_work_with_not_task_entries_is_written_as_the_newer_version() -> None:
+    """
+    Given  work that proofreads two printed lines after all
+    When   it is written and read back
+    Then   it is the same work, and its version keeps an older app from writing over it
+    """
+    work = _work(not_task=("Gymnasium Musterstadt", "Name:"))
+
+    stored = work.to_dict()
+
     assert stored["version"] == WORK_VERSION
     assert TeacherWork.from_dict(stored) == work
+
+
+def test_not_task_entries_are_added_once_and_taken_back_together() -> None:
+    """
+    Given  work with one line proofread after all
+    When   that line and another are added, and then all are taken back
+    Then   each line is held once, and none is left after taking them back
+    """
+    work = with_not_task(_work(not_task=("Name:",)), ["Name:", "Klasse:"])
+
+    assert work.not_task == ("Name:", "Klasse:")
+    assert not work.empty
+    assert without_not_task(work).not_task == ()
 
 
 def test_work_of_a_newer_version_is_refused() -> None:

@@ -49,8 +49,9 @@ from ..domain.key_facts import KeyFacts
 from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import output_folder_problem
 from ..domain.run_summary import KeepAwakeState, RunSummary
+from ..domain.task_text import MIN_DOCUMENTS
 from ..exceptions import OllamaUnreachableError, ProviderNotAvailableError
-from ..interfaces import ImageUnit, PreparedPreview, ProgressCallbacks, Reporter
+from ..interfaces import ImageUnit, PreparedPreview, ProgressCallbacks, Reporter, TaskTextMarker
 from ..messages import preview_needs_images
 from ..texts import report as report_text
 from ..texts.dialogs import folder_problem_text
@@ -76,6 +77,8 @@ from .workflow.coordinator import run_files as _run_files_coordinator
 from .workflow.file_processor import FileProcessor, FileProcessorDeps
 from .workflow.ocr_service import OCRStageService
 from .workflow.preprocess_service import PreprocessService
+from .workflow.processing_result import ProcessingResult
+from .workflow.task_text_pass import mark_task_text
 
 _logger = logging.getLogger(__name__)
 
@@ -116,6 +119,9 @@ class PipelineDependencies:
     # What this computer adds to a cache key.  The application layer passes the one its queue and
     # commands compute keys with, so a run and the queue cannot key differently.
     key_facts: KeyFacts = field(kw_only=True)
+    # Finds the printed text the queue shares, between the reading pass and the rest.  The
+    # application layer passes its service (``None``: every file is proofread as it was read).
+    task_text: TaskTextMarker | None = None
 
 
 # ── Public helpers ─────────────────────────────────────────────────────────
@@ -247,6 +253,7 @@ class OCRPipeline:
         self._cache_service: CacheReconciliationService | None = deps.cache_service
         self._preprocess_service: PreprocessService | None = deps.preprocess_service
         self._ocr_stage_service: OCRStageService | None = deps.ocr_stage_service
+        self._task_text = deps.task_text
         self._client_factory: ClientFactory = deps.client_factory
 
     # ── public ────────────────────────────────────────────────────────────
@@ -279,7 +286,10 @@ class OCRPipeline:
         if not files:
             return self._report_no_files()
         self._reporter.status(report_text.files_to_process(len(files)))
-        summary = self._run_files(files, file_processor, start.tmp_dir, start.artifact_store)
+        unread = self._mark_task_text(files, file_processor)
+        summary = self._run_files(
+            files, file_processor, start.tmp_dir, start.artifact_store, unread=unread
+        )
         run_report.summary(summary, self._reporter)
         return summary
 
@@ -420,10 +430,18 @@ class OCRPipeline:
         file_processor: FileProcessor,
         tmp_dir: Path,
         artifact_store: PreviewImageStore,
+        *,
+        unread: dict[Path, ProcessingResult],
     ) -> RunSummary:
+        """Run every file; one the reading pass could not read reports why, without a second try."""
+
+        def process(file: Path) -> ProcessingResult:
+            result = unread.pop(file, None)
+            return result if result is not None else file_processor.process(file)
+
         return _run_files_coordinator(
             files,
-            process_file=file_processor.process,
+            process_file=process,
             cleanup_tmp=lambda: self._cleanup_tmp(tmp_dir, artifact_store),
             stop_event=self._stop_event,
             stop_after_file_event=self._stop_after_file_event,
@@ -431,6 +449,41 @@ class OCRPipeline:
             on_file_done=self._progress.on_file_done,
             reporter=self._reporter,
         )
+
+    def _mark_task_text(
+        self, files: list[Path], file_processor: FileProcessor
+    ) -> dict[Path, ProcessingResult]:
+        """Read the queue first and mark the printed text it shares, before anything is proofread.
+
+        Two passes are only made when there is something to compare: the switch is on and the
+        queue holds at least :data:`~teachers_teammate.domain.task_text.MIN_DOCUMENTS`
+        documents.  A stop in the reading pass, by either button, ends the work there: nothing is
+        proofread, and the run that follows reports every file as not started.
+        """
+        marker = self._task_text
+        if marker is None or not self._config.skip_task_text or len(files) < MIN_DOCUMENTS:
+            return {}
+        return mark_task_text(
+            files,
+            read=file_processor.read,
+            mark=lambda queued: marker.mark_a_queue(self._config, queued),
+            stopping=self._stopping,
+            reporter=self._reporter,
+            started=self._on_read_first,
+        ).unread
+
+    def _stopping(self) -> bool:
+        """Return whether the run was asked to stop."""
+        return bool(
+            (self._stop_event and self._stop_event.is_set())
+            or (self._stop_after_file_event and self._stop_after_file_event.is_set())
+        )
+
+    def _on_read_first(self, file: Path, idx: int, total: int) -> None:
+        """Remember which file the reading pass is on, then pass the event on."""
+        self._current_source_id = str(file.resolve())
+        if self._progress.on_read_first is not None:
+            self._progress.on_read_first(self._current_source_id, file.name, idx, total)
 
     def _on_file_started(self, source_id: str, name: str, idx: int, total: int) -> None:
         """Remember which file the run is on, then pass the event on."""

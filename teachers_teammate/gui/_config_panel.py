@@ -151,6 +151,7 @@ class _ProofreadingDialog(QDialog):
         parent: QWidget | None = None,
         *,
         explanations: tuple[str, str],
+        skip_task_text: bool,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -158,6 +159,7 @@ class _ProofreadingDialog(QDialog):
         self._prompts = prompts
         vbox = QVBoxLayout(self)
         vbox.addWidget(self._build_explanations_group(*explanations))
+        vbox.addWidget(self._build_task_text_group(skip_task_text))
         vbox.addWidget(self._build_notes_group(notes), stretch=1)
         vbox.addWidget(self._build_prompts_section())
         buttons = QDialogButtonBox(
@@ -172,8 +174,8 @@ class _ProofreadingDialog(QDialog):
         """Return the notes as the dialog leaves them: stripped, at most ``NOTES_LIMIT``."""
         return self._notes.toPlainText().strip()[:NOTES_LIMIT].rstrip()
 
-    def explanation_values(self) -> dict[str, object]:
-        """Return ``explanation_language`` and ``correction_output``."""
+    def option_values(self) -> dict[str, object]:
+        """Return ``explanation_language``, ``correction_output`` and ``skip_task_text``."""
         return {
             "explanation_language": str(self._explanation_language.currentData() or ""),
             "correction_output": (
@@ -181,6 +183,7 @@ class _ProofreadingDialog(QDialog):
                 if self._corrections_only.isChecked()
                 else CorrectionOutput.REVIEW
             ),
+            "skip_task_text": self._skip_task_text.isChecked(),
         }
 
     def _build_explanations_group(self, language: str, output_mode: str) -> QGroupBox:
@@ -191,7 +194,7 @@ class _ProofreadingDialog(QDialog):
 
         self._explanation_language = QComboBox()
         self._explanation_language.addItem(txt.SAME_AS_TEXT, "")
-        for name in _LANGUAGES:  # the item data is what explanation_values() reads back
+        for name in _LANGUAGES:  # the item data is what option_values() reads back
             self._explanation_language.addItem(name, name)
         index = self._explanation_language.findData(language)
         self._explanation_language.setCurrentIndex(max(index, 0))
@@ -203,6 +206,16 @@ class _ProofreadingDialog(QDialog):
         self._corrections_only.setChecked(output_mode == CorrectionOutput.TEXT)
         self._corrections_only.toggled.connect(self._sync_prompts)
         form.addRow("", self._corrections_only)
+        return group
+
+    def _build_task_text_group(self, skip_task_text: bool) -> QGroupBox:
+        """Build the switch that leaves a worksheet's printed text alone."""
+        group = QGroupBox(txt.TASK_TEXT_HEADING)
+        vbox = QVBoxLayout(group)
+        self._skip_task_text = QCheckBox(txt.SKIP_TASK_TEXT)
+        self._skip_task_text.setToolTip(txt.SKIP_TASK_TEXT_TOOLTIP)
+        self._skip_task_text.setChecked(skip_task_text)
+        vbox.addWidget(self._skip_task_text)
         return group
 
     def _build_notes_group(self, notes: str) -> QGroupBox:
@@ -600,10 +613,11 @@ class ConfigPanel(QScrollArea):
                 str(settings.get("explanation_language", DEFAULTS["explanation_language"])),
                 str(settings.get("correction_output", DEFAULTS["correction_output"])),
             ),
+            skip_task_text=bool(settings.get("skip_task_text", DEFAULTS["skip_task_text"])),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.set_correction_notes(dialog.notes())
-            self.update_settings(dialog.explanation_values())
+            self.update_settings(dialog.option_values())
             self.instructions_changed.emit()
 
     def _evaluation_fixed_text(self) -> str:

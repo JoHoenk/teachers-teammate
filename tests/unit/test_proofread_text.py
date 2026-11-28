@@ -12,6 +12,7 @@ from teachers_teammate.domain.proofreading.edits import EditPart, edits
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.proofreading.review import CorrectionReview, edit_note
 from teachers_teammate.exceptions import AnonymizerError, RunStoppedError
+from teachers_teammate.infrastructure.ocr_formats import plain_text_of
 from teachers_teammate.infrastructure.workflow.proofread_text import (
     ProofreadText,
     hide_personal_info,
@@ -21,6 +22,7 @@ from teachers_teammate.infrastructure.workflow.proofread_text import (
 )
 from teachers_teammate.interfaces import AnonymizationMap, Anonymizer, Corrector
 
+TASK = "Aufgabe 1 Lies den Text!"
 STUDENT = "Lena geht heim."
 SENT = "[PERSON_1] geht heim."
 NAMES: AnonymizationMap = {"[PERSON_1]": "Lena"}
@@ -68,6 +70,43 @@ class _Corrector(Corrector):
         text_format: TextFormat = "plain",
     ) -> int | None:
         return self._pieces
+
+
+class _Echo(Corrector):
+    """Answers with the text it was sent, and records every stretch of it."""
+
+    def __init__(self, pieces: int | None = None) -> None:
+        self._pieces = pieces
+        self.sent: list[str] = []
+
+    def correct(
+        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> CorrectionOutcome:
+        self.sent.append(raw_text)
+        return CorrectionOutcome(raw_text)
+
+    def pieces(
+        self,
+        text: str,  # the count is fixed for the test
+        language: str,
+        *,
+        text_format: TextFormat = "plain",
+    ) -> int | None:
+        return self._pieces
+
+
+class _NamingAnonymizer(Anonymizer):
+    """Replaces the name Lena by a placeholder wherever it stands, and puts it back."""
+
+    def anonymize(self, text: str) -> tuple[str, AnonymizationMap]:
+        if "Lena" not in text:
+            return text, {}
+        return text.replace("Lena", "[PERSON_1]"), dict(NAMES)
+
+    def restore(self, text: str, mapping: AnonymizationMap) -> str:
+        for placeholder, original in mapping.items():
+            text = text.replace(placeholder, original)
+        return text
 
 
 class _Reporter:
@@ -367,3 +406,181 @@ def test_the_restored_text_is_the_name_or_nothing(text: str) -> None:
     Then   the name comes back, or the empty text stays empty
     """
     assert restore_personal_info(_Anonymizer(), text, NAMES) == text.replace("[PERSON_1]", "Lena")
+
+
+def test_the_printed_text_never_reaches_the_model() -> None:
+    """
+    Given  a text with a printed task line and a teacher's mark on it
+    When   the text is proofread
+    Then   the model sees only the student's stretches, and the task line comes back unchanged
+    """
+    corrector = _Echo()
+    unit = ProofreadText(corrector, None, "German", reporter=_Reporter())
+    text = f"Gymnasium Musterstadt\n{TASK}\nLena geht heim."
+
+    result = unit(text, passages=(TASK,))
+
+    assert corrector.sent == ["Gymnasium Musterstadt\n", "\nLena geht heim."]
+    assert result.text == text
+    assert result.sent_text == "Gymnasium Musterstadt\n\nLena geht heim."
+
+
+def test_a_name_inside_the_task_is_hidden_from_the_model_too() -> None:
+    """
+    Given  a printed task line that names a student, and hiding on
+    When   the text is proofread
+    Then   the model is sent the student's mention only, and both names are back in the answer
+    """
+    corrector = _Echo()
+    unit = ProofreadText(corrector, _NamingAnonymizer(), "German", reporter=_Reporter())
+    task = f"{TASK} Lena liest den Text!"
+    text = f"Gymnasium Musterstadt\n{task}\nLena geht heim."
+
+    result = unit(text, passages=(task,))
+
+    assert corrector.sent == ["Gymnasium Musterstadt\n", "\n[PERSON_1] geht heim."]
+    assert result.text == text
+    assert result.names_hidden == 1
+
+
+def test_the_requests_count_the_student_stretches_only() -> None:
+    """
+    Given  a text with two student stretches around a printed line, and a corrector that says how
+    much one stretch takes
+    When   the text is proofread
+    Then   the count is the sum of the stretches, and the run says it goes in parts
+    """
+    reporter = _Reporter()
+    corrector = _Echo(pieces=1)
+    unit = ProofreadText(corrector, None, "German", reporter=reporter)
+    text = f"Gymnasium Musterstadt\n{TASK}\nLena geht heim."
+
+    result = unit(text, passages=(TASK,))
+
+    assert result.pieces == 2
+    assert any("parts" in line for line in reporter.lines)
+
+
+class _Fixing(Corrector):
+    """Writes "ging" for "geht" in each stretch it is sent, with a review of that change."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    def correct(
+        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> CorrectionOutcome:
+        self.sent.append(raw_text)
+        corrected = raw_text.replace("geht", "ging")
+        found = edits(plain_text_of(raw_text, text_format), plain_text_of(corrected, text_format))
+        review = CorrectionReview(
+            edits=tuple(edit_note(edit, explanation="Zeitform") for edit in found)
+        )
+        return CorrectionOutcome(corrected, review=review if found else None)
+
+    def pieces(
+        self,
+        text: str,  # one request per stretch
+        language: str,
+        *,
+        text_format: TextFormat = "plain",
+    ) -> int | None:
+        return 1
+
+
+def test_a_markdown_text_sends_its_student_lines_with_their_markup() -> None:
+    """
+    Given  a Markdown text: a heading, a printed task line, and the student's line with a bold word
+    When   the text is proofread with the task line marked
+    Then   the task line is not sent, the bold word goes out and comes back as it was written
+    """
+    corrector = _Echo()
+    unit = ProofreadText(corrector, None, "German", reporter=_Reporter())
+    text = f"# Gymnasium Musterstadt\n\n{TASK}\n\nLena geht **heim**."
+
+    result = unit(text, "markdown", passages=(TASK,))
+
+    assert corrector.sent == ["# Gymnasium Musterstadt\n\n", "\n\nLena geht **heim**."]
+    assert result.text == text
+
+
+def test_a_markdown_text_of_several_pages_is_cut_at_its_lines() -> None:
+    """
+    Given  a Markdown text of two pages, its printed line on the first
+    When   the text is proofread with that line marked
+    Then   the printed line stays out with the label above it, and the second page's label goes
+           with the student's lines
+    """
+    corrector = _Echo()
+    unit = ProofreadText(corrector, None, "German", reporter=_Reporter())
+    text = f"Page 1:\n\n{TASK}\n\nLena geht **heim**.\n\nPage 2:\n\nNoch ein Satz."
+
+    result = unit(text, "markdown", passages=(TASK,))
+
+    assert corrector.sent == ["\n\nLena geht **heim**.\n\nPage 2:\n\nNoch ein Satz."]
+    assert result.text == text
+
+
+def test_a_markdown_label_with_its_fill_in_goes_out_whole() -> None:
+    """
+    Given  a Markdown text whose bold label carries the student's name, the label marked
+    When   the text is proofread
+    Then   the line goes out whole, so no cut falls inside the bold label
+    """
+    corrector = _Echo()
+    unit = ProofreadText(corrector, None, "German", reporter=_Reporter())
+    text = f"{TASK}\n\n**Name:** Lena\n\nLena geht heim."
+
+    result = unit(text, "markdown", passages=(f"{TASK}\nName:",))
+
+    assert corrector.sent == ["**Name:** Lena\n\nLena geht heim."]
+    assert result.text == text
+
+
+def test_the_reviews_of_the_student_stretches_join_in_one() -> None:
+    """
+    Given  a Markdown text with a printed line between two student lines, and a corrector that
+           changes one word in each and explains it
+    When   the text is proofread
+    Then   one review holds both explanations at their places, and none is said to be missing
+    """
+    unit = ProofreadText(_Fixing(), None, "German", reporter=_Reporter())
+    text = f"Lena geht **heim**.\n\n{TASK}\n\nBen geht auch."
+
+    result = unit(text, "markdown", passages=(TASK,))
+
+    assert result.text == f"Lena ging **heim**.\n\n{TASK}\n\nBen ging auch."
+    assert result.review is not None
+    assert len(result.review.edits) == 2
+    assert not any("explanation" in warning.lower() for warning in result.warnings)
+
+
+def test_the_sample_counts_the_words_that_were_sent() -> None:
+    """
+    Given  a text with a printed line of five words and a student line of three
+    When   the text is proofread with the printed line marked
+    Then   the run's sample counts the three words the model read
+    """
+    sampler = _Sampler()
+    unit = ProofreadText(_Echo(), None, "German", reporter=_Reporter(), sampler=sampler)
+
+    unit(f"{TASK} Bitte\n{STUDENT}", passages=(f"{TASK} Bitte",))
+
+    assert [sample["words"] for sample in sampler.finished] == [3]
+
+
+def test_a_text_that_is_all_print_makes_no_sample() -> None:
+    """
+    Given  a text that is one printed line and nothing else
+    When   the text is proofread with that line marked
+    Then   nothing is sent, and the run keeps no sample of it
+    """
+    sampler = _Sampler()
+    corrector = _Echo()
+    unit = ProofreadText(corrector, None, "German", reporter=_Reporter(), sampler=sampler)
+
+    result = unit(TASK, passages=(TASK,))
+
+    assert corrector.sent == []
+    assert result.text == TASK
+    assert [sample["usable"] for sample in sampler.finished] == [False]

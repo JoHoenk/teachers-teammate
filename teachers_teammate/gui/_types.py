@@ -61,6 +61,7 @@ class SettingsDict(TypedDict, total=False):
     explanation_language: str
     correction_output: str
     correction_notes: str
+    skip_task_text: bool
     evaluate_provider: str
     evaluate_model: str
     evaluate_prompt: str

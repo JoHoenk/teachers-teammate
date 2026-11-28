@@ -49,6 +49,9 @@ STUDENT_STRIKE_COLOUR = "#999999"
 """Colour of the student's own crossed-out words: grey, so they read as the page's history
 and not as something the model did."""
 
+TASK_TEXT_COLOUR = "#8a8a8a"
+"""Colour of the printed text a document leaves alone: grey, so it reads as not the student's."""
+
 INSERT_COLOUR = "#1f6feb"
 MUTED_COLOUR = "#888888"
 

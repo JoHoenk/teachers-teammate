@@ -410,6 +410,40 @@ def test_a_failed_hide_stays_in_the_banner(qtbot) -> None:
 
 
 @pytest.mark.gui
+def test_the_banner_says_that_printed_text_was_left_alone(qtbot) -> None:
+    """
+    Given  a document marked with its first sentence as printed text
+    When   the body shows it
+    Then   the line above the text says so, with how many passages it leaves alone
+    """
+    doc = dataclasses.replace(_document(corrected=""), task_segments=((0, len(RAW)),))
+    body = _body(qtbot, doc)
+
+    assert body.banner.text == check_text.task_text_notice(1)
+    assert body.banner.action == check_text.PROOFREAD_TASK_TEXT_AGAIN
+    with qtbot.waitSignal(body.task_text_again) as blocker:
+        body.banner.action_clicked.emit()
+    assert blocker.args == [True]
+
+
+@pytest.mark.gui
+def test_the_banner_offers_to_leave_printed_text_alone_again(qtbot) -> None:
+    """
+    Given  a document whose printed text the teacher chose to proofread after all
+    When   the body shows it, and the strip's button is clicked
+    Then   the strip says so, and the button asks to leave the text alone again
+    """
+    doc = dataclasses.replace(_document(corrected=""), task_text_taken_back=True)
+    body = _body(qtbot, doc)
+
+    assert body.banner.text == check_text.TASK_TEXT_PROOFREAD
+    assert body.banner.action == check_text.LEAVE_TASK_TEXT_ALONE
+    with qtbot.waitSignal(body.task_text_again) as blocker:
+        body.banner.action_clicked.emit()
+    assert blocker.args == [False]
+
+
+@pytest.mark.gui
 def test_the_warning_shows_while_the_names_are_hidden(qtbot) -> None:
     """
     Given  a document that was only read, with a warning, and the names hidden

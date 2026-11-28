@@ -14,7 +14,7 @@ the words it is about and the offsets of the review are offsets in that plain te
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, datetime
 import logging
 from pathlib import Path
@@ -46,6 +46,7 @@ from ..domain.proofreading.review import (
     align,
     explained_sentences,
 )
+from ..domain.task_text import Segment
 from ..interfaces import DocumentCreator
 from .docx_comments import BODY_PT, marks_for, write_marked_text
 from .ocr_formats import plain_text_of
@@ -261,6 +262,7 @@ class DocxDocumentCreator(DocumentCreator):
         source_image: str | Path | None = None,
         text_format: TextFormat = "plain",
         review: CorrectionReview | None = None,
+        task: Sequence[Segment] = (),
     ) -> None:
         """Write a landscape .docx to *out_path*.
 
@@ -276,6 +278,8 @@ class DocxDocumentCreator(DocumentCreator):
             text_format:    ``"markdown"`` keeps bold/strikethrough/... as Word formatting.
             review:         Explanations and unclear expressions, added as comments and
                             tables; ``None`` writes the document exactly as before.
+            task:           Where the printed text stands in the plain *corrected_text*; it is
+                            written as it came back, grey and italic.
         """
         text_format = normalize_text_format(text_format)
         if self._fmt == "comments":
@@ -297,6 +301,7 @@ class DocxDocumentCreator(DocumentCreator):
                 image_path=source_image,
                 text_format=text_format,
                 review=review,
+                task=task,
             )
 
     def _build_table(
@@ -309,6 +314,7 @@ class DocxDocumentCreator(DocumentCreator):
         image_path: str | Path | None = None,
         text_format: TextFormat = "plain",
         review: CorrectionReview | None = None,
+        task: Sequence[Segment] = (),
     ) -> None:
         """
         Write a landscape three-column .docx file to *out_path*.
@@ -321,6 +327,8 @@ class DocxDocumentCreator(DocumentCreator):
             image_path:     Path to the original source image shown in column 1.
                             When ``None``, the image cell is left blank.
             review:         Explanations and unclear expressions appended below the table.
+            task:           Where the printed text stands in the plain *corrected_text*; the
+                            column writes it grey and italic, because it was left alone.
         """
         doc = Document()
 
@@ -355,16 +363,7 @@ class DocxDocumentCreator(DocumentCreator):
         content[2].width = _TXT_COL_WIDTH
         if image_path is not None:
             self._insert_image(content[0], str(image_path), _IMG_COL_WIDTH)
-        if text_format == "markdown":
-            self._fill_cell_formatted(content[1], raw_text)
-            if corrected_text:
-                self._fill_cell_formatted(content[2], corrected_text)
-            else:
-                self._fill_cell(content[2], "(correction skipped)", italic=True)
-        else:
-            self._fill_cell(content[1], raw_text)
-            placeholder = corrected_text if corrected_text else "(correction skipped)"
-            self._fill_cell(content[2], placeholder, italic=not corrected_text)
+        self._fill_text_columns(content, raw_text, corrected_text, text_format, task)
 
         if review is not None:
             labels = labels_for(self._labels_language)
@@ -487,14 +486,63 @@ class DocxDocumentCreator(DocumentCreator):
         run.italic = italic
         run.font.size = Pt(10)
 
-    def _fill_cell_formatted(self, cell: Any, markdown: str) -> None:
-        """Fill *cell* with Markdown *markdown*, keeping its formatting as Word runs."""
+    def _fill_text_columns(
+        self,
+        cells: Any,
+        raw_text: str,
+        corrected_text: str | None,
+        text_format: TextFormat,
+        task: Sequence[Segment],
+    ) -> None:
+        """Fill the extracted column and the proofread column of the table layout."""
+        if text_format == "markdown":
+            self._fill_cell_formatted(cells[1], raw_text)
+        else:
+            self._fill_cell(cells[1], raw_text)
+        if not corrected_text:
+            self._fill_cell(cells[2], "(correction skipped)", italic=True)
+        elif text_format == "markdown":
+            self._fill_cell_formatted(cells[2], corrected_text, task)
+        elif task:
+            self._fill_cell_greyed(cells[2], corrected_text, task)
+        else:
+            self._fill_cell(cells[2], corrected_text)
+
+    def _fill_cell_greyed(self, cell: Any, text: str, task: Sequence[Segment]) -> None:
+        """Fill *cell* with the plain *text*, its task segments grey and italic."""
+        paragraph = cell.paragraphs[0]
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        for segment in task:
+            for index, line in enumerate(text[segment.start : segment.end].split("\n")):
+                if index:
+                    paragraph.add_run().add_break()
+                if not line:
+                    continue
+                run = paragraph.add_run(xml_safe_text(line))
+                run.font.size = Pt(10)
+                if segment.kind == "task":
+                    run.italic = True
+                    run.font.color.rgb = _MUTED_COLOUR
+
+    def _fill_cell_formatted(self, cell: Any, markdown: str, task: Sequence[Segment] = ()) -> None:
+        """Fill *cell* with Markdown *markdown*, keeping its formatting as Word runs.
+
+        A block that stands inside a task segment (positions in the plain text of *markdown*) is
+        written grey and italic, because it was left alone.
+        """
         from .ocr_formats import parse_stored_text  # noqa: PLC0415
 
-        self._fill_cell_document(cell, parse_stored_text(markdown, "markdown"))
+        doc = parse_stored_text(markdown, "markdown")
+        greyed = _task_blocks(doc, plain_text_of(markdown, "markdown"), task) if task else set()
+        self._fill_cell_document(cell, doc, greyed)
 
-    def _fill_cell_document(self, cell: Any, doc: FormattedDocument) -> None:
-        """Write the blocks of *doc* into *cell* as paragraphs, lists and nested tables."""
+    def _fill_cell_document(
+        self, cell: Any, doc: FormattedDocument, greyed: Collection[int] = ()
+    ) -> None:
+        """Write the blocks of *doc* into *cell* as paragraphs, lists and nested tables.
+
+        The blocks whose ``id`` is in *greyed* are printed text, written grey and italic.
+        """
         first = True
         for block, marker in list_markers(doc.blocks):
             if block.kind == "table":
@@ -519,7 +567,10 @@ class DocxDocumentCreator(DocumentCreator):
             for span in block.spans:
                 bold = block.kind == "heading"
                 size = _HEADING_PT if block.kind == "heading" else _BODY_PT
-                self._add_run(para, span.text, span.style, bold=bold, size=size)
+                run = self._add_run(para, span.text, span.style, bold=bold, size=size)
+                if id(block) in greyed:
+                    run.italic = True
+                    run.font.color.rgb = _MUTED_COLOUR
 
     def _add_nested_table(self, cell: Any, block: Block) -> None:
         width = max(len(row) for row in block.rows)
@@ -619,3 +670,25 @@ class DocxDocumentCreator(DocumentCreator):
         xml_bytes = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
         part = Part(_COMMENTS_URI, _COMMENTS_CT, xml_bytes, doc.part.package)
         doc.part.relate_to(part, _COMMENTS_REL)
+
+
+def _task_blocks(doc: FormattedDocument, plain: str, task: Sequence[Segment]) -> set[int]:
+    """Return the ``id`` of each block of *doc* that stands inside a task segment of *plain*.
+
+    The blocks are found in the plain text in order, from a forward cursor; a block not found
+    there is the student's.
+    """
+    printed = [(segment.start, segment.end) for segment in task if segment.kind == "task"]
+    found: set[int] = set()
+    cursor = 0
+    for block in doc.blocks:
+        text = block.text.strip()
+        if block.kind in ("table", "figure") or not text:
+            continue
+        start = plain.find(text, cursor)
+        if start < 0:
+            continue
+        cursor = start + len(text)
+        if any(first <= start and cursor <= last for first, last in printed):
+            found.add(id(block))
+    return found

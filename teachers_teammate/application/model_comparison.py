@@ -41,7 +41,7 @@ import time
 from typing import TYPE_CHECKING
 
 from .. import __version__
-from ..cache_keys import sent_record
+from ..cache_keys import sent_record, with_task_text
 from ..config import Config
 from ..domain.correction_policy import CorrectionOutput
 from ..domain.data_location import StageLocation, is_ollama
@@ -53,6 +53,7 @@ from ..domain.proofreading.model_comparison import Comparison, Option, Version, 
 from ..domain.proofreading.option_marks import OptionMark, Verdict, identity
 from ..domain.proofreading.text_loss import words as count_words
 from ..domain.stages import Stage
+from ..domain.task_text import passage_parts
 from ..domain.teacher_work import text_identity
 from ..exceptions import RunStoppedError, StageError
 from ..interfaces import LoggingReporter, Reporter
@@ -117,6 +118,19 @@ class CompareSource:
 
     It holds the model's own text, before the teacher changed anything: what a comparison is about
     is what the models wrote, not what the teacher made of it."""
+
+    task_marks: tuple[str, ...] = ()
+    """The passages of the document that are printed text, not the student's writing.
+
+    A comparison leaves them out as a run does, and they belong to its key, so an answer made
+    without them is not the answer of this document."""
+
+    not_task: tuple[str, ...] = ()
+    """The lines the teacher proofreads after all, although a passage covers them."""
+
+    task_text: tuple[str, ...] = ()
+    """What :attr:`task_marks` really cover in :attr:`plain`, and no more: the part of the
+    proofreading key that belongs to this document alone."""
 
     def own(self, key: str) -> bool:
         """Return whether the document's own proofreading is the answer of the settings *key*."""
@@ -261,6 +275,9 @@ class ModelComparisonService:
         plain = TextFormatter.plain_text(view.raw_text, text_format)
         if not plain.strip():
             return None
+        # A comparison leaves out what a run with these settings leaves out.
+        marks = view.task_marks if config.skip_task_text else ()
+        not_task = view.not_task if config.skip_task_text else ()
         return CompareSource(
             text=view.raw_text,
             plain=plain,
@@ -269,6 +286,9 @@ class ModelComparisonService:
             text_sha=text_identity(plain),
             words=count_words(plain),
             stored=self._own_version(view, text_format),
+            task_marks=marks,
+            not_task=not_task,
+            task_text=passage_parts(plain, marks, not_task),
         )
 
     @staticmethod
@@ -354,7 +374,7 @@ class ModelComparisonService:
         stopped.
         """
         variant = self.variant(config, candidate)
-        key = self._key(variant)
+        key = with_task_text(variant, self._key(variant), source.task_text)
         if source.own(key):
             return ComparedRun(candidate=candidate, own=True)
         if repeat == 0:
@@ -370,6 +390,8 @@ class ModelComparisonService:
             answer = unit(
                 source.text,
                 source.text_format,
+                passages=source.task_marks,
+                not_task=source.not_task,
                 stop_requested=None if hooks.stop_event is None else hooks.stop_event.is_set,
             )
         except RunStoppedError:

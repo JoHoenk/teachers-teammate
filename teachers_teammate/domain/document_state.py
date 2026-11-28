@@ -10,14 +10,15 @@ Pure: no I/O.  ``state_repository`` turns a record into JSON and back.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from .formatted_text import normalize_text_format
 from .page_layout import LAYOUT_VERSION, ScanBox, layout_from
 from .proofreading.review import CorrectionReview
 from .stages import Stage, normalize_stage
-from .teacher_work import MachineTexts, text_identity
+from .task_text import passage_parts
+from .teacher_work import MachineTexts, TeacherWork, current_texts, text_identity
 
 
 def machine_texts(state: DocumentState) -> MachineTexts:
@@ -92,6 +93,11 @@ class DocumentState:
     # from.  A layout of another version, or of a text the document no longer has, is stale.
     layout_version: int = 0
     layout_source: str = ""
+    # The passages of the document that are printed text, not the student's writing: what a
+    # detection found, rebuilt by the next one.  The texts stay as they were read, so diffs,
+    # metrics and exports do not change; the marks only decide what is not sent.  The teacher's
+    # "not task" entries over them are their work (``TeacherWork.not_task``).
+    task_passages: list[str] = field(default_factory=list)
     ocr_done: bool = False
     correction_done: bool = False
     evaluation_done: bool = False
@@ -115,6 +121,11 @@ class DocumentState:
     # Preprocessing steps applied to produce ``preview_img``.  ``None`` means unknown
     # (state written before this field existed); ``[]`` means none were applied.
     preprocess_steps: list[str] | None = None
+
+    @property
+    def task_marks(self) -> tuple[str, ...]:
+        """Return the passages the document leaves alone; a stored row of another shape is none."""
+        return tuple(row for row in self.task_passages if isinstance(row, str))
 
     @property
     def review(self) -> CorrectionReview | None:
@@ -251,3 +262,23 @@ def reset_fields(stage: Stage) -> dict[str, object]:
     if policy.clear_evaluation:
         cleared.update(cleared_fields(Stage.EVALUATION))
     return cleared
+
+
+def task_text_of(
+    state: DocumentState, work: TeacherWork | None, plain_of: Callable[[str, str], str]
+) -> tuple[str, ...]:
+    """Return what the marks of *state* really cover in the transcription the document has now.
+
+    The document's part of its proofreading key: marking a passage, or taking it back,
+    re-proofreads this document and no other.  The marks are looked for in the current
+    transcription, the teacher's where they fixed it, because that is the text the proofreading
+    cuts.  A mark the text no longer holds counts for nothing, and a "not task" entry of the
+    teacher takes its line back out.  *plain_of* converts the text from its notation as the
+    proofreading does, so both see the same lines.
+    """
+    marks = state.task_marks
+    if not marks:
+        return ()
+    texts = current_texts(machine_texts(state), work)
+    plain = plain_of(texts.transcription, texts.transcription_format)
+    return passage_parts(plain, marks, work.not_task if work is not None else ())

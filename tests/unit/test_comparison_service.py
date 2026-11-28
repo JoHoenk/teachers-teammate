@@ -229,7 +229,16 @@ class _Unit:
         self._owner = owner
         self._config = config
 
-    def __call__(self, text, text_format="plain", *, name="", stop_requested=None):
+    def __call__(
+        self,
+        text,
+        text_format="plain",
+        *,
+        name="",
+        passages=(),
+        not_task=(),
+        stop_requested=None,
+    ):
         self._owner.asked.append(self._config)
         self._owner.texts.append(text)
         if self._owner.ollama is not None:

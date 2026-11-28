@@ -8,7 +8,9 @@ import shutil
 from unittest.mock import MagicMock
 import pytest
 from teachers_teammate.application.commands import DocumentCommands, WorkNotSavedError
+from teachers_teammate.application.formatting import TextFormatter
 from teachers_teammate.application.run import windows_for
+from teachers_teammate.domain.document_state import task_text_of
 from teachers_teammate.domain.freshness import stage_hashes
 from teachers_teammate.domain.proofreading.carry import ReadingFix
 from teachers_teammate.domain.proofreading.edits import edits as word_edits
@@ -30,7 +32,7 @@ from teachers_teammate.infrastructure.state_repository import (
     compute_file_hash,
 )
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore, WorkTooNewError
-from teachers_teammate.cache_keys import correction_key
+from teachers_teammate.cache_keys import correction_key, with_task_text
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheReconciliationService,
 )
@@ -50,6 +52,50 @@ from ._service_helpers import (
 def _reader_models_in_place(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Give every service of this file a store that holds the built-in reader's models."""
     reader_models_in_place(tmp_path, monkeypatch)
+
+
+@pytest.mark.unit
+def test_proofreading_the_task_text_again_keeps_the_mark_and_writes_one_entry_per_line(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a document whose two printed lines are marked, one of them with a fill-in
+    When   the teacher proofreads the task text after all
+    Then   each marked line is a "not task" entry, the mark stays, and nothing is left marked;
+           leaving it alone again takes the entries back
+    """
+    repo, source = _repo_with_document(tmp_path)
+    state = repo.load_valid(source)
+    assert state is not None
+    repo.save(
+        source,
+        dataclasses.replace(
+            state,
+            raw_text="Gymnasium Musterstadt\nName: Anna\nDie Ferien waren schön.\n"
+            "Am Montag war die Klasse im Museum.\nDer Lehrer sammelt die Hefte ein.\n",
+            task_passages=["Gymnasium Musterstadt"],
+        ),
+    )
+    marked = repo.load_valid(source)
+    assert marked is not None
+    assert task_text_of(marked, None, TextFormatter.plain_text)
+
+    changed = _commands_for(repo).proofread_task_text_again(make_config(tmp_path), source=source)
+
+    stored = repo.load_valid(source)
+    work = TeacherWorkStore().load(marked.source_hash)
+    assert changed is True
+    assert stored is not None
+    assert stored.task_passages == marked.task_passages
+    assert work is not None
+    assert work.not_task == ("Gymnasium Musterstadt",)
+    assert task_text_of(stored, work, TextFormatter.plain_text) == ()
+
+    left_alone = _commands_for(repo).leave_task_text_alone(make_config(tmp_path), source=source)
+
+    again = TeacherWorkStore().load(marked.source_hash)
+    assert left_alone is True
+    assert again is None  # nothing else was in the work, so its file is gone
 
 
 @pytest.mark.unit
@@ -424,7 +470,7 @@ def test_a_carried_proofreading_was_made_from_the_text_the_document_has(tmp_path
     state = repo.load_valid(source)
     assert state is not None
     work = TeacherWorkStore().load(compute_file_hash(source))
-    hashes = stage_hashes(state, work, commands._expected(config, source))
+    hashes = stage_hashes(state, work, commands._expected(config, source, ()))
     assert hashes.correction_source == hashes.expected_correction_source != ""
 
 
@@ -774,6 +820,44 @@ def test_keeping_the_changes_stamps_the_settings_on_corrections_that_apply(tmp_p
         windows_for(other, recommendations=svc.recommendations),
         make_key_facts(),
     )
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_keeping_the_changes_stamps_the_key_of_a_document_with_task_text(tmp_path: Path) -> None:
+    """
+    Given  a document with a marked printed line whose corrections apply to the stored answer
+    When   *Keep my changes* is recorded for it
+    Then   the stamp is the key the queue compares with, its task text included, so the same
+           settings do not ask again
+    """
+    _made, repo, [worked] = _proofread(tmp_path, "worked.txt")
+    state = repo.load_valid(worked)
+    assert state is not None
+    first_line = state.raw_text.splitlines()[0]
+    repo.save(worked, dataclasses.replace(state, task_passages=[first_line]))
+    _change_work(
+        worked,
+        lambda work: with_corrected(
+            work, "corrected by the teacher", current_texts(_machine_of(repo, worked), work)
+        ),
+    )
+    other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    svc.commands.keep_teacher_work(other, files=[worked])
+
+    stamped = TeacherWorkStore().load(compute_file_hash(worked))
+    assert stamped is not None and stamped.corrections is not None
+    settings_key = correction_key(
+        other, windows_for(other, recommendations=svc.recommendations), make_key_facts()
+    )
+    marked = repo.load_valid(worked)
+    assert marked is not None
+    assert stamped.corrections.kept_under == with_task_text(
+        other, settings_key, task_text_of(marked, stamped, TextFormatter.plain_text)
+    )
+    assert stamped.corrections.kept_under != settings_key
 
 
 @pytest.mark.unit

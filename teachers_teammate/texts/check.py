@@ -153,6 +153,7 @@ another one is in the way before the run starts."""
 PROGRESS_PREPROCESSING = "preprocessing…"
 PROGRESS_OCR = "OCR…"
 PROGRESS_CORRECTING = "correcting…"
+PROGRESS_READING_FIRST = "reading first, to find the task text…"
 """The step named after a file's name in the progress line of a run."""
 
 TAB_CORRECTIONS = "Corrections"
@@ -256,3 +257,23 @@ def wait_detail_text(detail: WaitDetail) -> str:
     if detail.kind is WaitKind.QUEUED:
         return run_queued_for_model(detail.other, detail.model)
     return ""
+
+
+# ── printed text ──────────────────────────────────────────────────────────────
+
+TASK_TEXT_NOT_PROOFREAD = "Task text — not proofread"
+"""What the strip above a text that leaves printed text alone begins with."""
+PROOFREAD_TASK_TEXT_AGAIN = "Proofread this after all"
+"""The strip's button on a document that leaves printed text alone."""
+TASK_TEXT_PROOFREAD = "Task text — proofread in this document."
+"""The strip above a text whose printed text the teacher chose to proofread after all."""
+LEAVE_TASK_TEXT_ALONE = "Leave it alone again"
+"""That strip's button: the printed text is left alone again."""
+
+
+def task_text_notice(count: int) -> str:
+    """Return the line above a text that leaves *count* passages of printed text alone."""
+    if count < 1:
+        return ""
+    passages = "passage" if count == 1 else "passages"
+    return f"{TASK_TEXT_NOT_PROOFREAD} ({count} {passages}, grey)."

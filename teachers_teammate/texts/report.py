@@ -111,6 +111,24 @@ def files_to_preprocess(count: int) -> str:
     return f"Found {count} file(s) to preprocess.\n"
 
 
+def reading_the_queue(count: int) -> str:
+    """Return the line that opens the reading pass: the queue is read before it is proofread."""
+    return f"Reading {count} document(s) first, to find the text they share.\n"
+
+
+def task_text_found(documents: int, total: int, worksheets: int) -> str:
+    """Return the line for the printed text a run left alone, and how many worksheets it saw.
+
+    *documents* is how many documents have task text, *total* how many the run works on, and
+    *worksheets* how many worksheets the detection told apart.
+    """
+    sheet = "worksheet" if worksheets == 1 else "worksheets"
+    return (
+        f"Task text found in {documents} of {total} documents ({worksheets} {sheet}) "
+        "— not proofread."
+    )
+
+
 def processing(index: int, total: int, name: str) -> str:
     """Return the line that opens the work on one file."""
     return f"[{index}/{total}] Processing: {name}"

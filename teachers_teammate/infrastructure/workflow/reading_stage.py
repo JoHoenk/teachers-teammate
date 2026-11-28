@@ -96,14 +96,18 @@ class ReadingStage:
         self._recognize = recognize
         self._on_ocr_done = on_ocr_done
 
-    def run(self, file: Path, ctx: CacheContext) -> Reading:
-        """Return what *file* was read as, from the cache or by reading its pages."""
+    def run(self, file: Path, ctx: CacheContext, *, announce: bool = True) -> Reading:
+        """Return what *file* was read as, from the cache or by reading its pages.
+
+        *announce* off keeps ``on_ocr_done`` quiet: the reading pass of a run reads a file before
+        its turn, and the turn itself says the reading is done.
+        """
         cache_state = ctx.state
         if cache_state.ocr_done and cache_state.raw_text:
-            return self._load_ocr_from_cache(file, ctx)
-        return self._run_preprocess_and_ocr(file, ctx)
+            return self._load_ocr_from_cache(file, ctx, announce=announce)
+        return self._run_preprocess_and_ocr(file, ctx, announce=announce)
 
-    def _load_ocr_from_cache(self, file: Path, ctx: CacheContext) -> Reading:
+    def _load_ocr_from_cache(self, file: Path, ctx: CacheContext, *, announce: bool) -> Reading:
         cache_state = ctx.state
         preview_img = cache_state.preview_img
         source_image_str = cache_state.source_image or preview_img
@@ -122,11 +126,11 @@ class ReadingStage:
             except OSError as exc:
                 _logger.warning("Cannot store the preview image of %s: %s", file.name, exc)
         self._shared.reporter.status(report_text.CACHED_OCR)
-        if self._on_ocr_done:
+        if announce and self._on_ocr_done:
             self._on_ocr_done(str(file.resolve()), file.name)
         return Reading(preview_img=preview_img, source_image=source_image, ctx=ctx)
 
-    def _run_preprocess_and_ocr(self, file: Path, ctx: CacheContext) -> Reading:
+    def _run_preprocess_and_ocr(self, file: Path, ctx: CacheContext, *, announce: bool) -> Reading:
         """Prepare the pages of *file* and read them, or take the text the file already has."""
         reading = _teacher_reading(ctx.work)
         prepared = self._prepared(file, reading)
@@ -139,7 +143,9 @@ class ReadingStage:
         if self._shared.stopping() and prepared.raw_text_hint is None:
             raise stopped_result(Stage.OCR, preview_img=preview_img)
         try:
-            ctx = self._run_ocr(file, prepared, preview_img, ctx, reading=reading)
+            ctx = self._run_ocr(
+                file, prepared, preview_img, ctx, reading=reading, announce=announce
+            )
         except RunStoppedError as exc:
             raise stopped_result(Stage.OCR, preview_img=preview_img) from exc
         return Reading(preview_img=preview_img, source_image=prepared.source_image, ctx=ctx)
@@ -205,6 +211,7 @@ class ReadingStage:
         ctx: CacheContext,
         *,
         reading: TranscriptionWork | None = None,
+        announce: bool = True,
     ) -> CacheContext:
         """Read the pages of *prepared*, or take the text it already carries; record the text."""
         raw_text_hint = prepared.raw_text_hint
@@ -242,7 +249,7 @@ class ReadingStage:
 
         if raw_text_hint is None:
             self._shared.reporter.status(report_text.ocr_done(page_count))
-            if self._on_ocr_done:
+            if announce and self._on_ocr_done:
                 self._on_ocr_done(str(file.resolve()), file.name)
 
         return ctx

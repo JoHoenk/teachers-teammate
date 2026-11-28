@@ -65,6 +65,7 @@ _SAMPLES: dict[str, object] = {
     "correction_level": "C1",
     "explanation_language": "German",
     "correction_output": "text",
+    "skip_task_text": False,
     "evaluation_enabled": True,
     "evaluate_provider": "openai",
     "evaluate_model": "gpt-y",

@@ -15,6 +15,7 @@ from teachers_teammate.domain.proofreading.review import (
     UnclearNote,
 )
 from teachers_teammate.domain.proofreading.word_diff import word_diff
+from teachers_teammate.domain.task_text import Segment
 from teachers_teammate.infrastructure.docx_builder import DocxDocumentCreator
 
 # ── table format ───────────────────────────────────────────────────────────
@@ -349,6 +350,62 @@ def test_table_format_keeps_markdown_styles_as_word_runs(tmp_path: Path) -> None
     assert "**" not in all_text
     assert "~~" not in all_text
     assert "<sup>" not in all_text
+
+
+def test_table_format_writes_task_text_grey_and_italic(tmp_path: Path) -> None:
+    """
+    Given  a proofread text which is a printed task line above the student's own sentence
+    When   create() writes the table layout with that line marked as task text
+    Then   the task line is grey and italic, and the student's sentence stands as it is
+    """
+    out = tmp_path / "task.docx"
+    task_line = "Aufgabe 1: Lies den Text!"
+    corrected = f"{task_line}\nAnna schreibt einen Brief."
+    split = len(task_line)
+
+    DocxDocumentCreator(fmt="table").create(
+        raw_text=corrected,
+        corrected_text=corrected,
+        out_path=out,
+        title="T",
+        task=(Segment(0, split, "task"), Segment(split, len(corrected), "student")),
+    )
+
+    doc = Document(str(out))
+    task_run = _runs(doc, task_line)[0]
+    assert task_run.italic
+    assert str(task_run.font.color.rgb) == "666666"
+    student_run = _runs(doc, "Anna schreibt einen Brief.")[0]
+    assert not student_run.italic
+
+
+def test_table_format_keeps_markdown_and_greys_its_task_text(tmp_path: Path) -> None:
+    """
+    Given  a proofread Markdown text: a printed heading above the student's sentence with a bold
+           word, the heading marked as task text
+    When   create() writes the table layout
+    Then   the heading is grey and italic, and the student's bold word is still bold
+    """
+    out = tmp_path / "task.docx"
+    corrected = "# Aufgabe 1 Lies den Text\n\nAnna schreibt **einen** Brief."
+    plain = "Aufgabe 1 Lies den Text\n\nAnna schreibt einen Brief."
+    split = len("Aufgabe 1 Lies den Text")
+
+    DocxDocumentCreator(fmt="table").create(
+        raw_text=corrected,
+        corrected_text=corrected,
+        out_path=out,
+        title="T",
+        text_format="markdown",
+        task=(Segment(0, split, "task"), Segment(split, len(plain), "student")),
+    )
+
+    doc = Document(str(out))
+    heading = [run for run in _runs(doc, "Aufgabe 1 Lies den Text") if run.italic]
+    assert heading
+    assert str(heading[0].font.color.rgb) == "666666"
+    bold = _runs(doc, "einen")
+    assert any(run.bold and not run.italic for run in bold)
 
 
 def test_table_format_plain_text_is_written_verbatim(tmp_path: Path) -> None:

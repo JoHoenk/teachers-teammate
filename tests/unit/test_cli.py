@@ -1388,6 +1388,30 @@ def test_the_keep_awake_flags_reach_the_config(tmp_path: Path, flags, expected) 
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
+@pytest.mark.parametrize(("flags", "expected"), [([], True), (["--proofread-task-text"], False)])
+def test_the_task_text_switch_reaches_the_config(tmp_path: Path, flags, expected) -> None:
+    """
+    Given  no flag, or --proofread-task-text
+    When   run_cli() is called
+    Then   the config the run gets skips the task text unless the flag says to proofread it
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    captured: list = []
+
+    class _FakeAppService(_AppServiceStub):
+        def run_selected(self, config, files, /, **kwargs) -> RunSummary:
+            captured.append(config)
+            return RunSummary()
+
+    run_cli(
+        argv=["-i", str(tmp_path), "--no-docx", *flags], app_service=services_of(_FakeAppService())
+    )
+
+    assert captured[0].skip_task_text is expected
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
 @pytest.mark.parametrize(
     ("flags", "expected"),
     [([], True), (["--no-scan-marks"], False), (["--no-scan-marks", "--scan-marks"], True)],

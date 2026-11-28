@@ -18,6 +18,7 @@ An empty work deletes its file, so the folder holds only what the teacher really
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 import json
 import logging
@@ -102,12 +103,7 @@ class TeacherWorkStore:
             if changed.empty:
                 self.path_for(source_hash).unlink(missing_ok=True)
                 return changed
-            stored = TeacherWork(
-                source_hash=source_hash,
-                name=name,
-                transcription=changed.transcription,
-                corrections=changed.corrections,
-            )
+            stored = replace(changed, source_hash=source_hash, name=name)
             write_text_atomic(
                 self.path_for(source_hash),
                 json.dumps(stored.to_dict(), indent=2, ensure_ascii=False),

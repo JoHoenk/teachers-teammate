@@ -79,6 +79,12 @@ _ocr_timeout_type = _bounded_int(OCR_TIMEOUT_RANGE, cli_text.timeout_out_of_rang
 def _add_correction_args(parser: argparse.ArgumentParser, providers: list[str] | None) -> None:
     """Add the correction argument group to *parser*."""
     corr_grp = parser.add_argument_group("correction")
+    _add_proofreading_switches(corr_grp)
+    _add_proofreading_details(corr_grp, providers)
+
+
+def _add_proofreading_switches(corr_grp: argparse._ArgumentGroup) -> None:
+    """Add what the proofreading does at all: corrections, names, task text."""
     corr_grp.add_argument(
         "--correction",
         dest="correction_enabled",
@@ -105,6 +111,19 @@ def _add_correction_args(parser: argparse.ArgumentParser, providers: list[str] |
         action="store_false",
         help=cli_text.HELP_NO_ANONYMIZATION,
     )
+    corr_grp.add_argument(
+        "--proofread-task-text",
+        dest="skip_task_text",
+        action="store_false",
+        default=DEFAULTS["skip_task_text"],
+        help=cli_text.HELP_PROOFREAD_TASK_TEXT,
+    )
+
+
+def _add_proofreading_details(
+    corr_grp: argparse._ArgumentGroup, providers: list[str] | None
+) -> None:
+    """Add how the proofreading works: provider, model, level, output, context."""
     corr_grp.add_argument(
         "--correction-provider",
         default=DEFAULTS["correction_provider"],

@@ -11,12 +11,14 @@ import pytest
 from teachers_teammate.cache_keys import (
     anonymization_fingerprint,
     correction_key,
+    expected_hashes,
     ocr_key,
     preprocess_fingerprint,
     preview_key,
     privacy_key,
     review_key,
     sent_record,
+    with_task_text,
 )
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.local_models import AUTO_VERSION
@@ -285,3 +287,52 @@ def test_the_privacy_key_follows_the_anonymizer_settings(tmp_path: Path) -> None
 
     assert privacy_key(plain, facts) != privacy_key(hidden, facts)
     assert privacy_key(hidden, facts) == privacy_key(hidden, facts)
+
+
+@pytest.mark.unit
+def test_a_document_that_leaves_task_text_alone_has_a_proofreading_key_of_its_own(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  the same source and settings, once without and once with a passage of printed text
+    When   the stage hashes of each are asked for
+    Then   only the proofreading key differs, and it is the settings key the passage made
+    """
+    config = make_config(tmp_path, correction_enabled=True, correction_provider="ollama")
+    facts = _FakeFacts()
+
+    plain = expected_hashes(config, _PDF, None, facts, task_text=())
+    marked = expected_hashes(config, _PDF, None, facts, task_text=("Aufgabe 1",))
+
+    assert marked.correction_config_hash == with_task_text(
+        config, plain.correction_config_hash, ("Aufgabe 1",)
+    )
+    assert marked.correction_config_hash != plain.correction_config_hash
+    assert marked.ocr_config_hash == plain.ocr_config_hash
+    assert marked.eval_config_hash == plain.eval_config_hash
+
+
+@pytest.mark.unit
+def test_a_document_that_leaves_nothing_alone_keeps_the_settings_key(tmp_path: Path) -> None:
+    """
+    Given  a document the teacher marked nowhere
+    When   its proofreading key is asked for
+    Then   it is the key its settings make, so nothing about it changes
+    """
+    config = make_config(tmp_path)
+    key = correction_key(config, None, _FakeFacts())
+
+    assert with_task_text(config, key, ()) == key
+
+
+@pytest.mark.unit
+def test_a_run_that_proofreads_task_text_keys_by_the_settings_alone(tmp_path: Path) -> None:
+    """
+    Given  a document with a passage of printed text, and the switch that leaves it alone off
+    When   its proofreading key is asked for
+    Then   it is the key its settings make: the passage is proofread like the rest
+    """
+    config = make_config(tmp_path, skip_task_text=False)
+    key = correction_key(config, None, _FakeFacts())
+
+    assert with_task_text(config, key, ("Aufgabe 1",)) == key

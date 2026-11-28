@@ -59,6 +59,8 @@ def merged_view(
         ),
         correction_text=texts.corrected,
         machine_correction_text=texts.machine_corrected,
+        task_marks=state.task_marks,
+        not_task=work.not_task if work is not None else (),
         work=work_status(work, texts, kept_over_settings=kept_over_settings),
     )
 

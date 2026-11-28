@@ -296,7 +296,7 @@ def test_a_scripted_run_becomes_a_report_and_a_checked_store(tmp_path: Path):
 
     for group in chosen:
         judgement = gates.GateTwoRule().judge(group)
-        assert judgement.outcome is gates.Outcome.PASS_PENDING, [
+        assert judgement.outcome is gates.Outcome.PASS, [
             check.line() for check in judgement.checks if check.passed is not True
         ]
 

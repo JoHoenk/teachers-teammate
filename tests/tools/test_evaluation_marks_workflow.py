@@ -242,7 +242,6 @@ def test_a_filled_in_sheet_becomes_marks_the_gate_counts(tmp_path):
     assert validate.unmatched_marks(marks, answers, by_text) == []
     judgement = gates.GateTwoRule().judge(groups.groups(load.load(root).runs)[0], marks)
     assert _check(judgement, "explanations, de").value == "1/1 correct"
-    assert _check(judgement, "explanations, de").passed is True
 
 
 def test_a_mark_names_the_text_the_way_an_answer_does(tmp_path):

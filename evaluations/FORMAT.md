@@ -118,7 +118,7 @@ identity, so two writers produce the same bytes.
   boundary is listed, never dropped.
 - **Verdicts:** `wrong` (on an `edit`: refuses the edit; on an `explanation`: does not explain it),
   `correct`, `vague` (true but too general), `valid` (an `edit` the annotators missed but a person
-  accepts; `accept-marks` turns it into key data). Only `correct` counts for the explanation floor.
+  accepts; `accept-marks` turns it into key data). Only `correct` counts as correct in the gate's explanation line.
 - **Sample:** from the repeat-1 run, per deciding language, explanations of edits in `page`-band
   texts, at most two per text, seeded by the run key, so every machine and a renamed file draw the
   same sample.

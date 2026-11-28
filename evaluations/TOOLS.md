@@ -223,8 +223,10 @@ set default to the newest run's, and the command says so. Every axis in which th
 named in `--along` or fixed with `--where` (`--where sampling.presence_penalty=` keeps runs without
 that option); anything ambiguous is refused.
 
-- **`gate`**: one line per floor (`✓`, `✗`, `·` diagnostic), then the outcome. Reads the step-①
-  temperature unless given, and the marks files. Exit 0 `PASS` / `PASS_PENDING`, 1 `FAIL` /
+- **`gate`**: one line per floor (`✓`, `✗`) and per figure (`·`), then the outcome. Reads the
+  step-① temperature and prompt variant the app sends the model unless given (`--temperature`,
+  `--prompt`), and of groups that differ only in their instructions the one asked as today's code
+  asks. A refusal names the axes the remaining groups differ in. Exit 0 `PASS`, 1 `FAIL` /
   `INCOMPLETE`, 2 refused.
 - **`compare`**: `--along` the varying axes (`core/axis_table.py`), `--baseline` the reference value
   (default: first row). `--corrections` counts `text-first` and `text-first/correct` as one. Prints

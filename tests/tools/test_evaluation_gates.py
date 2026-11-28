@@ -1,8 +1,8 @@
-"""Unit tests for gate 2's floors: what one model has to meet on its own numbers.
+"""Unit tests for gate 2, the entry gate: whether one model works in the app at all.
 
 A group of three repeats is judged per language, a group of two is not judged at all, a failed text
-fails the model, a language that does not decide is shown and not counted, and the explanations of a
-review run decide only once a teacher has marked them.
+fails the model, a language that does not decide is shown and not counted, and the quality figures
+(coverage, left alone, GLEU, the explained share, the teacher's marks) are printed and never decide.
 
 Nothing here reads the real store: the records and the runs are built in the test, so a failure
 names the rule that broke and not a file on somebody's disk.
@@ -262,7 +262,7 @@ def test_a_group_of_three_repeats_is_judged_per_language(tmp_path):
     assert judgement.outcome is gates.Outcome.PASS
     assert judgement.languages() == ("de", "en")
     assert _check(judgement, "failed texts, de").passed is True
-    assert _check(judgement, "coverage, en").passed is True
+    assert _check(judgement, "coverage, en").value == "1.00"
 
 
 def test_a_group_of_two_repeats_is_not_judged(tmp_path):
@@ -370,7 +370,33 @@ def test_a_text_that_lost_text_once_is_shown_and_not_marked(tmp_path):
     assert _check(judgement, "texts that lost text in 2 or more repeats, de").passed is True
 
 
-# ── the explanations ────────────────────────────────────────────────────────
+# ── the quality figures ─────────────────────────────────────────────────────
+
+
+def test_a_model_that_changes_nothing_passes_and_its_figures_say_so(tmp_path):
+    """
+    Given  a store whose model left every text as it was, in all three repeats
+    When   the group is judged
+    Then   the model passes, because it works in the app, and coverage and GLEU show what it missed
+           without deciding: how good a model is, is the ranking's question
+    """
+    records = _records()
+    unchanged = tuple(_answer(record, output=record.source) for record in records)
+    group = _group(
+        tmp_path / "store",
+        records,
+        steps=(Step.CORRECT,),
+        answers={1: unchanged, 2: unchanged, 3: unchanged},
+    )
+
+    judgement = gates.GateTwoRule().judge(group)
+
+    assert judgement.outcome is gates.Outcome.PASS
+    coverage = _check(judgement, "coverage, de")
+    assert coverage.value == "0.00"
+    assert coverage.passed is None
+    assert coverage.kind is gates.CheckKind.DIAGNOSTIC
+    assert _check(judgement, "GLEU above the source, de").line().startswith("· ")
 
 
 def _review_group(root: Path, *, marks: tuple[Mark, ...] | None = None) -> gates.Judgement:
@@ -410,38 +436,27 @@ def _marks(value: str = "correct") -> tuple[Mark, ...]:
     return tuple(marks)
 
 
-def test_an_unmarked_review_passes_pending(tmp_path):
+def test_the_teachers_marks_are_printed_and_never_decide(tmp_path):
     """
-    Given  a review run whose explanations nobody has marked
-    When   the group is judged without marks
-    Then   the floors hold but the outcome is pending, because no star is given without marks
+    Given  a review run whose explanations nobody has marked, and the same run marked wrong
+    When   each is judged
+    Then   both pass, and the explanation line says what is left to mark or how many were correct
     """
-    judgement = _review_group(tmp_path / "store")
+    unmarked = _review_group(tmp_path / "unmarked")
+    wrong = _review_group(tmp_path / "wrong", marks=_marks("wrong"))
 
-    assert judgement.outcome is gates.Outcome.PASS_PENDING
-    assert _check(judgement, "explanations, de").value == "1 to mark"
+    assert unmarked.outcome is gates.Outcome.PASS
+    assert _check(unmarked, "explanations, de").value == "1 to mark"
+    assert wrong.outcome is gates.Outcome.PASS
+    assert _check(wrong, "explanations, de").value == "0/1 correct"
+    assert _check(wrong, "explanations, de").kind is gates.CheckKind.DIAGNOSTIC
 
 
-def test_marked_explanations_decide_the_outcome(tmp_path):
+def test_a_review_with_nothing_to_mark_says_so(tmp_path):
     """
-    Given  a review run whose explanations a teacher marked
-    When   the group is judged with those marks
-    Then   the correct ones pass the model and the wrong ones fail it
-    """
-    passed = _review_group(tmp_path / "correct", marks=_marks("correct"))
-    failed = _review_group(tmp_path / "wrong", marks=_marks("wrong"))
-
-    assert passed.outcome is gates.Outcome.PASS
-    assert _check(passed, "explanations, de").value == "1/1 correct"
-    assert failed.outcome is gates.Outcome.FAIL
-    assert _check(failed, "explanations, de").passed is False
-
-
-def test_a_review_with_nothing_to_mark_is_pending(tmp_path):
-    """
-    Given  a review run whose answers carry no explanations
+    Given  a review run whose texts are too short for the explanation sample
     When   the group is judged
-    Then   the explanation check is neither passed nor failed, so the outcome is pending
+    Then   the explanation line says there is nothing to mark, and the model passes
     """
     records = tuple(
         _record(record.language, record.source, record.reference, band="short")
@@ -457,39 +472,39 @@ def test_a_review_with_nothing_to_mark_is_pending(tmp_path):
 
     judgement = gates.GateTwoRule().judge(group)
 
-    assert judgement.outcome is gates.Outcome.PASS_PENDING
+    assert judgement.outcome is gates.Outcome.PASS
     assert _check(judgement, "explanations, de").value == "nothing to mark"
 
 
-def test_a_text_first_group_gets_the_explanation_floors(tmp_path):
+def test_a_text_first_group_gets_the_explanation_figures(tmp_path):
     """
-    Given  a text-first run, which asks the explanations
+    Given  a text-first run, which asks the explanations, whose answers carry none
     When   the group is judged
-    Then   the explained share, the other fallbacks and the spot check are measured
+    Then   the other fallbacks are a floor, and the explained share and the marks are figures
     """
     group = _group(tmp_path / "store", _records())
 
     judgement = gates.GateTwoRule().judge(group)
 
-    assert _check(judgement, "explained share, de").passed is False
     assert _check(judgement, "other fallbacks, de").passed is True
-    assert [check for check in judgement.checks if check.kind is gates.CheckKind.EXPLANATION]
+    assert _check(judgement, "explained share, de").kind is gates.CheckKind.DIAGNOSTIC
+    assert _check(judgement, "explanations, de").kind is gates.CheckKind.DIAGNOSTIC
+    assert judgement.outcome is gates.Outcome.PASS
 
 
-def test_a_correct_only_group_has_no_explanation_floor(tmp_path):
+def test_a_correct_only_group_has_no_explanation_figures(tmp_path):
     """
     Given  a text-first run that asked step ① alone
     When   the group is judged
-    Then   no explanation floor is measured, and the model passes on its floors alone
+    Then   nothing about explanations is measured, and the model passes on its floors alone
     """
     group = _group(tmp_path / "store", _records(), steps=(Step.CORRECT,))
 
     judgement = gates.GateTwoRule().judge(group)
 
     assert judgement.outcome is gates.Outcome.PASS
-    assert not [check for check in judgement.checks if "explained" in check.name]
+    assert not [check for check in judgement.checks if "explain" in check.name]
     assert not [check for check in judgement.checks if "fallbacks" in check.name]
-    assert not [check for check in judgement.checks if check.kind is gates.CheckKind.EXPLANATION]
 
 
 # ── the diagnostics ─────────────────────────────────────────────────────────
@@ -568,16 +583,16 @@ def test_a_check_line_names_the_bar_and_the_mark():
     When   each is written as a line
     Then   the mark says which it is, and the bar is named where there is one
     """
-    passed = gates.Check("coverage, de", True, "0.95", "≥ 0.90")
-    failed = gates.Check("coverage, de", False, "0.80", "≥ 0.90")
-    unmeasured = gates.Check("coverage, de", None, "no text", "≥ 0.90")
+    passed = gates.Check("added marks, de", True, "0", "≤ 0")
+    failed = gates.Check("added marks, de", False, "2", "≤ 0")
+    unmeasured = gates.Check("added marks, de", None, "no text", "≤ 0")
     diagnostic = gates.Check(
         "seconds per 100 words", None, "3.1", "", kind=gates.CheckKind.DIAGNOSTIC
     )
 
-    assert passed.line() == "✓ coverage, de: 0.95 (needs ≥ 0.90)"
-    assert failed.line() == "✗ coverage, de: 0.80 (needs ≥ 0.90)"
-    assert unmeasured.line() == "? coverage, de: no text (needs ≥ 0.90)"
+    assert passed.line() == "✓ added marks, de: 0 (needs ≤ 0)"
+    assert failed.line() == "✗ added marks, de: 2 (needs ≤ 0)"
+    assert unmeasured.line() == "? added marks, de: no text (needs ≤ 0)"
     assert diagnostic.line() == "· seconds per 100 words: 3.1"
 
 

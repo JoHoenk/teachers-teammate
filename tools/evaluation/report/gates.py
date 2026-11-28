@@ -4,7 +4,8 @@ One question, one answer.  :meth:`GateTwoRule.judge` asks whether one model, on 
 works in the app: no text it could not proofread, no cut-off that cost the explanations, no Markdown
 it added, no text it keeps losing.  Pass or fail per model, no other model involved.  How good it
 is, is the ranking's question (mean F0.5, :mod:`.stats` and :mod:`.compare`): coverage, left alone,
-GLEU, the explained share and the teacher's marks are printed with the verdict and never decide.
+GLEU, the explained share, the fallbacks that left part of the explanations out and the teacher's
+marks are printed with the verdict and never decide.
 
 The answer comes in two steps, measuring and then rating.  Measuring pools nothing across
 languages: every check is measured per language, French too.  Rating decides which languages enter
@@ -157,9 +158,6 @@ class GateTwoRule:
     """Fallbacks whose requests include a ``length``: both tries were cut off, so the teacher lost
     the explanations of that text."""
 
-    other_fallbacks: int = 1
-    """Fallbacks that were not cut off, per language over all runs."""
-
     added_marks: int = 0
     """Texts where the model added Markdown marks the source does not have."""
 
@@ -188,8 +186,8 @@ class GateTwoRule:
         """Return one check per floor and language, and the figures beside them.
 
         Nothing is pooled across languages: each language is measured on its own, French too, and
-        which of them decides is :meth:`rate`'s question.  The figures (coverage, the explained
-        share, GLEU, left alone) sit in their language's block and never decide.
+        which of them decides is :meth:`rate`'s question.  The figures (other fallbacks, coverage,
+        the explained share, GLEU, left alone) sit in their language's block and never decide.
         """
         if not group.complete or 1 not in group.repeats:
             return Measurement(
@@ -249,7 +247,7 @@ class GateTwoRule:
                 )
             )
             if explains:
-                checks.append(self._other_fallbacks(code, parts))
+                checks.append(_other_fallbacks(code, parts))
             checks.append(
                 self._at_most(
                     f"added marks, {code}", code, pooled_counts["added_marks"], self.added_marks
@@ -321,18 +319,6 @@ class GateTwoRule:
         found = sum(1 for count in lost.values() if count >= 2)
         return self._at_most(name, code, found, self.lost_texts)
 
-    def _other_fallbacks(self, code: str, parts: Sequence[Sequence[summary.ModelSummary]]) -> Check:
-        """Return the fallbacks of one language that were not cut off, over all runs."""
-        counts = _pooled(parts, code)
-        other = counts["fallback"] - counts["cut_off"]
-        return Check(
-            f"other fallbacks, {code}",
-            other <= self.other_fallbacks,
-            str(other),
-            f"≤ {self.other_fallbacks}",
-            language=code,
-        )
-
     def _explanations(
         self,
         group: groups.RunGroup,
@@ -346,19 +332,21 @@ class GateTwoRule:
         """
         drawn = spot_check.sample(group.first())
         per_language = drawn.per_language()
-        counted = spot_check.correct_share(drawn, marks) if marks is not None else {}
+        counted = spot_check.correct_share(drawn, marks or ())
+        open_notes = spot_check.unmarked(drawn, marks or ())
         checks = []
         for code in _languages(parts):
             if code not in self.deciding:
                 continue
             notes = per_language.get(code, ())
+            left = sum(1 for note in open_notes if note.language == code)
+            correct, total = counted.get(code, (0, len(notes)))
             if not notes:
                 value = "nothing to mark"
-            elif marks is None:
-                value = f"{len(notes)} to mark"
+            elif left == total:
+                value = f"{total} to mark"
             else:
-                correct, total = counted.get(code, (0, len(notes)))
-                value = f"{correct}/{total} correct"
+                value = f"{correct}/{total - left} correct" + (f", {left} to mark" if left else "")
             checks.append(_figure(f"{spot_check.EXPLANATIONS}, {code}", value, code))
         return checks
 
@@ -407,6 +395,16 @@ def _pooled(parts: Sequence[Sequence[summary.ModelSummary]], language: str) -> d
 def _figure(name: str, value: str, language: str) -> Check:
     """Return one language's figure: printed in its block, never deciding."""
     return Check(name, None, value, "", language=language, kind=CheckKind.DIAGNOSTIC)
+
+
+def _other_fallbacks(code: str, parts: Sequence[Sequence[summary.ModelSummary]]) -> Check:
+    """Return the fallbacks of one language that were not cut off, over all runs.
+
+    Step ② or ③ answered for part of the text only: the corrected text is whole and part of the
+    explanations is missing, which is a matter of quality and not of whether the model works.
+    """
+    counts = _pooled(parts, code)
+    return _figure(f"other fallbacks, {code}", str(counts["fallback"] - counts["cut_off"]), code)
 
 
 def _share(

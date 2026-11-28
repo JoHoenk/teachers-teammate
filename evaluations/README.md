@@ -79,12 +79,13 @@ German and English decide; the ranking figure is the mean F0.5 over both, on bot
 ## Floors
 
 Gate 2 asks only whether a model works in the app. It must pass every floor of `GateTwoRule`
-(`tools/evaluation/report/gates.py`): no failed text, no cut-off or other fallback beyond the
-floor, no added marks, and no text that loses text in two of the three repeats. A group with fewer
-than three repeats or a missing text is *incomplete*, not passed.
+(`tools/evaluation/report/gates.py`): no failed text, no cut-off that cost the explanations, no
+added marks, and no text that loses text in two of the three repeats. A group with fewer than three
+repeats or a missing text is *incomplete*, not passed.
 
-Coverage, left alone, GLEU, the explained share and the teacher's marks of the explanations are
-printed with the verdict and never decide: quality is the ranking's question. A teacher can mark a
+Coverage, left alone, GLEU, the explained share, the fallbacks that left part of the explanations
+out and the teacher's marks are printed with the verdict and never decide: quality is the ranking's
+question. A teacher can mark a
 sample of the explanations as correct, wrong or vague; corrections the annotators missed but a
 teacher accepts count as correct for every model.
 

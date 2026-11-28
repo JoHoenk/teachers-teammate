@@ -452,6 +452,37 @@ def test_the_teachers_marks_are_printed_and_never_decide(tmp_path):
     assert _check(wrong, "explanations, de").kind is gates.CheckKind.DIAGNOSTIC
 
 
+def test_explanations_nobody_marked_are_to_mark_even_with_an_empty_marks_file(tmp_path):
+    """
+    Given  a review run, and a marks list that holds no mark of its sample
+    When   the group is judged
+    Then   the explanation line says how many are left to mark, not that none of them was correct
+    """
+    judgement = _review_group(tmp_path / "store", marks=())
+
+    assert _check(judgement, "explanations, de").value == "1 to mark"
+
+
+def test_fallbacks_that_left_explanations_out_do_not_fail_the_model(tmp_path):
+    """
+    Given  a text-first run whose German text fell back in every repeat, without a cut-off
+    When   the group is judged
+    Then   the model passes, and the fallbacks are counted as a figure: the text is whole and only
+           part of its explanations is missing
+    """
+    records = _records()
+    answers = tuple(
+        _answer(record, fallback=True) if record.language == "de" else _answer(record)
+        for record in records
+    )
+    group = _group(tmp_path / "store", records, answers={1: answers, 2: answers, 3: answers})
+
+    judgement = gates.GateTwoRule().judge(group)
+
+    assert judgement.outcome is gates.Outcome.PASS
+    assert _check(judgement, "other fallbacks, de").value == "3"
+
+
 def test_a_review_with_nothing_to_mark_says_so(tmp_path):
     """
     Given  a review run whose texts are too short for the explanation sample
@@ -480,13 +511,13 @@ def test_a_text_first_group_gets_the_explanation_figures(tmp_path):
     """
     Given  a text-first run, which asks the explanations, whose answers carry none
     When   the group is judged
-    Then   the other fallbacks are a floor, and the explained share and the marks are figures
+    Then   the other fallbacks, the explained share and the marks are figures
     """
     group = _group(tmp_path / "store", _records())
 
     judgement = gates.GateTwoRule().judge(group)
 
-    assert _check(judgement, "other fallbacks, de").passed is True
+    assert _check(judgement, "other fallbacks, de").kind is gates.CheckKind.DIAGNOSTIC
     assert _check(judgement, "explained share, de").kind is gates.CheckKind.DIAGNOSTIC
     assert _check(judgement, "explanations, de").kind is gates.CheckKind.DIAGNOSTIC
     assert judgement.outcome is gates.Outcome.PASS

@@ -20,7 +20,7 @@ import pytest
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX
 from teachers_teammate.exceptions import OCRError
 from teachers_teammate.domain.model_catalog import request_profile
-from teachers_teammate.infrastructure.ollama_utils import ChatStats
+from teachers_teammate.infrastructure.ollama_request import ChatStats
 from tools import verify_model_catalog
 from tools.evaluation.checks import gate1_answers, gate_one
 from tools.evaluation.core.sizes import (

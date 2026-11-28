@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClient
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
+from teachers_teammate.infrastructure.ollama_request import ChatStats
 from tools.evaluation.core.modes import ALL_STEPS, Exchange, Step
 from tools.evaluation.core.performance import LoadedModel, Performance, RequestStats
 from tools.evaluation.core.records import RunFile, RunHeader, Session

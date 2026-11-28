@@ -29,27 +29,24 @@ from ..domain.data_location import (
     RETIRED_OCR_ENGINES,
     STAGE_ANONYMIZATION,
 )
+from ..domain.hardware_profile import HardwareProfile, profile_setting
 from ..domain.local_models import (
     PAGE_MODELS_ADDON_ID,
     PAGE_MODELS_SIZE_GB,
     READER_MODEL_NAME,
     READER_SIZE_GB,
 )
-from ..domain.model_catalog import (
-    OLLAMA_CATALOG,
+from ..domain.model_catalog import OLLAMA_CATALOG, ModelCategory, find_spec
+from ..domain.model_fit import (
     DiskVerdict,
-    HardwareProfile,
-    ModelCategory,
     ModelRating,
     Suitability,
     best_model,
     catalog_uses,
     disk_verdict,
-    find_spec,
-    normalize_tag,
-    profile_setting,
     suitability_rank,
 )
+from ..domain.model_tags import normalize_tag
 from ..domain.ollama_discovery import OllamaState
 from ..domain.stages import Stage
 from ..settings_schema import DEFAULTS, normalize_preprocess_method

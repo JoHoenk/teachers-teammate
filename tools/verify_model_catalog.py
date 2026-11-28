@@ -85,16 +85,15 @@ from teachers_teammate.domain.context_budget import (
     PROOFREADING_NUM_CTX_CAP,
     automatic_num_ctx,
 )
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.hardware_profile import (
     FULL_SPEED_SHARE,
     NOMINAL_CARD_GB,
-    OLLAMA_CATALOG,
     HardwareProfile,
-    OllamaModelSpec,
-    RequestProfile,
 )
+from teachers_teammate.domain.model_catalog import OLLAMA_CATALOG, OllamaModelSpec
+from teachers_teammate.domain.request_profile import RequestProfile
 from teachers_teammate.exceptions import OCRError, OllamaUnreachableError
-from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
 from tools.evaluation.checks import gate1_answers, gate_one
 from tools.evaluation.checks.check_rule import CheckRule, CheckRun, Decision
 from tools.evaluation.checks.download_sizes import check_size, report_real_size

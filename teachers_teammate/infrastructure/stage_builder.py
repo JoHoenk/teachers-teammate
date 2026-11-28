@@ -38,8 +38,9 @@ from ..domain.data_location import (
     llm_stage_location,
     online_ocr_reason,
 )
+from ..domain.hardware_profile import HardwareDetection
 from ..domain.local_models import READER_MODELS
-from ..domain.model_catalog import HardwareDetection, RequestProfile
+from ..domain.request_profile import RequestProfile
 from ..exceptions import OnlineOcrNotAllowedError, ProviderNotAvailableError
 from ..interfaces import (
     Anonymizer,
@@ -60,7 +61,8 @@ from .docx_builder import DocxDocumentCreator
 from .evaluation import PortEvaluator
 from .llm_factory import build_llm, get_provider_info
 from .ocr_processor import OllamaOCRProcessor
-from .ollama_utils import OllamaClient, ollama_server
+from .ollama_client import OllamaClient
+from .ollama_host import ollama_server
 from .onnx.store import ModelStore
 from .ppocr.engine import PpOcrProcessor
 from .preprocessing.recipes import steps_for

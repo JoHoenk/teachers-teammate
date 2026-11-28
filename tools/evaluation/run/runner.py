@@ -40,7 +40,7 @@ from .ports import ProbePort, RecordingPort, ServerUnavailableError
 from .progress import Progress
 
 if TYPE_CHECKING:
-    from teachers_teammate.domain.model_catalog import RequestProfile
+    from teachers_teammate.domain.request_profile import RequestProfile
     from teachers_teammate.interfaces import Corrector
 
 WARM_UP_TEXT = "Das ist ein Test."

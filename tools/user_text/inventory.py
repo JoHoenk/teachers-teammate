@@ -231,7 +231,7 @@ INVARIANT_MESSAGES: frozenset[tuple[str, str]] = frozenset(
             "f'{page_id} is not a {kind.__name__}'",
         ),
         (
-            "teachers_teammate/infrastructure/addon_manager.py",
+            "teachers_teammate/infrastructure/addon_pip.py",
             "the pip process opened no output stream",
         ),
         (

@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QHideEvent
 from PySide6.QtWidgets import QSplitter, QVBoxLayout, QWidget
 
-from ..domain.model_catalog import GpuUsage, SystemUsage
+from ..domain.system_facts import GpuUsage, SystemUsage
 from ..texts import menus
 from ._chart_widget import ChartWidget
 from ._handles import MONITOR_WINDOW

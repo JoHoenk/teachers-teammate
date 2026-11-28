@@ -23,32 +23,34 @@ import logging
 import threading
 from urllib.parse import urlparse
 
-from ..domain.model_catalog import (
-    OLLAMA_CATALOG,
+from ..domain.hardware_profile import (
     DetectionReason,
-    GpuInfo,
-    GpuUsage,
     HardwareDetection,
     HardwareProfile,
     HardwareProfileSetting,
     LocalHardware,
-    ModelCategory,
-    ModelRating,
-    ModelUses,
-    OllamaModelSpec,
-    SystemUsage,
     active_profile,
-    best_model,
-    catalog_uses,
     choose_profile,
     concrete_profile,
+)
+from ..domain.model_catalog import (
+    OLLAMA_CATALOG,
+    ModelCategory,
+    ModelUses,
+    OllamaModelSpec,
     find_spec,
-    normalize_tag,
+)
+from ..domain.model_fit import (
+    ModelRating,
+    best_model,
+    catalog_uses,
     rate_model,
     uses_from_capabilities,
 )
+from ..domain.model_tags import normalize_tag
 from ..domain.ollama_address import normalize_ollama_url
 from ..domain.stages import Stage
+from ..domain.system_facts import GpuInfo, GpuUsage, SystemUsage
 from ..exceptions import OllamaUnreachableError
 from ..settings_schema import DEFAULTS
 from .context_choice import ContextChoice, context_choice

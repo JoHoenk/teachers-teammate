@@ -19,7 +19,7 @@ from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ..application.composition import AppServices
-from ..domain.model_catalog import (
+from ..domain.hardware_profile import (
     PROFILE_SETTINGS,
     HardwareDetection,
     HardwareProfileSetting,

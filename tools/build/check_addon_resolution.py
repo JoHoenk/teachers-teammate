@@ -117,7 +117,7 @@ def dry_run_command(
     """Return the command that resolves *requirements* with the app's pip and installs nothing.
 
     The arguments are the ones the app uses for a real install
-    (``addon_manager.pip_policy_arguments``, ``--upgrade`` included: the newest release is
+    (``addon_pip.pip_policy_arguments``, ``--upgrade`` included: the newest release is
     what the weekly job exists to try), plus ``--dry-run``.  With *lock* the add-on lock is a
     second ``-c``, as in the installed app.  With *report* pip writes what it would install as
     JSON, which ``tools/licenses/inventory.py --check-resolved`` reads.
@@ -240,9 +240,7 @@ def _slug(name: str) -> str:
 
 def addons_to_check() -> dict[str, list[str]]:
     """Return the add-ons to resolve: every one the app offers under Settings → Add-ons."""
-    from teachers_teammate.infrastructure.addon_manager import (  # noqa: PLC0415
-        addon_requirements,
-    )
+    from teachers_teammate.infrastructure.addon_list import addon_requirements  # noqa: PLC0415
 
     return addon_requirements()
 

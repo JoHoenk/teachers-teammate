@@ -38,6 +38,7 @@ CONSTRUCTED = {
     "ProviderService",
     "ReaderService",
     "ReleaseService",
+    "RunChecks",
     "RunService",
     "SampleStore",
     "SetupService",

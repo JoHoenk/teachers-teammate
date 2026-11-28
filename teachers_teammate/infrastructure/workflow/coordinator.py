@@ -14,7 +14,7 @@ from ...interfaces import OnFileDoneFn, OnFileStartedFn, Reporter
 from ...messages import log_failure
 from ...texts import report as report_text
 from ..reporting import StdoutReporter
-from .file_processor import ProcessingResult
+from .processing_result import ProcessingResult
 
 _logger = logging.getLogger(__name__)
 

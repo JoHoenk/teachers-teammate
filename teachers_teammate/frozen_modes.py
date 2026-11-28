@@ -444,12 +444,16 @@ def _check_addon_constraints() -> str | None:
     The installed app gives this file to pip for every add-on install; a missing or stale one
     would let an add-on bring its own numpy or pydantic.
     """
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    from teachers_teammate.infrastructure.addon_list import (  # noqa: PLC0415
+        ADDON_CONSTRAINTS_RELATIVE,
+        addon_constraints_path,
+        read_constraints,
+    )
 
-    path = addon_manager.addon_constraints_path()
+    path = addon_constraints_path()
     if path is None:
-        return f"{addon_manager.ADDON_CONSTRAINTS_RELATIVE} is not in the bundle"
-    pins = addon_manager.read_constraints(path)
+        return f"{ADDON_CONSTRAINTS_RELATIVE} is not in the bundle"
+    pins = read_constraints(path)
     if not pins:
         return f"{path.name} lists no package"
     problems: list[str] = []
@@ -471,15 +475,20 @@ def _check_addon_lock() -> str | None:
     The installed app gives this file to pip as a second ``-c``; a bundle without it would
     install whatever version of spaCy or langchain-openai is newest that day.
     """
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    from teachers_teammate.infrastructure.addon_list import (  # noqa: PLC0415
+        ADDON_LOCK_RELATIVE,
+        addon_lock_path,
+        addon_package_names,
+        read_constraints,
+    )
 
-    path = addon_manager.addon_lock_path()
+    path = addon_lock_path()
     if path is None:
-        return f"{addon_manager.ADDON_LOCK_RELATIVE} is not in the bundle"
-    pins = addon_manager.read_constraints(path)
+        return f"{ADDON_LOCK_RELATIVE} is not in the bundle"
+    pins = read_constraints(path)
     if not pins:
         return f"{path.name} lists no package"
-    missing = [name for name in addon_manager.addon_package_names() if name not in pins]
+    missing = [name for name in addon_package_names() if name not in pins]
     return f"not pinned: {', '.join(missing)}" if missing else None
 
 
@@ -651,17 +660,21 @@ _ADDON_LOG_TAIL = 200
 def _install_addons(target: Path, log: list[str]) -> list[str]:
     """Install every add-on and the check language's spaCy model into *target*; return failures."""
     from teachers_teammate.domain.name_models import spacy_model_for  # noqa: PLC0415
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    from teachers_teammate.infrastructure.addon_list import addon_requirements  # noqa: PLC0415
+    from teachers_teammate.infrastructure.addon_pip import (  # noqa: PLC0415
+        download_spacy_model_subprocess,
+        install_addon_subprocess,
+    )
 
     problems: list[str] = []
-    for addon in addon_manager.addon_requirements():
+    for addon in addon_requirements():
         try:
-            addon_manager.install_addon_subprocess(addon, target, log.append)
+            install_addon_subprocess(addon, target, log.append)
         except (OSError, RuntimeError) as exc:
             problems.append(f"install {addon}: {exc}")
     model = spacy_model_for(_ADDON_CHECK_LANGUAGE)
     try:
-        addon_manager.download_spacy_model_subprocess(model, target, log.append)
+        download_spacy_model_subprocess(model, target, log.append)
     except (OSError, RuntimeError) as exc:
         problems.append(f"download {model}: {exc}")
     return problems
@@ -677,11 +690,14 @@ def _use_addons(target: Path) -> None:
 
 def _check_addon_imports() -> list[str]:
     """Import the module of every add-on; name the ones that fail."""
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    from teachers_teammate.infrastructure.addon_list import (  # noqa: PLC0415
+        addon_module,
+        addon_requirements,
+    )
 
     problems: list[str] = []
-    for addon in addon_manager.addon_requirements():
-        module = addon_manager.addon_module(addon)
+    for addon in addon_requirements():
+        module = addon_module(addon)
         try:
             importlib.import_module(module)
         except Exception as exc:  # noqa: BLE001 — any failure is what this check looks for

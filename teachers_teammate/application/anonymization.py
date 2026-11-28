@@ -275,6 +275,6 @@ class AnonymizationService:
         progress_cb: Callable[[str], None],
     ) -> None:
         """Download a spaCy model into *target* using spaCy's own download mechanism."""
-        from ..infrastructure.addon_manager import download_spacy_model_subprocess  # noqa: PLC0415
+        from ..infrastructure.addon_pip import download_spacy_model_subprocess  # noqa: PLC0415
 
         download_spacy_model_subprocess(model, target, progress_cb)

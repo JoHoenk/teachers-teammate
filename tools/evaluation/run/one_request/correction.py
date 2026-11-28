@@ -1,7 +1,7 @@
 """The one-request correctors: the evaluation baseline of the proofreading stage.
 
 :class:`LangChainCorrector` — accepts any LangChain ``BaseChatModel``; provider-agnostic.
-:class:`NativeOllamaCorrector` — uses :class:`~teachers_teammate.infrastructure.ollama_utils.
+:class:`NativeOllamaCorrector` — uses :class:`~teachers_teammate.infrastructure.ollama_client.
 OllamaClient` directly; no LangChain.
 
 Both implement :class:`~teachers_teammate.interfaces.Corrector` and return a
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from langchain_core.language_models import BaseChatModel
 
-    from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+    from teachers_teammate.infrastructure.ollama_client import OllamaClient
 
 from teachers_teammate.domain.context_budget import (
     BASE_NUM_CTX,
@@ -42,8 +42,8 @@ from teachers_teammate.domain.context_budget import (
 )
 from teachers_teammate.domain.correction_policy import CUT_OFF_TRIES, normalize_output_mode
 from teachers_teammate.domain.formatted_text import TextFormat
-from teachers_teammate.domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
+from teachers_teammate.domain.request_profile import DEFAULT_REQUEST_PROFILE, RequestProfile
 from teachers_teammate.infrastructure.proofreading.port import (
     REVIEW_TIMEOUT_CAP,  # noqa: F401  # re-exported for the tests that pin the timeout
     LangChainPort,
@@ -205,7 +205,7 @@ teacher's own format gets it too.
 
 It is **not** sent to every model: the families react differently (some collapse to a single
 sentence with it, others ignore it), so
-:class:`~teachers_teammate.domain.model_catalog.RequestProfile` decides per model.
+:class:`~teachers_teammate.domain.request_profile.RequestProfile` decides per model.
 """
 
 
@@ -227,7 +227,7 @@ def instruction_parts(
     compact-JSON rule.  The dialog shows these parts; :func:`_instructions` sends their join.
 
     *compact_json* is the model's profile knob
-    (:class:`~teachers_teammate.domain.model_catalog.RequestProfile`), so the caller resolves it
+    (:class:`~teachers_teammate.domain.request_profile.RequestProfile`), so the caller resolves it
     from the model tag: the corrector, the dialog and the cache key all ask
     :func:`~teachers_teammate.domain.model_catalog.request_profile`.
     """
@@ -493,7 +493,7 @@ class LangChainCorrector(_ReviewCorrector):
 class NativeOllamaCorrector(_ReviewCorrector):
     """Ollama-backed proofreading using the native HTTP API (no LangChain).
 
-    Accepts an :class:`~.ollama_utils.OllamaClient` injected by the stage
+    Accepts an :class:`~.ollama_client.OllamaClient` injected by the stage
     builder — the client is shared across pipeline stages and must not be
     constructed here.
     """

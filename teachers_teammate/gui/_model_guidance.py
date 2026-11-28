@@ -21,17 +21,11 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from ..application.composition import AppServices
+from ..domain.hardware_profile import HardwareProfile, active_profile
 from ..domain.install_item import InstallItem, InstallKind
-from ..domain.model_catalog import (
-    HardwareProfile,
-    ModelCategory,
-    ModelRating,
-    Suitability,
-    active_profile,
-    best_model,
-    normalize_tag,
-    suitability_rank,
-)
+from ..domain.model_catalog import ModelCategory
+from ..domain.model_fit import ModelRating, Suitability, best_model, suitability_rank
+from ..domain.model_tags import normalize_tag
 from ..domain.performance_estimate import TimeRange
 from ..texts import review as txt
 from ..texts.models import (

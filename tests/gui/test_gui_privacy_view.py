@@ -10,7 +10,7 @@ import pytest
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.anonymization import AnonymizationService
 from teachers_teammate.application.providers import ProviderService
-from teachers_teammate.application.run import RunService
+from teachers_teammate.application.run_checks import RunChecks
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.domain.data_location import SentRecord
 from teachers_teammate.texts import check as check_text
@@ -151,7 +151,7 @@ def _open_document(
 @pytest.fixture(autouse=True)
 def _no_network(monkeypatch) -> None:
     """Never probe a real service: the status row and the menu ask in the background."""
-    monkeypatch.setattr(RunService, "check_stage_requirements", lambda *_: [])
+    monkeypatch.setattr(RunChecks, "check_stage_requirements", lambda *_: [])
     monkeypatch.setattr(
         ProviderService, "check_connection", lambda self, **_kw: (False, False, "offline")
     )

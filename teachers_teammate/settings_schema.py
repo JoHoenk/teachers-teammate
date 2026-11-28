@@ -37,12 +37,8 @@ from .domain.data_location import (
     RETIRED_OCR_ENGINES,
     OcrEngine,
 )
-from .domain.model_catalog import (
-    DEFAULT_OCR_MODEL,
-    DEFAULT_WRITING_MODEL,
-    HardwareProfileSetting,
-    parse_profile_setting,
-)
+from .domain.hardware_profile import HardwareProfileSetting, parse_profile_setting
+from .domain.model_catalog import DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL
 from .domain.ollama_address import normalize_ollama_url
 from .domain.ollama_discovery import DEFAULT_SERVER_URL
 from .domain.output_files import DocxFormat

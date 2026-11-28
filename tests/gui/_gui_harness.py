@@ -33,17 +33,16 @@ from teachers_teammate.application.composition import AppServices
 from teachers_teammate.application.ollama_server import OllamaServerService
 from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.providers import ProviderService
-from teachers_teammate.application.run import RunPreflight, RunService
+from teachers_teammate.application.run_checks import RunChecks, RunPreflight
 from teachers_teammate.application.stored_results import StoredSummary
 from teachers_teammate.domain.anonymization import AnonymizerConfig
-from teachers_teammate.domain.model_catalog import (
-    OLLAMA_CATALOG,
+from teachers_teammate.domain.hardware_profile import (
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
-    ModelUses,
     concrete_profile,
 )
+from teachers_teammate.domain.model_catalog import OLLAMA_CATALOG, ModelUses
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.proofreading.review import CorrectionReview
 from teachers_teammate.domain.providers import ProviderInfo
@@ -179,7 +178,7 @@ class FakeGuiService(LocalDataFlowStub):
         card_gb: float | None = None,
     ) -> list:
         _ = ollama_url, cached_only
-        from teachers_teammate.domain.model_catalog import rate_model  # noqa: PLC0415
+        from teachers_teammate.domain.model_fit import rate_model  # noqa: PLC0415
 
         return [
             rate_model(tag, task, profile, system_memory_gb=system_memory_gb, card_gb=card_gb)
@@ -187,7 +186,7 @@ class FakeGuiService(LocalDataFlowStub):
         ]
 
     def rate_for(self, tags, task, detection, setting, ollama_url, *, cached_only: bool = False):
-        from teachers_teammate.domain.model_catalog import active_profile  # noqa: PLC0415
+        from teachers_teammate.domain.hardware_profile import active_profile  # noqa: PLC0415
 
         return self.rate_ollama_models(
             tags,
@@ -296,7 +295,7 @@ def neutralize_gui_threads(monkeypatch: Any) -> None:
     monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(ProviderService, "check_connection", lambda *a, **k: (True, True, "✓ OK"))
-    monkeypatch.setattr(RunService, "check_stage_requirements", lambda *a, **k: [])
+    monkeypatch.setattr(RunChecks, "check_stage_requirements", lambda *a, **k: [])
 
 
 def assert_no_running_threads(widget: QWidget) -> None:
@@ -516,8 +515,8 @@ def record_notices(monkeypatch) -> list[Notice]:
 @pytest.fixture(autouse=True)
 def no_network_in_gui_tests(monkeypatch) -> None:
     """Prevent all MainWindow tests from making Ollama/network calls via the dependency guard."""
-    monkeypatch.setattr(RunService, "check_stage_requirements", lambda *_: [])
-    monkeypatch.setattr(RunService, "check_run_preflight", lambda *_args, **_kw: RunPreflight())
+    monkeypatch.setattr(RunChecks, "check_stage_requirements", lambda *_: [])
+    monkeypatch.setattr(RunChecks, "check_run_preflight", lambda *_args, **_kw: RunPreflight())
     # The silent server search must not probe the real computer or its network.
     monkeypatch.setattr(OllamaServerService, "discover_ollama_servers", lambda *_a, **_kw: [])
     # The status row checks its services in the background; never probe a real server.

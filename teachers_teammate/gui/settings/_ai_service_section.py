@@ -25,7 +25,7 @@ from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QWidg
 
 from ...application.composition import AppServices
 from ...domain.data_location import PROVIDER_OLLAMA, DataLocation, DataRegion
-from ...domain.model_catalog import HardwareProfile, HardwareProfileSetting
+from ...domain.hardware_profile import HardwareProfile, HardwareProfileSetting
 from ...domain.model_listing import ListedModel, ModelListing
 from ...domain.ollama_address import normalize_ollama_url
 from ...domain.providers import ProviderInfo

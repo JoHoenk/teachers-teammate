@@ -15,7 +15,7 @@ from typing import Any, cast
 
 import pytest
 
-from teachers_teammate.domain.model_catalog import RequestProfile
+from teachers_teammate.domain.request_profile import RequestProfile
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.exceptions import StageError, StageErrorKind
 from teachers_teammate.interfaces import Corrector
@@ -899,9 +899,9 @@ def test_the_file_of_a_run_is_named_by_the_prompt_its_requests_carry(
            axis default, so it carries no tag — and the third its own, so a file never holds
            answers of two prompts
     """
-    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+    from teachers_teammate.domain.request_profile import STEP_ONE_PROMPTS  # noqa: PLC0415
 
-    monkeypatch.setitem(model_catalog.STEP_ONE_PROMPTS, MODEL, "keep")
+    monkeypatch.setitem(STEP_ONE_PROMPTS, MODEL, "keep")
     harness = _Harness()
 
     def planned(prompt: str) -> str:

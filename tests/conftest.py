@@ -373,11 +373,11 @@ def _add_on_folder_in_tmp(
     must never see or touch the real one, nor leave the path changed for the next test.
     """
     try:
-        from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+        from teachers_teammate.infrastructure import addon_folder  # noqa: PLC0415
     except ImportError:  # pure-unit targets without the package
         return
-    folder = tmp_path_factory.mktemp("addon_root") / "packages"
-    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: folder)
+    folder = tmp_path_factory.mktemp("addon_root")
+    monkeypatch.setattr(addon_folder, "app_data_folder", lambda: folder)
     monkeypatch.setattr(sys, "path", list(sys.path))
 
 
@@ -464,7 +464,10 @@ def pytest_configure(config: pytest.Config) -> None:
 
 PLATFORM_TEST_FILES = frozenset(
     {
-        "test_addon_manager.py",
+        "test_addon_folder.py",
+        "test_addon_imports.py",
+        "test_addon_pip.py",
+        "test_addon_staging.py",
         "test_diagnostics.py",
         "test_frozen_entry.py",
         "test_frozen_modes.py",
@@ -476,7 +479,10 @@ PLATFORM_TEST_FILES = frozenset(
         "test_ollama_discovery.py",
         "test_ollama_install.py",
         "test_ollama_server.py",
-        "test_ollama_utils.py",
+        "test_ollama_client.py",
+        "test_ollama_host.py",
+        "test_ollama_request.py",
+        "test_ollama_stream.py",
         "test_power.py",
         "test_recommendation_service.py",
         "test_state_repository.py",

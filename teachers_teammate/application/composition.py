@@ -22,7 +22,9 @@ import teachers_teammate
 
 from ..cache_keys import correction_key
 from ..infrastructure import logging_setup, power, qt_log
-from ..infrastructure.addon_manager import AddonPackages
+from ..infrastructure.addon_imports import inject_packages_dir
+from ..infrastructure.addon_packages import AddonPackages
+from ..infrastructure.addon_staging import prepare_packages_dir_once
 from ..infrastructure.compare_store import CompareStore
 from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.file_discovery import FileDiscovery
@@ -56,7 +58,8 @@ from .ollama_server import OllamaServerService, ollama_client
 from .providers import ProviderService
 from .reader import ReaderService
 from .releases import ReleaseService
-from .run import RunParts, RunService, RunServices, state_store_for, windows_for
+from .run import RunParts, RunService, state_store_for, windows_for
+from .run_checks import CheckServices, RunChecks
 from .setup_plan import SetupService
 from .speed_estimates import SpeedEstimateService
 from .stored_results import StoredResults
@@ -76,12 +79,14 @@ class AppServices:
     """The application's services, one instance per process.
 
     Every service is built once here, so the caches that must not exist twice — the anonymizer,
-    the model listings, the installed models — are shared by the whole process.  ``run`` is the
-    run itself; the rest are the parts of it.
+    the model listings, the installed models — are shared by the whole process.  ``run`` runs the
+    files; ``run_checks`` answers what a run and a single stage ask before they start.
     """
 
     run: RunService
-    """The run: its files, what it needs before it starts, and the summary it leaves."""
+    """The run: the files it is given and the summary it leaves."""
+    run_checks: RunChecks
+    """What a run is asked before it starts, and what one stage needs on its own."""
     ollama: OllamaServerService
     """The Ollama server: discovery, status, model sizes and pulls."""
     providers: ProviderService
@@ -173,14 +178,16 @@ def build_app_services(
     setup = _setup(parts, providers, reader, recommendations, anonymization, addons)
     key_facts = MachineKeyFacts(parts.model_store)
     documents, commands = _documents(parts, recommendations, data_flow, anonymization, key_facts)
-    run = _run(
-        parts, providers, reader, recommendations, anonymization, addons, documents, key_facts
+    run_checks = _run_checks(
+        parts, providers, reader, recommendations, anonymization, addons, documents
     )
+    run = _run(parts, recommendations, anonymization, key_facts)
     comparison, compare_candidates = _comparison(
         parts, providers, speeds, recommendations, anonymization, documents, run, key_facts
     )
     return AppServices(
         run=run,
+        run_checks=run_checks,
         ollama=parts.ollama,
         providers=providers,
         keys=keys,
@@ -352,7 +359,7 @@ def _documents(
     return documents, commands
 
 
-def _run(
+def _run_checks(
     parts: _Parts,
     providers: ProviderService,
     reader: ReaderService,
@@ -360,6 +367,26 @@ def _run(
     anonymization: AnonymizationService,
     addons: AddonService,
     documents: DocumentQueries,
+) -> RunChecks:
+    """Return the checks a run passes before it starts: the services they ask, one per topic."""
+    return RunChecks(
+        services=CheckServices(
+            ollama=parts.ollama,
+            hardware=parts.hardware,
+            providers=providers,
+            reader=reader,
+            recommendations=recommendations,
+            anonymization=anonymization,
+            addons=addons,
+            documents=documents,
+        ),
+    )
+
+
+def _run(
+    parts: _Parts,
+    recommendations: ModelRecommendationService,
+    anonymization: AnonymizationService,
     key_facts: KeyFacts,
 ) -> RunService:
     """Return the run itself: the service the adapters start a batch on."""
@@ -374,16 +401,8 @@ def _run(
             work_store=parts.work_store,
             samples=parts.samples,
         ),
-        services=RunServices(
-            ollama=parts.ollama,
-            hardware=parts.hardware,
-            providers=providers,
-            reader=reader,
-            recommendations=recommendations,
-            anonymization=anonymization,
-            addons=addons,
-            documents=documents,
-        ),
+        recommendations=recommendations,
+        anonymization=anonymization,
     )
 
 
@@ -462,11 +481,6 @@ def inject_addon_packages_dir() -> None:
     dealt with once per process.  A folder left by an older app version is not added
     (see ``AddonService.addons_outdated``).
     """
-    from ..infrastructure.addon_manager import (  # noqa: PLC0415
-        inject_packages_dir,
-        prepare_packages_dir_once,
-    )
-
     prepare_packages_dir_once()
     inject_packages_dir()
 

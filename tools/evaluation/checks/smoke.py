@@ -61,7 +61,7 @@ from .structured_check import (
 
 if TYPE_CHECKING:
     from teachers_teammate.domain.formatted_text import TextFormat
-    from teachers_teammate.domain.model_catalog import RequestProfile
+    from teachers_teammate.domain.request_profile import RequestProfile
 
     from ..core.performance import LoadedModel
     from ..run.ports import ChatPort, ProbePort
@@ -363,7 +363,7 @@ def loaded_warnings(loaded: Sequence[LoadedModel], tag: str, window: int) -> tup
     another window is not the setup that was asked for.  Both are warnings: the setup may still
     answer every fixture.
     """
-    from teachers_teammate.domain.model_catalog import normalize_tag  # noqa: PLC0415
+    from teachers_teammate.domain.model_tags import normalize_tag  # noqa: PLC0415
 
     model = next((item for item in loaded if normalize_tag(item.name) == normalize_tag(tag)), None)
     if model is None:
@@ -643,7 +643,7 @@ class TextSmokeCheck:
             OCRError,
             OllamaUnreachableError,
         )
-        from teachers_teammate.infrastructure.ollama_utils import (  # noqa: PLC0415
+        from teachers_teammate.infrastructure.ollama_request import (  # noqa: PLC0415
             proofreading_options,
         )
 

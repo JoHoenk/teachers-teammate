@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from ...domain.stages import Stage
 from ...exceptions import StageError, StageErrorKind
 from ...messages import proofreading_not_compared
-from ..ollama_utils import OllamaClient
+from ..ollama_client import OllamaClient
 from ..run_stats import RunStatsCollector, StepSampler
 from ..stage_builder import PipelineComponentFactory, StageBuilder
 from .proofread_text import ProofreadText
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     import threading
 
     from ...config import Config
-    from ...domain.model_catalog import HardwareDetection
+    from ...domain.hardware_profile import HardwareDetection
     from ...infrastructure.onnx.store import ModelStore
     from ...infrastructure.speed_store import SampleStore
     from ...interfaces import Reporter

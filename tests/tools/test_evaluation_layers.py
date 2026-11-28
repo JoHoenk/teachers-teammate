@@ -184,9 +184,9 @@ def test_the_rule_recognises_what_it_forbids(tmp_path: Path):
             "from teachers_teammate.domain.proofreading.review import CorrectionReview\n"
             "\n"
             "if TYPE_CHECKING:\n"
-            "    from teachers_teammate.infrastructure.ollama_utils import ChatStats\n"
+            "    from teachers_teammate.infrastructure.ollama_request import ChatStats\n"
             "\n"
-            "from teachers_teammate.infrastructure.ollama_utils import ChatStats\n"
+            "from teachers_teammate.infrastructure.ollama_request import ChatStats\n"
         ),
         "store/__init__.py": "",
         "store/reader.py": "from ..report import load\n",
@@ -201,7 +201,7 @@ def test_the_rule_recognises_what_it_forbids(tmp_path: Path):
 
     assert _problems(tmp_path) == ["store/reader.py:1: store imports report, which is above it"]
     assert _core_problems(tmp_path) == [
-        "core/records.py:8: core imports teachers_teammate.infrastructure.ollama_utils at run time"
+        "core/records.py:8: core imports teachers_teammate.infrastructure.ollama_request at run time"
     ]
 
 

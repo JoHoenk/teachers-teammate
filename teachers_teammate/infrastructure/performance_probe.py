@@ -27,13 +27,8 @@ import threading
 
 from ..config import OcrConfig
 from ..domain.context_budget import BASE_NUM_CTX
-from ..domain.model_catalog import (
-    OCR_TEMPERATURE,
-    ServerFacts,
-    normalize_tag,
-    request_profile,
-    review_temperature,
-)
+from ..domain.model_catalog import request_profile
+from ..domain.model_tags import normalize_tag
 from ..domain.performance_estimate import (
     ModelSpeed,
     ProbeResult,
@@ -41,6 +36,8 @@ from ..domain.performance_estimate import (
     StepOutcome,
     StepResult,
 )
+from ..domain.request_profile import OCR_TEMPERATURE, review_temperature
+from ..domain.system_facts import ServerFacts
 from ..exceptions import (
     OCRDeadlineError,
     OCRError,
@@ -53,11 +50,8 @@ from ..texts.review import (
     SPEED_NO_TOKEN_COUNTS_PAGE,
     SPEED_NO_TOKEN_COUNTS_PARAGRAPH,
 )
-from .ollama_utils import (
-    ChatStats,
-    OllamaClient,
-    proofreading_options,
-)
+from .ollama_client import OllamaClient
+from .ollama_request import ChatStats, proofreading_options
 from .onnx.store import ModelStore
 
 _logger = logging.getLogger(__name__)
@@ -330,10 +324,12 @@ class PerformanceProbe:
                 gpu_found=self._gpu_found,
                 error=str(exc),
             )
-        after = self._client.server_facts()
+        after_snapshot = self._client.snapshot()
+        after = after_snapshot.facts(loaded=self._client.loaded_models())
         return ProbeResult(
             steps=self._decorate(steps, after=after),
             facts=after,
+            snapshot=after_snapshot,
             on_battery=self._on_battery,
             shared=shared,
             swaps=swaps,

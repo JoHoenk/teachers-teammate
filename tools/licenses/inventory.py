@@ -8,7 +8,7 @@ version it is pinned to, the license it states, and whether it is inside our dow
 
 Versions come from the locks, never from a hand edit: a row changes only when this tool runs
 after a lock changed.  The tool reads the app's own lists — ``[project] dependencies``,
-``addon_manager.addon_package_names()``, the ``LocalModel`` sets — instead of keeping a copy of
+``addon_list.addon_package_names()``, the ``LocalModel`` sets — instead of keeping a copy of
 them.
 
 How a part reaches the teacher decides what we owe, not what kind of part it is.  Inside our
@@ -77,7 +77,7 @@ from teachers_teammate.domain.local_models import (  # noqa: E402
     PAGE_MODELS,
     READER_MODELS,
 )
-from teachers_teammate.infrastructure.addon_manager import addon_package_names  # noqa: E402
+from teachers_teammate.infrastructure.addon_list import addon_package_names  # noqa: E402
 from teachers_teammate.infrastructure.spacy_models import SPACY_MODEL_PINS  # noqa: E402
 
 #: The three ways a part reaches a teacher, and what each one owes.

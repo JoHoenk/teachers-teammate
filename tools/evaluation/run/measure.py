@@ -1,7 +1,7 @@
 """Measuring a run: the requests it makes, the state of the server, the graphics memory.
 
 Everything that touches a machine lives here, behind seams a test can replace: a recording client
-(the app's own :class:`~teachers_teammate.infrastructure.ollama_utils.OllamaClient`, so the request
+(the app's own :class:`~teachers_teammate.infrastructure.ollama_client.OllamaClient`, so the request
 the app sends is the request that is measured), a probe of the server's HTTP interface, and a
 sampler of the graphics card that runs a command on this machine or over SSH.
 
@@ -34,8 +34,8 @@ import typing
 from typing import TYPE_CHECKING, Any
 import urllib.request
 
-from teachers_teammate.domain.model_catalog import normalize_tag
-from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.domain.model_tags import normalize_tag
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
 
 from ..core.constants import CARD_USED_TOLERANCE_BYTES, CPU_ONLY_OPTIONS, OLLAMA
 from ..core.modes import Exchange, Step
@@ -48,8 +48,8 @@ from .one_request.answer_format import ANSWER_FORMAT_VERSION
 from .ports import ProbePort, RequestRecorder
 
 if TYPE_CHECKING:
-    from teachers_teammate.domain.model_catalog import RequestProfile
-    from teachers_teammate.infrastructure.ollama_utils import ChatStats
+    from teachers_teammate.domain.request_profile import RequestProfile
+    from teachers_teammate.infrastructure.ollama_request import ChatStats
 
 Clock = Callable[[], float]
 Fetch = Callable[[str, str, dict | None], dict]

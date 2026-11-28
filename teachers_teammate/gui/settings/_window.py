@@ -41,8 +41,8 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import OcrConfig
+from ...domain.hardware_profile import profile_setting
 from ...domain.install_item import InstallItem
-from ...domain.model_catalog import profile_setting
 from ...texts import dialogs as dlg
 from ...texts import settings as st
 from .. import _dialogs

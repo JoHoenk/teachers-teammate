@@ -200,7 +200,7 @@ class ExportController(QObject):
         """Warn when text files would land in the input folder, where the next run reads them.
 
         A one-off export only asks; a run with text files configured there is refused
-        (:meth:`~teachers_teammate.application.run.RunService.output_problem_for_run`)
+        (:meth:`~teachers_teammate.application.run_checks.RunChecks.output_problem_for_run`)
         since it would repeat.
         """
         input_dir = self._panel.get_input_dir()

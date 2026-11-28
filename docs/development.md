@@ -281,7 +281,10 @@ label tables follow the *document* language, not the UI language, and stay in
 ## Ollama model catalog
 
 `domain/model_catalog.py` is the single source of truth for which Ollama models the app
-knows, recommends, and considers suitable for a computer type (hardware profile):
+knows; what it recommends and how it rates a model for a computer type (hardware profile) is in
+`domain/model_fit.py`. Around them: `domain/model_tags.py` (tag spelling and lookups),
+`domain/request_profile.py` (what is sent to a model), `domain/hardware_profile.py` (the profiles
+and their detection) and `domain/system_facts.py` (what a server reports).
 
 - `OLLAMA_CATALOG` — every catalogued model with its category (`"ocr"` reading model /
   `"general"` writing model), approximate running memory, download size, and a
@@ -296,9 +299,9 @@ knows, recommends, and considers suitable for a computer type (hardware profile)
 
 To add a model: add one `OllamaModelSpec` to `OLLAMA_CATALOG` and (when it should be
 recommended) its tag to the matching `RECOMMENDED` entries. Consistency tests in
-`tests/unit/test_model_catalog.py` check that every recommended tag exists with the
-right category and that every best pick runs at full speed on its profile — new entries must
-keep them green.
+`tests/unit/test_model_catalog.py` and `tests/unit/test_model_fit.py` check that every recommended
+tag exists with the right category and that every best pick runs at full speed on its profile — new
+entries must keep them green.
 
 The static defaults (`DEFAULTS["ocr_model"]` / `correction_model` / `evaluate_model` and
 the per-task provider defaults in `_model_defaults.py`) all come from
@@ -350,7 +353,7 @@ hand, from the size the profile stands for.  `memory_gb` of a catalog entry is t
 the model needs at the proofreading window of 8192 tokens (card and main memory together),
 measured where possible (*Model sizes*, above).
 
-| Quantity | Rule (constants in `domain/model_catalog.py`) |
+| Quantity | Rule (constants in `domain/hardware_profile.py`, tiers in `domain/model_fit.py`) |
 | --- | --- |
 | Card budget | `CARD_USABLE_SHARE` of the card's memory; a share of the unified memory on Apple Silicon (`HardwareDetection.card_gb`); none without a card |
 | Reserve | the larger of `SYSTEM_RESERVE_MIN_GB` and `SYSTEM_RESERVE_SHARE` of the total main memory; swapping to disk is never counted as memory |
@@ -362,7 +365,7 @@ measured where possible (*Model sizes*, above).
 The two share thresholds come from speeds measured on one 8 GB card and one processor; they are
 ratios, so they scale with the computer.
 
-`RunService._memory_shortfall()` is the run-time counterpart, used by
+`RunChecks._memory_shortfall()` is the run-time counterpart, used by
 `check_run_preflight()` (both adapters) before a run: for an Ollama on this computer,
 the part of every catalogued model that does not fit the card (all of it on Apple Silicon) has to
 fit the main memory that is free *right now*, minus `RUN_MEMORY_MARGIN_GB`.  It reads
@@ -536,7 +539,8 @@ and `report --performance --catalog-lines` prints the `answer_length` lines for 
 
 | Piece | Where | Rule |
 |---|---|---|
-| Decisions (best model, suitability, hardware profile, `rate_model`) | `domain/model_catalog.py` | Pure functions, no I/O — table-test them. |
+| Decisions (best model, suitability, `rate_model`) | `domain/model_fit.py` | Pure functions, no I/O — table-test them. |
+| Decisions (the hardware profile and its detection) | `domain/hardware_profile.py` | Same, and the thresholds every one of them reads. |
 | The local hardware probe | `application/model_recommendations.py` | One owner: it runs once per process and describes this computer, not the server. The memory and GPU readers and the context choice live here too (`available_memory_gb`, `read_gpu_usage`, `read_system_usage`, `context_choice`). |
 | What a server answered (version, installed models with digests and sizes, what a model can do) | `application/ollama_server.py` | One owner. `snapshot(url)` asks and holds the answer, `cached_snapshot(url)` never asks, `forget(url)` drops it — a pull does by itself. No other service keeps an Ollama cache; what is in memory (`/api/ps`) is never held. |
 | Texts a teacher reads | `teachers_teammate/texts/` | Qt-free; widgets never build these sentences themselves. See "Where text lives" above. |
@@ -565,7 +569,7 @@ the step.  What it relies on:
 - **Each provider module declares its package** in `PROVIDER.package`
   (`AddonPackage(module="langchain_mistralai", pip="langchain-mistralai")`); Ollama's connector
   is `package_optional` because the app talks to Ollama directly.  The Add-ons tables in
-  `addon_manager.py` are built from these declarations.  `ProviderService`
+  `addon_list.py` are built from these declarations.  `ProviderService`
   (`application/providers.py`) answers `missing_provider_package()` and
   `list_provider_packages()` (providers sharing a package appear once), so the pages,
   Add-ons and the run preflight need no list of their own.
@@ -604,7 +608,7 @@ What an address *is* — its normal form, its host, whether it points at this co
 model name is installed — is `domain/ollama_address.py`, pure and reachable without a lazy import.
 It takes this computer's names as lookups, so the cheap loopback check answers the default address
 without a socket or DNS call.  Both lookups are required arguments; `OllamaServerService.is_local`
-and `ollama_utils.ollama_server` pass `own_host_names` and `windows_host_addresses`.
+and `ollama_host.ollama_server` pass `own_host_names` and `windows_host_addresses`.
 
 - `DiscoveryScope.THIS_COMPUTER`: the `OLLAMA_HOST` address, `127.0.0.1:11434`, and -- inside WSL --
   the Windows host (default gateway, then name servers; no `wsl.exe`, that would start a
@@ -648,8 +652,8 @@ Rules that keep a stop honest:
   on purpose.  The Ollama wrappers in `_llm_invoke` re-raise it instead of degrading it to a
   warning (any other error still becomes one, and is a failure even when Stop now was pressed
   at the same moment); a new wrapper that catches every exception must do the same.
-  `FileProcessor` checks the event between steps (`_stopping()`) and **before** a slow
-  anonymization pass, and the steps raise `_stopped_result(message, stage, ...)` themselves.
+  The stages check the event between steps (`StageShared.stopping()`) and **before** a slow
+  anonymization pass, and each raises `Stopped` (`stopped_result(stage, ...)`) itself.
   The stop carries the stage (`ProcessingResult.stopped_stage`, one of `ocr`, `correction`,
   `evaluation`), so the results table marks the cut-short cell even for the review, which
   has no "running" mark; it also carries the stored correction's review and warning.
@@ -706,7 +710,8 @@ on macOS, `systemd-inhibit --list` on Linux.
 ## Request profiles: temperatures and prompts per model
 
 What differs per model in the request the app sends is one `RequestProfile`
-(`domain/model_catalog.py`); `request_profile(tag, provider)` resolves it, and the evaluation tools
+(`domain/request_profile.py`); `request_profile(tag, provider)` looks the model up in the catalog
+(`domain/model_catalog.py`) and fills it in, and the evaluation tools
 send the same request (`evaluations/TOOLS.md`). The corrector, the *What is sent for this file*
 dialog and the correction cache key (`RequestProfile.fingerprint()`) read the one object, so the
 dialog shows the request that is sent and a profile change re-runs only that model's corrections.
@@ -1008,7 +1013,7 @@ SHA-256.  `READER_MODELS` are the reader's two sets.
 - **One download at a time per process** (`_DOWNLOAD_LOCK`): two would write the same `.part`
   file.  What is missing is worked out inside the lock, so a download that waited finds the
   files in place and fetches nothing; it can still be cancelled while it waits.
-- A run reads the store its service checks (`RunService(model_store=)` →
+- A run reads the store its service checks (`RunParts(model_store=)` →
   `PipelineDependencies.model_store` / `run_ocr(model_store=)` → `StageBuilder.model_store`), so
   the readiness check and the run never look at different folders.
 - `check_run_preflight()` reports `IssueKind.READER_MODEL_MISSING` (the built-in reader's model
@@ -1160,7 +1165,7 @@ the same text.  Looking at items (`looked_at`) freezes nothing.  Only *Re-run Te
 reads it again, after asking, and then drops both parts.
 
 **The teacher's transcription needs no reading at all.**  When the cache holds no reading (it was
-emptied) and the work has a transcription part, `FileProcessor._run_preprocess_and_ocr` prepares
+emptied) and the work has a transcription part, `ReadingStage._run_preprocess_and_ocr` prepares
 the pages for the scan but does not read them: the teacher's text is stored as the document's
 text, with its notation, as if the file carried its own text (a text file, a PDF text layer).  The
 file is not skipped when text recognition is switched off either — `check_run_preflight` counts a
@@ -1470,7 +1475,7 @@ anything stores them:
   and `EditNote.sentences` is recomputed from it (`merge_reviews`).  A piece whose plain text is
   not found, or whose shifted review does not fit, loses its review and the file gets
   `EXPLANATIONS_MISSING`.
-- **Names** (`infrastructure/workflow/file_processor.py`).  The exchange sees placeholders
+- **Names** (`infrastructure/workflow/hidden_names.py`).  The exchange sees placeholders
   (`[PERSON_1]`), and a name is rarely as long as its placeholder, so every edit after a name
   would point at the wrong words.  `restore_with_offsets` returns the restored text and an
   `OffsetMap` (`domain/offset_map.py`); the review is remapped through it.
@@ -1737,8 +1742,7 @@ window that changes between files makes Ollama reload the model for every file.
 - The window is sized for **one model at a time**. `run_files()` runs every stage of one file
   before the next file, so OCR and proofreading take turns and never run in parallel; a larger
   window can therefore make Ollama unload the idle OCR model and load the writing model on every
-  file. That is an accepted cost, the same one `ollama_utils.py` already
-  names for a small card: nothing slows down or fails, the models only swap.
+  file. That is an accepted cost: nothing slows down or fails, the models only swap.
 
 The resolved window is passed down (`OllamaPort(num_ctx=…)`, `StageBuilder.resolved_windows()`)
 and used by `proofreading_options()`, `ContextBudget`, the chunk budget below, the correction
@@ -1866,7 +1870,8 @@ What a stage *did* produce is an outcome:
 
 `FileProcessor` collects the warnings into `ProcessingResult.warnings` so the application layer
 can surface them without interrupting the batch run.  A stop is neither: `RunStoppedError` and
-`_Stopped` leave the file `stopped`, and `FileSkipped` leaves it *skipped*.
+`Stopped` (`workflow/processing_result.py`) leave the file `stopped`, and `FileSkipped` leaves it
+*skipped*.
 
 ```python
 # interfaces.py (simplified)
@@ -1970,7 +1975,7 @@ Linux:    ~/.local/share/teachers_teammate/packages/
 macOS:    ~/Library/Application Support/teachers_teammate/packages/
 ```
 
-The location is computed by `addon_manager.get_packages_dir()` using
+The location is computed by `addon_folder.get_packages_dir()` using
 `platformdirs.user_data_dir`. This directory is prepended to `sys.path` by
 `inject_packages_dir()` so anything installed there is importable.
 
@@ -1999,7 +2004,7 @@ only part of a package, so putting the folder last is wrong too).  Two things pr
 - **Constraints.** `tools/build/addon_constraints.py` (run by `build_standalone.py`, bundled by
   the spec) writes `teachers_teammate/_build/addon_constraints.txt` — `name==version` of every
   package in the build environment except the build tools (`BUILD_ONLY`).
-  `addon_manager.pip_policy_arguments()` adds `--upgrade --only-binary :all: --no-cache-dir -c <file>`
+  `addon_pip.pip_policy_arguments()` adds `--upgrade --only-binary :all: --no-cache-dir -c <file>`
   to every pip call of the installed app: `--upgrade` because `pip --target` leaves an existing
   package folder alone; wheels only because a source build would start the GUI exe as its build
   interpreter; no cache because pip's cache is shared with other Python programs and never
@@ -2016,7 +2021,7 @@ only part of a package, so putting the folder last is wrong too).  Two things pr
   step that needs an add-on in the folder (spaCy, a LangChain package) return
   `IssueKind.ADDONS_OUTDATED` (`fix_for` → *Update add-ons…*), and Settings → Add-ons shows a
   banner with **Update add-ons**.  Nothing downloads before that click.  `update_addons()` →
-  `addon_manager.update_installed_addons()` installs every add-on in the folder again with the
+  `addon_pip.update_installed_addons()` installs every add-on in the folder again with the
   constraints, removes the outdated shared copies pip did not replace (by `RECORD`), and
   injects the folder.  Language models are separate packages that share nothing with the app
   and are not touched.
@@ -2058,11 +2063,11 @@ The constraints file says what an add-on may **not** change.  What it *gets* is 
   (`tools/build/addon_pins.py`) — so nothing installs unpinned there either; a dry run that
   fails fails the build.  The smoke test
   (`addon lock`, frozen only) proves the file is in the bundle and pins every package
-  `addon_manager.addon_package_names()` lists.
+  `addon_list.addon_package_names()` lists.
 - **`third_party_licenses/inventory.csv`.** One list for everything the app ships or installs —
   the bundle's packages, the add-ons', the models, the build tools.  `tools/licenses/inventory.py`
   writes it: it reads the app's own lists (`[project] dependencies`,
-  `addon_manager.addon_package_names()`, the `LocalModel`s, `SPACY_MODEL_PINS`), takes every
+  `addon_list.addon_package_names()`, the `LocalModel`s, `SPACY_MODEL_PINS`), takes every
   version from the two locks, and downloads each locked wheel for its license text.  The same run
   compiles the one license list, `teachers_teammate/assets/third_party_licenses.txt`, which the
   GUI shows and every download carries as `third_party_license.txt`.  `tools/licenses/policy.toml`
@@ -2102,7 +2107,7 @@ if "--_pip_install_mode" in sys.argv:
     raise SystemExit(_pip_main(_pip_args))
 ```
 
-`addon_manager.install_addon_subprocess()` uses this mechanism for the addon packages
+`addon_pip.install_addon_subprocess()` uses this mechanism for the addon packages
 (spaCy, the provider connectors).  `_PipInstallThread` in `settings/_addons_page.py` also
 uses it when `sys.frozen` is `True`.
 
@@ -2110,7 +2115,7 @@ In development (non-frozen) builds, both code paths fall back to the standard
 `[sys.executable, "-m", "pip", "install", "--upgrade", ...]` without `--target`, so packages
 land in the active venv as usual.
 
-All pip installs run one at a time (`_PIP_LOCK` in `addon_manager.py`), so Settings → Add-ons
+All pip installs run one at a time (`_PIP_LOCK` in `addon_pip.py`), so Settings → Add-ons
 never writes to the packages directory twice at once.
 
 ### GPU monitoring (bundled, no package to install)
@@ -2122,7 +2127,7 @@ package at all — `gpu_detector.read_amd_usage()` reads the `amdgpu` driver's s
 `None` when neither source does, and `_stats_widget.py` then shows CPU and RAM only.  CPU and RAM
 come from `read_system_usage()` (psutil); without a first reading the widget shows a note instead.
 
-`nvidia-ml-py` and `pyamdgpuinfo` are in `addon_manager._RETIRED_PACKAGES`, so a copy of them
+`nvidia-ml-py` and `pyamdgpuinfo` are in `addon_folder._RETIRED_PACKAGES`, so a copy of them
 in the add-on folder is removed at start.
 
 GPU *detection* (`infrastructure/gpu_detector.py`) reads the Windows display-adapter registry
@@ -2150,7 +2155,7 @@ this release names — not whatever spaCy's compatibility table would pick for t
 happens to be installed.  A unit test holds each pin's major.minor to the locked spaCy, so a
 spaCy bump is a model bump.
 
-`addon_manager.download_spacy_model_subprocess()` then installs it:
+`addon_pip.download_spacy_model_subprocess()` then installs it:
 `pip install --target <packages_dir> --only-binary :all: --no-cache-dir -c <constraints> <url>`
 (frozen builds; `--prefer-binary <url>` from source) downloads and unpacks the wheel into the
 addon packages directory.

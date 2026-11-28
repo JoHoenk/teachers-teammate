@@ -27,14 +27,9 @@ from teachers_teammate.domain.local_models import (
 from teachers_teammate.domain.data_location import (
     STAGE_ANONYMIZATION,
 )
-from teachers_teammate.domain.model_catalog import (
-    DiskVerdict,
-    HardwareProfile,
-    ModelCategory,
-    ModelRating,
-    Suitability,
-    find_spec,
-)
+from teachers_teammate.domain.hardware_profile import HardwareProfile
+from teachers_teammate.domain.model_catalog import ModelCategory, find_spec
+from teachers_teammate.domain.model_fit import DiskVerdict, ModelRating, Suitability
 from teachers_teammate.domain.ollama_address import is_local_ollama_url
 
 #: The recommendation the fake ``best`` names per task.

@@ -11,7 +11,7 @@ import time
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from teachers_teammate.infrastructure.ollama_utils import ChatStats
+    from teachers_teammate.infrastructure.ollama_request import ChatStats
 
     from ..core.performance import LoadedModel, RequestStats
 
@@ -48,7 +48,7 @@ class ChatPort(Protocol):
 
 
 class OllamaChatPort:
-    """Adapt :class:`~teachers_teammate.infrastructure.ollama_utils.OllamaClient` to ``ChatPort``.
+    """Adapt :class:`~teachers_teammate.infrastructure.ollama_client.OllamaClient` to ``ChatPort``.
 
     The size of a request is not checked here: the structured-output check asks the app's own
     corrector how much text one review request carries
@@ -57,7 +57,7 @@ class OllamaChatPort:
 
     def __init__(self, url: str, *, num_ctx: int | None = None) -> None:
         from teachers_teammate.domain.context_budget import BASE_NUM_CTX  # noqa: PLC0415
-        from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+        from teachers_teammate.infrastructure.ollama_client import OllamaClient  # noqa: PLC0415
 
         self._client = OllamaClient(url)
         self._num_ctx = BASE_NUM_CTX if num_ctx is None else num_ctx

@@ -46,7 +46,7 @@ from ..config import Config
 from ..domain.correction_policy import CorrectionOutput
 from ..domain.data_location import PROVIDER_OLLAMA, StageLocation
 from ..domain.formatted_text import TextFormat, normalize_text_format
-from ..domain.model_catalog import Suitability
+from ..domain.model_fit import Suitability
 from ..domain.performance_estimate import TimeRange
 from ..domain.proofreading.compared_result import ComparedResult
 from ..domain.proofreading.model_comparison import Comparison, Option, Version, compare
@@ -430,10 +430,15 @@ class ModelComparisonService:
         )
 
     def _digest(self, candidate: Candidate, ollama_url: str) -> str:
-        """Return the digest of *candidate* on its server; ``""`` for an online provider."""
+        """Return the digest of *candidate* on its server; ``""`` for an online provider.
+
+        Asked of the server as it is now, not read from an answer a few minutes old: a model
+        pulled in a terminal since would otherwise be stored with the digest of the weights it
+        no longer has.  One request per model, in a job that takes minutes.
+        """
         if candidate.provider != PROVIDER_OLLAMA:
             return ""
-        return self._ollama.snapshot(ollama_url).digest_of(candidate.model)
+        return self._ollama.snapshot(ollama_url, max_age=0.0).digest_of(candidate.model)
 
     # ── what the models loaded ─────────────────────────────────────────────
 

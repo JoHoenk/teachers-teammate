@@ -19,13 +19,13 @@ from dataclasses import asdict, dataclass, field
 from statistics import median
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
-from teachers_teammate.domain.model_catalog import normalize_tag
+from teachers_teammate.domain.model_tags import normalize_tag
 from teachers_teammate.domain.performance_estimate import percentile
 
 from .formats import extra_fields
 
 if TYPE_CHECKING:
-    from teachers_teammate.infrastructure.ollama_utils import ChatStats
+    from teachers_teammate.infrastructure.ollama_request import ChatStats
 
 _NS = 1e9
 """Nanoseconds per second: Ollama reports its durations in nanoseconds."""

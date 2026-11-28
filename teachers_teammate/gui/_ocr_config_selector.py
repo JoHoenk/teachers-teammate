@@ -45,14 +45,15 @@ from ..domain.data_location import (
     PROVIDER_OLLAMA,
     DataLocation,
 )
+from ..domain.hardware_profile import HardwareProfileSetting
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
-from ..domain.model_catalog import OCR_TEMPERATURE, HardwareProfileSetting
 from ..domain.ollama_address import normalize_ollama_url
 from ..domain.pdf_text_layer import (
     PDF_TEXT_LAYER_MODES,
     PdfTextLayerMode,
     normalize_pdf_text_layer,
 )
+from ..domain.request_profile import OCR_TEMPERATURE
 from ..domain.setting_values import PreprocessMethod
 from ..settings_schema import (
     DEFAULTS,

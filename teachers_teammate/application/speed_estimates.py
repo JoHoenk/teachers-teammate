@@ -33,16 +33,9 @@ from ..config import Config, OcrConfig
 from ..domain.context_budget import BASE_NUM_CTX
 from ..domain.correction_policy import CorrectionOutput, normalize_output_mode
 from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
-from ..domain.model_catalog import (
-    AnswerLength,
-    HardwareDetection,
-    ModelCategory,
-    RequestProfile,
-    ServerFacts,
-    find_spec,
-    rate_model,
-    request_profile,
-)
+from ..domain.hardware_profile import HardwareDetection
+from ..domain.model_catalog import AnswerLength, ModelCategory, find_spec, request_profile
+from ..domain.model_fit import rate_model
 from ..domain.ollama_address import normalize_ollama_url
 from ..domain.performance_estimate import (
     TYPICAL_PAGE_WORDS,
@@ -65,7 +58,9 @@ from ..domain.performance_estimate import (
     reading_page_time,
 )
 from ..domain.proofreading.result import StepName
+from ..domain.request_profile import RequestProfile
 from ..domain.stages import Stage
+from ..domain.system_facts import ServerFacts
 from ..infrastructure.performance_probe import (
     PerformanceProbe,
     ProbeResult,
@@ -490,6 +485,8 @@ class SpeedEstimateService:
             :exc:`~teachers_teammate.exceptions.RunStoppedError`: the teacher stopped the test.
         """
         url = normalize_ollama_url(choices.ollama_url)
+        # Read before the probe asks anything: a pull or a restart while the test runs wins.
+        generation = self._ollama.generation(url)
         probe = self._probe_factory(
             # The client gets the event too: it is what abandons a request that is waiting.
             self._client_factory(url, cancel_event=cancel_event),
@@ -502,9 +499,11 @@ class SpeedEstimateService:
         if result.error:
             # A server that could not be reached says nothing: nothing to store.
             return result
-        # The panel compares a record with what the server has now, so the digests are read
-        # again after the test: a model that was pulled meanwhile would make it out of date.
-        self._ollama.snapshot(url, max_age=0.0)
+        # The test's last answer becomes the app's: the records it makes and what the panel
+        # compares them with come from one answer of the server, so a measurement taken now is
+        # not shown as out of date by a digest read a minute ago.
+        if result.snapshot is not None and not result.snapshot.unreachable:
+            self._ollama.hold(url, result.snapshot, generation=generation)
         for record in self._records(url, result, hardware):
             self._store.save(record)
         return result

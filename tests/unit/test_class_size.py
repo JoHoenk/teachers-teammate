@@ -68,10 +68,7 @@ OVERSIZED_FUNCTIONS: dict[str, int] = {
         "teachers_teammate/gui/settings/addons/_ollama_models_tab.py"
         "::OllamaModelsTab._update_model_suitability"
     ): 82,
-    (
-        "teachers_teammate/infrastructure/ollama_utils.py"
-        "::_consume_iterator_with_first_token_timeout"
-    ): 82,
+    ("teachers_teammate/infrastructure/ollama_stream.py::consume_with_first_token_timeout"): 76,
 }
 
 #: The functions still over the branch limit, at the number of branches they have today.
@@ -93,8 +90,8 @@ WIDE_FUNCTIONS: dict[str, int] = {
     "teachers_teammate/gui/_check_controller.py::CheckController.__init__": 9,
     "teachers_teammate/gui/_ocr_config_selector.py::OcrConfigSelector.__init__": 9,
     "teachers_teammate/gui/_settings_launcher.py::SettingsLauncher.__init__": 9,
-    "teachers_teammate/infrastructure/ollama_utils.py::OllamaClient.chat": 11,
-    "teachers_teammate/infrastructure/ollama_utils.py::OllamaClient.chat_with_stats": 10,
+    "teachers_teammate/infrastructure/ollama_client.py::OllamaClient.chat": 11,
+    "teachers_teammate/infrastructure/ollama_client.py::OllamaClient.chat_with_stats": 10,
     "teachers_teammate/infrastructure/proofreading/corrector.py::ollama_exchange_corrector": 12,
     "teachers_teammate/infrastructure/proofreading/exchanges/text_first.py::TextFirstExchange._ask_explain": 9,
     "teachers_teammate/infrastructure/state_repository.py"
@@ -103,7 +100,7 @@ WIDE_FUNCTIONS: dict[str, int] = {
     "::StateRepository.record_correction_result": 11,
     "teachers_teammate/infrastructure/workflow/cache_service.py"
     "::CacheReconciliationService.record_correction": 9,
-    "teachers_teammate/infrastructure/workflow/file_processor.py::FileProcessor._write_outputs": 9,
+    "teachers_teammate/infrastructure/workflow/output_writer.py::OutputWriter.write": 9,
 }
 
 #: The nodes whose body is scanned like a module's: a class or a function defined under one of

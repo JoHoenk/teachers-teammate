@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.hardware_profile import (
     DetectionReason,
     HardwareDetection,
     HardwareProfile,

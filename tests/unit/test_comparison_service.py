@@ -34,7 +34,7 @@ from teachers_teammate.cache_keys import correction_key
 from teachers_teammate.messages import proofreading_not_compared
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX, RunWindows
 from teachers_teammate.domain.data_location import DataLocation, StageLocation
-from teachers_teammate.domain.model_catalog import ModelRating, Suitability
+from teachers_teammate.domain.model_fit import ModelRating, Suitability
 from teachers_teammate.domain.performance_estimate import TYPICAL_PAGE_WORDS, TimeRange
 from teachers_teammate.domain.proofreading.compared_result import ComparedResult, stem_of
 from teachers_teammate.domain.proofreading.option_marks import OptionMark, Verdict
@@ -711,6 +711,32 @@ def test_the_model_it_loaded_is_unloaded_and_the_one_that_was_there_stays(
 
         assert fake.unloaded == ["qwen3:8b"]
         assert [entry["name"] for entry in fake.ps()] == ["gemma3:12b"]
+
+
+def test_a_model_pulled_since_the_last_answer_is_stored_with_its_new_digest(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a server the app asked a moment ago, and a model of it that was pulled again since
+    When   the model answers, and the comparison stores the answer
+    Then   the stored answer carries the digest the server reports now, not the one it had
+    """
+    results = _Results()
+    with FakeOllama() as fake:
+        config = replace(_config(tmp_path), ollama_url=fake.url)
+        fake.install("qwen3:8b", digest="sha256:before")
+        server = OllamaServerService()
+        # What the app holds from a moment ago: other weights than the ones installed since.
+        server.snapshot(fake.url)
+        fake.install("qwen3:8b", digest="sha256:after")
+        unit = _UnitFor(answer=_answer("Der Hund ist laut!"), ollama=fake)
+        service = _service(tmp_path, unit=unit, results=results, ollama=server)
+
+        service.run(config, _source(), [_candidate()])
+
+    stored = results.load(text_identity(TEXT), _key_of(config, "qwen3:8b", make_key_facts()))
+    assert stored is not None
+    assert stored.digest == "sha256:after"
 
 
 def test_a_stopped_model_stores_nothing(tmp_path: Path) -> None:

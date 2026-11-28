@@ -43,8 +43,8 @@ from .check_rule import CheckRule, CheckRun, Decision, FirstTry, Verdict
 from .gate1_fixtures import FIXTURES, Fixture
 
 if TYPE_CHECKING:
-    from teachers_teammate.domain.model_catalog import RequestProfile
-    from teachers_teammate.infrastructure.ollama_utils import ChatStats
+    from teachers_teammate.domain.request_profile import RequestProfile
+    from teachers_teammate.infrastructure.ollama_request import ChatStats
 
 RUNS_AT_TEMPERATURE = 3
 """How often each fixture runs at a temperature above 0: a check that passes once says little."""
@@ -179,9 +179,7 @@ def review_budget(
         REVIEW_ANSWER_FACTOR,
         ContextBudget,
     )
-    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
-        DEFAULT_REQUEST_PROFILE,
-    )
+    from teachers_teammate.domain.request_profile import DEFAULT_REQUEST_PROFILE  # noqa: PLC0415
 
     compact = DEFAULT_REQUEST_PROFILE.compact_json if profile is None else profile.compact_json
     system, user = review_request(language, text_format, "", compact_json=compact)
@@ -304,7 +302,7 @@ def judge(sent: Sent) -> CheckRun:
         sent: The request, the answer and the statistics Ollama reported for it.
     """
     from teachers_teammate.application.formatting import TextFormatter  # noqa: PLC0415
-    from teachers_teammate.infrastructure.ollama_utils import ChatStats  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_request import ChatStats  # noqa: PLC0415
     from tools.evaluation.run.one_request.correction_schema import (  # noqa: PLC0415
         to_review,
         validate_answer,
@@ -681,7 +679,7 @@ class StructuredOutputCheck:
             OCRTimeoutError,
             OllamaUnreachableError,
         )
-        from teachers_teammate.infrastructure.ollama_utils import (  # noqa: PLC0415
+        from teachers_teammate.infrastructure.ollama_request import (  # noqa: PLC0415
             proofreading_options,
         )
         from tools.evaluation.run.one_request.correction_schema import (  # noqa: PLC0415
@@ -707,7 +705,7 @@ class StructuredOutputCheck:
         except OCRDeadlineError:
             # A runaway: still writing at the deadline.  It is judged as cut off, which it is as
             # far as a teacher is concerned, and asked once more like any cut-off answer.
-            from teachers_teammate.infrastructure.ollama_utils import ChatStats  # noqa: PLC0415
+            from teachers_teammate.infrastructure.ollama_request import ChatStats  # noqa: PLC0415
 
             return replace(
                 sent,

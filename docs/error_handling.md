@@ -80,7 +80,7 @@ end-of-run line and the tray count the failures. A run with every file failed le
 one line, not thirty boxes.
 
 An installer keeps a pane of its own, but it shows progress — pip's output. When pip fails, the
-last twenty lines of it go to the log at WARNING (`addon_manager.PIP_FAILURE_LINES`), since the
+last twenty lines of it go to the log at WARNING (`addon_pip.PIP_FAILURE_LINES`), since the
 pane closes with the dialog. That is the child process's output, not the error: the handler
 still logs the error once.
 

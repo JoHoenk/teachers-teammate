@@ -20,7 +20,7 @@ from teachers_teammate.cache_keys import (
 )
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.local_models import AUTO_VERSION
-from teachers_teammate.domain.model_catalog import RequestProfile
+from teachers_teammate.domain.request_profile import RequestProfile
 from teachers_teammate.domain.pdf_text_layer import input_fingerprint
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.domain.stages import Stage

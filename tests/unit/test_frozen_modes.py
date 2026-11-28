@@ -300,10 +300,12 @@ def test_addon_constraints_check_compares_the_bundle_with_what_is_running(
     import importlib.metadata  # noqa: PLC0415
     import sys  # noqa: PLC0415
 
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    from teachers_teammate.infrastructure.addon_list import (  # noqa: PLC0415
+        ADDON_CONSTRAINTS_RELATIVE,
+    )
 
     bundle = tmp_path / "bundle"
-    pins = bundle / addon_manager.ADDON_CONSTRAINTS_RELATIVE
+    pins = bundle / ADDON_CONSTRAINTS_RELATIVE
     pins.parent.mkdir(parents=True)
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
@@ -331,14 +333,17 @@ def test_addon_lock_check_wants_every_addon_pinned(tmp_path: Path, monkeypatch) 
     """
     import sys  # noqa: PLC0415
 
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    from teachers_teammate.infrastructure.addon_list import (  # noqa: PLC0415
+        ADDON_LOCK_RELATIVE,
+        addon_package_names,
+    )
 
     bundle = tmp_path / "bundle"
-    lock = bundle / addon_manager.ADDON_LOCK_RELATIVE
+    lock = bundle / ADDON_LOCK_RELATIVE
     lock.parent.mkdir(parents=True)
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
-    names = addon_manager.addon_package_names()
+    names = addon_package_names()
     lock.write_text("".join(f"{name}==1.0\n" for name in names), encoding="utf-8")
 
     assert frozen_modes._check_addon_lock() is None
@@ -508,20 +513,20 @@ def _frozen_addons(monkeypatch) -> dict[str, list[str]]:
     """A frozen app whose pip does nothing, with one add-on; returns what was installed."""
     import sys  # noqa: PLC0415
 
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    from teachers_teammate.infrastructure import addon_list, addon_pip  # noqa: PLC0415
 
     installed: dict[str, list[str]] = {"addons": [], "models": []}
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "path", list(sys.path))
-    monkeypatch.setattr(addon_manager, "addon_requirements", lambda: {"privacy": ["spacy"]})
-    monkeypatch.setattr(addon_manager, "addon_module", lambda _addon: "json")
+    monkeypatch.setattr(addon_list, "addon_requirements", lambda: {"privacy": ["spacy"]})
+    monkeypatch.setattr(addon_list, "addon_module", lambda _addon: "json")
     monkeypatch.setattr(
-        addon_manager,
+        addon_pip,
         "install_addon_subprocess",
         lambda addon, _target, _log, **_kw: installed["addons"].append(addon),
     )
     monkeypatch.setattr(
-        addon_manager,
+        addon_pip,
         "download_spacy_model_subprocess",
         lambda model, _target, _log: installed["models"].append(model),
     )
@@ -569,9 +574,9 @@ def test_addon_smoke_test_names_an_addon_that_installs_but_does_not_import(
     When   the add-on smoke test runs
     Then   it fails and names the module and the error
     """
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    from teachers_teammate.infrastructure import addon_list  # noqa: PLC0415
 
-    monkeypatch.setattr(addon_manager, "addon_module", lambda _addon: "teachers_teammate.nope")
+    monkeypatch.setattr(addon_list, "addon_module", lambda _addon: "teachers_teammate.nope")
     out = tmp_path / "addons.json"
 
     exit_code = frozen_modes.run_addon_smoke_test(out)
@@ -592,15 +597,16 @@ def test_addon_smoke_test_names_a_failed_install_and_a_failed_name_detection(
     When   the add-on smoke test runs
     Then   both failures are listed
     """
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    from teachers_teammate.exceptions import AddonInstallError, InstallFailure  # noqa: PLC0415
+    from teachers_teammate.infrastructure import addon_pip  # noqa: PLC0415
 
     def offline(*_args: object, **_kwargs: object) -> None:
-        raise addon_manager.AddonInstallError(addon_manager.InstallFailure.OFFLINE)
+        raise AddonInstallError(InstallFailure.OFFLINE)
 
     def no_spacy() -> None:
         raise ImportError("spacy is installed but cannot be loaded: packaging.requirements")
 
-    monkeypatch.setattr(addon_manager, "install_addon_subprocess", offline)
+    monkeypatch.setattr(addon_pip, "install_addon_subprocess", offline)
     monkeypatch.setattr(frozen_modes, "_check_name_detection", no_spacy)
     out = tmp_path / "addons.json"
 

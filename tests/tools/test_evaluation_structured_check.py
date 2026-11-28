@@ -13,9 +13,10 @@ from typing import cast
 
 import pytest
 
-from teachers_teammate.domain.model_catalog import RequestProfile
+from teachers_teammate.domain.request_profile import RequestProfile
 from teachers_teammate.domain.proofreading.word_diff import tokenize
-from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClient
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
+from teachers_teammate.infrastructure.ollama_request import ChatStats
 
 from tools.evaluation.checks.check_rule import CheckRun, Verdict
 from tools.evaluation.checks.structured_check import (

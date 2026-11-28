@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
     from pydantic import BaseModel
 
-    from ..ollama_utils import OllamaClient
+    from ..ollama_client import OllamaClient
 
 REVIEW_TIMEOUT_CAP = 600.0
 """Upper bound in seconds for a request whose answer is long, whatever the text length is."""
@@ -138,7 +138,7 @@ class OllamaPort:
     def _send(self, req: StepRequest, *, schema: dict | None) -> PortAnswer:
         """Send *req* and return what came back, with the statistics of the request."""
         from ...exceptions import ResponseTruncatedError, RunStoppedError  # noqa: PLC0415
-        from ..ollama_utils import proofreading_options  # noqa: PLC0415
+        from ..ollama_request import proofreading_options  # noqa: PLC0415
 
         started = time.perf_counter()
         try:

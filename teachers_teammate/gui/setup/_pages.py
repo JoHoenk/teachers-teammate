@@ -53,15 +53,11 @@ from ...domain.data_location import (
     DataRegion,
     StageLocation,
 )
+from ...domain.hardware_profile import HardwareProfileSetting, profile_setting
 from ...domain.install_item import InstallItem, InstallKind
 from ...domain.language import LANGUAGES
 from ...domain.local_models import PAGE_MODELS_ADDON_ID
-from ...domain.model_catalog import (
-    DiskVerdict,
-    HardwareProfileSetting,
-    Suitability,
-    profile_setting,
-)
+from ...domain.model_fit import DiskVerdict, Suitability
 from ...domain.ollama_address import normalize_ollama_url
 from ...domain.stages import Stage
 from ...settings_schema import DEFAULTS, normalize_saved_ollama_url

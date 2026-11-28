@@ -41,7 +41,6 @@ from ....domain.correction_prompts import (
     unclear_user,
 )
 from ....domain.formatted_text import TextFormat
-from ....domain.model_catalog import RequestProfile
 from ....domain.proofreading.edits import (
     Batch,
     Edit,
@@ -66,6 +65,7 @@ from ....domain.proofreading.review import CorrectionReview, UnclearNote, edit_n
 from ....domain.proofreading.sentences import sentence_spans
 from ....domain.proofreading.text_loss import LeftOut, Repaired, measure, repair
 from ....domain.proofreading.word_diff import Hunk, word_diff
+from ....domain.request_profile import RequestProfile
 from ....texts.review import (
     ADDED_TEXT_WARNING,
     CORRECT_FAILED,

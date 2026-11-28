@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from teachers_teammate.domain.model_catalog import request_profile
 
 if TYPE_CHECKING:
-    from teachers_teammate.domain.model_catalog import RequestProfile
+    from teachers_teammate.domain.request_profile import RequestProfile
 
 COMPACT_JSON_CHOICES: tuple[str, ...] = ("catalog", "on", "off")
 """What ``--compact-json`` accepts: the catalog's choice per model, or one value for all."""

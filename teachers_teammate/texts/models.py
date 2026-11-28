@@ -13,18 +13,17 @@ from __future__ import annotations
 
 from datetime import date
 
-from ..domain.model_catalog import (
+from ..domain.hardware_profile import (
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
     HardwareProfileSetting,
-    ModelCategory,
-    ModelUses,
-    Suitability,
     card_budget_gb,
     memory_for_models_gb,
     system_reserve_gb,
 )
+from ..domain.model_catalog import ModelCategory, ModelUses
+from ..domain.model_fit import Suitability
 from .app import NAME
 from .review import REMOVE_PERSONAL_INFO
 from .settings import WHERE_AI_SETUP

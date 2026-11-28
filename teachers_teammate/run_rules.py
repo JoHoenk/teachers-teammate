@@ -10,7 +10,7 @@ from __future__ import annotations
 from .config import Config
 from .domain.context_budget import BASE_NUM_CTX, RunWindows, stage_windows
 from .domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
-from .domain.model_catalog import HardwareDetection
+from .domain.hardware_profile import HardwareDetection
 
 
 def resolve_run_windows(config: Config, hardware: HardwareDetection | None) -> RunWindows:

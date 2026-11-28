@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .model_catalog import RequestProfile
+from .request_profile import RequestProfile
 
 
 class KeyFacts(Protocol):

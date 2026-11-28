@@ -688,7 +688,7 @@ class MainWindow(QMainWindow):
 
     def _recognition_needed(self, source_ids: list[str] | None = None) -> bool:
         """Return whether a run over *source_ids* (default: the whole queue) reads pages."""
-        return self._app_service.run.needs_text_recognition(
+        return self._app_service.run_checks.needs_text_recognition(
             self._queued_files(source_ids), recognised=self._recognised_files()
         )
 

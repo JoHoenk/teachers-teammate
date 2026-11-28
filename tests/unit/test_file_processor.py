@@ -27,7 +27,7 @@ from teachers_teammate.infrastructure.proofreading.corrector import (
     ProofreadingSettings,
 )
 from teachers_teammate.infrastructure.proofreading.exchanges import TextFirstExchange
-from teachers_teammate.infrastructure.ollama_utils import ChatStats
+from teachers_teammate.infrastructure.ollama_request import ChatStats
 from teachers_teammate.infrastructure.run_stats import RunStatsCollector
 from teachers_teammate.infrastructure.speed_store import RunSample, SampleKey
 from teachers_teammate.domain.document_state import DocumentState
@@ -45,9 +45,11 @@ from teachers_teammate.infrastructure.workflow.file_processor import (
     FileProcessor,
     FileProcessorDeps,
 )
+from teachers_teammate.infrastructure.workflow.hidden_names import NameHiding
 from teachers_teammate.interfaces import Corrector
 from teachers_teammate.texts import report as report_text
 from teachers_teammate.texts.review import REVIEW_DOES_NOT_FIT, REVIEW_UNMATCHED
+from teachers_teammate.texts.run import output_replaces_another
 from teachers_teammate.infrastructure.proofreading.port import PortAnswer, StepRequest
 from tests.fakes.fake_port import FakePort, answer
 
@@ -1331,18 +1333,7 @@ def test_evaluation_skipped_when_no_evaluator(tmp_path: Path) -> None:
 
     fp, _, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=None)
 
-    fp2_cfg = FileProcessorDeps(
-        output_dir=tmp_path / "output",
-        language="English",
-        cache_service=fp._cache_service,
-        preprocess_service=fp._preprocess_service,
-        ocr_stage_service=fp._ocr_stage_service,
-        correction=corrector,
-        evaluation=None,
-        doc_creator=MagicMock(),
-    )
-    fp2 = FileProcessor(fp2_cfg)
-    result = fp2.process(file)
+    result = fp.process(file)
 
     assert result.ok is True
     assert result.evaluation_text == ""
@@ -1524,6 +1515,44 @@ def test_same_named_files_in_subfolders_do_not_collide(tmp_path: Path) -> None:
         assert (tmp_path / "output" / name / "essay.txt").read_text(encoding="utf-8") == (
             "extracted text"
         )
+
+
+def test_two_documents_that_write_one_output_file(tmp_path: Path) -> None:
+    """
+    Given  two inputs of the same name, which would write the same output files, and
+           outputs on
+    When   the run processes the second one after the first
+    Then   it fails with the sentence naming what would replace what, and the first
+           document's text file keeps its text
+    """
+    input_dir = tmp_path / "in"
+    input_dir.mkdir()
+    first, second = input_dir / "essay.png", input_dir / "essay.pdf"
+    for file in (first, second):
+        file.write_bytes(b"data")
+    fp, _, _, _ = _make_processor(tmp_path, input_dir=input_dir, write_text=True)
+
+    assert fp.process(first).ok is True
+    result = fp.process(second)
+
+    assert result.ok is False
+    assert result.message == (
+        f"Output files not saved: {output_replaces_another('essay.docx', 'essay.png')}"
+    )
+    assert (tmp_path / "output" / "essay.txt").read_text(encoding="utf-8") == "extracted text"
+
+
+def test_a_document_may_write_its_outputs_again(tmp_path: Path) -> None:
+    """
+    Given  one document the same run processes twice
+    When   the writer meets its own output files again
+    Then   it writes them instead of refusing them as another document's
+    """
+    file = tmp_path / "essay.png"
+    fp, _, _, _ = _make_processor(tmp_path, write_text=True)
+
+    assert fp.process(file).ok is True
+    assert fp.process(file).ok is True
 
 
 def test_text_files_plain_and_anonymized(tmp_path: Path) -> None:
@@ -2824,8 +2853,8 @@ def test_personal_data_left_hidden_becomes_a_warning() -> None:
     """
     mapping = {"[PERSON_1]": "Anna"}
 
-    assert "[PERSON_1]" in FileProcessor._left_hidden("Hallo [PERSON_1].", mapping)
-    assert FileProcessor._left_hidden("Hallo Anna.", mapping) == ""
+    assert "[PERSON_1]" in NameHiding.left_hidden("Hallo [PERSON_1].", mapping)
+    assert NameHiding.left_hidden("Hallo Anna.", mapping) == ""
 
 
 # ── The places of the scan ─────────────────────────────────────────────────

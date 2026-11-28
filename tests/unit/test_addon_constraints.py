@@ -9,7 +9,7 @@ import subprocess
 
 import pytest
 
-from teachers_teammate.infrastructure.addon_manager import addon_requirements
+from teachers_teammate.infrastructure.addon_list import addon_requirements
 from tools.build import addon_constraints, check_addon_resolution
 
 

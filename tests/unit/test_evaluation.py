@@ -13,7 +13,8 @@ from teachers_teammate.domain.context_budget import EVALUATION_ANSWER_TOKENS
 from teachers_teammate.domain.evaluation import EvaluationOutcome
 from teachers_teammate.domain.review_prompts import review_system
 from teachers_teammate.infrastructure.evaluation import PortEvaluator
-from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClient
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
+from teachers_teammate.infrastructure.ollama_request import ChatStats
 from teachers_teammate.infrastructure.proofreading.port import (
     LangChainPort,
     ModelPort,

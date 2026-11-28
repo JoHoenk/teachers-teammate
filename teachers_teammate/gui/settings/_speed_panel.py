@@ -48,7 +48,9 @@ from ...application.speed_estimates import (
     StepEstimate,
     UnmeasuredStep,
 )
-from ...domain.model_catalog import HardwareDetection, find_spec, short_model_name
+from ...domain.hardware_profile import HardwareDetection
+from ...domain.model_catalog import find_spec
+from ...domain.model_tags import short_model_name
 from ...domain.performance_estimate import ProbeResult, SpeedStep, StepOutcome
 from ...exceptions import RunStoppedError
 from ...texts import review as txt

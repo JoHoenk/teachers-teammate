@@ -2,7 +2,7 @@
 
 The speed test measures a model on a test page; a real run measures it on the teacher's own
 documents, which is the evidence that matters.  The Ollama client reports what the server said
-about every request (:attr:`~.ollama_utils.OllamaClient.stats_sink`), and this collector groups
+about every request (:attr:`~.ollama_client.OllamaClient.stats_sink`), and this collector groups
 those reports by the step that sent them: one sample per page for text recognition, one per
 document for proofreading and for the content review.
 
@@ -18,7 +18,7 @@ import threading
 
 from ..domain.ollama_address import normalize_ollama_url
 from ..domain.performance_estimate import SpeedStep
-from .ollama_utils import ChatStats
+from .ollama_request import ChatStats
 from .speed_store import RunSample, SampleKey, now_stamp
 
 _logger = logging.getLogger(__name__)

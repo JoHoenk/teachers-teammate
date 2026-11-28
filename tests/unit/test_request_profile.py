@@ -1,19 +1,22 @@
-"""Unit tests for the request profile of the exchange (``domain/model_catalog.py``)."""
+"""Unit tests for the request profile of the exchange (``domain/request_profile.py``)."""
 
 from __future__ import annotations
 
 from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 
 from teachers_teammate.domain import model_catalog
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.model_catalog import OLLAMA_CATALOG, find_spec, request_profile
+from teachers_teammate.domain.proofreading.result import ExchangeKind
+from teachers_teammate.domain.request_profile import (
     DEFAULT_REQUEST_PROFILE,
+    STEP_ONE_PROMPTS,
     RequestProfile,
     StepProfile,
-    request_profile,
+    review_temperature,
 )
-from teachers_teammate.domain.proofreading.result import ExchangeKind
 
 
 def test_the_default_profile_runs_the_three_step_exchange() -> None:
@@ -224,10 +227,10 @@ def test_no_model_gets_a_prompt_variant_until_one_is_adopted(monkeypatch) -> Non
     Then   every model has the standard prompt first; afterwards only that tag has the variant
            (also written with :latest), and an online service never does
     """
-    assert model_catalog.STEP_ONE_PROMPTS == {}
+    assert STEP_ONE_PROMPTS == {}
     assert request_profile("gemma4:12b").correct.prompt == ""
 
-    monkeypatch.setitem(model_catalog.STEP_ONE_PROMPTS, "qwen3.5:4b", "keep")
+    monkeypatch.setitem(STEP_ONE_PROMPTS, "qwen3.5:4b", "keep")
 
     assert request_profile("qwen3.5:4b").correct.prompt == "keep"
     assert request_profile("qwen3.5:4b").explain.prompt == ""
@@ -242,7 +245,7 @@ def test_a_variant_of_a_model_has_the_prompt_of_the_model(monkeypatch) -> None:
     Then   the quantisation has the variant, as it has the model's temperature, and the other
            model has the standard prompt
     """
-    monkeypatch.setitem(model_catalog.STEP_ONE_PROMPTS, "qwen3.5:9b", "keep")
+    monkeypatch.setitem(STEP_ONE_PROMPTS, "qwen3.5:9b", "keep")
 
     assert request_profile("qwen3.5:9b-q8_0").correct.prompt == "keep"
     assert request_profile("qwen3.5:9b").correct.prompt == "keep"
@@ -278,14 +281,110 @@ def test_every_profile_names_an_exchange_the_app_can_build() -> None:
     When   their request profiles are read
     Then   each names an exchange of ``EXCHANGES``, so no profile points at nothing
     """
-    from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL, OLLAMA_CATALOG  # noqa: PLC0415
     from teachers_teammate.infrastructure.llm_factory import list_providers  # noqa: PLC0415
     from teachers_teammate.infrastructure.proofreading.exchanges import (  # noqa: PLC0415
         EXCHANGES,
     )
 
-    profiles = [spec.request_profile for spec in model_catalog.OLLAMA_CATALOG]
+    profiles = [spec.request_profile for spec in OLLAMA_CATALOG]
     profiles += [request_profile(DEFAULT_WRITING_MODEL, provider) for provider in list_providers()]
 
     assert profiles
     assert {profile.exchange for profile in profiles} <= set(EXCHANGES)
+
+
+def test_unknown_models_get_the_default_profile_and_the_measured_step_one_temperature() -> None:
+    """
+    Given  a tag the catalog does not know
+    When   its request profile is asked for
+    Then   it is the default apart from step ①, which runs at the measured 0.4
+    """
+    profile = request_profile("some-model:7b")
+
+    assert profile.compact_json is False
+    assert profile.exchange == DEFAULT_REQUEST_PROFILE.exchange
+    assert profile.explain == DEFAULT_REQUEST_PROFILE.explain
+    assert profile.unclear == DEFAULT_REQUEST_PROFILE.unclear
+    assert profile.temperature == 0.4
+
+
+def test_a_variant_of_a_low_temperature_model_keeps_its_models_step_one_temperature() -> None:
+    """
+    Given  a quantised tag of a model that falls with every step up in temperature
+    When   its request profile is asked for
+    Then   step ① runs at that model's 0.05, not at the default 0.4, and a longer name that only
+           starts like a measured tag does not
+    """
+    assert request_profile("qwen3.5:4b-q8_0").temperature == 0.05
+    assert request_profile("ministral-3:8b-instruct-2512-q4_K_M").temperature == 0.05
+    assert request_profile("qwen3.5:40b").temperature == 0.4
+
+
+def test_every_catalog_model_starts_on_the_default_profile() -> None:
+    """
+    Given  the catalog
+    When   each model's request profile is read
+    Then   all of them are the default, so no request changes until a gate-1 run decides
+    """
+    assert {spec.request_profile for spec in OLLAMA_CATALOG} == {DEFAULT_REQUEST_PROFILE}
+
+
+def test_a_catalog_profile_is_found_by_its_tag() -> None:
+    """
+    Given  a catalog model whose profile asks for compact JSON
+    When   the profile is asked for by tag, with and without the ``:latest`` suffix
+    Then   the catalog's profile is the base, not the default
+    """
+    spec = replace(
+        find_spec("gemma4:e4b"),  # ty: ignore[invalid-argument-type]  # the tag is in the catalog
+        request_profile=RequestProfile(compact_json=True),
+    )
+    catalog = tuple(spec if other.tag == spec.tag else other for other in OLLAMA_CATALOG)
+    with patch.object(model_catalog, "OLLAMA_CATALOG", catalog):
+        assert request_profile("gemma4:e4b").compact_json is True
+        assert request_profile("gemma4").compact_json is False
+
+
+def test_step_one_gets_the_measured_temperature_and_the_other_steps_the_makers() -> None:
+    """
+    Given  models with and without a measured step-① temperature, with and without ``:latest``
+    When   their request profile and review temperature are asked for
+    Then   step ① gets the measured value (0.4 where none was measured), steps ② and ③ the
+           maker's, and the review the maker's or 0.7
+    """
+    assert request_profile("gemma4:e4b").correct.temperature == 0.4
+    assert request_profile("gemma4:e4b").explain.temperature == 1.0
+    assert request_profile("qwen3.5:9b").correct.temperature == 0.05
+    assert request_profile("qwen3.5:9b").explain.temperature == 0.7
+    assert request_profile("ministral-3:8b").correct.temperature == 0.05
+    assert request_profile("gemma4:e4b:latest").correct.temperature == 0.4
+    assert request_profile("gpt-oss:20b").correct.temperature == 0.4
+    assert request_profile("hf.co/some/candidate:Q4").correct.temperature == 0.4
+    assert review_temperature("gemma4:e4b") == 1.0
+    assert review_temperature("gpt-oss:20b") == 0.7
+
+
+def test_the_temperature_tables_apply_to_ollama_only() -> None:
+    """
+    Given  an online provider asked about a name that is also a recommended Ollama tag
+    When   the request profile and review temperature are asked for
+    Then   neither table applies: every step gets 0.2, the review 0.7
+    """
+    assert request_profile("gemma4:e4b", "google").correct.temperature == 0.2
+    assert request_profile("gemma4:e4b", "google").explain.temperature == 0.2
+    assert review_temperature("gemma4:e4b", "google") == 0.7
+
+
+@pytest.mark.use_case("Model_Request_Profile")
+def test_the_request_profile_asks_gpt_oss_for_a_level_not_the_flag() -> None:
+    """
+    Given  gpt-oss (which ignores think=False), a model of another family and an online provider
+    When   the request profile of each is read
+    Then   gpt-oss gets the lowest reasoning level and the others keep the flag off, so the cache
+           key, the evaluation tools and the request read one value
+    """
+    assert request_profile("gpt-oss:20b").think == "low"
+    assert request_profile("hf.co/unsloth/gpt-oss-20b-GGUF:UD-Q4_K_XL").think == "low"
+    assert request_profile("gemma4:e4b").think is False
+    assert request_profile("gpt-oss:20b", "openai").think is False

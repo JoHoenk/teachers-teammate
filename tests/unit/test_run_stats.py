@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from teachers_teammate.domain.performance_estimate import SpeedStep
-from teachers_teammate.infrastructure.ollama_utils import ChatStats
+from teachers_teammate.infrastructure.ollama_request import ChatStats
 from teachers_teammate.infrastructure.run_stats import LOAD_THRESHOLD_S, RunStatsCollector
 from teachers_teammate.infrastructure.speed_store import RunSample, SampleKey
 

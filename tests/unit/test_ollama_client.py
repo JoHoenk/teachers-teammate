@@ -1,4 +1,4 @@
-"""Unit tests for teachers_teammate.infrastructure.ollama_utils."""
+"""Unit tests for teachers_teammate.infrastructure.ollama_{kind}."""
 
 from __future__ import annotations
 
@@ -8,39 +8,21 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from teachers_teammate.exceptions import (
-    OCRDeadlineError,
     OCRError,
     OCRTimeoutError,
     OllamaUnreachableError,
     ResponseTruncatedError,
     RunStoppedError,
 )
-from teachers_teammate.domain.context_budget import BASE_NUM_CTX
-from teachers_teammate.domain.ollama_address import ollama_host
-from teachers_teammate.infrastructure import ollama_utils
-from teachers_teammate.infrastructure.ollama_utils import (
-    ChatStats,
-    OllamaClient,
-    _consume_iterator_with_first_token_timeout,
-)
+from teachers_teammate.infrastructure import ollama_client, ollama_request
+from teachers_teammate.infrastructure.ollama_request import ChatStats
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
 from teachers_teammate.messages import MessageKey
-
-
-_REAL_OWN_HOST_NAMES = ollama_utils.own_host_names  # tests below monkeypatch the module name
-
-
-@pytest.fixture(autouse=True)
-def _fresh_own_host_names():
-    """Keep the cached lookup of the computer's own names from leaking between tests."""
-    _REAL_OWN_HOST_NAMES.cache_clear()
-    yield
-    _REAL_OWN_HOST_NAMES.cache_clear()
 
 
 @pytest.fixture
@@ -169,7 +151,9 @@ def test_check_connection_and_list_models_ask_only_for_the_model_list(monkeypatc
     """
     _mock_server(monkeypatch, models=[("gemma4:e4b", "sha256:aaa")], loaded=[])
     versions: list[str] = []
-    monkeypatch.setattr(ollama_utils, "_http_json", lambda url, timeout: versions.append(url) or {})
+    monkeypatch.setattr(
+        ollama_client, "_http_json", lambda url, timeout: versions.append(url) or {}
+    )
     client = OllamaClient("http://127.0.0.1:11434")
 
     client.check_connection()
@@ -479,94 +463,6 @@ def test_chat_raises_ocr_error_when_first_token_times_out(monkeypatch) -> None:
     assert raised.value.args[0].key is MessageKey.NO_FIRST_TOKEN
 
 
-def test_an_answer_that_never_ends_is_abandoned_at_the_total_timeout() -> None:
-    """
-    Given  a stream that keeps producing chunks and never finishes
-    When   it is consumed with a total timeout
-    Then   OCRDeadlineError is raised after about that time, and the stream is closed so the
-           server stops generating
-    """
-    import time  # noqa: PLC0415
-
-    closed = []
-
-    def _forever():
-        try:
-            while True:
-                time.sleep(0.01)
-                yield 1
-        finally:
-            closed.append(True)
-
-    started = time.monotonic()
-    with pytest.raises(OCRDeadlineError) as raised:
-        _consume_iterator_with_first_token_timeout(_forever(), 1.0, total_timeout=0.2)
-
-    assert raised.value.args[0].key is MessageKey.ANSWER_ABANDONED
-
-    assert time.monotonic() - started < 1.0
-    deadline = time.monotonic() + 2.0
-    while not closed and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert closed == [True]
-
-
-def test_a_cancel_event_ends_a_running_answer_quickly_and_closes_the_stream() -> None:
-    """
-    Given  a stream that keeps producing chunks and a cancel event set after a moment
-    When   it is consumed with that event
-    Then   RunStoppedError is raised within about half a second and the stream is closed so the
-           server stops generating
-    """
-    import threading  # noqa: PLC0415
-    import time  # noqa: PLC0415
-
-    closed = []
-    cancel = threading.Event()
-
-    def _forever():
-        try:
-            while True:
-                time.sleep(0.01)
-                yield 1
-        finally:
-            closed.append(True)
-
-    threading.Timer(0.1, cancel.set).start()
-    started = time.monotonic()
-    with pytest.raises(RunStoppedError):
-        _consume_iterator_with_first_token_timeout(_forever(), 5.0, cancel_event=cancel)
-
-    assert time.monotonic() - started < 1.0
-    deadline = time.monotonic() + 2.0
-    while not closed and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert closed == [True]
-
-
-def test_a_cancel_event_ends_the_wait_for_the_first_token() -> None:
-    """
-    Given  a stream that never produces a first chunk and a cancel event set after a moment
-    When   it is consumed with a long first-token timeout
-    Then   RunStoppedError is raised long before that timeout
-    """
-    import threading  # noqa: PLC0415
-    import time  # noqa: PLC0415
-
-    cancel = threading.Event()
-
-    def _silent():
-        time.sleep(5)
-        yield 1
-
-    threading.Timer(0.1, cancel.set).start()
-    started = time.monotonic()
-    with pytest.raises(RunStoppedError):
-        _consume_iterator_with_first_token_timeout(_silent(), 30.0, cancel_event=cancel)
-
-    assert time.monotonic() - started < 1.5
-
-
 def test_a_chat_request_is_not_even_opened_when_already_cancelled(monkeypatch) -> None:
     """
     Given  an OllamaClient whose cancel event is already set
@@ -601,19 +497,6 @@ def test_a_cancel_event_that_is_not_set_changes_nothing(monkeypatch) -> None:
     )
 
     assert result == "Hello world"
-
-
-def test_a_total_timeout_does_not_cut_a_stream_that_finishes_in_time() -> None:
-    """
-    Given  a short stream
-    When   it is consumed with a generous total timeout
-    Then   every item is returned, as without one
-    """
-    assert _consume_iterator_with_first_token_timeout(iter([1, 2, 3]), 1.0, total_timeout=5.0) == [
-        1,
-        2,
-        3,
-    ]
 
 
 def test_chat_propagates_mid_stream_error_as_ocr_error(monkeypatch) -> None:
@@ -804,108 +687,6 @@ def test_chat_closes_the_inner_stream_when_the_reader_is_abandoned(monkeypatch) 
     assert closed == [True]
 
 
-# ── _consume_iterator_with_first_token_timeout ─────────────────────────────
-
-
-def test_consume_iterator_returns_all_items_when_first_arrives_in_time() -> None:
-    """
-    Given  an iterator that yields three items promptly
-    When   _consume_iterator_with_first_token_timeout() is called
-    Then   all items are returned in order
-    """
-    assert _consume_iterator_with_first_token_timeout(iter([1, 2, 3]), 1.0) == [1, 2, 3]
-
-
-def test_consume_iterator_raises_when_first_item_times_out() -> None:
-    """
-    Given  an iterator whose first item is delayed beyond the timeout
-    When   _consume_iterator_with_first_token_timeout() is called
-    Then   OCRError with the first-token key is raised
-    """
-    import time  # noqa: PLC0415
-
-    def _slow():
-        time.sleep(5)
-        yield 1
-
-    with pytest.raises(OCRError) as raised:
-        _consume_iterator_with_first_token_timeout(_slow(), 0.05)
-
-    assert raised.value.args[0].key is MessageKey.NO_FIRST_TOKEN
-
-
-def test_a_wait_pauses_the_first_token_timeout() -> None:
-    """
-    Given  an iterator whose first item arrives after the timeout, and a hook that reports the
-           server is busy with something else
-    When   _consume_iterator_with_first_token_timeout() is called
-    Then   the item is returned instead of a timeout: waiting behind another model is not a
-           failure of this request
-    """
-    import time  # noqa: PLC0415
-
-    def _slow():
-        time.sleep(0.3)
-        yield 1
-
-    assert _consume_iterator_with_first_token_timeout(
-        _slow(), 0.05, waiting=lambda _elapsed: True
-    ) == [1]
-
-
-def test_the_timeout_counts_again_once_the_wait_is_over() -> None:
-    """
-    Given  an iterator that never yields, and a hook that reports a wait only once
-    When   _consume_iterator_with_first_token_timeout() is called
-    Then   the timeout fires after the wait, so a server that stops answering still ends the
-           request
-    """
-    import time  # noqa: PLC0415
-
-    def _never():
-        time.sleep(5)
-        yield 1
-
-    answers = [True, False]
-
-    with pytest.raises(OCRError) as raised:
-        _consume_iterator_with_first_token_timeout(
-            _never(), 0.05, waiting=lambda _elapsed: answers.pop(0) if answers else False
-        )
-
-    assert raised.value.args[0].key is MessageKey.NO_FIRST_TOKEN
-
-
-def test_the_first_token_hook_fires_once_when_the_answer_begins() -> None:
-    """
-    Given  an iterator that yields two items, and a hook for the first token
-    When   _consume_iterator_with_first_token_timeout() is called
-    Then   the hook is called exactly once, so the run's clock starts where the answer really
-           began and not again at every chunk
-    """
-    seen: list[str] = []
-
-    assert _consume_iterator_with_first_token_timeout(
-        iter([1, 2]), 1.0, on_first_token=lambda: seen.append("token")
-    ) == [1, 2]
-    assert seen == ["token"]
-
-
-def test_consume_iterator_propagates_reader_exception_as_ocr_error() -> None:
-    """
-    Given  an iterator that raises after yielding one item
-    When   _consume_iterator_with_first_token_timeout() is called
-    Then   the exception is re-raised as an OCRError
-    """
-
-    def _boom():
-        yield 1
-        raise RuntimeError("kaboom")
-
-    with pytest.raises(OCRError, match="kaboom"):
-        _consume_iterator_with_first_token_timeout(_boom(), 1.0)
-
-
 # ── OllamaClient.pull ──────────────────────────────────────────────────────
 
 
@@ -963,97 +744,6 @@ def test_pull_no_callback(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
     OllamaClient("http://127.0.0.1:11434").pull("tinyllama")  # no exception
-
-
-# ── ollama_server, and the names this computer answers to ──────────────────
-
-
-@pytest.mark.parametrize(
-    ("url", "this_computer", "private"),
-    [
-        ("", True, True),
-        ("http://localhost:11434", True, True),
-        ("http://172.28.0.1:11434", True, True),  # the Windows computer behind WSL
-        ("http://192.168.1.5:11434", False, True),
-        ("nas.fritz.box:11434", False, True),
-        ("http://203.0.113.7:11434", False, False),
-        ("https://ollama.example.com", False, False),
-    ],
-)
-def test_ollama_server_says_where_the_address_is(
-    url: str, this_computer: bool, private: bool, monkeypatch
-) -> None:
-    """
-    Given  an Ollama URL (and a computer that knows itself under no other name, behind a WSL
-           session whose Windows host is 172.28.0.1)
-    When   ollama_server() reads it
-    Then   it names the host, and says whether it is this computer and whether it is on a
-           local network, the one reading every privacy rule starts from
-    """
-    monkeypatch.setattr(ollama_utils, "own_host_names", lambda: frozenset())
-    monkeypatch.setattr(ollama_utils, "windows_host_addresses", lambda: ("172.28.0.1",))
-
-    server = ollama_utils.ollama_server(url)
-
-    assert server.host == ollama_host(url)
-    assert (server.is_this_computer, server.is_private) == (this_computer, private)
-
-
-@pytest.mark.use_case("Hardware_Profile_Override")
-def test_own_host_names_collects_name_and_addresses_and_survives_lookup_errors(
-    monkeypatch,
-) -> None:
-    """
-    Given  the host-name lookups of the socket module
-    When   the own names are collected
-    Then   host name, FQDN and addresses are lower-cased into one set, and a failing
-           lookup yields an empty set instead of an error
-    """
-
-    def uncached() -> frozenset[str]:
-        ollama_utils.own_host_names.cache_clear()
-        return ollama_utils.own_host_names()
-
-    monkeypatch.setattr(ollama_utils.socket, "gethostname", lambda: "Studio-PC")
-    monkeypatch.setattr(ollama_utils.socket, "getfqdn", lambda: "Studio-PC.local")
-    monkeypatch.setattr(
-        ollama_utils.socket, "gethostbyname_ex", lambda _h: ("Studio-PC", [], ["10.0.0.7"])
-    )
-    assert uncached() == frozenset({"studio-pc", "studio-pc.local", "10.0.0.7"})
-
-    def failing(_host: str):
-        raise OSError("no resolver")
-
-    monkeypatch.setattr(ollama_utils.socket, "gethostbyname_ex", failing)
-    # Names found before the failing lookup are kept.
-    assert uncached() == frozenset({"studio-pc", "studio-pc.local"})
-
-
-@pytest.mark.use_case("Hardware_Profile_Override")
-def test_warm_up_resolves_own_names_once_in_the_background(monkeypatch) -> None:
-    """
-    Given  an empty cache of this computer's own names
-    When   the warm-up runs and the names are then asked for
-    Then   the lookup ran once, off the calling thread, and later asks reuse its answer
-    """
-    import threading  # noqa: PLC0415
-
-    calls: list[str] = []
-
-    def hostname() -> str:
-        calls.append(threading.current_thread().name)
-        return "studio-pc"
-
-    ollama_utils.own_host_names.cache_clear()
-    monkeypatch.setattr(ollama_utils.socket, "gethostname", hostname)
-    monkeypatch.setattr(ollama_utils.socket, "getfqdn", lambda: "studio-pc")
-    monkeypatch.setattr(ollama_utils.socket, "gethostbyname_ex", lambda _h: ("", [], []))
-
-    ollama_utils.warm_up_own_host_names()
-    names = ollama_utils.own_host_names()
-
-    assert names == frozenset({"studio-pc"})
-    assert calls == ["own-host-names"]
 
 
 # ── OllamaClient.model_capabilities ────────────────────────────────────────
@@ -1429,24 +1119,12 @@ def test_chat_logs_the_token_counts_at_debug(monkeypatch, caplog) -> None:
     )
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
-    with caplog.at_level(logging.DEBUG, logger="teachers_teammate.infrastructure.ollama_utils"):
+    with caplog.at_level(logging.DEBUG, logger="teachers_teammate.infrastructure.ollama_client"):
         OllamaClient("http://127.0.0.1:11434").chat("qwen3.5:9b", "hi")
 
     records = [r.getMessage() for r in caplog.records if "done_reason" in r.getMessage()]
     assert records and "qwen3.5:9b" in records[0]
     assert "1024" in records[0] and "64" in records[0]
-
-
-def test_proofreading_options_hold_one_fixed_context_size() -> None:
-    """
-    Given  the temperature of a proofreading request
-    When   proofreading_options() is called
-    Then   the options carry that temperature and the one shared context size
-    """
-    options = ollama_utils.proofreading_options(0.7)
-
-    assert options == {"temperature": 0.7, "num_ctx": BASE_NUM_CTX}
-    assert BASE_NUM_CTX == 8192
 
 
 def test_chat_can_return_a_cut_off_answer_when_the_caller_allows_it(monkeypatch) -> None:
@@ -1492,7 +1170,7 @@ def test_chat_refuses_a_request_that_cannot_fit_the_context_window(monkeypatch) 
 
     with pytest.raises(ResponseTruncatedError, match="too long for the model's working memory"):
         OllamaClient("http://127.0.0.1:11434").chat(
-            "m", too_long, options=ollama_utils.proofreading_options(0.7)
+            "m", too_long, options=ollama_request.proofreading_options(0.7)
         )
 
     mock_ollama.Client.return_value.chat.assert_not_called()
@@ -1509,7 +1187,7 @@ def test_chat_sends_a_request_that_fits_the_context_window(monkeypatch) -> None:
     page = "Ein Satz mit vielen Wörtern. " * 80  # ~2.3k characters
 
     result = OllamaClient("http://127.0.0.1:11434").chat(
-        "m", page, options=ollama_utils.proofreading_options(0.7), system="Korrigiere."
+        "m", page, options=ollama_request.proofreading_options(0.7), system="Korrigiere."
     )
 
     assert result == "Fertig."
@@ -1581,131 +1259,6 @@ def test_chat_with_stats_tells_an_unreachable_server_from_a_failed_request(monke
     with pytest.raises(OCRError) as refused:
         OllamaClient("http://127.0.0.1:11434").chat_with_stats("m", "hi")
     assert not isinstance(refused.value, OllamaUnreachableError)
-
-
-def test_a_finished_answer_that_is_already_queued_survives_a_stop() -> None:
-    """
-    Given  a stream whose answer is complete while the cancel event is already set
-    When   it is consumed
-    Then   the finished answer is returned instead of being thrown away
-    """
-    import threading  # noqa: PLC0415
-    import time  # noqa: PLC0415
-
-    cancel = threading.Event()
-
-    def _answer():
-        yield 1
-        yield 2
-        # Both chunks and the end marker are queued before the consumer looks again.
-        time.sleep(0.05)
-
-    stream = _answer()
-    real_next_item = ollama_utils._next_item
-
-    def next_item_after_stop(item_queue, timeout, cancel_event):
-        if not cancel.is_set():
-            deadline = time.monotonic() + 5
-            while item_queue.qsize() < 3 and time.monotonic() < deadline:
-                time.sleep(0.01)  # until both chunks and the end marker are queued
-            cancel.set()  # ... then press "Stop now"
-        return real_next_item(item_queue, timeout, cancel_event)
-
-    with patch.object(ollama_utils, "_next_item", next_item_after_stop):
-        result = _consume_iterator_with_first_token_timeout(stream, 5.0, cancel_event=cancel)
-
-    assert result == [1, 2]
-
-
-@pytest.mark.parametrize("reason", ["stop", "first_token_timeout", "deadline"])
-def test_giving_up_on_a_request_cuts_its_connection(reason: str) -> None:
-    """
-    Given  a stream that never answers (or never ends) and a caller that can cut the connection
-    When   the request is stopped, times out waiting for the first token, or hits its deadline
-    Then   on_abandon is called once, so the server stops working on the abandoned request
-    """
-    import threading  # noqa: PLC0415
-    import time  # noqa: PLC0415
-
-    cancel = threading.Event()
-    cut: list[bool] = []
-
-    def _silent():
-        time.sleep(3)
-        yield 1
-
-    def _endless():
-        while True:
-            time.sleep(0.01)
-            yield 1
-
-    kwargs: dict = {"on_abandon": lambda: cut.append(True)}
-    if reason == "stop":
-        kwargs["cancel_event"] = cancel
-        threading.Timer(0.1, cancel.set).start()
-        stream, first, expected = _silent(), 30.0, RunStoppedError
-    elif reason == "first_token_timeout":
-        stream, first, expected = _silent(), 0.1, OCRTimeoutError
-    else:
-        kwargs["total_timeout"] = 0.1
-        stream, first, expected = _endless(), 5.0, OCRDeadlineError
-
-    with pytest.raises(expected):
-        _consume_iterator_with_first_token_timeout(stream, first, **kwargs)
-
-    assert cut == [True]
-
-
-def test_a_failing_on_abandon_does_not_hide_the_stop() -> None:
-    """
-    Given  an on_abandon callback that raises
-    When   the request is stopped
-    Then   RunStoppedError is still what the caller sees
-    """
-    import threading  # noqa: PLC0415
-    import time  # noqa: PLC0415
-
-    cancel = threading.Event()
-    cancel.set()
-
-    def _silent():
-        time.sleep(1)
-        yield 1
-
-    def boom() -> None:
-        raise RuntimeError("already closed")
-
-    with pytest.raises(RunStoppedError):
-        _consume_iterator_with_first_token_timeout(
-            _silent(), 30.0, cancel_event=cancel, on_abandon=boom
-        )
-
-
-def test_cut_connection_closes_the_client_of_the_request() -> None:
-    """
-    Given  an ollama client
-    When   its connection is cut
-    Then   the client is closed (a blocked read fails and the server sees the drop)
-    """
-    client = MagicMock()
-
-    ollama_utils._cut_connection(client)
-
-    client.close.assert_called_once_with()
-
-
-def test_cut_connection_falls_back_to_the_http_client_of_an_older_client() -> None:
-    """
-    Given  a client without the public close
-    When   its connection is cut
-    Then   the httpx client under it is closed instead
-    """
-    http = MagicMock()
-    older_client: Any = SimpleNamespace(_client=http)  # a client from before `close()`
-
-    ollama_utils._cut_connection(older_client)
-
-    http.close.assert_called_once_with()
 
 
 def test_the_structured_ollama_wrapper_lets_a_stop_through() -> None:
@@ -1783,7 +1336,7 @@ def _mock_server(monkeypatch, *, models, loaded, version="0.40.15") -> None:
     mock_ollama = MagicMock()
     mock_ollama.Client.return_value = mock_client
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
-    monkeypatch.setattr(ollama_utils, "_http_json", lambda url, timeout: {"version": version})
+    monkeypatch.setattr(ollama_client, "_http_json", lambda url, timeout: {"version": version})
 
 
 def test_server_facts_gathers_version_digests_and_loaded_models(monkeypatch) -> None:
@@ -1826,7 +1379,7 @@ def test_server_facts_survives_a_server_that_says_nothing(monkeypatch) -> None:
     def _fail(url: str, timeout: float) -> dict:
         raise OSError("no route to host")
 
-    monkeypatch.setattr(ollama_utils, "_http_json", _fail)
+    monkeypatch.setattr(ollama_client, "_http_json", _fail)
 
     facts = OllamaClient("http://127.0.0.1:11434").server_facts()
 
@@ -1962,16 +1515,3 @@ def test_a_client_without_a_sink_still_answers(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
     assert OllamaClient("http://127.0.0.1:11434").chat("m", "hi") == "Hallo Welt"
-
-
-def test_sampling_values_join_the_proofreading_options_without_replacing_the_fixed_ones() -> None:
-    """
-    Given  sampling values that try to set the temperature and the window as well
-    When   proofreading_options() is called
-    Then   the values are sent, and the temperature and the window are the ones the caller gave
-    """
-    options = ollama_utils.proofreading_options(
-        0.3, 4096, {"presence_penalty": 0.0, "temperature": 9.0, "num_ctx": 1}
-    )
-
-    assert options == {"presence_penalty": 0.0, "temperature": 0.3, "num_ctx": 4096}

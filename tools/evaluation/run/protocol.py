@@ -41,12 +41,12 @@ from teachers_teammate.domain.context_budget import (
 from teachers_teammate.domain.correction_policy import DEFAULT_LEVEL
 from teachers_teammate.domain.correction_prompts import CORRECT_VARIANTS, repair_message
 from teachers_teammate.domain.formatted_text import PLAIN, TextFormat
-from teachers_teammate.domain.model_catalog import (
+from teachers_teammate.domain.request_profile import (
     DEFAULT_REQUEST_PROFILE,
     RequestProfile,
     StepProfile,
 )
-from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
 from teachers_teammate.infrastructure.proofreading.corrector import ollama_exchange_corrector
 from teachers_teammate.infrastructure.proofreading.port import PortAnswer, StepRequest
 

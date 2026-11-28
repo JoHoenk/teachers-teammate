@@ -50,8 +50,8 @@ def test_a_helper_mode_leaves_the_add_on_folder_alone(
     monkeypatch.setattr(sys, "argv", ["teachers-teammate", mode, str(tmp_path / "arg"), "--extra"])
 
     with (
-        patch("teachers_teammate.infrastructure.addon_manager.prepare_packages_dir", prepare),
-        patch("teachers_teammate.infrastructure.addon_manager.inject_packages_dir", inject),
+        patch("teachers_teammate.infrastructure.addon_staging.prepare_packages_dir", prepare),
+        patch("teachers_teammate.infrastructure.addon_imports.inject_packages_dir", inject),
         patch.dict(sys.modules, {"teachers_teammate.frozen_modes": frozen_modes}),
         patch.dict(sys.modules, _pip_modules(pip_main)),
     ):
@@ -74,8 +74,8 @@ def test_the_script_mode_does_not_touch_the_add_on_folder(monkeypatch: pytest.Mo
     monkeypatch.setattr(sys, "argv", ["teachers-teammate", "--_run_script", "walk.py", "e2e.json"])
 
     with (
-        patch("teachers_teammate.infrastructure.addon_manager.prepare_packages_dir", prepare),
-        patch("teachers_teammate.infrastructure.addon_manager.inject_packages_dir", inject),
+        patch("teachers_teammate.infrastructure.addon_staging.prepare_packages_dir", prepare),
+        patch("teachers_teammate.infrastructure.addon_imports.inject_packages_dir", inject),
         patch.dict(sys.modules, {"teachers_teammate.frozen_modes": frozen_modes}),
     ):
         assert frozen_entry.main() == 0
@@ -108,8 +108,8 @@ def test_the_script_mode_hands_its_arguments_to_the_runner(
     )
 
     with (
-        patch("teachers_teammate.infrastructure.addon_manager.prepare_packages_dir", MagicMock()),
-        patch("teachers_teammate.infrastructure.addon_manager.inject_packages_dir", MagicMock()),
+        patch("teachers_teammate.infrastructure.addon_staging.prepare_packages_dir", MagicMock()),
+        patch("teachers_teammate.infrastructure.addon_imports.inject_packages_dir", MagicMock()),
         patch.dict(sys.modules, {"teachers_teammate.frozen_modes": frozen_modes}),
     ):
         assert frozen_entry.main() == 0
@@ -129,8 +129,8 @@ def test_the_script_mode_without_a_result_file_stops(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(sys, "argv", ["teachers-teammate", "--_run_script", "walk.py"])
 
     with (
-        patch("teachers_teammate.infrastructure.addon_manager.prepare_packages_dir", MagicMock()),
-        patch("teachers_teammate.infrastructure.addon_manager.inject_packages_dir", MagicMock()),
+        patch("teachers_teammate.infrastructure.addon_staging.prepare_packages_dir", MagicMock()),
+        patch("teachers_teammate.infrastructure.addon_imports.inject_packages_dir", MagicMock()),
         patch.dict(sys.modules, {"teachers_teammate.frozen_modes": frozen_modes}),
     ):
         assert frozen_entry.main() == 2
@@ -176,8 +176,8 @@ def test_a_normal_start_logs_before_it_imports_the_gui(monkeypatch: pytest.Monke
             "teachers_teammate.infrastructure.logging_setup.start_logging",
             lambda: order.append("start_logging"),
         ),
-        patch("teachers_teammate.infrastructure.addon_manager.prepare_packages_dir", MagicMock()),
-        patch("teachers_teammate.infrastructure.addon_manager.inject_packages_dir", MagicMock()),
+        patch("teachers_teammate.infrastructure.addon_staging.prepare_packages_dir", MagicMock()),
+        patch("teachers_teammate.infrastructure.addon_imports.inject_packages_dir", MagicMock()),
     ):
         assert frozen_entry.main() == 0
 
@@ -202,8 +202,8 @@ def test_a_gui_that_cannot_be_imported_is_still_after_the_log_started(
             "teachers_teammate.infrastructure.logging_setup.start_logging",
             lambda: order.append("start_logging"),
         ),
-        patch("teachers_teammate.infrastructure.addon_manager.prepare_packages_dir", MagicMock()),
-        patch("teachers_teammate.infrastructure.addon_manager.inject_packages_dir", MagicMock()),
+        patch("teachers_teammate.infrastructure.addon_staging.prepare_packages_dir", MagicMock()),
+        patch("teachers_teammate.infrastructure.addon_imports.inject_packages_dir", MagicMock()),
         pytest.raises(ImportError),
     ):
         frozen_entry.main()

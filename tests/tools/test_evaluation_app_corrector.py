@@ -11,7 +11,7 @@ import pytest
 
 from teachers_teammate.exceptions import StageError, StageErrorKind
 from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
-from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.stage_builder import PipelineComponentFactory, StageBuilder
 from teachers_teammate.interfaces import Corrector
@@ -120,7 +120,7 @@ def test_the_steps_that_run_drop_the_unclear_check_a_profile_switches_off() -> N
     When   the steps of the exchange are narrowed
     Then   the first keeps all three, the second drops step ③, and the order is kept
     """
-    from teachers_teammate.domain.model_catalog import RequestProfile  # noqa: PLC0415
+    from teachers_teammate.domain.request_profile import RequestProfile  # noqa: PLC0415
 
     assert steps_that_run(ALL_STEPS, RequestProfile()) == ALL_STEPS
     assert steps_that_run(ALL_STEPS, RequestProfile(unclear_check=False)) == (
@@ -204,7 +204,7 @@ def test_the_exchange_factory_builds_the_exchange_corrector_in_the_chunking_wrap
     Then   it is the app's exchange corrector in the chunking wrapper, carrying the profile it
            was given, and its budget follows the window like the app's other correctors
     """
-    from teachers_teammate.domain.model_catalog import RequestProfile  # noqa: PLC0415
+    from teachers_teammate.domain.request_profile import RequestProfile  # noqa: PLC0415
     from teachers_teammate.infrastructure.proofreading.corrector import (  # noqa: PLC0415
         ExchangeCorrector,
     )

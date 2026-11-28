@@ -19,7 +19,7 @@ from ..domain.install_item import (
     InstallKind,
 )
 from ..domain.local_models import PAGE_MODELS, READER_MODELS
-from ..domain.model_catalog import normalize_tag
+from ..domain.model_tags import normalize_tag
 from ..infrastructure.onnx.store import ModelStore
 from .anonymization import AnonymizationService
 from .ports import AddonState
@@ -164,7 +164,7 @@ class AddonService:
         progress_cb: Callable[[str], None],
     ) -> None:
         """Install *addon* packages into *target* using the bundled pip."""
-        from ..infrastructure.addon_manager import install_addon_subprocess  # noqa: PLC0415
+        from ..infrastructure.addon_pip import install_addon_subprocess  # noqa: PLC0415
 
         install_addon_subprocess(addon, target, progress_cb)
 
@@ -174,7 +174,7 @@ class AddonService:
         progress_cb: Callable[[str], None],
     ) -> None:
         """Install arbitrary pip *packages* into the addon packages directory."""
-        from ..infrastructure.addon_manager import install_packages_subprocess  # noqa: PLC0415
+        from ..infrastructure.addon_pip import install_packages_subprocess  # noqa: PLC0415
 
         install_packages_subprocess(packages, self._state.packages_dir(), progress_cb)
 
@@ -187,12 +187,12 @@ class AddonService:
             OSError: if the packages directory cannot be written.
             RuntimeError: if pip fails for an add-on, or this is not the installed app.
         """
-        from ..infrastructure.addon_manager import update_installed_addons  # noqa: PLC0415
+        from ..infrastructure.addon_pip import update_installed_addons  # noqa: PLC0415
 
         update_installed_addons(progress_cb)
 
     def clear_stale_addon_modules(self, addon: str) -> None:
         """Evict cached sys.modules entries left over from a failed addon import."""
-        from ..infrastructure.addon_manager import clear_stale_modules  # noqa: PLC0415
+        from ..infrastructure.addon_imports import clear_stale_modules  # noqa: PLC0415
 
         clear_stale_modules(addon)

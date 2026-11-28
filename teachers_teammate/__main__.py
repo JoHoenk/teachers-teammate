@@ -6,7 +6,8 @@ from .texts.messages import install
 # sentence, not as a key with its data.
 install()
 
-from .infrastructure.addon_manager import inject_packages_dir, prepare_packages_dir  # noqa: E402
+from .infrastructure.addon_imports import inject_packages_dir  # noqa: E402
+from .infrastructure.addon_staging import prepare_packages_dir  # noqa: E402
 
 # Before anything is imported from the add-on folder: finish an interrupted install.
 prepare_packages_dir()

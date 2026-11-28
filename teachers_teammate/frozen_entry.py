@@ -54,10 +54,8 @@ def _pip_main(args: list[str]) -> int:
 
 def _inject_addon_packages(argv: list[str]) -> None:
     """Make the packages the in-app installer added importable, before anything imports them."""
-    from teachers_teammate.infrastructure.addon_manager import (  # noqa: PLC0415
-        inject_packages_dir,
-        prepare_packages_dir,
-    )
+    from teachers_teammate.infrastructure.addon_imports import inject_packages_dir  # noqa: PLC0415
+    from teachers_teammate.infrastructure.addon_staging import prepare_packages_dir  # noqa: PLC0415
 
     if "--_run_script" in argv:
         # A script runs on the bundle alone: the add-on folder is the teacher's own, and the

@@ -8,7 +8,7 @@ classes, the AI on this computer, Proofreading, Privacy, the summary and the las
 from __future__ import annotations
 
 from ..domain.data_location import STAGE_ANONYMIZATION
-from ..domain.model_catalog import Suitability
+from ..domain.model_fit import Suitability
 from ..domain.stages import Stage
 from .app import NAME
 from .review import REMOVE_PERSONAL_INFO

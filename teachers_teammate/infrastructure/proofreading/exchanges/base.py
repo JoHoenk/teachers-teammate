@@ -17,9 +17,9 @@ from types import MappingProxyType
 from typing import Protocol
 
 from ....domain.formatted_text import TextFormat
-from ....domain.model_catalog import RequestProfile
 from ....domain.proofreading.result import ExchangeCost, ExchangeKind, StepName, StepReport
 from ....domain.proofreading.review import CorrectionReview
+from ....domain.request_profile import RequestProfile
 from ..port import ModelPort
 
 

@@ -25,16 +25,9 @@ if TYPE_CHECKING:
     from ..domain.credentials import KeyLocation
     from ..domain.data_location import StageLocation
     from ..domain.formatted_text import TextFormat
-    from ..domain.model_catalog import (
-        GpuInfo,
-        GpuUsage,
-        HardwareDetection,
-        HardwareProfileSetting,
-        ModelCategory,
-        ModelRating,
-        ModelUses,
-        SystemUsage,
-    )
+    from ..domain.hardware_profile import HardwareDetection, HardwareProfileSetting
+    from ..domain.model_catalog import ModelCategory, ModelUses
+    from ..domain.model_fit import ModelRating
     from ..domain.ollama_discovery import WaitDetail
     from ..domain.ollama_snapshot import ServerSnapshot
     from ..domain.performance_estimate import TimeRange
@@ -42,7 +35,7 @@ if TYPE_CHECKING:
     from ..domain.proofreading.option_marks import OptionMark
     from ..domain.proofreading.result import CorrectionOutcome
     from ..domain.proofreading.review import CorrectionReview
-    from ..infrastructure.ollama_utils import ServerActivity
+    from ..domain.system_facts import GpuInfo, GpuUsage, ServerActivity, SystemUsage
     from ..interfaces import Anonymizer, ConnectionCheck, Reporter
 
 
@@ -68,6 +61,14 @@ class OllamaServer(Protocol):
 
     def forget(self, url: str) -> None:
         """Forget what the app knows about the server at *url*."""
+        ...
+
+    def generation(self, url: str) -> int:
+        """Return how often the answer of *url* was forgotten; read it before asking."""
+        ...
+
+    def hold(self, url: str, snapshot: ServerSnapshot, *, generation: int) -> None:
+        """Keep *snapshot* as the latest answer of *url*, unless it was forgotten since."""
         ...
 
     def capabilities(
@@ -410,7 +411,7 @@ class ModelAdvice(Protocol):
         *,
         cached_only: bool = False,
     ) -> list[ModelRating]:
-        """Return a :class:`~teachers_teammate.domain.model_catalog.ModelRating` per tag."""
+        """Return a :class:`~teachers_teammate.domain.model_fit.ModelRating` per tag."""
         ...
 
 

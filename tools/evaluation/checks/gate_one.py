@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from teachers_teammate.infrastructure.ollama_utils import ChatStats
+from teachers_teammate.infrastructure.ollama_request import ChatStats
 
 from ..core.revision import tool_revision
 from ..run import defaults, protocol
@@ -42,7 +42,7 @@ from .structured_check import (
 )
 
 if TYPE_CHECKING:
-    from teachers_teammate.domain.model_catalog import RequestProfile
+    from teachers_teammate.domain.request_profile import RequestProfile
 
 
 class StaleAnswersError(ValueError):

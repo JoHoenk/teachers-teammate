@@ -21,7 +21,7 @@ from ..domain.data_location import (
     fingerprint_parts,
 )
 from ..domain.language import language_name
-from ..domain.model_catalog import short_model_name
+from ..domain.model_tags import short_model_name
 from ._types import Notice, NoticeKind
 from .app import stage_title
 from .review import NAMES_AS_WRITTEN, NAMES_IN_LANGUAGES, REMOVE_PERSONAL_INFO

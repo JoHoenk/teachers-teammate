@@ -11,7 +11,8 @@ from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.data_location import DataLocation, StageLocation
 from teachers_teammate.domain.install_item import InstallItem, InstallKind
-from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL, HardwareProfileSetting
+from teachers_teammate.domain.hardware_profile import HardwareProfileSetting
+from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
 from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 

@@ -20,7 +20,8 @@ from ...domain.data_location import (
     OCR_ENGINE_NAMES,
     STAGE_ANONYMIZATION,
 )
-from ...domain.model_catalog import licence_note, short_model_name
+from ...domain.model_catalog import licence_note
+from ...domain.model_tags import short_model_name
 from ...domain.stages import Stage
 from ...texts import setup as words
 from ...texts.setup import name_model_label

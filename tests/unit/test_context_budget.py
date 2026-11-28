@@ -22,12 +22,8 @@ from teachers_teammate.domain.context_budget import (
     run_windows,
     window_from_setting,
 )
-from teachers_teammate.domain.model_catalog import (
-    CARD_USABLE_SHARE,
-    FULL_SPEED_SHARE,
-    OllamaModelSpec,
-    find_spec,
-)
+from teachers_teammate.domain.hardware_profile import CARD_USABLE_SHARE, FULL_SPEED_SHARE
+from teachers_teammate.domain.model_catalog import OllamaModelSpec, find_spec
 
 
 @pytest.mark.use_case("Context_Budget")

@@ -198,6 +198,19 @@ class DocumentQueries:
             return set()
         return found
 
+    def with_stored_transcription(self, files: Collection[Path]) -> set[Path]:
+        """Return the *files* whose transcription the teacher stored: they need no reading."""
+        found: set[Path] = set()
+        for file in files:
+            try:
+                work = self._work_store.load(compute_file_hash_cached(file))
+            except OSError:
+                _logger.debug("Cannot read %s: no stored transcription to find", file.name)
+                continue
+            if work is not None and work.transcription is not None:
+                found.add(file)
+        return found
+
     def worked_on_documents(
         self, config: Config, files: Collection[Path], *, run_proofreads: bool
     ) -> WorkedOn:

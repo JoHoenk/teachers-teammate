@@ -968,7 +968,7 @@ def test_pipeline_run_returns_1_when_ollama_unreachable(tmp_path: Path) -> None:
     When   OCRPipeline.run() is called
     Then   returns 1 (Ollama connection check fails before processing begins)
     """
-    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_client import OllamaClient  # noqa: PLC0415
     from teachers_teammate.exceptions import OllamaUnreachableError  # noqa: PLC0415
 
     cfg = make_config(
@@ -1014,7 +1014,7 @@ def test_pipeline_run_returns_1_when_ocr_model_not_in_ollama(tmp_path: Path) -> 
     )
     _place_image(cfg.input_dir)
 
-    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_client import OllamaClient  # noqa: PLC0415
     from teachers_teammate.exceptions import OllamaUnreachableError  # noqa: PLC0415
 
     with patch.object(
@@ -1052,7 +1052,7 @@ def test_pipeline_run_proceeds_when_ollama_model_found(tmp_path: Path) -> None:
     )
     _place_image(cfg.input_dir)
 
-    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_client import OllamaClient  # noqa: PLC0415
 
     mock_ocr = mock_reader()
     mock_ocr.process_image.return_value = "text"

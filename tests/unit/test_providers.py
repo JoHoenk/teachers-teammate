@@ -17,7 +17,7 @@ from teachers_teammate._model_defaults import default_model_for_task
 from teachers_teammate.domain.data_location import DataRegion
 from teachers_teammate.domain.providers import AddonPackage, ProviderInfo
 from teachers_teammate.domain.stages import Stage
-from teachers_teammate.infrastructure.addon_manager import addon_requirements
+from teachers_teammate.infrastructure.addon_list import addon_requirements
 from teachers_teammate.infrastructure.llm_factory import list_providers
 from teachers_teammate.messages import MessageKey
 
@@ -165,7 +165,7 @@ def test_ollama_list_models_returns_list_when_server_unreachable(mocker) -> None
     Then   an empty list is returned (no exception propagated)
     """
     mocker.patch(
-        "teachers_teammate.infrastructure.ollama_utils.OllamaClient.list_models",
+        "teachers_teammate.infrastructure.ollama_client.OllamaClient.list_models",
         return_value=[],
     )
     mod = _load("ollama")
@@ -830,7 +830,7 @@ def test_ollama_list_models_returns_models_when_server_reachable() -> None:
     Then   the list returned by OllamaClient.list_models is returned
     """
     with patch(
-        "teachers_teammate.infrastructure.ollama_utils.OllamaClient.list_models",
+        "teachers_teammate.infrastructure.ollama_client.OllamaClient.list_models",
         return_value=["llama3", "mistral"],
     ):
         mod = _load("ollama")

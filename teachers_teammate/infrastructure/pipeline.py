@@ -44,8 +44,8 @@ from typing import NamedTuple
 
 from ..config import Config, OcrConfig
 from ..domain.data_location import ENGINE_OLLAMA
+from ..domain.hardware_profile import HardwareDetection
 from ..domain.key_facts import KeyFacts
-from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import WaitDetail
 from ..domain.output_files import output_folder_problem
 from ..domain.run_summary import KeepAwakeState, RunSummary
@@ -57,7 +57,7 @@ from ..texts import report as report_text
 from ..texts.dialogs import folder_problem_text
 from . import run_report
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
-from .ollama_utils import OllamaClient
+from .ollama_client import OllamaClient
 from .onnx.store import ModelStore
 from .preview_image_store import PreviewImageStore
 from .reporting import StdoutReporter

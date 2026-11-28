@@ -11,13 +11,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QScrollArea
 import pytest
 
-from teachers_teammate.domain.model_catalog import (
-    DEFAULT_OCR_MODEL,
-    DEFAULT_WRITING_MODEL,
+from teachers_teammate.domain.hardware_profile import (
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
     HardwareProfileSetting,
+)
+from teachers_teammate.domain.model_catalog import (
+    DEFAULT_OCR_MODEL,
+    DEFAULT_WRITING_MODEL,
     ModelUses,
     OLLAMA_CATALOG,
 )

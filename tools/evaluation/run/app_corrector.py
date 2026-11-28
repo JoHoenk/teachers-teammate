@@ -241,7 +241,8 @@ class NoExplanationCorrector(Corrector):
 
     What the skipped step ② leaves behind (unexplained edits, a warning that explanations are
     missing) is not part of the answer to "what does step ① correct", so it is dropped; a file
-    whose step ① failed keeps its failure and its warning.
+    whose step ① failed keeps its failure and its warning, and text step ① left out and the app
+    put back stays counted (``left_out``), because the drop was step ①'s own.
     """
 
     def __init__(self, inner: Corrector) -> None:
@@ -258,7 +259,9 @@ class NoExplanationCorrector(Corrector):
         outcome = self._inner.correct(raw_text, language, text_format=text_format)
         if outcome.failed:
             return outcome
-        return CorrectionOutcome(text=outcome.text)
+        return CorrectionOutcome(
+            text=outcome.text, left_out=outcome.left_out, fell_back=outcome.left_out > 0
+        )
 
     def max_text_chars(self, language: str, *, text_format: TextFormat = "plain") -> int | None:
         """Return the budget of the exchange, so the pieces are the exchange's pieces."""

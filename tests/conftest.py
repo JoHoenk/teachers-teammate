@@ -10,9 +10,14 @@ from pathlib import Path
 import shutil
 import sys
 import threading
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from teachers_teammate.application.api_keys import ApiKeys
+    from teachers_teammate.application.ports import SecretStore
 
 # Use headless Qt in CI/local Bazel test runs unless explicitly overridden.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -281,6 +286,14 @@ def make_config(tmp_path: Path, **overrides: object):
     return Config(**defaults)
 
 
+def make_api_keys(store: SecretStore) -> ApiKeys:
+    """Return the app's keys over *store*, reading the providers the app ships."""
+    from teachers_teammate.application.api_keys import ApiKeys  # noqa: PLC0415
+    from teachers_teammate.infrastructure.llm_factory import LlmFactoryProviders  # noqa: PLC0415
+
+    return ApiKeys(store, providers=LlmFactoryProviders())
+
+
 def make_key_facts():
     """Return this computer's key facts with an empty model folder, as a test finds it.
 
@@ -300,6 +313,7 @@ def pipeline_dependencies(tmp_path: Path, **fields: object):
     point at empty temporary folders: a run and the test that set the work up see one folder.
     """
     from teachers_teammate.infrastructure.key_facts import MachineKeyFacts  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_client import OllamaClient  # noqa: PLC0415
     from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
     from teachers_teammate.infrastructure.pipeline import PipelineDependencies  # noqa: PLC0415
     from teachers_teammate.infrastructure.speed_store import SampleStore  # noqa: PLC0415
@@ -311,6 +325,7 @@ def pipeline_dependencies(tmp_path: Path, **fields: object):
         "samples": SampleStore(tmp_path / "samples.json"),
         "work_store": TeacherWorkStore(),
         "model_store": ModelStore(),
+        "client_factory": OllamaClient,
     }
     values.update(fields)
     values.setdefault("key_facts", MachineKeyFacts(values["model_store"]))

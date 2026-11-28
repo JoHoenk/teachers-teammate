@@ -14,6 +14,7 @@ import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 import threading
+from typing import Any
 
 from ..config import Config
 from ..domain.context_budget import RunWindows
@@ -32,6 +33,7 @@ from ..interfaces import ProgressCallbacks, SleepBlocker
 from ..run_rules import resolve_run_windows
 from .anonymization import AnonymizationService
 from .model_recommendations import ModelRecommendationService
+from .ports import OllamaClientFactory
 
 
 def state_store_for(
@@ -76,6 +78,9 @@ class RunParts:
     work_store: TeacherWorkStore
     #: The one sample store of this process: the speed estimates read what a run writes.
     samples: SampleStore
+    #: Builds every Ollama client a run uses: the app's only factory, handed in by composition,
+    #: so a run's clients carry its stop event and its statistics sink.
+    client_factory: OllamaClientFactory[Any]
 
 
 class RunService:
@@ -96,6 +101,7 @@ class RunService:
         self._key_facts = parts.key_facts
         self._work_store = parts.work_store
         self._samples = parts.samples
+        self._client_factory = parts.client_factory
         self._recommendations = recommendations
         self._anonymization = anonymization
         # How many runs this process is running right now: 0 unless one is inside its call.
@@ -176,6 +182,7 @@ class RunService:
                         key_facts=self._key_facts,
                         work_store=self._work_store,
                         samples=self._samples,
+                        client_factory=self._client_factory,
                     ),
                     progress=progress,
                 )
@@ -195,6 +202,7 @@ class RunService:
                 work_store=self._work_store,
                 model_store=self._model_store,
                 key_facts=self._key_facts,
+                client_factory=self._client_factory,
             )
             return self._pipeline_factory(
                 config, files, dependencies=dependencies

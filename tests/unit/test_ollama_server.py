@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 import threading
 import time
@@ -13,12 +13,12 @@ import pytest
 from teachers_teammate.application.ollama_server import (
     OllamaServerService,
     OllamaStatus,
-    ollama_client,
 )
 from teachers_teammate.domain.ollama_discovery import OllamaState
 from teachers_teammate.domain.ollama_snapshot import SNAPSHOT_TTL_S
 from teachers_teammate.exceptions import OllamaUnreachableError
 from teachers_teammate.infrastructure.ollama_client import OllamaClient
+from teachers_teammate.infrastructure.ollama_request import ChatStats
 
 from ..fakes.fake_ollama import PULL_DIGEST, FakeOllama
 
@@ -51,11 +51,16 @@ class _CountingFactory:
         self.timeouts: list[float | None] = []
 
     def __call__(
-        self, url: str, *, cancel_event: threading.Event | None = None, timeout: float | None = None
+        self,
+        url: str,
+        *,
+        cancel_event: threading.Event | None = None,
+        timeout: float | None = None,
+        stats_sink: Callable[[str, ChatStats], None] | None = None,
     ) -> OllamaClient:
         """Build the real client of *url* and note its timeout."""
         self.timeouts.append(timeout)
-        return ollama_client(url, cancel_event=cancel_event, timeout=timeout)
+        return OllamaClient(url, cancel_event=cancel_event, timeout=timeout, stats_sink=stats_sink)
 
 
 @pytest.fixture(name="fake")

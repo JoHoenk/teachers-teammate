@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from .config import Config
 from .domain.context_budget import BASE_NUM_CTX, RunWindows, stage_windows
-from .domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
+from .domain.data_location import ENGINE_OLLAMA, is_ollama
 from .domain.hardware_profile import HardwareDetection
 
 
@@ -27,8 +27,8 @@ def resolve_run_windows(config: Config, hardware: HardwareDetection | None) -> R
         config.proofreading_context,
         proofreading_model=config.effective_correction_model,
         evaluation_model=config.effective_evaluate_model,
-        proofreading_local=config.correction_provider == PROVIDER_OLLAMA,
-        evaluation_local=config.evaluate_provider == PROVIDER_OLLAMA,
+        proofreading_local=is_ollama(config.correction_provider),
+        evaluation_local=is_ollama(config.evaluate_provider),
         evaluation_runs=config.evaluation_enabled,
         card_gb=hardware.card_gb if hardware is not None else None,
     )
@@ -42,13 +42,13 @@ def window_of_model(config: Config, windows: RunWindows, tag: str) -> int:
     sizes = [BASE_NUM_CTX]
     if (
         config.correction_enabled
-        and config.correction_provider == PROVIDER_OLLAMA
+        and is_ollama(config.correction_provider)
         and config.effective_correction_model == tag
     ):
         sizes.append(windows.proofreading)
     if (
         config.evaluation_enabled
-        and config.evaluate_provider == PROVIDER_OLLAMA
+        and is_ollama(config.evaluate_provider)
         and config.effective_evaluate_model == tag
     ):
         sizes.append(windows.evaluation)
@@ -59,8 +59,8 @@ def uses_ollama(config: Config) -> bool:
     """Return whether any enabled stage of *config* talks to an Ollama server."""
     return (
         (config.recognition_enabled and config.ocr.engine == ENGINE_OLLAMA)
-        or (config.correction_enabled and config.correction_provider == PROVIDER_OLLAMA)
-        or (config.evaluation_enabled and config.evaluate_provider == PROVIDER_OLLAMA)
+        or (config.correction_enabled and is_ollama(config.correction_provider))
+        or (config.evaluation_enabled and is_ollama(config.evaluate_provider))
     )
 
 
@@ -69,11 +69,11 @@ def ollama_models(config: Config) -> tuple[str, ...]:
     models: list[str] = []
     if config.recognition_enabled and config.ocr.engine == ENGINE_OLLAMA and config.ocr.model:
         models.append(config.ocr.model)
-    if config.correction_enabled and config.correction_provider == PROVIDER_OLLAMA:
+    if config.correction_enabled and is_ollama(config.correction_provider):
         model = config.effective_correction_model or ""
         if model and model not in models:
             models.append(model)
-    if config.evaluation_enabled and config.evaluate_provider == PROVIDER_OLLAMA:
+    if config.evaluation_enabled and is_ollama(config.evaluate_provider):
         model = config.effective_evaluate_model or ""
         if model and model not in models:
             models.append(model)

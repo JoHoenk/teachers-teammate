@@ -13,7 +13,7 @@ from collections.abc import Callable
 import dataclasses
 
 from ..config import Config
-from ..domain.data_location import PROVIDER_OLLAMA
+from ..domain.data_location import PROVIDER_OLLAMA, is_ollama
 from ..domain.model_fit import Suitability, suitability_rank
 from .model_comparison import Candidate, CompareSource
 from .ports import CompareResults, ModelAdvice, PageTimes, ProviderCatalogue
@@ -103,7 +103,7 @@ class ComparisonCandidates:
         return [
             provider
             for provider in self._providers.list_providers()
-            if provider != PROVIDER_OLLAMA
+            if not is_ollama(provider)
             and not self._providers.provider_key_missing(provider)
             and not self._providers.missing_provider_package(provider)
         ]

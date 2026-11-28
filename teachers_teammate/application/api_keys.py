@@ -9,6 +9,9 @@ neither does a library that reads the environment on its own.
 The store is asked on first use of a key and the answer is remembered, ``"no key"`` included: a
 keychain read can ask the teacher to unlock it, so a run that asks nothing online never touches
 the keychain.
+
+What a provider declares is not worked out here: which providers there are and what each one's
+key is called come in through the constructor.
 """
 
 from __future__ import annotations
@@ -17,15 +20,15 @@ from collections.abc import Iterable
 import os
 
 from ..domain.credentials import KeyLocation
-from ..infrastructure import llm_factory
-from .ports import SecretStore
+from .ports import ProviderDeclarations, SecretStore
 
 
 class ApiKeys:
     """The API keys of the online AI services: what the app holds, the environment, the store."""
 
-    def __init__(self, store: SecretStore) -> None:
+    def __init__(self, store: SecretStore, *, providers: ProviderDeclarations) -> None:
         self._store = store
+        self._providers = providers
         #: The keys the app holds, by environment-variable name.  A name that is here wins over
         #: the environment, so a key typed into Settings takes effect for the rest of the session.
         self._held: dict[str, str] = {}
@@ -34,7 +37,7 @@ class ApiKeys:
 
     def key_for(self, provider: str) -> str | None:
         """Return the key of *provider*, or ``None`` when the app has none for it."""
-        info = llm_factory.get_provider_info(provider)
+        info = self._providers.info(provider)
         env_key = info.env_key if info is not None else ""
         return (self.key(env_key) or None) if env_key else None
 
@@ -95,8 +98,8 @@ class ApiKeys:
 
     def forget_all(self) -> None:
         """Forget every provider's key: what the uninstaller runs before the program files go."""
-        for provider in llm_factory.list_providers():
-            info = llm_factory.get_provider_info(provider)
+        for provider in self._providers.names():
+            info = self._providers.info(provider)
             if info is not None and info.env_key:
                 self.forget(info.env_key)
 

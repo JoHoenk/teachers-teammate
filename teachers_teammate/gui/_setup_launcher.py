@@ -16,7 +16,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QWidget
 
 from ..application.composition import AppServices
-from ..domain.data_location import ENGINE_OLLAMA, PROVIDER_OLLAMA
+from ..domain.data_location import ENGINE_OLLAMA, is_ollama
 from ..domain.hardware_profile import HardwareDetection
 from ..settings_schema import DEFAULTS, normalize_saved_ollama_url
 from ..texts import dialogs as dlg
@@ -179,12 +179,12 @@ class SetupLauncher(QObject):
         ):
             apply["ocr_model"] = best["ocr_model"]
         if (
-            settings.get("correction_provider") == PROVIDER_OLLAMA
+            is_ollama(settings.get("correction_provider"))
             and settings.get("correction_model") == DEFAULTS["correction_model"]
         ):
             apply["correction_model"] = best["correction_model"]
         if (
-            settings.get("evaluate_provider") == PROVIDER_OLLAMA
+            is_ollama(settings.get("evaluate_provider"))
             and settings.get("evaluate_model") == DEFAULTS["evaluate_model"]
         ):
             apply["evaluate_model"] = best["evaluate_model"]

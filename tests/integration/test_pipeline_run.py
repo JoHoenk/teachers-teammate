@@ -1082,8 +1082,10 @@ def test_a_failing_model_check_ends_the_run_without_contacting_a_server(tmp_path
     """
     Given  ocr_engine='ollama' and an injected model check that refuses
     When   OCRPipeline.run() is called
-    Then   the run reports that reason and reads nothing, without asking a server
+    Then   the run reports that reason and reads nothing, without asking a server, and the check
+           is given the run's own client
     """
+    from teachers_teammate.infrastructure.ollama_client import OllamaClient  # noqa: PLC0415
     from teachers_teammate.infrastructure.stage_builder import (  # noqa: PLC0415
         PipelineComponentFactory,
     )
@@ -1108,10 +1110,45 @@ def test_a_failing_model_check_ends_the_run_without_contacting_a_server(tmp_path
     assert summary.exit_code == 1
     assert "Cannot connect to Ollama" in summary.error
     check.assert_called_once()
-    assert (check.call_args.kwargs["url"], check.call_args.kwargs["model"]) == (
-        cfg.ollama_url,
-        "my-model",
-    )
+    # The run's own client, so the check can be abandoned by "Stop now" like any other request.
+    assert isinstance(check.call_args.kwargs["client"], OllamaClient)
+    assert check.call_args.kwargs["client"].base_url == cfg.ollama_url
+    assert check.call_args.kwargs["model"] == "my-model"
+
+
+def test_the_runs_one_client_comes_from_the_factory_with_its_stop_event(tmp_path: Path) -> None:
+    """
+    Given  a run given a client factory, and the stop event its "Stop now" sets
+    When   the run reads a page
+    Then   the client is built by that factory, once, with the run's event and the sink of its
+           statistics: one client serves the whole run, and both a stop and a sample reach it
+    """
+    from tests.fakes.fake_client_factory import RecordingClientFactory  # noqa: PLC0415
+
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False, docx_enabled=False)
+    _place_image(cfg.input_dir)
+    stop = threading.Event()
+    factory = RecordingClientFactory()
+
+    reader = mock_reader()
+    reader.process_image.return_value = "Hello World"
+
+    with patch(
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
+        return_value=reader,
+    ):
+        summary = OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            stop,
+            dependencies=pipeline_dependencies(tmp_path, client_factory=factory),
+        ).run()
+
+    assert summary.exit_code == 0
+    build = factory.only_build()
+    assert build.url == cfg.ollama_url
+    assert build.cancel_event is stop
+    assert build.stats_sink is not None
 
 
 # ── Engine selection ───────────────────────────────────────────────────────

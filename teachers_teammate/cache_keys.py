@@ -19,7 +19,7 @@ from .config import Config, OcrConfig
 from .domain.anonymization import resolve_anonymizer_config
 from .domain.context_budget import RunWindows, window_from_setting
 from .domain.correction_policy import CorrectionOutput
-from .domain.data_location import ENGINE_PPOCR, PROVIDER_OLLAMA, SentRecord
+from .domain.data_location import ENGINE_PPOCR, SentRecord, is_ollama
 from .domain.freshness import ExpectedHashes, compute_config_hash
 from .domain.key_facts import KeyFacts
 from .domain.local_models import auto_identity, reader_fingerprint
@@ -155,7 +155,7 @@ def sent_record(
     return SentRecord(
         provider=provider,
         model=model,
-        endpoint=ollama_host(config.ollama_url) if provider == PROVIDER_OLLAMA else "",
+        endpoint=ollama_host(config.ollama_url) if is_ollama(provider) else "",
         names_hidden=names_hidden,
         hiding_on=config.anonymization_enabled,
         privacy=privacy_key(config, facts),
@@ -169,7 +169,7 @@ def window_fingerprint(config: Config, windows: RunWindows | None = None) -> tup
     Without them only the settings are known, which gives the pinned window and the base step
     for ``"auto"`` — the same key a run at the base window produces.
     """
-    if config.correction_provider != PROVIDER_OLLAMA:
+    if not is_ollama(config.correction_provider):
         return ()
     window = (
         windows.proofreading
@@ -188,7 +188,7 @@ def evaluation_window_fingerprint(
     of a smaller window must not be reused.  An online provider brings its own window, which the
     app does not set.
     """
-    if config.evaluate_provider != PROVIDER_OLLAMA or windows is None:
+    if not is_ollama(config.evaluate_provider) or windows is None:
         return ()
     return (f"num-ctx-{windows.evaluation}",)
 

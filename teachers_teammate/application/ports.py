@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 import threading
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from ..domain.hardware_profile import HardwareDetection, HardwareProfileSetting
     from ..domain.model_catalog import ModelCategory, ModelUses
     from ..domain.model_fit import ModelRating
+    from ..domain.model_listing import ModelListing
     from ..domain.ollama_discovery import WaitDetail
     from ..domain.ollama_snapshot import ServerSnapshot
     from ..domain.performance_estimate import TimeRange
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from ..domain.proofreading.option_marks import OptionMark
     from ..domain.proofreading.result import CorrectionOutcome
     from ..domain.proofreading.review import CorrectionReview
+    from ..domain.providers import ProviderInfo
     from ..domain.system_facts import GpuInfo, GpuUsage, ServerActivity, SystemUsage
     from ..interfaces import Anonymizer, ConnectionCheck, Reporter
 
@@ -126,9 +128,9 @@ class OllamaServer(Protocol):
 class OllamaClientFactory[C](Protocol):
     """Builds the Ollama client *C* of one address.
 
-    *cancel_event* makes a waiting request abandonable, *timeout* bounds one that must answer.
-    A service that only passes the client on takes it as ``object``: only the code that drives
-    it knows its shape.
+    *cancel_event* makes a waiting request abandonable, *timeout* bounds one that must answer,
+    *stats_sink* is told what every chat request cost.  A service that only passes the client on
+    takes it as ``object``: only the code that drives it knows its shape.
     """
 
     def __call__(
@@ -137,7 +139,41 @@ class OllamaClientFactory[C](Protocol):
         *,
         cancel_event: threading.Event | None = None,
         timeout: float | None = None,
+        stats_sink: Callable[[str, Any], None] | None = None,
     ) -> C: ...
+
+
+class ProviderDeclarations(Protocol):
+    """What the provider modules declare: which providers there are and what each one is."""
+
+    def names(self) -> list[str]:
+        """Return the ids of all providers, sorted."""
+        ...
+
+    def info(self, provider: str) -> ProviderInfo | None:
+        """Return what *provider* declares, or ``None`` when the name is no provider."""
+        ...
+
+
+class OnlineProviders(ProviderDeclarations, Protocol):
+    """The online AI services: what each declares, and asking one something.
+
+    The counterpart of :class:`OllamaServer` for the vendors: ``LlmFactoryProviders`` implements
+    it over the provider modules.  *api_key* is the key the app holds for that service (``""``
+    when it holds none), so no method reads a key of its own.
+    """
+
+    def data_region(self, provider: str) -> str:
+        """Return where *provider* processes data: ``"eu"``, ``"non_eu"`` or ``"unknown"``."""
+        ...
+
+    def list_models_checked(self, provider: str, *, api_key: str) -> ModelListing:
+        """Return the models of *provider*, and whether the list is live or built in."""
+        ...
+
+    def check_connection(self, provider: str, *, api_key: str) -> tuple[bool, str]:
+        """Return ``(connected, message)`` for *provider*: does it answer with that key?"""
+        ...
 
 
 class Credentials(Protocol):

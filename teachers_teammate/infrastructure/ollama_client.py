@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ..domain.ollama_address import models_include, normalize_ollama_url
 from ..domain.ollama_discovery import WaitDetail, WaitKind
@@ -142,12 +142,21 @@ class OllamaClient:
         self,
         url: str,
         *,
-        timeout: float = _CONNECT_TIMEOUT,
+        timeout: float | None = None,
         cancel_event: threading.Event | None = None,
         stats_sink: Callable[[str, ChatStats], None] | None = None,
     ) -> None:
+        """Create the client of the server at *url*.
+
+        Args:
+            timeout: How long a request that has to answer may wait (``None``: the connect
+                timeout below).
+            cancel_event: Makes a waiting request abandonable: the run or speed test the
+                teacher stopped.
+            stats_sink: Called as ``stats_sink(model, stats)`` after every chat request.
+        """
         self.base_url = normalize_ollama_url(url)
-        self._timeout = timeout
+        self._timeout = _CONNECT_TIMEOUT if timeout is None else timeout
         #: When set, a chat request that is waiting is abandoned (the server stops generating)
         #: and raises :exc:`~teachers_teammate.exceptions.RunStoppedError`.
         self._cancel_event = cancel_event
@@ -666,3 +675,21 @@ class OllamaClient:
                     )
         except Exception as exc:
             raise OCRError(model_pull_failed(message_of(exc))) from exc
+
+
+class ClientFactory(Protocol):
+    """Builds the client of one Ollama server: what composition hands to everything that asks.
+
+    ``OllamaClient`` is the app's only implementation, so a run, a speed test and a comparison
+    all build the same client.  The parameters are the ones a caller can add to a client it did
+    not build itself; what it does not pass a value for is the default of the client.
+    """
+
+    def __call__(
+        self,
+        url: str,
+        *,
+        cancel_event: threading.Event | None = None,
+        timeout: float | None = None,
+        stats_sink: Callable[[str, ChatStats], None] | None = None,
+    ) -> OllamaClient: ...

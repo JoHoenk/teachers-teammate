@@ -30,6 +30,8 @@ from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.gpu_detector import SystemHardwareProbe
 from ..infrastructure.key_facts import MachineKeyFacts
+from ..infrastructure.llm_factory import LlmFactoryProviders
+from ..infrastructure.ollama_client import OllamaClient
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.option_mark_store import OptionMarkStore, default_marks_root
 from ..infrastructure.performance_probe import PerformanceProbe
@@ -54,7 +56,7 @@ from .documents import DocumentQueries
 from .export import ExportService
 from .model_comparison import ComparisonParts, ModelComparisonService
 from .model_recommendations import ModelRecommendationService
-from .ollama_server import OllamaServerService, ollama_client
+from .ollama_server import OllamaServerService
 from .providers import ProviderService
 from .reader import ReaderService
 from .releases import ReleaseService
@@ -137,6 +139,7 @@ class _Parts:
     state_repository_factory: Callable[[Path], StateRepository]
     component_factory: PipelineComponentFactory
     keys: ApiKeys
+    online: LlmFactoryProviders
     work_store: TeacherWorkStore
     model_store: ModelStore
     sleep_blocker: SleepBlocker
@@ -158,9 +161,7 @@ def build_app_services(
     work_store: TeacherWorkStore | None = None,
 ) -> AppServices:
     """Build the application's services, sharing the parts that must exist once."""
-    keys = ApiKeys(CredentialStore())
     parts = _parts(
-        keys=keys,
         discovery=discovery,
         pipeline_factory=pipeline_factory,
         state_repository_factory=state_repository_factory,
@@ -190,7 +191,7 @@ def build_app_services(
         run_checks=run_checks,
         ollama=parts.ollama,
         providers=providers,
-        keys=keys,
+        keys=parts.keys,
         reader=reader,
         recommendations=recommendations,
         speeds=speeds,
@@ -221,7 +222,6 @@ def build_app_services(
 
 def _parts(
     *,
-    keys: ApiKeys,
     discovery: FileDiscovery | None,
     pipeline_factory: Callable[..., OCRPipeline] | None,
     state_repository_factory: Callable[[Path], StateRepository] | None,
@@ -231,8 +231,11 @@ def _parts(
     work_store: TeacherWorkStore | None,
 ) -> _Parts:
     """Return what the services are built from, each part built here or handed in."""
+    online = LlmFactoryProviders()
+    keys = ApiKeys(CredentialStore(), providers=online)
     return _Parts(
         keys=keys,
+        online=online,
         discovery=discovery or FileDiscovery(),
         pipeline_factory=pipeline_factory or OCRPipeline,
         state_repository_factory=state_repository_factory or StateRepository,
@@ -251,7 +254,7 @@ def _parts(
 
 def _reading(parts: _Parts) -> tuple[ProviderService, ReaderService]:
     """Return the providers and the text recognition: what reads a page, and with what."""
-    providers = ProviderService(ollama=parts.ollama, credentials=parts.keys)
+    providers = ProviderService(ollama=parts.ollama, credentials=parts.keys, online=parts.online)
     reader = ReaderService(
         model_store=parts.model_store,
         component_factory=parts.component_factory,
@@ -267,7 +270,7 @@ def _speed_estimates(parts: _Parts, providers: ProviderService) -> SpeedEstimate
     return SpeedEstimateService(
         effective_model=providers.effective_model,
         ollama=parts.ollama,
-        client_factory=ollama_client,
+        client_factory=OllamaClient,
         samples=parts.samples,
         # The reading step prepares its test page with the page models a run reads with.
         probe_factory=functools.partial(PerformanceProbe, model_store=parts.model_store),
@@ -400,6 +403,7 @@ def _run(
             key_facts=key_facts,
             work_store=parts.work_store,
             samples=parts.samples,
+            client_factory=OllamaClient,
         ),
         recommendations=recommendations,
         anonymization=anonymization,
@@ -435,6 +439,7 @@ def _comparison(
             model_store=parts.model_store,
             reporter=reporter,
             samples=parts.samples,
+            client_factory=OllamaClient,
             stop_event=stop_event,
             # The window a run with these settings would use: the key computed here is its key.
             hardware=recommendations.cached_hardware_profile(

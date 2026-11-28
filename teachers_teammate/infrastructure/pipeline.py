@@ -52,12 +52,11 @@ from ..domain.run_summary import KeepAwakeState, RunSummary
 from ..exceptions import OllamaUnreachableError, ProviderNotAvailableError
 from ..interfaces import ImageUnit, PreparedPreview, ProgressCallbacks, Reporter
 from ..messages import preview_needs_images
-from ..run_rules import uses_ollama
 from ..texts import report as report_text
 from ..texts.dialogs import folder_problem_text
 from . import run_report
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
-from .ollama_client import OllamaClient
+from .ollama_client import ClientFactory, OllamaClient
 from .onnx.store import ModelStore
 from .preview_image_store import PreviewImageStore
 from .reporting import StdoutReporter
@@ -111,6 +110,9 @@ class PipelineDependencies:
     # The sentence the banner and the window warn with on battery power; the adapter passes it,
     # so the run's warning and the window say the same line.
     battery_warning: str = ""
+    # Builds every Ollama client of this run.  The run builds one and every stage shares it, so
+    # one stop event can abandon the request being made and one sink sees every request.
+    client_factory: ClientFactory = field(kw_only=True)
     # What this computer adds to a cache key.  The application layer passes the one its queue and
     # commands compute keys with, so a run and the queue cannot key differently.
     key_facts: KeyFacts = field(kw_only=True)
@@ -245,6 +247,7 @@ class OCRPipeline:
         self._cache_service: CacheReconciliationService | None = deps.cache_service
         self._preprocess_service: PreprocessService | None = deps.preprocess_service
         self._ocr_stage_service: OCRStageService | None = deps.ocr_stage_service
+        self._client_factory: ClientFactory = deps.client_factory
 
     # ── public ────────────────────────────────────────────────────────────
 
@@ -259,12 +262,15 @@ class OCRPipeline:
             self._reporter.error(refusal)
             return RunSummary(error=refusal)
         start = self._prepare_run()
-        unreadable = self._check_ocr_model()
+        # One client for the whole run, built before the model check so that check can be
+        # abandoned by "Stop now" like any other request.
+        client, run_stats = self._ollama_client()
+        unreadable = self._check_ocr_model(client)
         if unreadable:
             return RunSummary(error=unreadable)
         try:
             file_processor = self._setup_services(
-                start.tmp_dir, start.artifact_store, start.state_repo
+                start.tmp_dir, start.artifact_store, start.state_repo, client, run_stats
             )
         except (ValueError, RuntimeError, ProviderNotAvailableError) as exc:
             self._reporter.error(str(exc))
@@ -308,14 +314,18 @@ class OCRPipeline:
         )
         return _RunStart(tmp_dir, artifact_store, state_repo)
 
-    def _check_ocr_model(self) -> str:
-        """Return why the model that reads the pages cannot be used, or ``""``."""
+    def _check_ocr_model(self, client: OllamaClient) -> str:
+        """Return why the model that reads the pages cannot be used, or ``""``.
+
+        Asks through the run's own *client*, so the request it makes belongs to the run and
+        "Stop now" abandons it.
+        """
         cfg = self._config
         if not (cfg.recognition_enabled and cfg.ocr.engine == ENGINE_OLLAMA):
             return ""
         try:
             self._component_factory.check_ocr_model(
-                url=cfg.ollama_url, model=cfg.ocr.model, reporter=self._reporter
+                client=client, model=cfg.ocr.model, reporter=self._reporter
             )
         except (RuntimeError, OllamaUnreachableError) as exc:
             self._reporter.error(str(exc))
@@ -450,17 +460,17 @@ class OCRPipeline:
                     report_text.prepared_page(out_path.name, ", ".join(page_steps))
                 )
 
-    def _ollama_client(self, cfg: Config) -> tuple[OllamaClient | None, RunStatsCollector]:
+    def _ollama_client(self) -> tuple[OllamaClient, RunStatsCollector]:
         """Return the one client every Ollama stage shares, and the collector it reports to.
 
-        Building it here means the address is normalised once and injection is explicit.  The
-        same client reports every request's statistics to the collector, so one sink sees the
-        whole run and can turn each step into a sample of how fast this machine is.
+        It comes from the factory composition passes in, with this run's stop event — so "Stop
+        now" abandons the request being made, whichever stage made it — and with the collector
+        as its sink, so one sink sees the whole run and can turn each step into a sample of how
+        fast this machine is.
         """
+        cfg = self._config
         run_stats = RunStatsCollector(cfg.ollama_url, self._samples.add)
-        if not uses_ollama(cfg):
-            return None, run_stats
-        client = OllamaClient(
+        client = self._client_factory(
             cfg.ollama_url, cancel_event=self._stop_event, stats_sink=run_stats.record
         )
         # The client is the only place that sees a request waiting for the server, so it is where
@@ -474,6 +484,8 @@ class OCRPipeline:
         tmp_dir: Path,
         artifact_store: PreviewImageStore,
         state_repo: StateRepository,
+        ollama_client: OllamaClient,
+        run_stats: RunStatsCollector,
     ) -> FileProcessor:
         """Build all pipeline services and return a ready-to-use FileProcessor."""
         cfg = self._config
@@ -482,9 +494,7 @@ class OCRPipeline:
             cfg, self._component_factory, self._model_store, self._reporter, self._hardware
         )
 
-        ollama_client, run_stats = self._ollama_client(cfg)
-
-        ocr = builder.build_ocr(ollama_client, self._stop_event)
+        ocr = builder.build_ocr(ollama_client=ollama_client, stop_event=self._stop_event)
 
         correction, anonymizer = builder.build_correction_and_anonymizer(ollama_client)
         if cfg.correction_enabled:

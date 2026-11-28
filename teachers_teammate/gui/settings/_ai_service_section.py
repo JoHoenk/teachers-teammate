@@ -24,7 +24,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QWidget
 
 from ...application.composition import AppServices
-from ...domain.data_location import PROVIDER_OLLAMA, DataLocation, DataRegion
+from ...domain.data_location import DataLocation, DataRegion, is_ollama
 from ...domain.hardware_profile import HardwareProfile, HardwareProfileSetting
 from ...domain.model_listing import ListedModel, ModelListing
 from ...domain.ollama_address import normalize_ollama_url
@@ -417,7 +417,7 @@ class AiServiceSection(QWidget):
         self._guidance.set_ollama_url(new_url)
         self._refresh_service_labels()
         self._update_where_hint()
-        if self.provider() == PROVIDER_OLLAMA and self._loaded:
+        if is_ollama(self.provider()) and self._loaded:
             self._refetch_models()
 
     def on_packages_changed(self) -> None:
@@ -493,13 +493,13 @@ class AiServiceSection(QWidget):
             # A kept model that is already in the built-in list must not be added twice.
             self._model.addItem(keep)
         self._model.setCurrentText(keep)
-        if provider == PROVIDER_OLLAMA:
+        if is_ollama(provider):
             # The local list changes whenever a model is pulled or removed, and is cheap to
             # ask for.  An online service's list fetched a moment ago is still good (a failed
             # one is never cached), so it is kept; "Try again" drops it on request.
             self._app_service.providers.invalidate_model_cache(provider, self._ollama_url)
         # Hint line and "Use best choice" button exist only for Ollama.
-        self._guidance.setVisible(provider == PROVIDER_OLLAMA)
+        self._guidance.setVisible(is_ollama(provider))
         self._update_package_hint(provider)
         self._update_key_row(provider)
         self._update_where_hint()
@@ -544,7 +544,7 @@ class AiServiceSection(QWidget):
         """
         for provider in self._drafts.providers_of(env_key):
             self._app_service.providers.invalidate_model_cache(
-                provider, self._ollama_url if provider == PROVIDER_OLLAMA else ""
+                provider, self._ollama_url if is_ollama(provider) else ""
             )
         if env_key == self._key_row.env_key:
             self._key_row.show_value(self._drafts.value(env_key))
@@ -572,8 +572,8 @@ class AiServiceSection(QWidget):
         show = (
             self._show_same_model_tip
             and profile in (HardwareProfile.CPU, HardwareProfile.CARD_8GB)
-            and self.provider() == PROVIDER_OLLAMA
-            and self._other_provider == PROVIDER_OLLAMA
+            and is_ollama(self.provider())
+            and is_ollama(self._other_provider)
             and self._model.currentText().strip() != self._other_model
         )
         self._same_model_tip_lbl.setVisible(show)
@@ -584,7 +584,7 @@ class AiServiceSection(QWidget):
         """Invalidate the model cache of the current service and fetch the list again."""
         provider = self.provider()
         self._app_service.providers.invalidate_model_cache(
-            provider, self._ollama_url if provider == PROVIDER_OLLAMA else ""
+            provider, self._ollama_url if is_ollama(provider) else ""
         )
         self._auto_fetch()
 
@@ -621,19 +621,19 @@ class AiServiceSection(QWidget):
             self._set_busy(False)
             self._status_lbl.setText(_STATUS_KEY_MISSING)
             return
-        url = self._ollama_url if provider == PROVIDER_OLLAMA else ""
+        url = self._ollama_url if is_ollama(provider) else ""
         # Ollama always goes through the thread (a cache hit there is instant):
         # classifying custom models must not run on the GUI thread.
         cached = (
             None
-            if provider == PROVIDER_OLLAMA
+            if is_ollama(provider)
             else self._app_service.providers.get_cached_listing(provider, base_url=url)
         )
         if cached is not None:
             self._show_listing(cached)
             return
         self._set_busy(True, asking_for_models_text(service))
-        if provider == PROVIDER_OLLAMA:
+        if is_ollama(provider):
 
             def fetch(report: Callable[[str], None]) -> ModelListing:
                 listing = self._app_service.providers.list_provider_models_checked(
@@ -679,7 +679,7 @@ class AiServiceSection(QWidget):
             self._status_lbl.setText(
                 _listing_status(listing, service) if listing.source == "failed" else _STATUS_ERROR
             )
-            if provider == PROVIDER_OLLAMA:
+            if is_ollama(provider):
                 # Waiting hid the hint; with Ollama not answering it still has something to say
                 # (that a tag is not installed, and the button to download the best choice).
                 self._guidance.setVisible(True)
@@ -687,7 +687,7 @@ class AiServiceSection(QWidget):
                 self._update_same_model_tip()
             return
         self._status_lbl.setText(_listing_status(listing, service))
-        if provider == PROVIDER_OLLAMA:
+        if is_ollama(provider):
             self._guidance.setVisible(True)
             self._guidance.set_models(models)
             self._update_same_model_tip()  # set_models() blocks the combo's signals

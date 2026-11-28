@@ -49,19 +49,6 @@ class OllamaStatus:
     can_start: bool = False
 
 
-def ollama_client(
-    url: str, *, cancel_event: threading.Event | None = None, timeout: float | None = None
-) -> OllamaClient:
-    """Build the Ollama client of one address: the one factory the app uses.
-
-    *cancel_event* makes a waiting request abandonable (a run or a speed test the teacher
-    stopped), *timeout* bounds a request that has to answer (``None``: the client's own).
-    """
-    if timeout is None:
-        return OllamaClient(url, cancel_event=cancel_event)
-    return OllamaClient(url, cancel_event=cancel_event, timeout=timeout)
-
-
 class OllamaServerService:
     """Asks the Ollama server at the configured address what it has and what it is doing.
 
@@ -74,15 +61,15 @@ class OllamaServerService:
     def __init__(
         self,
         *,
-        client_factory: OllamaClientFactory[OllamaClient] = ollama_client,
+        client_factory: OllamaClientFactory[OllamaClient] = OllamaClient,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Create the service.
 
         Args:
             client_factory: Builds the client of one address.  One factory is shared with the
-                speed test, so a test replaces it once and nothing else builds a client of its
-                own.
+                run, the comparison and the speed test, so a test replaces it once and nothing
+                else builds a client of its own.
             clock: What the age of a snapshot is measured with; a test replaces it.
         """
         self._client = client_factory

@@ -5,16 +5,16 @@ from __future__ import annotations
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 import pytest
 
+from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.providers import ProviderInfo
 from teachers_teammate.infrastructure.llm_factory import (
+    LlmFactoryProviders,
     build_llm,
     get_provider_data_region,
     get_provider_info,
     list_provider_models,
     list_provider_models_checked,
     list_providers,
-    provider_package,
-    provider_package_required,
 )
 from teachers_teammate.messages import MessageKey
 
@@ -431,29 +431,6 @@ def test_checked_listing_of_a_provider_that_raises_keeps_its_builtin_models(mock
     assert listing.problem
 
 
-def test_provider_package_names_module_and_pip_name() -> None:
-    """
-    Given  the Mistral providers, which share one package, and a name that is no provider
-    When   provider_package() is read
-    Then   both Mistral providers name langchain_mistralai / langchain-mistralai, and the
-           unknown name has none
-    """
-    assert provider_package("mistral") == ("langchain_mistralai", "langchain-mistralai")
-    assert provider_package("mistral_eu") == provider_package("mistral")
-    assert provider_package("nonexistent") is None
-
-
-def test_the_ollama_connector_is_optional_and_the_others_are_required() -> None:
-    """
-    Given  the providers
-    When   provider_package_required() is asked
-    Then   Ollama (talked to directly) needs no package, every online service does
-    """
-    assert provider_package_required("ollama") is False
-    assert provider_package_required("mistral") is True
-    assert provider_package_required("openai") is True
-
-
 # ── Data region per provider ───────────────────────────────────────────────
 
 
@@ -564,3 +541,44 @@ def test_the_vendor_country_is_available_for_the_tooltip() -> None:
     assert openai is not None and openai.vendor_country == "USA"
     ollama = get_provider_info("ollama")
     assert ollama is not None and not ollama.vendor_country
+
+
+def test_the_adapter_hands_the_key_to_the_provider(mocker) -> None:
+    """
+    Given  a provider module that says which models it offers and whether it answers
+    When   the online providers adapter asks it both questions
+    Then   the key the app holds reaches the module, and its answers come back
+    """
+    listed = mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory.list_provider_models_checked",
+        return_value=ModelListing(["glm-live"], "live"),
+    )
+    checked = mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory.check_provider_connection",
+        return_value=(True, "✓ OK"),
+    )
+    online = LlmFactoryProviders()
+
+    listing = online.list_models_checked("mistral", api_key="sk-held")
+    ok, message = online.check_connection("mistral", api_key="sk-held")
+
+    assert listing.models == ["glm-live"]
+    assert (ok, message) == (True, "✓ OK")
+    listed.assert_called_once_with("mistral", api_key="sk-held")
+    checked.assert_called_once_with("mistral", api_key="sk-held")
+
+
+def test_the_adapter_reads_what_the_shipped_providers_declare() -> None:
+    """
+    Given  the providers the app ships and a name nobody declares
+    When   the adapter is asked for the providers, one's declaration and its region
+    Then   it answers what the provider modules declare, and the unknown name has nothing
+    """
+    online = LlmFactoryProviders()
+
+    assert online.names() == list_providers()
+    info = online.info("mistral_eu")
+    assert info is not None and info.env_key == "MISTRAL_API_KEY"
+    assert online.data_region("mistral_eu") == get_provider_data_region("mistral_eu")
+    assert online.info("nonexistent") is None
+    assert online.data_region("nonexistent") == "unknown"

@@ -48,10 +48,10 @@ from ...application.setup_plan import (
 )
 from ...domain.anonymization import SECONDARY_MODEL_AUTO
 from ...domain.data_location import (
-    PROVIDER_OLLAMA,
     DataLocation,
     DataRegion,
     StageLocation,
+    is_ollama,
 )
 from ...domain.hardware_profile import HardwareProfileSetting, profile_setting
 from ...domain.install_item import InstallItem, InstallKind
@@ -545,8 +545,8 @@ class ProofreadingPage(SetupPage):
         self._places = QButtonGroup(self)
         for button in (self._local, self._online, self._off):
             self._places.addButton(button)
-        self._local.setChecked(saved == PROVIDER_OLLAMA)
-        self._online.setChecked(saved not in (PROVIDER_OLLAMA, ""))
+        self._local.setChecked(is_ollama(saved))
+        self._online.setChecked(bool(saved) and not is_ollama(saved))
         layout.addWidget(self._local)
         self._suggestion = _note(SUGGESTION_CHECKING)
         layout.addWidget(_indent(self._suggestion))
@@ -1046,7 +1046,7 @@ class SummaryPage(SetupPage):
 
     def _place_of(self, provider: str) -> str:
         """Return where *provider* runs in the few words the summary has room for."""
-        if provider == PROVIDER_OLLAMA:
+        if is_ollama(provider):
             url = self.assistant().answers().ollama_url
             return short_place(
                 self._context.app_service.providers.describe_llm_location(provider, "", url)
@@ -1067,7 +1067,7 @@ class SummaryPage(SetupPage):
             step.provider
             for step in plan.steps
             if step.provider
-            and step.provider != PROVIDER_OLLAMA
+            and not is_ollama(step.provider)
             and self._context.app_service.providers.provider_key_missing(step.provider)
         }
 

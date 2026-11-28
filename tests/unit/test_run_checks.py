@@ -612,11 +612,9 @@ def test_preflight_needs_no_ollama_for_other_engines(tmp_path: Path) -> None:
     svc = _make_svc(model_store=fake_reader_store(tmp_path))
     cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False)
 
-    with (
-        patch(
-            "teachers_teammate.application.providers.list_provider_models_checked",
-            side_effect=AssertionError("Ollama must not be contacted"),
-        ),
+    with patch(
+        "teachers_teammate.infrastructure.ollama_client.OllamaClient.snapshot",
+        side_effect=AssertionError("Ollama must not be contacted"),
     ):
         result = svc.run_checks.check_run_preflight(cfg)
 
@@ -946,7 +944,7 @@ def test_the_ocr_stage_asks_nothing_for_ollama(tmp_path: Path) -> None:
     svc = _make_svc()
 
     with patch(
-        "teachers_teammate.application.providers.list_provider_models_checked",
+        "teachers_teammate.infrastructure.ollama_client.OllamaClient.snapshot",
         side_effect=AssertionError("Ollama must not be contacted"),
     ):
         assert svc.run_checks.check_stage_requirements(_ollama_config(tmp_path), "ocr") == []

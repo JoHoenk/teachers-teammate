@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from .correction_prompts import correct_system, prompt_identity
-from .data_location import PROVIDER_OLLAMA
+from .data_location import PROVIDER_OLLAMA, is_ollama
 from .model_tags import measured_value, tag_value
 from .proofreading.result import ExchangeKind, StepName, stored_exchange_id
 
@@ -282,7 +282,7 @@ def _temperature(tag: str, provider: str, default: float) -> float:
     Only the table of Ollama tags applies to Ollama: another provider's model of the same name is
     a different service with its own defaults.
     """
-    if provider != PROVIDER_OLLAMA:
+    if not is_ollama(provider):
         return default
     recommended = recommended_temperature(tag)
     return default if recommended is None else recommended
@@ -290,7 +290,7 @@ def _temperature(tag: str, provider: str, default: float) -> float:
 
 def _step_one_temperature(tag: str, provider: str) -> float:
     """Return the temperature step ① is sent at: measured for a local model, else the default."""
-    if provider != PROVIDER_OLLAMA:
+    if not is_ollama(provider):
         return DEFAULT_CORRECTION_TEMPERATURE
     measured = step_one_temperature(tag)
     return STEP_ONE_DEFAULT_TEMPERATURE if measured is None else measured
@@ -298,7 +298,7 @@ def _step_one_temperature(tag: str, provider: str) -> float:
 
 def _step_one_prompt(tag: str, provider: str) -> str:
     """Return the step-① prompt variant of a local model, ``""`` for the standard prompt."""
-    if provider != PROVIDER_OLLAMA:
+    if not is_ollama(provider):
         return ""
     return measured_value(STEP_ONE_PROMPTS, tag) or ""
 
@@ -309,7 +309,7 @@ def profile_for(base: RequestProfile, tag: str, provider: str = PROVIDER_OLLAMA)
     Step ① runs at its measured temperature (:data:`STEP_ONE_TEMPERATURES`), steps ② and ③ at
     the maker's (:data:`MAKER_TEMPERATURES`), because no measurement has compared theirs yet.
     """
-    level = think_level(tag) if provider == PROVIDER_OLLAMA else None
+    level = think_level(tag) if is_ollama(provider) else None
     maker = _temperature(tag, provider, DEFAULT_CORRECTION_TEMPERATURE)
     return replace(
         base,

@@ -33,8 +33,8 @@ from ..domain.anonymization import AnonymizerConfig, resolve_anonymizer_config
 from ..domain.context_budget import RunWindows
 from ..domain.data_location import (
     ENGINE_PPOCR,
-    PROVIDER_OLLAMA,
     DataLocation,
+    is_ollama,
     llm_stage_location,
     online_ocr_reason,
 )
@@ -160,9 +160,9 @@ def _default_build_anonymizer(*, language: str, config: AnonymizerConfig) -> Ano
     raise NotImplementedError
 
 
-def _default_check_ocr_model(*, url: str, model: str, reporter: Reporter) -> None:
-    """Ask the Ollama server at *url* whether *model* is there; raise when it is not."""
-    OllamaClient(url).check_model(model, reporter)
+def _default_check_ocr_model(*, client: OllamaClient, model: str, reporter: Reporter) -> None:
+    """Ask *client* whether *model* is there; raise when it is not."""
+    client.check_model(model, reporter)
 
 
 def _default_build_ocr_postprocessor() -> OcrOutputPostprocessor:
@@ -293,8 +293,8 @@ class OcrPostprocessorBuilder(Protocol):
 class OcrModelCheck(Protocol):
     """Asks the Ollama server whether the model a run reads pages with is there."""
 
-    def __call__(self, *, url: str, model: str, reporter: Reporter) -> None:
-        """Raise when *model* is not on the server at *url*."""
+    def __call__(self, *, client: OllamaClient, model: str, reporter: Reporter) -> None:
+        """Raise when *model* is not on the server *client* asks."""
         ...
 
 
@@ -343,10 +343,6 @@ class StageBuilder:
     #: keeps the base window.
     hardware: HardwareDetection | None = None
 
-    def _build_ollama_client(self) -> OllamaClient:
-        """Create the shared OllamaClient for all Ollama-backed stages."""
-        return OllamaClient(self.config.ollama_url)
-
     def _model_port(
         self,
         provider: str,
@@ -354,7 +350,7 @@ class StageBuilder:
         *,
         num_ctx: int,
         temperature: float,
-        ollama_client: OllamaClient | None = None,
+        ollama_client: OllamaClient,
     ) -> ModelPort:
         """Return the connection to *model* on *provider*: the server's own API, or LangChain.
 
@@ -366,11 +362,12 @@ class StageBuilder:
             num_ctx: The window a local model is asked for; a LangChain provider brings its own.
             temperature: The temperature of the requests *this* stage sends; a provider builds
                 its model with it, so a stage with its own temperature needs its own port.
+            ollama_client: The run's client, built by composition.  An Ollama stage without one
+                is a bug, so nothing here builds a second.
         """
-        if provider == PROVIDER_OLLAMA:
-            client = ollama_client or self._build_ollama_client()
+        if is_ollama(provider):
             return OllamaPort(
-                client,
+                ollama_client,
                 model,
                 timeout=float(self.config.ocr_timeout),
                 num_ctx=num_ctx,
@@ -412,10 +409,14 @@ class StageBuilder:
 
     def build_ocr(
         self,
-        ollama_client: OllamaClient | None = None,
+        *,
+        ollama_client: OllamaClient,
         stop_event: threading.Event | None = None,
     ) -> OCRProcessor:
         """Build the OCR processor; refuse settings that would read pages online.
+
+        *ollama_client* is the run's client, which the Ollama engine reads with; the built-in
+        reader needs none and is given one all the same.
 
         Raises:
             OnlineOcrNotAllowedError: the engine or model would receive the page images
@@ -437,9 +438,11 @@ class StageBuilder:
             raise OnlineOcrNotAllowedError(reason)
         if ocr.engine == ENGINE_PPOCR:
             return factory.build_ppocr_ocr(store=self.model_store, stop_event=stop_event)
-        client = ollama_client or self._build_ollama_client()
         return factory.build_ollama_ocr(
-            model=ocr.model, client=client, timeout=cfg.ocr_timeout, temperature=ocr.temperature
+            model=ocr.model,
+            client=ollama_client,
+            timeout=cfg.ocr_timeout,
+            temperature=ocr.temperature,
         )
 
     def build_scan_places(self, stop_event: threading.Event | None = None) -> ScanPlaces | None:
@@ -459,12 +462,13 @@ class StageBuilder:
         reader = self.factory.build_ppocr_ocr(store=self.model_store, stop_event=stop_event)
         return ScanPlaces(reader, stop_event)
 
-    def build_corrector(self, ollama_client: OllamaClient | None = None) -> Corrector | None:
+    def build_corrector(self, ollama_client: OllamaClient) -> Corrector | None:
         """Build the corrector of this run, or ``None`` when proofreading is off.
 
         The one place that decides which corrector a run uses, so a run and the pieces
         estimate of the GUI build the same one.  Building is cheap: neither the Ollama client
         nor the corrector contacts the server, and no anonymizer is built here.
+        *ollama_client* is the run's client, which an Ollama corrector asks.
 
         The corrector is the exchange over the connection of the chosen provider: a local
         server is asked through its own API (which knows the window), an online provider
@@ -497,7 +501,7 @@ class StageBuilder:
         )
 
     def build_correction_and_anonymizer(
-        self, ollama_client: OllamaClient | None = None
+        self, ollama_client: OllamaClient
     ) -> tuple[Corrector | None, Anonymizer | None]:
         """Build the corrector and the anonymizer, each only when it is enabled.
 
@@ -580,7 +584,7 @@ class StageBuilder:
     def build_evaluation(
         self,
         correction: Corrector | None,
-        ollama_client: OllamaClient | None = None,
+        ollama_client: OllamaClient,
     ) -> Evaluator | None:
         cfg = self.config
         if not cfg.evaluation_enabled:

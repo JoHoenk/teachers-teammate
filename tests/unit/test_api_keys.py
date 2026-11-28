@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 
-from teachers_teammate.application.api_keys import ApiKeys
 from teachers_teammate.domain.credentials import KeyLocation
+
+from tests.conftest import make_api_keys
 
 from ..fakes.fake_secret_store import FakeSecretStore
 
@@ -17,7 +18,7 @@ def test_a_key_the_app_holds_is_the_key_of_its_provider(monkeypatch) -> None:
     Then   it is the key the app holds, and the environment is untouched
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    keys = ApiKeys(FakeSecretStore())
+    keys = make_api_keys(FakeSecretStore())
 
     keys.remember("OPENAI_API_KEY", "sk-held")
 
@@ -32,7 +33,7 @@ def test_a_key_exported_before_start_is_found_in_the_environment(monkeypatch) ->
     Then   the environment's key is the one used, and it is known to be set outside the app
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-exported")
-    keys = ApiKeys(FakeSecretStore())
+    keys = make_api_keys(FakeSecretStore())
 
     assert keys.key_for("openai") == "sk-exported"
     assert keys.key("OPENAI_API_KEY") == "sk-exported"
@@ -47,7 +48,7 @@ def test_a_key_the_app_holds_wins_over_the_environment(monkeypatch) -> None:
     Then   the typed key is used, and the key no longer counts as set outside the app
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-exported")
-    keys = ApiKeys(FakeSecretStore())
+    keys = make_api_keys(FakeSecretStore())
 
     keys.remember("OPENAI_API_KEY", "sk-typed")
 
@@ -62,7 +63,7 @@ def test_a_provider_that_needs_no_key_has_none(monkeypatch) -> None:
     Then   there is none
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-exported")
-    keys = ApiKeys(FakeSecretStore())
+    keys = make_api_keys(FakeSecretStore())
     keys.remember("OPENAI_API_KEY", "sk-typed")
 
     assert keys.key_for("ollama") is None
@@ -75,7 +76,7 @@ def test_a_key_no_longer_held_lets_the_environment_count_again(monkeypatch) -> N
     Then   the environment's key is used again
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-exported")
-    keys = ApiKeys(FakeSecretStore())
+    keys = make_api_keys(FakeSecretStore())
     keys.remember("OPENAI_API_KEY", "sk-typed")
 
     keys.remember("OPENAI_API_KEY", None)
@@ -93,7 +94,7 @@ def test_a_key_only_the_store_has_is_the_key_of_its_provider(monkeypatch) -> Non
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     store = FakeSecretStore()
     store.keys["OPENAI_API_KEY"] = "sk-stored"
-    keys = ApiKeys(store)
+    keys = make_api_keys(store)
 
     assert keys.key_for("openai") == "sk-stored"
     assert keys.key_for("openai") == "sk-stored"
@@ -110,7 +111,7 @@ def test_the_environment_wins_over_the_stored_key(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-exported")
     store = FakeSecretStore()
     store.keys["OPENAI_API_KEY"] = "sk-stored"
-    keys = ApiKeys(store)
+    keys = make_api_keys(store)
 
     assert keys.key_for("openai") == "sk-exported"
 
@@ -125,7 +126,7 @@ def test_a_store_without_the_key_is_asked_once(monkeypatch) -> None:
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     store = FakeSecretStore()
-    keys = ApiKeys(store)
+    keys = make_api_keys(store)
 
     assert keys.key_for("openai") is None
     assert keys.key("OPENAI_API_KEY") == ""
@@ -141,7 +142,7 @@ def test_saving_and_forgetting_a_key_reaches_the_store(monkeypatch) -> None:
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     store = FakeSecretStore()
-    keys = ApiKeys(store)
+    keys = make_api_keys(store)
 
     assert keys.save("OPENAI_API_KEY", " sk-new ") is KeyLocation.SETTINGS_FILE
     assert store.keys == {"OPENAI_API_KEY": "sk-new"}

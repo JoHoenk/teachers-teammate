@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from ...domain.stages import Stage
 from ...exceptions import StageError, StageErrorKind
 from ...messages import proofreading_not_compared
-from ..ollama_client import OllamaClient
+from ..ollama_client import ClientFactory
 from ..run_stats import RunStatsCollector, StepSampler
 from ..stage_builder import PipelineComponentFactory, StageBuilder
 from .proofread_text import ProofreadText
@@ -38,8 +38,8 @@ def proofread_unit_for(
     model_store: ModelStore,
     reporter: Reporter,
     samples: SampleStore,
+    client_factory: ClientFactory,
     hardware: HardwareDetection | None = None,
-    ollama_client: OllamaClient | None = None,
     stop_event: threading.Event | None = None,
 ) -> ProofreadText:
     """Return the unit that proofreads one text with *config*.
@@ -50,10 +50,9 @@ def proofread_unit_for(
         model_store: Where the reader's model files are, which the builder needs to exist.
         reporter: The sink of the unit's status lines and warnings.
         samples: Where the sample of the answer's speed goes, as a run's does.
+        client_factory: Builds the unit's Ollama client — the app's only one, as a run's is.
         hardware: The computer that runs the models, for the context window; ``None`` keeps the
             base window.
-        ollama_client: The client a caller already has (a run shares one); ``None`` builds one
-            that reports its statistics to *samples*.
         stop_event: Set to abandon the request that is waiting, as a run's *Stop now* does.
     """
     builder = StageBuilder(
@@ -66,9 +65,7 @@ def proofread_unit_for(
     collector = RunStatsCollector(config.ollama_url, samples.add)
     # What the server reports about a request is turned into a sample of this machine's speed —
     # the same way a run does it, so the AI models page learns every model the teacher tried.
-    client = ollama_client or OllamaClient(
-        config.ollama_url, cancel_event=stop_event, stats_sink=collector.record
-    )
+    client = client_factory(config.ollama_url, cancel_event=stop_event, stats_sink=collector.record)
     corrector = builder.build_corrector(client)
     if corrector is None:
         # Proofreading is switched off, so there is no unit to build and nothing to compare.

@@ -38,7 +38,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QWizard
 import pytest
 
-from teachers_teammate.application import providers as providers_module
 from teachers_teammate.application.anonymization import AnonymizationService
 from teachers_teammate.application.composition import AppServices, build_app_services
 from teachers_teammate.application.setup_plan import (
@@ -929,8 +928,7 @@ def test_s7_an_online_service_installs_its_package_and_keeps_the_key(
         lambda _language, _config=None: True,  # name detection is there: no spaCy download
     )
     monkeypatch.setattr(
-        providers_module,
-        "list_provider_models_checked",
+        "teachers_teammate.infrastructure.llm_factory.list_provider_models_checked",
         lambda _provider, **_kwargs: ModelListing(models=[MODEL]),
     )
 

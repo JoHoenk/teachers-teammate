@@ -41,6 +41,7 @@ from teachers_teammate.domain.proofreading.option_marks import OptionMark, Verdi
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.teacher_work import text_identity
 from teachers_teammate.exceptions import RunStoppedError, StageError, StageErrorKind
+from teachers_teammate.infrastructure.ollama_client import OllamaClient
 from teachers_teammate.infrastructure.speed_store import SampleStore
 from teachers_teammate.infrastructure.stage_builder import PipelineComponentFactory
 from teachers_teammate.infrastructure.workflow.proofread_text import ProofreadOutcome
@@ -929,6 +930,7 @@ def test_a_missing_provider_package_is_a_runtime_error(tmp_path: Path) -> None:
                 model_store=MagicMock(),
                 reporter=reporter,
                 samples=SampleStore(tmp_path / "samples.json"),
+                client_factory=OllamaClient,
                 stop_event=stop_event,
             ),
             documents=lambda config, path: _view(),
@@ -965,6 +967,7 @@ def test_proofreading_switched_off_is_a_rows_words(tmp_path: Path) -> None:
                 model_store=MagicMock(),
                 reporter=reporter,
                 samples=SampleStore(tmp_path / "samples.json"),
+                client_factory=OllamaClient,
                 stop_event=stop_event,
             ),
             documents=lambda config, path: _view(),
@@ -1202,6 +1205,7 @@ def test_a_stop_event_that_is_set_ends_the_request_of_a_local_model(tmp_path: Pa
             model_store=MagicMock(),
             reporter=MagicMock(),
             samples=SampleStore(tmp_path / "samples.json"),
+            client_factory=OllamaClient,
             stop_event=event,
         )
 

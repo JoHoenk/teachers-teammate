@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from .data_location import PROVIDER_OLLAMA
+from .data_location import PROVIDER_OLLAMA, is_ollama
 from .model_tags import normalize_tag
 from .request_profile import DEFAULT_REQUEST_PROFILE, RequestProfile, profile_for
 
@@ -313,6 +313,6 @@ def request_profile(tag: str, provider: str = PROVIDER_OLLAMA) -> RequestProfile
     measured temperature (:data:`STEP_ONE_TEMPERATURES`), steps ② and ③ at the maker's
     (:data:`MAKER_TEMPERATURES`), because no measurement has compared theirs yet.
     """
-    spec = find_spec(tag) if provider == PROVIDER_OLLAMA else None
+    spec = find_spec(tag) if is_ollama(provider) else None
     base = DEFAULT_REQUEST_PROFILE if spec is None else spec.request_profile
     return profile_for(base, tag, provider)

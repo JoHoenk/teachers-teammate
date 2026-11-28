@@ -14,22 +14,13 @@ import threading
 import time
 
 from .._model_defaults import default_model_for_task
-from ..domain.data_location import PROVIDER_OLLAMA, StageLocation
+from ..domain.data_location import StageLocation, is_ollama
 from ..domain.model_listing import ModelListing
 from ..domain.ollama_snapshot import SNAPSHOT_TTL_S
 from ..domain.providers import ProviderInfo, display_name_of
-from ..infrastructure.llm_factory import (
-    check_provider_connection,
-    get_provider_data_region,
-    get_provider_info,
-    list_provider_models_checked,
-    list_providers,
-    provider_package,
-    provider_package_required,
-)
 from ..interfaces import ConnectionCheck
 from .data_flow import llm_location, text_goes_online
-from .ports import Credentials, OllamaServer
+from .ports import Credentials, OllamaServer, OnlineProviders
 
 
 def importable(module: str) -> bool:
@@ -53,10 +44,12 @@ class ProviderService:
         *,
         ollama: OllamaServer,
         credentials: Credentials,
+        online: OnlineProviders,
         importable_module: Callable[[str], bool] | None = None,
     ) -> None:
         self._ollama = ollama
         self._credentials = credentials
+        self._online = online
         self._importable = importable_module or importable
         # The lists are read from a background thread and written from the window's; one lock
         # covers the dict.
@@ -67,11 +60,11 @@ class ProviderService:
 
     def list_providers(self) -> list[str]:
         """Return available LLM providers."""
-        return list_providers()
+        return self._online.names()
 
     def get_provider_info(self, provider: str) -> ProviderInfo | None:
         """Return what *provider* declares, or ``None`` when the name is no provider."""
-        return get_provider_info(provider)
+        return self._online.info(provider)
 
     def display_name(self, provider: str) -> str:
         """Return the name a teacher reads for *provider* (its id when it declares none)."""
@@ -89,7 +82,7 @@ class ProviderService:
 
     def key_page(self, env_key: str) -> str:
         """Return the page where a key for *env_key* is created (``""`` when nobody says)."""
-        for provider in list_providers():
+        for provider in self.list_providers():
             if self.env_key(provider) == env_key:
                 info = self.get_provider_info(provider)
                 if info is not None and info.key_url:
@@ -100,13 +93,16 @@ class ProviderService:
         """Return the names of the services that need the package *pip* (Mistral and EU share one)."""
         return [
             self.display_name(provider)
-            for provider in list_providers()
-            if (package := provider_package(provider)) is not None and package[1] == pip
+            for provider in self.list_providers()
+            if (info := self.get_provider_info(provider)) is not None
+            and info.package is not None
+            and info.package.pip == pip
         ]
 
     def package_is_connector(self, provider: str) -> bool:
         """Return whether *provider*'s package is an optional connector (the app works without it)."""
-        return provider_package(provider) is not None and not provider_package_required(provider)
+        info = self.get_provider_info(provider)
+        return info is not None and info.package is not None and info.package_optional
 
     def provider_key_missing(self, provider: str) -> bool:
         """Return whether *provider* needs an API key the app has none of.
@@ -126,7 +122,7 @@ class ProviderService:
 
     def get_provider_data_region(self, provider: str) -> str:
         """Return where *provider* processes the data: ``"eu"``, ``"non_eu"`` or ``"unknown"``."""
-        return get_provider_data_region(provider)
+        return self._online.data_region(provider)
 
     def describe_llm_location(self, provider: str, model: str, ollama_url: str) -> StageLocation:
         """Return where proofreading / content review with *provider* and *model* runs."""
@@ -150,22 +146,22 @@ class ProviderService:
         """
         packages: dict[str, tuple[str, str]] = {}
         seen: set[str] = set()
-        for provider in list_providers():
-            package = provider_package(provider)
-            if package is None or package[1] in seen:
+        for provider in self.list_providers():
+            info = self.get_provider_info(provider)
+            if info is None or info.package is None or info.package.pip in seen:
                 continue
-            seen.add(package[1])
-            packages[provider] = package
+            seen.add(info.package.pip)
+            packages[provider] = (info.package.module, info.package.pip)
         return packages
 
     def missing_provider_package(self, provider: str) -> str | None:
         """Return the pip name of the package *provider* needs but is not installed, else ``None``."""
-        package = provider_package(provider)
-        if package is None or not provider_package_required(provider):
+        info = self.get_provider_info(provider)
+        if info is None or info.package is None or info.package_optional:
             return None
-        if self._importable(package[0]):
+        if self._importable(info.package.module):
             return None
-        return package[1]
+        return info.package.pip
 
     def check_connection(
         self,
@@ -179,15 +175,15 @@ class ProviderService:
         Returns ``(connected, model_ok, message)``.  For the services that are not Ollama the
         tuple is ``(ok, ok, message)``: the model-level distinction does not apply to them.
         """
-        if provider == PROVIDER_OLLAMA:
+        if is_ollama(provider):
             return self._ollama.check_connection(url, model)
         # Unknown providers are not blocked — assume OK by default.
-        if provider not in list_providers():
+        if provider not in self.list_providers():
             return ConnectionCheck(True, True, "✓ OK")
         # Delegate to the provider module's own health check (key presence for API providers)
         # and hand it the key the app holds for that provider.
         api_key = self._credentials.key_for(provider) or ""
-        ok, message = check_provider_connection(provider, api_key=api_key)
+        ok, message = self._online.check_connection(provider, api_key=api_key)
         return ConnectionCheck(ok, ok, message)
 
     # ── the model lists ───────────────────────────────────────────────────────
@@ -209,7 +205,7 @@ class ProviderService:
         is noticed.  Ollama is not cached here: the service that owns the server keeps its
         answer, and a server that cannot be asked says why instead of showing an empty list.
         """
-        if provider == PROVIDER_OLLAMA:
+        if is_ollama(provider):
             answer = self._ollama.snapshot(base_url)
             if answer.unreachable:
                 return ModelListing([], "failed", answer.reason)
@@ -217,7 +213,7 @@ class ProviderService:
         cached = self.get_cached_listing(provider, base_url=base_url)
         if cached is not None:
             return cached
-        listing = list_provider_models_checked(
+        listing = self._online.list_models_checked(
             provider, api_key=self._credentials.key_for(provider) or ""
         )
         self.remember_listing(provider, listing, base_url=base_url)
@@ -238,7 +234,7 @@ class ProviderService:
 
     def get_cached_listing(self, provider: str, *, base_url: str = "") -> ModelListing | None:
         """Return the cached listing for *provider* if still within TTL, else ``None``."""
-        if provider == PROVIDER_OLLAMA:
+        if is_ollama(provider):
             # Within the server's own lifetime, and only an answer that lists models, as for
             # an online list (``ModelListing.cacheable``).
             answer = self._ollama.cached_snapshot(base_url, max_age=SNAPSHOT_TTL_S)
@@ -260,7 +256,7 @@ class ProviderService:
         For Ollama this forgets what the server answered: the service that owns the server
         fetches it again when it is asked.
         """
-        if provider == PROVIDER_OLLAMA:
+        if is_ollama(provider):
             self._ollama.forget(base_url)
             return
         with self._cache_lock:

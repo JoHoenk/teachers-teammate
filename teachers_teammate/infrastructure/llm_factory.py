@@ -191,20 +191,6 @@ def _builtin_models(provider: str) -> list[str]:
     return list(info.models) if info is not None else []
 
 
-def provider_package(provider: str) -> tuple[str, str] | None:
-    """Return ``(importable module, pip name)`` of the package *provider* uses, or ``None``."""
-    info = get_provider_info(provider)
-    if info is None or info.package is None:
-        return None
-    return info.package.module, info.package.pip
-
-
-def provider_package_required(provider: str) -> bool:
-    """Whether *provider* cannot work without its package (Ollama's connector is optional)."""
-    info = get_provider_info(provider)
-    return info is None or not info.package_optional
-
-
 def check_provider_connection(provider: str, **kwargs: object) -> tuple[bool, str]:
     """Return ``(ok, message)`` for a lightweight health check of *provider*.
 
@@ -273,3 +259,31 @@ def _api_key(module: LLMProviderModule, api_key: str | None) -> str | None:
     if not isinstance(env_key, str) or not env_key:
         return None
     return os.environ.get(env_key, "").strip() or None
+
+
+class LlmFactoryProviders:
+    """The online services, asked through the provider modules of this folder.
+
+    Each method looks its function up by name when it is called, so patching one of them in a
+    test changes what this object answers.
+    """
+
+    def names(self) -> list[str]:
+        """Return the ids of all providers, sorted."""
+        return list_providers()
+
+    def info(self, provider: str) -> ProviderInfo | None:
+        """Return what *provider* declares, or ``None`` when the name is no provider."""
+        return get_provider_info(provider)
+
+    def data_region(self, provider: str) -> str:
+        """Return where *provider* processes data."""
+        return get_provider_data_region(provider)
+
+    def list_models_checked(self, provider: str, *, api_key: str) -> ModelListing:
+        """Return the models of *provider*, and where the list came from."""
+        return list_provider_models_checked(provider, api_key=api_key)
+
+    def check_connection(self, provider: str, *, api_key: str) -> tuple[bool, str]:
+        """Return ``(connected, message)`` for *provider*."""
+        return check_provider_connection(provider, api_key=api_key)

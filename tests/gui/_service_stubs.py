@@ -55,6 +55,8 @@ from teachers_teammate.domain.ollama_snapshot import ServerSnapshot
 from teachers_teammate.domain.performance_estimate import ProbeResult, TimeRange
 from teachers_teammate.domain.providers import ProviderInfo, display_name_of
 
+from tests.conftest import make_api_keys
+
 if TYPE_CHECKING:
     # The panel pulls Qt in, which the domain- and CLI-level tests' deps do not carry.
     from teachers_teammate.gui._config_panel import ConfigPanel
@@ -311,7 +313,7 @@ class LocalDataFlowStub:
 
     def _api_keys(self) -> ApiKeys:
         if self.api_keys is None:
-            self.api_keys = ApiKeys(CredentialStore())
+            self.api_keys = make_api_keys(CredentialStore())
         return self.api_keys
 
     # ── speed test and time estimates (the panel on the AI models page) ───────
